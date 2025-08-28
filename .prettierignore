@@ -1,0 +1,8 @@
+dist/
+build/
+coverage/
+node_modules/
+pnpm-lock.yaml
+*.min.js
+*.min.css
+*.md

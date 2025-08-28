@@ -1,0 +1,63 @@
+{
+  "name": "navidrome-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for interacting with Navidrome music server",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "prepare": "pnpm build"
+  },
+  "keywords": [
+    "mcp",
+    "navidrome",
+    "music",
+    "subsonic",
+    "api",
+    "server"
+  ],
+  "author": "",
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/navidrome-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/navidrome-mcp/issues"
+  },
+  "homepage": "https://github.com/yourusername/navidrome-mcp#readme",
+  "packageManager": "pnpm@10.15.0",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "dotenv": "^16.4.7",
+    "zod": "^4.1.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.34.0",
+    "@types/node": "^24.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.41.0",
+    "@typescript-eslint/parser": "^8.41.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/ui": "^3.2.4",
+    "eslint": "^9.34.0",
+    "eslint-config-prettier": "^9.1.0",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.6.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
