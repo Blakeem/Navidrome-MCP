@@ -168,14 +168,6 @@ npx @modelcontextprotocol/inspector node dist/index.js
 4. Implement retry logic for transient failures
 5. Provide actionable error messages for users
 
-## Security Notes
-
-1. Never commit real credentials
-2. Use environment variables for all sensitive data
-3. Validate and sanitize all inputs
-4. Use HTTPS for production deployments
-5. Implement token refresh before expiration
-
 ## Important Reminders
 
 1. This is specifically for Navidrome, not generic Subsonic
