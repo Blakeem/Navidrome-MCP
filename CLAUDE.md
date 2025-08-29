@@ -177,4 +177,3 @@ npx @modelcontextprotocol/inspector node dist/index.js
 5. Test against the live server at 192.168.86.100:4533
 6. Keep security as a top priority
 7. Maintain production-quality code at all times
-8. Use only working API endpoints (primarily `/song` endpoint)
