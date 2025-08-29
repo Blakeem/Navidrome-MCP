@@ -20,6 +20,5 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 
 export function registerResources(_server: Server, _client: NavidromeClient): void {
-  // Resources will be registered here
-  // TODO: Implement resource registration
+  // Resource registration will be implemented when resources are created
 }

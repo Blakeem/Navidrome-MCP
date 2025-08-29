@@ -20,6 +20,5 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 
 export function registerTools(_server: Server, _client: NavidromeClient): void {
-  // Tools will be registered here
-  // TODO: Implement tool registration
+  // Tool registration will be implemented when tools are created
 }

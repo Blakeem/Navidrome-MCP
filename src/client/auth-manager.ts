@@ -52,6 +52,11 @@ export class AuthManager {
     if (!this.token || !this.tokenExpiry || this.tokenExpiry <= new Date()) {
       await this.authenticate();
     }
-    return this.token!;
+
+    if (!this.token) {
+      throw new Error('Failed to obtain authentication token');
+    }
+
+    return this.token;
   }
 }
