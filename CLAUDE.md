@@ -242,6 +242,187 @@ Client methods should handle authentication, request formatting, and response pa
 3. Run `pnpm typecheck` - Must have ZERO errors
 4. Fix ALL issues before moving on
 
+## Testing with MCP Inspector
+
+### What is MCP Inspector?
+
+The MCP Inspector is the **official testing tool** for MCP servers. It's similar to API management tools like Postman, but specifically designed for the Model Context Protocol. It provides:
+
+- **Web UI Mode**: Interactive browser interface for visual testing
+- **CLI Mode**: Command-line interface perfect for automation and scripting
+- **Real-time Testing**: Test tools, resources, and prompts directly
+- **Request/Response Debugging**: See exactly what's being sent and received
+
+### MCP Protocol Overview
+
+MCP servers use **JSON-RPC over STDIO** (not REST APIs):
+- Server runs as a subprocess
+- Communicates via standard input/output  
+- Uses JSON-RPC 2.0 protocol
+- Perfect for AI assistants and automation
+
+### MCP Resources vs Tools
+
+**Resources** are read-only data that provide context to LLMs:
+- Think of them like **GET endpoints** in REST APIs
+- Used to load information into the LLM's context
+- Examples: Server status, library statistics, configuration data
+- Identified by unique URIs (e.g., `navidrome://server/info`)
+
+**Tools** are executable functions with side effects:
+- Think of them like **POST endpoints** in REST APIs  
+- Used to perform actions and computations
+- Examples: Search songs, create playlists, control playback
+- Take parameters and return results
+
+### Current Resources
+
+The server provides these resources:
+
+| URI | Name | Description |
+|-----|------|-------------|
+| `navidrome://server/info` | Server Information | Navidrome connection status and info |
+| `navidrome://library/stats` | Library Statistics | Music library statistics and counts |
+
+### CLI Testing Commands
+
+#### List Available Tools
+```bash
+# List all tools provided by the server
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+
+# Using our npm script
+pnpm build && npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+```
+
+#### Test Individual Tools
+```bash
+# Test connection (basic test)
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call \
+  --tool-name test_connection \
+  --tool-arg includeServerInfo=true
+
+# List songs from music library
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call \
+  --tool-name list_songs \
+  --tool-arg limit=5
+
+# List songs with advanced filtering
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call \
+  --tool-name list_songs \
+  --tool-arg limit=10 \
+  --tool-arg sort=year \
+  --tool-arg order=DESC \
+  --tool-arg starred=true
+```
+
+#### List and Read Resources
+```bash
+# List all available resources
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method resources/list
+
+# Read a specific resource
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method resources/read \
+  --uri "navidrome://server/info"
+
+# Read library statistics
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method resources/read \
+  --uri "navidrome://library/stats"
+```
+
+### Web UI Testing
+
+For interactive testing and development:
+
+```bash
+# Open Inspector in browser (recommended for development)
+pnpm inspector
+
+# Or use the development version with auto-recompile
+pnpm inspector:dev
+
+# Or run directly
+npx @modelcontextprotocol/inspector node dist/index.js
+```
+
+The web interface provides:
+- **Visual tool testing** with form inputs
+- **Real-time request/response** viewing  
+- **Error debugging** with stack traces
+- **Export functionality** for Claude Desktop configuration
+
+### CLI vs Web UI: When to Use Each
+
+| **CLI Mode** | **Web UI Mode** |
+|--------------|-----------------|
+| **Automated testing & CI/CD** | **Interactive development** |
+| **Scripting and integration** | **Visual debugging** |
+| **Quick verification** | **Exploring APIs visually** |
+| **Batch processing** | **Form-based parameter input** |
+| **Integration with coding assistants** | **Real-time experimentation** |
+
+### Common CLI Testing Patterns
+
+#### Development Feedback Loop
+```bash
+# 1. Make code changes
+# 2. Build
+pnpm build
+
+# 3. Test basic functionality
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+
+# 4. Test specific functionality
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call --tool-name list_songs --tool-arg limit=3
+```
+
+#### Integration Testing
+```bash
+# Test all available tools
+for tool in $(npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list | jq -r '.tools[].name'); do
+  echo "Testing tool: $tool"
+  npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call --tool-name "$tool"
+done
+```
+
+### Best Practices for Testing
+
+1. **Test Early and Often**: Use CLI testing during development
+2. **Automate Testing**: Include CLI tests in your development workflow
+3. **Test Edge Cases**: Try invalid parameters and error conditions
+4. **Use Both Modes**: CLI for automation, Web UI for exploration
+5. **Document Examples**: Keep working CLI commands in your documentation
+
+### Adding New Features
+
+#### Adding New Tools
+When implementing new tools:
+
+1. **Create tool function** in `src/tools/[category].ts`
+2. **Import and register** in `src/tools/index.ts`
+3. **Run quality checks**: `pnpm lint && pnpm typecheck && pnpm test`
+4. **Build**: `pnpm build`
+5. **Test with CLI**: `npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list`
+6. **Test execution**: `npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/call --tool-name [name]`
+7. **Document usage**: Add CLI examples to this file
+
+#### Adding New Resources
+When implementing new resources:
+
+1. **Add resource definition** to `resources` array in `src/resources/index.ts`
+2. **Add URI handler** in the `ReadResourceRequestSchema` handler
+3. **Run quality checks**: `pnpm lint && pnpm typecheck && pnpm test`
+4. **Build**: `pnpm build`
+5. **Test listing**: `npx @modelcontextprotocol/inspector --cli node dist/index.js --method resources/list`
+6. **Test reading**: `npx @modelcontextprotocol/inspector --cli node dist/index.js --method resources/read --uri "your-uri"`
+7. **Update documentation**: Add the resource to the Current Resources table above
+
 ### Important Reminders
 1. This is specifically for Navidrome, not generic Subsonic
 2. Always use pnpm, never npm or yarn

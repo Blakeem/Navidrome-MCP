@@ -44,7 +44,7 @@ export class AuthManager {
 
     const data = (await response.json()) as { token: string };
     this.token = data.token;
-    this.tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
     logger.debug('Authentication successful');
   }
 

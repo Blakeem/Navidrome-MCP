@@ -27,6 +27,7 @@ const ConfigSchema = z.object({
   password: z.string().min(1, 'NAVIDROME_PASSWORD is required'),
   debug: z.boolean().default(false),
   cacheTtl: z.number().positive().default(300),
+  tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -38,6 +39,7 @@ export async function loadConfig(): Promise<Config> {
     password: process.env['NAVIDROME_PASSWORD'],
     debug: process.env['DEBUG'] === 'true',
     cacheTtl: process.env['CACHE_TTL'] ? parseInt(process.env['CACHE_TTL'], 10) : 300,
+    tokenExpiry: process.env['TOKEN_EXPIRY'] ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
   };
 
   try {

@@ -18,7 +18,138 @@
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import {
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  type Resource,
+} from '@modelcontextprotocol/sdk/types.js';
 
-export function registerResources(_server: Server, _client: NavidromeClient): void {
-  // Resource registration will be implemented when resources are created
+export function registerResources(server: Server, client: NavidromeClient): void {
+  // Define available resources
+  const resources: Resource[] = [
+    {
+      uri: 'navidrome://library/recent-songs',
+      name: 'Recent Songs',
+      description: 'Recently added songs from the music library (sample of 10 songs)',
+      mimeType: 'application/json',
+    },
+    {
+      uri: 'navidrome://server/status',
+      name: 'Server Status',
+      description: 'Navidrome server connection status',
+      mimeType: 'application/json',
+    },
+  ];
+
+  // Register list resources handler
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources,
+  }));
+
+  // Register read resource handler
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    const { uri } = request.params;
+
+    if (uri === 'navidrome://library/recent-songs') {
+      try {
+        // Get recent songs using our working /song endpoint
+        const queryParams = new URLSearchParams({
+          _start: '0',
+          _end: '10',
+          _sort: 'createdAt',
+          _order: 'DESC',
+        });
+
+        const songs = await client.request<unknown>(`/song?${queryParams.toString()}`);
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  resource: 'Recent Songs',
+                  description: 'Recently added songs from the music library',
+                  timestamp: new Date().toISOString(),
+                  data: songs,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  error: 'Failed to fetch recent songs',
+                  message: error instanceof Error ? error.message : 'Unknown error',
+                  timestamp: new Date().toISOString(),
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+    }
+
+    if (uri === 'navidrome://server/status') {
+      try {
+        // Test connectivity using our working /song endpoint with minimal request
+        const queryParams = new URLSearchParams({
+          _start: '0',
+          _end: '1', // Just get 1 song to test connectivity
+        });
+
+        await client.request(`/song?${queryParams.toString()}`);
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  status: 'connected',
+                  server: 'Navidrome',
+                  timestamp: new Date().toISOString(),
+                  message: 'Successfully connected to Navidrome server',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  status: 'error',
+                  server: 'Navidrome',
+                  timestamp: new Date().toISOString(),
+                  error: 'Failed to connect to Navidrome server',
+                  message: error instanceof Error ? error.message : 'Unknown error',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+    }
+
+    throw new Error(`Unknown resource: ${uri}`);
+  });
 }

@@ -23,6 +23,7 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { NavidromeClient } from './client/navidrome-client.js';
 import { logger } from './utils/logger.js';
+import { MCP_CAPABILITIES } from './capabilities.js';
 
 async function main(): Promise<void> {
   const config = await loadConfig();
@@ -34,10 +35,7 @@ async function main(): Promise<void> {
       version: '1.0.0',
     },
     {
-      capabilities: {
-        tools: {},
-        resources: {},
-      },
+      capabilities: MCP_CAPABILITIES,
     }
   );
 
