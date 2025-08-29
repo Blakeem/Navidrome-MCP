@@ -46,7 +46,7 @@ pids
 .cache/
 
 # Project specific
-CLAUDE.md
+# CLAUDE.md
 *.bak
 .tmp/
 temp/
