@@ -201,6 +201,12 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
 - **`set_queue`**: Set queue with specific songs and position
 - **`clear_queue`**: Empty the playback queue
 
+**⚠️ Queue Management Limitations:**
+- **Works with**: Jukebox mode clients (DSub, play:Sub, Ultrasonic, Tempo), multi-device scenarios
+- **Doesn't control**: Direct playback (play/pause/skip) - handled by your music player app
+- **Use case**: Set up playlists remotely, queue management across devices, automation scenarios
+- **Currently playing**: Check `list_recently_played` - tracks appear after completion/skip
+
 ### 📊 Listening History Tools
 - **`list_recently_played`**: Get recently played tracks with time filtering (today/week/month/all)
 - **`list_most_played`**: Get most played songs, albums, or artists with play counts
