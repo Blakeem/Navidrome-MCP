@@ -238,6 +238,10 @@ export interface AddTracksToPlaylistRequest {
 export interface AddTracksToPlaylistResponse {
   /** Number of tracks added */
   added: number;
+  /** Human-readable message */
+  message: string;
+  /** Whether the operation was successful */
+  success: boolean;
 }
 
 /**
@@ -246,6 +250,10 @@ export interface AddTracksToPlaylistResponse {
 export interface RemoveTracksFromPlaylistResponse {
   /** IDs of removed tracks */
   ids: string[];
+  /** Human-readable message */
+  message: string;
+  /** Whether the operation was successful */
+  success: boolean;
 }
 
 /**

@@ -189,7 +189,19 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToPlaylistDTO(rawPlaylist as any);
+    const playlist = transformToPlaylistDTO(rawPlaylist as any);
+    
+    // Fix the name if it's not properly returned from API
+    if (!playlist.name || playlist.name === 'Unknown Playlist') {
+      playlist.name = params.name;
+    }
+    
+    // Fix the comment if it's not properly returned from API
+    if (params.comment && (!playlist.comment || playlist.comment === '')) {
+      playlist.comment = params.comment;
+    }
+    
+    return playlist;
   } catch (error) {
     throw new Error(
       `Failed to create playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -227,7 +239,19 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToPlaylistDTO(rawPlaylist as any);
+    const playlist = transformToPlaylistDTO(rawPlaylist as any);
+    
+    // Fix the name if it was updated but not properly returned from API
+    if (params.name && (!playlist.name || playlist.name === 'Unknown Playlist')) {
+      playlist.name = params.name;
+    }
+    
+    // Fix the comment if it was updated but not properly returned from API
+    if (params.comment !== undefined && (!playlist.comment || playlist.comment === '')) {
+      playlist.comment = params.comment;
+    }
+    
+    return playlist;
   } catch (error) {
     throw new Error(
       `Failed to update playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -238,7 +262,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
 /**
  * Delete a playlist (owner or admin only)
  */
-export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; id: string }> {
+export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; id: string; message: string }> {
   const params = GetByIdSchema.parse(args);
 
   try {
@@ -249,6 +273,7 @@ export async function deletePlaylist(client: NavidromeClient, args: unknown): Pr
     return {
       success: true,
       id: params.id,
+      message: `Successfully deleted playlist with ID: ${params.id}`,
     };
   } catch (error) {
     throw new Error(
@@ -351,8 +376,11 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
       body: JSON.stringify(requestBody),
     });
 
+    const addedCount = response.added || 0;
     return {
-      added: response.added || 0,
+      added: addedCount,
+      message: `Successfully added ${addedCount} track${addedCount !== 1 ? 's' : ''} to playlist`,
+      success: addedCount > 0,
     };
   } catch (error) {
     throw new Error(
@@ -375,8 +403,11 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
       method: 'DELETE',
     });
 
+    const removedIds = response.ids || params.trackIds;
     return {
-      ids: response.ids || params.trackIds,
+      ids: removedIds,
+      message: `Successfully removed ${removedIds.length} track${removedIds.length !== 1 ? 's' : ''} from playlist`,
+      success: removedIds.length > 0,
     };
   } catch (error) {
     throw new Error(
