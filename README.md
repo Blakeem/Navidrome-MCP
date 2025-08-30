@@ -192,3 +192,74 @@ All documentation in the `/docs` directory is licensed under Creative Commons At
 ## Support
 
 For issues and feature requests, please use the [GitHub issue tracker](https://github.com/Blakeem/Navidrome-MCP/issues).
+
+## Development Roadmap
+
+### 🚀 Next Priority Features (High Value for LLMs)
+
+#### ⭐ User Preferences & Ratings
+- [ ] **Star/Favorite Management**: `star_song`, `unstar_song`, `star_album`, `unstar_album`, `star_artist`, `unstar_artist`
+- [ ] **List Favorites**: `list_starred_songs`, `list_starred_albums`, `list_starred_artists`  
+- [ ] **Rating System**: `rate_song`, `rate_album`, `rate_artist` (1-5 stars)
+- [ ] **Top Rated Content**: `list_top_rated_songs`, `list_top_rated_albums`
+- [ ] **Get Ratings**: `get_song_rating`, `get_album_rating`, `get_artist_rating`
+
+*Perfect for voice commands: "Star this song", "Rate this album 5 stars", "Show my favorite artists"*
+
+#### 🎵 Playback Queue Management  
+- [ ] **Queue Operations**: `get_queue`, `set_queue`, `add_to_queue`, `clear_queue`
+- [ ] **Queue Control**: `play_next`, `shuffle_queue`, `reorder_queue`
+- [ ] **Queue Status**: `get_queue_position`, `set_queue_position`
+
+*Essential for: "Play this next", "Add to queue", "Shuffle my queue", "Clear the queue"*
+
+#### 📊 Listening History & Analytics
+- [ ] **Recently Played**: `list_recently_played`, `get_play_history`
+- [ ] **Listening Stats**: `get_listening_stats`, `get_most_played_songs`
+- [ ] **Discovery Tools**: `get_similar_artists`, `get_recommendations`
+
+*Great for: "What did I listen to yesterday?", "Show my most played tracks this month"*
+
+### 🎯 Medium Priority Features
+
+#### 📻 Internet Radio Integration
+- [ ] **Radio Management**: `list_radio_stations`, `create_radio_station`, `delete_radio_station`
+- [ ] **Radio Playback**: `play_radio_station`, `get_current_radio_info`
+
+*Voice-friendly: "Play jazz radio", "Add this station to my radios"*
+
+#### 🏷️ Advanced Tag Operations
+- [ ] **Tag Search**: `search_by_tags`, `list_songs_by_composer`, `filter_by_label`
+- [ ] **Tag Analysis**: `get_tag_distribution`, `list_unique_tags`
+
+*Advanced queries: "Show me all Bach compositions", "Find jazz from Blue Note Records"*
+
+#### 🔗 Content Sharing  
+- [ ] **Share Management**: `create_share`, `list_my_shares`, `delete_share`
+- [ ] **Quick Sharing**: `share_playlist`, `share_album`, `share_song`
+- [ ] **Share Settings**: `set_share_expiry`, `toggle_share_downloads`
+
+*Social features: "Share this playlist publicly", "Create a download link for this album"*
+
+#### 👤 Multi-Device Support
+- [ ] **Player Management**: `list_players`, `register_player`, `update_player_settings`
+- [ ] **Device Control**: `set_active_player`, `sync_across_devices`
+
+### 🗂️ File System Access Features (Future)
+*These require local file system access and will be implemented as separate tools:*
+
+#### 📁 Smart Playlists
+- [ ] **Smart Playlist Management**: `create_smart_playlist`, `update_smart_playlist_rules`
+- [ ] **Smart Playlist Operations**: `refresh_smart_playlist`, `list_smart_playlists`
+- [ ] **Rule Builder**: `validate_smart_playlist_rules`, `preview_smart_playlist`
+
+#### 📥 Import/Export
+- [ ] **M3U Operations**: `import_m3u_playlist`, `export_playlist_as_m3u`
+- [ ] **Playlist Sync**: `import_from_spotify`, `export_to_streaming_service`
+
+### ❌ Features Not Planned
+*These are not suitable for LLM integration:*
+- Admin features (user management, server configuration)
+- Direct streaming URLs (client-specific, security concerns)  
+- Transcoding controls (technical server settings)
+- Library scanning/management (admin-only operations)
