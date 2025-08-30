@@ -52,6 +52,29 @@ import {
   searchAlbums,
   searchArtists,
 } from './search.js';
+import {
+  starItem,
+  unstarItem,
+  setRating,
+  listStarredItems,
+  listTopRated,
+} from './user-preferences.js';
+import {
+  getQueue,
+  setQueue,
+  clearQueue,
+} from './queue-management.js';
+import {
+  listRecentlyPlayed,
+  listMostPlayed,
+} from './listening-history.js';
+import {
+  getSimilarArtists,
+  getSimilarTracks,
+  getArtistInfo,
+  getTopTracksByArtist,
+  getTrendingMusic,
+} from './lastfm-discovery.js';
 
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
   // Define available tools
@@ -588,6 +611,351 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
         required: ['query'],
       },
     },
+    {
+      name: 'star_item',
+      description: 'Star/favorite a song, album, or artist',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the item to star',
+          },
+          type: {
+            type: 'string',
+            description: 'The type of item to star',
+            enum: ['song', 'album', 'artist'],
+          },
+        },
+        required: ['id', 'type'],
+      },
+    },
+    {
+      name: 'unstar_item',
+      description: 'Unstar/unfavorite a song, album, or artist',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the item to unstar',
+          },
+          type: {
+            type: 'string',
+            description: 'The type of item to unstar',
+            enum: ['song', 'album', 'artist'],
+          },
+        },
+        required: ['id', 'type'],
+      },
+    },
+    {
+      name: 'set_rating',
+      description: 'Set a rating (0-5 stars) for a song, album, or artist',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the item to rate',
+          },
+          type: {
+            type: 'string',
+            description: 'The type of item to rate',
+            enum: ['song', 'album', 'artist'],
+          },
+          rating: {
+            type: 'number',
+            description: 'Rating from 0-5 stars (0 removes rating)',
+            minimum: 0,
+            maximum: 5,
+          },
+        },
+        required: ['id', 'type', 'rating'],
+      },
+    },
+    {
+      name: 'list_starred_items',
+      description: 'List starred/favorited songs, albums, or artists',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            description: 'Type of starred items to list',
+            enum: ['songs', 'albums', 'artists'],
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of items to return (1-500)',
+            minimum: 1,
+            maximum: 500,
+            default: 20,
+          },
+          offset: {
+            type: 'number',
+            description: 'Number of items to skip for pagination',
+            minimum: 0,
+            default: 0,
+          },
+        },
+        required: ['type'],
+      },
+    },
+    {
+      name: 'list_top_rated',
+      description: 'List top-rated songs, albums, or artists',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            description: 'Type of items to list',
+            enum: ['songs', 'albums', 'artists'],
+          },
+          minRating: {
+            type: 'number',
+            description: 'Minimum rating to include (1-5)',
+            minimum: 1,
+            maximum: 5,
+            default: 4,
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of items to return (1-500)',
+            minimum: 1,
+            maximum: 500,
+            default: 20,
+          },
+          offset: {
+            type: 'number',
+            description: 'Number of items to skip for pagination',
+            minimum: 0,
+            default: 0,
+          },
+        },
+        required: ['type'],
+      },
+    },
+    {
+      name: 'get_queue',
+      description: 'Get the current playback queue',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
+    {
+      name: 'set_queue',
+      description: 'Set the playback queue with specified songs',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          songIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Array of song IDs to add to queue',
+          },
+          current: {
+            type: 'number',
+            description: 'Index of current track (0-based)',
+            minimum: 0,
+            default: 0,
+          },
+          position: {
+            type: 'number',
+            description: 'Playback position in seconds',
+            minimum: 0,
+            default: 0,
+          },
+        },
+        required: ['songIds'],
+      },
+    },
+    {
+      name: 'clear_queue',
+      description: 'Clear the playback queue',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
+    {
+      name: 'list_recently_played',
+      description: 'List recently played tracks with time filtering',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: {
+            type: 'number',
+            description: 'Maximum number of tracks to return (1-500)',
+            minimum: 1,
+            maximum: 500,
+            default: 20,
+          },
+          offset: {
+            type: 'number',
+            description: 'Number of tracks to skip for pagination',
+            minimum: 0,
+            default: 0,
+          },
+          timeRange: {
+            type: 'string',
+            description: 'Time range for recently played tracks',
+            enum: ['today', 'week', 'month', 'all'],
+            default: 'all',
+          },
+        },
+      },
+    },
+    {
+      name: 'list_most_played',
+      description: 'List most played songs, albums, or artists',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            description: 'Type of items to list',
+            enum: ['songs', 'albums', 'artists'],
+            default: 'songs',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of items to return (1-500)',
+            minimum: 1,
+            maximum: 500,
+            default: 20,
+          },
+          offset: {
+            type: 'number',
+            description: 'Number of items to skip for pagination',
+            minimum: 0,
+            default: 0,
+          },
+          minPlayCount: {
+            type: 'number',
+            description: 'Minimum play count to include',
+            minimum: 1,
+            default: 1,
+          },
+        },
+      },
+    },
+    {
+      name: 'get_similar_artists',
+      description: 'Get similar artists using Last.fm API',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          artist: {
+            type: 'string',
+            description: 'Name of the artist to find similar artists for',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of similar artists to return (1-100)',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+        },
+        required: ['artist'],
+      },
+    },
+    {
+      name: 'get_similar_tracks',
+      description: 'Get similar tracks using Last.fm API',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          artist: {
+            type: 'string',
+            description: 'Name of the track artist',
+          },
+          track: {
+            type: 'string',
+            description: 'Name of the track',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of similar tracks to return (1-100)',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+        },
+        required: ['artist', 'track'],
+      },
+    },
+    {
+      name: 'get_artist_info',
+      description: 'Get detailed artist information from Last.fm',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          artist: {
+            type: 'string',
+            description: 'Name of the artist to get information for',
+          },
+          lang: {
+            type: 'string',
+            description: 'Language for the biography (ISO 639 code)',
+            default: 'en',
+          },
+        },
+        required: ['artist'],
+      },
+    },
+    {
+      name: 'get_top_tracks_by_artist',
+      description: 'Get top tracks for an artist from Last.fm',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          artist: {
+            type: 'string',
+            description: 'Name of the artist',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of top tracks to return (1-50)',
+            minimum: 1,
+            maximum: 50,
+            default: 10,
+          },
+        },
+        required: ['artist'],
+      },
+    },
+    {
+      name: 'get_trending_music',
+      description: 'Get trending music charts from Last.fm',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          type: {
+            type: 'string',
+            description: 'Type of chart to get',
+            enum: ['artists', 'tracks', 'tags'],
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of items to return (1-100)',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+          page: {
+            type: 'number',
+            description: 'Page number for pagination',
+            minimum: 1,
+            default: 1,
+          },
+        },
+        required: ['type'],
+      },
+    },
   ];
 
   // Register list tools handler
@@ -853,6 +1221,186 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
     if (name === 'search_artists') {
       const result = await searchArtists(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'star_item') {
+      const result = await starItem(client, config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'unstar_item') {
+      const result = await unstarItem(client, config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'set_rating') {
+      const result = await setRating(client, config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'list_starred_items') {
+      const result = await listStarredItems(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'list_top_rated') {
+      const result = await listTopRated(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_queue') {
+      const result = await getQueue(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'set_queue') {
+      const result = await setQueue(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'clear_queue') {
+      const result = await clearQueue(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'list_recently_played') {
+      const result = await listRecentlyPlayed(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'list_most_played') {
+      const result = await listMostPlayed(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_similar_artists') {
+      const result = await getSimilarArtists(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_similar_tracks') {
+      const result = await getSimilarTracks(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_artist_info') {
+      const result = await getArtistInfo(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_top_tracks_by_artist') {
+      const result = await getTopTracksByArtist(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_trending_music') {
+      const result = await getTrendingMusic(config, args ?? {});
       return {
         content: [
           {

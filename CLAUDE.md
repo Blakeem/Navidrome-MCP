@@ -133,21 +133,227 @@ npx @modelcontextprotocol/inspector node dist/index.js
 3. Run `pnpm typecheck` - Must have ZERO errors
 4. Fix ALL issues before moving on
 
-### Adding New Tools
-1. Create tool function in `src/tools/[category].ts`
-2. Import and register in `src/tools/index.ts`
-3. Run quality checks: `pnpm lint && pnpm typecheck && pnpm test`
-4. Build and test with CLI: `pnpm build && npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list`
+### Adding New Tools - STRICT MODE WORKFLOW
+
+**CRITICAL: Follow this exact workflow to avoid type errors:**
+
+1. **Study Existing Patterns First**
+   ```bash
+   # Look at working examples
+   cat src/tools/test.ts        # Simple pattern
+   cat src/tools/library.ts     # Complex pattern with DTOs
+   cat src/types/dto.ts         # Available interfaces
+   ```
+
+2. **Create Interfaces BEFORE Implementation**
+   ```typescript
+   // Start with interfaces in your tool file
+   export interface YourToolResult {
+     success: boolean;
+     data: YourDataType[];
+   }
+   
+   export interface YourDataType {
+     id: string;
+     name: string;
+     // Use existing DTO types when possible
+   }
+   ```
+
+3. **Implement Function with Proper Types**
+   ```typescript
+   export async function yourTool(
+     client: NavidromeClient, 
+     args: unknown
+   ): Promise<YourToolResult> {
+     // Implementation using the interfaces above
+   }
+   ```
+
+4. **Test Types Every Few Lines**
+   ```bash
+   # Run this frequently during development
+   pnpm typecheck
+   ```
+
+5. **Register in Tools Index**
+   - Import the function in `src/tools/index.ts`
+   - Add tool definition with proper schema
+   - Add handler in CallToolRequestSchema
+
+6. **Final Quality Checks**
+   ```bash
+   pnpm lint && pnpm typecheck && pnpm test
+   ```
+
+7. **Test with MCP Inspector**
+   ```bash
+   pnpm build && npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+   ```
+
+**If you get type errors during step 4, STOP and fix them immediately. Do not continue implementation until types are perfect.**
+
+### Using Git for Reference
+The project maintains working code in git branches:
+```bash
+# View previous working implementations
+git log --oneline
+git show <commit-hash>  # View specific commit
+git diff HEAD~1 src/tools/  # Compare recent changes
+
+# The docs folder contains API documentation for reference:
+ls docs/api/  # Navidrome API specifications
+```
 
 ### Adding New Resources
 1. Add resource definition to `resources` array in `src/resources/index.ts`
 2. Add URI handler in the `ReadResourceRequestSchema` handler
 3. Run quality checks and test with CLI
 
+## TypeScript Strict Mode Requirements
+
+This project uses **ultra-strict TypeScript settings** that require careful type management from the start. **DO NOT use `any` types** - they will cause lint failures and make refactoring difficult later.
+
+### Ultra-Strict Settings in `tsconfig.json`
+- `noPropertyAccessFromIndexSignature: true` - Must use bracket notation for Record types
+- `exactOptionalPropertyTypes: true` - Optional props cannot have explicit `undefined`
+- `noUncheckedIndexedAccess: true` - Array/object access returns `T | undefined`
+- `strict: true` - All strict type checking enabled
+
+### Proper Type Patterns
+
+#### ✅ DO: Define Proper Interfaces First
+```typescript
+// Define specific API response interfaces
+export interface NavidromeArtist {
+  id: string;
+  name: string;
+  albumCount: number;
+  starred?: string;
+}
+
+export interface ArtistListResult {
+  artists: NavidromeArtist[];
+  total: number;
+}
+
+// Use in function signatures
+export async function listArtists(client: NavidromeClient, args: unknown): Promise<ArtistListResult> {
+  const response = await client.request<NavidromeArtist[]>('/artist');
+  return { artists: response, total: response.length };
+}
+```
+
+#### ❌ DON'T: Use `any` Types
+```typescript
+// This will cause lint failures
+export async function listArtists(client: NavidromeClient, args: unknown): Promise<any> {
+  const response = await client.request<any>('/artist');
+  return response.map((artist: any) => ({ ... }));
+}
+```
+
+#### ✅ DO: Handle External APIs with Type Guards
+```typescript
+// For unknown external APIs (like Last.fm)
+interface LastFmResponse {
+  artist?: {
+    name: string;
+    mbid?: string;
+  };
+}
+
+function isLastFmArtist(data: unknown): data is LastFmResponse {
+  return typeof data === 'object' && data !== null && 'artist' in data;
+}
+
+const data = await response.json();
+if (isLastFmArtist(data)) {
+  // Now safely typed
+  return data.artist.name;
+}
+```
+
+#### ❌ DON'T: Use Record<string, unknown> for Known APIs
+```typescript
+// This creates strict mode errors
+const data = response as Record<string, unknown>;
+data.artist  // Error: Property access from index signature
+data['artist']  // Works but clunky
+```
+
+#### ✅ DO: Handle Optional Properties Correctly
+```typescript
+// With exactOptionalPropertyTypes: true
+interface StarredItem {
+  title?: string;  // Means string OR missing (not undefined)
+}
+
+// Correct approach
+const item: StarredItem = {
+  id: track.id,
+  // Only include title if it exists and is truthy
+  ...(track.title && { title: track.title }),
+};
+
+// Alternative approach
+const item: StarredItem = {
+  id: track.id,
+};
+if (track.title) {
+  item.title = track.title;  // Safe assignment
+}
+```
+
+#### ❌ DON'T: Assign undefined to Optional Properties
+```typescript
+// This fails with exactOptionalPropertyTypes
+const item: StarredItem = {
+  title: track.title || undefined,  // Error!
+};
+```
+
+### Avoiding Common `any` Lint Failures
+
+#### ✅ DO: Type API Responses Properly
+```typescript
+// Look at existing patterns in the codebase
+const response = await client.request<SongDTO[]>('/song');
+const songs = response.map((song: SongDTO) => ({
+  id: song.id,
+  title: song.title || 'Unknown',
+}));
+```
+
+#### ✅ DO: Use Existing DTO Types
+```typescript
+// Import and use existing types from the codebase
+import type { SongDTO, AlbumDTO } from '../types/dto.js';
+```
+
+#### ✅ DO: Follow Existing Patterns
+```typescript
+// Look at tools/test.ts, tools/library.ts for proper patterns
+// Copy their interface and function signature patterns exactly
+```
+
+### Pre-Implementation Checklist
+
+**Before writing ANY new tool function:**
+
+1. ✅ **Study existing tools** - Copy their type patterns exactly
+2. ✅ **Define interfaces first** - Create proper return types before implementation  
+3. ✅ **Use existing DTO types** - Import from `../types/dto.js` when available
+4. ✅ **Test with small examples** - Write minimal functions first to verify types work
+5. ✅ **Avoid `any` completely** - Use `unknown` and type guards instead
+6. ✅ **Run `pnpm typecheck`** after every few lines to catch issues early
+
+**This approach prevents the need for extensive refactoring later!**
+
 ## Implementation Guidelines
 
 ### API Client Design
-1. Use only **working endpoints** - replace any broken ones with `/song` endpoint
+1. Use only **working endpoints**, if you have any issues test directly with curl (use username/password of claude/anthropicuser)
 2. Implement automatic token refresh in the AuthManager
 3. Use TypeScript interfaces for all API responses
 4. Handle rate limiting gracefully

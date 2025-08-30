@@ -15,6 +15,28 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 - **Track Management**: Add tracks by song ID, album ID, artist ID, or specific disc
 - **Advanced Controls**: Remove tracks and reorder playlist items
 
+### ⭐ User Preferences & Rating System
+- **Star/Favorite Management**: Star and unstar songs, albums, and artists
+- **Rating System**: Set 0-5 star ratings for any content
+- **List Starred Content**: Browse your favorited songs, albums, and artists
+- **Top Rated Content**: Find your highest-rated music with customizable minimum ratings
+
+### 🎵 Playback Queue Management
+- **Queue Operations**: View, set, and clear the playback queue
+- **Queue Control**: Add specific songs to queue with position control
+- **Real-time Status**: Get current queue state with track information
+
+### 📊 Listening History & Analytics
+- **Recently Played**: View recent tracks with play dates and filtering by time range
+- **Most Played Content**: Discover your most-played songs, albums, and artists
+- **Play Statistics**: Track play counts and listening patterns
+
+### 🎼 Music Discovery (Last.fm Integration)
+- **Similar Content**: Find artists and tracks similar to your favorites
+- **Artist Information**: Get detailed biographies, tags, and statistics
+- **Top Tracks**: Discover an artist's most popular songs
+- **Global Charts**: Browse trending artists, tracks, and tags worldwide
+
 ### 🔄 Real-time Resources
 - **Server Status**: Monitor Navidrome connection and server health
 
@@ -53,11 +75,16 @@ NAVIDROME_URL=http://your-server:4533
 NAVIDROME_USERNAME=your_username
 NAVIDROME_PASSWORD=your_password
 
+# Music Discovery (Last.fm Integration)
+LASTFM_API_KEY=your_lastfm_api_key_here
+
 # Optional settings
 DEBUG=false
 CACHE_TTL=300
 TOKEN_EXPIRY=86400
 ```
+
+**Note**: Last.fm API key is required for music discovery features. Get a free API key at [https://www.last.fm/api](https://www.last.fm/api).
 
 4. **Build the server** (compiles TypeScript to JavaScript):
 ```bash
@@ -82,7 +109,8 @@ Add the server to your Claude Desktop config file:
       "env": {
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
-        "NAVIDROME_PASSWORD": "your_password"
+        "NAVIDROME_PASSWORD": "your_password",
+        "LASTFM_API_KEY": "your_lastfm_api_key_here"
       }
     }
   }
@@ -161,6 +189,29 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
 - **`remove_tracks_from_playlist`**: Remove tracks by position IDs
 - **`reorder_playlist_track`**: Reorder tracks within playlists
 
+### ⭐ User Preferences & Rating Tools
+- **`star_item`**: Star/favorite songs, albums, or artists
+- **`unstar_item`**: Remove favorites from songs, albums, or artists
+- **`set_rating`**: Set 0-5 star ratings for songs, albums, or artists
+- **`list_starred_items`**: List starred songs, albums, or artists
+- **`list_top_rated`**: List top-rated content with customizable minimum rating
+
+### 🎵 Queue Management Tools
+- **`get_queue`**: View current playback queue with track details
+- **`set_queue`**: Set queue with specific songs and position
+- **`clear_queue`**: Empty the playback queue
+
+### 📊 Listening History Tools
+- **`list_recently_played`**: Get recently played tracks with time filtering (today/week/month/all)
+- **`list_most_played`**: Get most played songs, albums, or artists with play counts
+
+### 🎼 Music Discovery Tools (Last.fm)
+- **`get_similar_artists`**: Find similar artists using Last.fm data
+- **`get_similar_tracks`**: Find similar tracks using Last.fm data
+- **`get_artist_info`**: Get detailed artist information, biography, and tags
+- **`get_top_tracks_by_artist`**: Get an artist's top tracks from Last.fm
+- **`get_trending_music`**: Get global trending charts (artists/tracks/tags)
+
 ### 📊 Resources
 - **`navidrome://server/status`**: Real-time server connection status
 
@@ -197,36 +248,35 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 
 ### 🚀 Next Priority Features (High Value for LLMs)
 
-#### ⭐ User Preferences & Ratings
-- [ ] **Star/Favorite Management**: `star_song`, `unstar_song`, `star_album`, `unstar_album`, `star_artist`, `unstar_artist`
-- [ ] **List Favorites**: `list_starred_songs`, `list_starred_albums`, `list_starred_artists`  
-- [ ] **Rating System**: `rate_song`, `rate_album`, `rate_artist` (1-5 stars)
-- [ ] **Top Rated Content**: `list_top_rated_songs`, `list_top_rated_albums`
-- [ ] **Get Ratings**: `get_song_rating`, `get_album_rating`, `get_artist_rating`
+#### ✅ User Preferences & Ratings (COMPLETED)
+- [x] **Star/Favorite Management**: `star_item`, `unstar_item` for songs, albums, and artists
+- [x] **List Favorites**: `list_starred_items` for songs, albums, and artists
+- [x] **Rating System**: `set_rating` for songs, albums, and artists (0-5 stars)
+- [x] **Top Rated Content**: `list_top_rated` with customizable minimum rating
 
 *Perfect for voice commands: "Star this song", "Rate this album 5 stars", "Show my favorite artists"*
 
-#### 🎵 Playback Queue Management  
-- [ ] **Queue Operations**: `get_queue`, `set_queue`, `add_to_queue`, `clear_queue`
-- [ ] **Queue Control**: `play_next`, `shuffle_queue`, `reorder_queue`
-- [ ] **Queue Status**: `get_queue_position`, `set_queue_position`
+#### ✅ Playback Queue Management (COMPLETED)
+- [x] **Queue Operations**: `get_queue`, `set_queue`, `clear_queue`
+- [x] **Queue Control**: Add specific songs to queue with position control
+- [x] **Queue Status**: Real-time queue state with track information
 
-*Essential for: "Play this next", "Add to queue", "Shuffle my queue", "Clear the queue"*
+*Essential for: "Add to queue", "Clear the queue", "Show current queue"*
 
-#### 📊 Listening History & Analytics
-- [ ] **Recently Played**: `list_recently_played`, `get_play_history`
-- [ ] **Listening Stats**: `get_listening_stats`, `get_most_played_songs`
-- [ ] **Discovery Tools**: `get_similar_artists`, `get_recommendations`
+#### ✅ Listening History & Analytics (COMPLETED)
+- [x] **Recently Played**: `list_recently_played` with time filtering (today/week/month/all)
+- [x] **Listening Stats**: `list_most_played` for songs, albums, and artists
+- [x] **Play Statistics**: Track play counts and listening patterns
 
 *Great for: "What did I listen to yesterday?", "Show my most played tracks this month"*
 
-#### 🎼 Music Discovery & Recommendations (Last.fm Integration)
-- [ ] **Similar Artists**: `get_similar_artists`, `get_artist_info`
-- [ ] **Similar Tracks**: `get_similar_songs`, `get_track_recommendations`
-- [ ] **Discovery Features**: `get_top_tracks_by_artist`, `get_trending_music`
-- [ ] **Personalized Recommendations**: `get_recommendations_based_on_history`
+#### ✅ Music Discovery & Recommendations (Last.fm Integration) (COMPLETED)
+- [x] **Similar Artists**: `get_similar_artists` with match scores and metadata
+- [x] **Similar Tracks**: `get_similar_tracks` with artist and match information
+- [x] **Discovery Features**: `get_top_tracks_by_artist`, `get_trending_music`
+- [x] **Artist Information**: `get_artist_info` with biography, tags, and statistics
 
-*Powerful discovery: "Find artists similar to Radiohead", "Recommend music based on my favorites"*
+*Powerful discovery: "Find artists similar to Radiohead", "Get trending music", "Tell me about this artist"*
 
 ### 🎯 Medium Priority Features
 

@@ -33,8 +33,8 @@ export class AuthManager {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        username: this.config.username,
-        password: this.config.password,
+        username: this.config.navidromeUsername,
+        password: this.config.navidromePassword,
       }),
     });
 
