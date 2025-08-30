@@ -18,6 +18,8 @@
 
 import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import { transformSongsToDTO } from '../transformers/song-transformer.js';
+import type { SongDTO } from '../types/dto.js';
 
 const ListSongsSchema = z.object({
   limit: z.number().min(1).max(500).optional().default(20),
@@ -30,41 +32,11 @@ const ListSongsSchema = z.object({
   starred: z.boolean().optional(),
 });
 
-export interface Song {
-  id: string;
-  title: string;
-  album: string;
-  albumId: string;
-  artist: string;
-  artistId: string;
-  albumArtist: string;
-  albumArtistId: string;
-  trackNumber: number;
-  discNumber: number;
-  year: number;
-  genre: string;
-  genres: string[];
-  duration: number;
-  bitRate: number;
-  sampleRate: number;
-  bitDepth: number;
-  channels: number;
-  path: string;
-  suffix: string;
-  size: number;
-  hasCoverArt: boolean;
-  compilation: boolean;
-  playCount: number;
-  playDate?: string;
-  rating: number;
-  starred: boolean;
-  starredAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
+// Using the clean DTO for song data
+export type Song = SongDTO;
 
 export interface ListSongsResult {
-  songs: Song[];
+  songs: SongDTO[];
   total: number;
   offset: number;
   limit: number;
@@ -86,7 +58,8 @@ export async function listSongs(client: NavidromeClient, args: unknown): Promise
       queryParams.set('starred', params.starred.toString());
     }
 
-    const songs = await client.request<Song[]>(`/song?${queryParams.toString()}`);
+    const rawSongs = await client.request<unknown>(`/song?${queryParams.toString()}`);
+    const songs = transformSongsToDTO(rawSongs);
 
     return {
       songs,
