@@ -23,11 +23,12 @@ loadDotenv();
 
 const ConfigSchema = z.object({
   navidromeUrl: z.string().url('NAVIDROME_URL must be a valid URL'),
-  username: z.string().min(1, 'NAVIDROME_USERNAME is required'),
-  password: z.string().min(1, 'NAVIDROME_PASSWORD is required'),
+  navidromeUsername: z.string().min(1, 'NAVIDROME_USERNAME is required'),
+  navidromePassword: z.string().min(1, 'NAVIDROME_PASSWORD is required'),
   debug: z.boolean().default(false),
   cacheTtl: z.number().positive().default(300),
   tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
+  lastFmApiKey: z.string().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -35,11 +36,12 @@ export type Config = z.infer<typeof ConfigSchema>;
 export async function loadConfig(): Promise<Config> {
   const rawConfig = {
     navidromeUrl: process.env['NAVIDROME_URL'],
-    username: process.env['NAVIDROME_USERNAME'],
-    password: process.env['NAVIDROME_PASSWORD'],
+    navidromeUsername: process.env['NAVIDROME_USERNAME'],
+    navidromePassword: process.env['NAVIDROME_PASSWORD'],
     debug: process.env['DEBUG'] === 'true',
     cacheTtl: process.env['CACHE_TTL'] ? parseInt(process.env['CACHE_TTL'], 10) : 300,
     tokenExpiry: process.env['TOKEN_EXPIRY'] ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
+    lastFmApiKey: process.env['LASTFM_API_KEY'] || '6c5482a9477a682ed972cbf6df122cda',
   };
 
   try {

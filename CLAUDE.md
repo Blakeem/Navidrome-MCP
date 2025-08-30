@@ -147,7 +147,7 @@ npx @modelcontextprotocol/inspector node dist/index.js
 ## Implementation Guidelines
 
 ### API Client Design
-1. Use only **working endpoints** - replace any broken ones with `/song` endpoint
+1. Use only **working endpoints**, if you have any issues test directly with curl (use username/password of claude/anthropicuser)
 2. Implement automatic token refresh in the AuthManager
 3. Use TypeScript interfaces for all API responses
 4. Handle rate limiting gracefully

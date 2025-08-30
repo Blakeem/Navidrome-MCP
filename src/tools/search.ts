@@ -61,10 +61,10 @@ interface SubsonicSearchResult {
  */
 function createSubsonicAuth(config: Config): URLSearchParams {
   const salt = crypto.randomBytes(16).toString('hex');
-  const token = crypto.createHash('md5').update(config.password + salt).digest('hex');
+  const token = crypto.createHash('md5').update(config.navidromePassword + salt).digest('hex');
   
   return new URLSearchParams({
-    u: config.username,
+    u: config.navidromeUsername,
     t: token,
     s: salt,
     v: '1.16.1',
