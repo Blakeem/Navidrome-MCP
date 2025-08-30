@@ -132,7 +132,7 @@ export interface GenreDTO {
 }
 
 /**
- * Clean DTO for playlists containing a song
+ * Clean DTO for playlists
  */
 export interface PlaylistDTO {
   /** Unique playlist ID */
@@ -149,6 +149,119 @@ export interface PlaylistDTO {
   durationFormatted: string;
   /** Owner username */
   owner: string;
+  /** Owner user ID */
+  ownerId?: string;
+  /** ISO 8601 timestamp when created */
+  createdAt?: string;
+  /** ISO 8601 timestamp when last updated */
+  updatedAt?: string;
+}
+
+/**
+ * DTO for individual tracks within a playlist
+ */
+export interface PlaylistTrackDTO {
+  /** Track position ID in playlist */
+  id: number;
+  /** Song ID */
+  mediaFileId: string;
+  /** Playlist ID */
+  playlistId: string;
+  /** Song title */
+  title: string;
+  /** Album name */
+  album: string;
+  /** Artist name */
+  artist: string;
+  /** Album artist */
+  albumArtist?: string;
+  /** Duration in seconds */
+  duration: number;
+  /** Duration in human-readable format */
+  durationFormatted: string;
+  /** Bit rate */
+  bitRate?: number;
+  /** File path */
+  path?: string;
+  /** Track number on original album */
+  trackNumber?: number;
+  /** Release year */
+  year?: number;
+  /** Primary genre */
+  genre?: string;
+}
+
+/**
+ * Request DTO for creating a new playlist
+ */
+export interface CreatePlaylistRequest {
+  /** Playlist name (required) */
+  name: string;
+  /** Playlist description */
+  comment?: string;
+  /** Whether playlist should be public */
+  public?: boolean;
+}
+
+/**
+ * Request DTO for updating a playlist
+ */
+export interface UpdatePlaylistRequest {
+  /** New playlist name */
+  name?: string;
+  /** New playlist description */
+  comment?: string;
+  /** New public visibility setting */
+  public?: boolean;
+}
+
+/**
+ * Request DTO for adding tracks to a playlist
+ */
+export interface AddTracksToPlaylistRequest {
+  /** Song IDs to add */
+  ids?: string[];
+  /** Album IDs to add (all tracks) */
+  albumIds?: string[];
+  /** Artist IDs to add (all tracks) */
+  artistIds?: string[];
+  /** Specific discs to add */
+  discs?: Array<{
+    albumId: string;
+    discNumber: number;
+  }>;
+}
+
+/**
+ * Response DTO for adding tracks to a playlist
+ */
+export interface AddTracksToPlaylistResponse {
+  /** Number of tracks added */
+  added: number;
+}
+
+/**
+ * Response DTO for removing tracks from a playlist
+ */
+export interface RemoveTracksFromPlaylistResponse {
+  /** IDs of removed tracks */
+  ids: string[];
+}
+
+/**
+ * Request DTO for reordering a track in a playlist
+ */
+export interface ReorderPlaylistTrackRequest {
+  /** New position (0-based index) */
+  insert_before: number;
+}
+
+/**
+ * Response DTO for reordering a track
+ */
+export interface ReorderPlaylistTrackResponse {
+  /** Track position ID */
+  id: number;
 }
 
 /**

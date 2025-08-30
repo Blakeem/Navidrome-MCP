@@ -23,18 +23,10 @@ import {
   ReadResourceRequestSchema,
   type Resource,
 } from '@modelcontextprotocol/sdk/types.js';
-import { transformSongsToDTO } from '../transformers/song-transformer.js';
-import type { RecentlyAddedSongsResponse } from '../types/dto.js';
 
 export function registerResources(server: Server, client: NavidromeClient): void {
   // Define available resources
   const resources: Resource[] = [
-    {
-      uri: 'navidrome://library/recent-songs',
-      name: 'Recently Added Songs',
-      description: 'Songs recently added to the music library (newest first). Supports query parameters: ?limit=N (1-50, default 10) &offset=N (default 0) for pagination',
-      mimeType: 'application/json',
-    },
     {
       uri: 'navidrome://server/status',
       name: 'Server Status',
@@ -55,83 +47,6 @@ export function registerResources(server: Server, client: NavidromeClient): void
     // Parse URI to handle query parameters
     const baseUri = uri.split('?')[0];
 
-    if (baseUri === 'navidrome://library/recent-songs') {
-      try {
-        // Parse optional query parameters from URI
-        const url = new URL(uri, 'https://example.com');
-        
-        // Parse and validate limit parameter
-        const limitParam = url.searchParams.get('limit');
-        let limit = 10; // default
-        if (limitParam !== null) {
-          const parsedLimit = parseInt(limitParam, 10);
-          if (isNaN(parsedLimit)) {
-            throw new Error(`Invalid limit parameter: '${limitParam}'. Must be a number between 1 and 50.`);
-          }
-          limit = Math.min(50, Math.max(1, parsedLimit));
-        }
-        
-        // Parse and validate offset parameter
-        const offsetParam = url.searchParams.get('offset');
-        let offset = 0; // default
-        if (offsetParam !== null) {
-          const parsedOffset = parseInt(offsetParam, 10);
-          if (isNaN(parsedOffset) || parsedOffset < 0) {
-            throw new Error(`Invalid offset parameter: '${offsetParam}'. Must be a non-negative number.`);
-          }
-          offset = parsedOffset;
-        }
-
-        // Get recent songs using our working /song endpoint
-        const queryParams = new URLSearchParams({
-          _start: offset.toString(),
-          _end: (offset + limit).toString(),
-          _sort: 'createdAt',
-          _order: 'DESC',
-        });
-
-        const rawSongs = await client.request<unknown>(`/song?${queryParams.toString()}`);
-        const songs = transformSongsToDTO(rawSongs);
-
-        const response: RecentlyAddedSongsResponse = {
-          resource: 'Recently Added Songs',
-          description: 'Songs recently added to the music library (newest first)',
-          timestamp: new Date().toISOString(),
-          count: songs.length,
-          offset,
-          limit,
-          songs,
-        };
-
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: JSON.stringify(response, null, 2),
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: JSON.stringify(
-                {
-                  error: 'Failed to fetch recently added songs',
-                  message: error instanceof Error ? error.message : 'Unknown error',
-                  timestamp: new Date().toISOString(),
-                },
-                null,
-                2
-              ),
-            },
-          ],
-        };
-      }
-    }
 
     if (baseUri === 'navidrome://server/status') {
       try {

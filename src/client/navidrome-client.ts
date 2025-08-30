@@ -37,12 +37,20 @@ export class NavidromeClient {
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const token = await this.authManager.getToken();
 
+    const defaultHeaders: Record<string, string> = {
+      'x-nd-authorization': `Bearer ${token}`,
+    };
+
+    // Only set Content-Type for non-GET requests
+    if (options.method && options.method !== 'GET') {
+      defaultHeaders['Content-Type'] = 'application/json';
+    }
+
     const response = await fetch(`${this.baseUrl}/api${endpoint}`, {
       ...options,
       headers: {
+        ...defaultHeaders,
         ...options.headers,
-        'x-nd-authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
       },
     });
 
@@ -50,6 +58,12 @@ export class NavidromeClient {
       throw new Error(`API request failed: ${response.status} ${response.statusText}`);
     }
 
-    return response.json() as Promise<T>;
+    // Handle different content types
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      return response.json() as Promise<T>;
+    } else {
+      return response.text() as Promise<T>;
+    }
   }
 }

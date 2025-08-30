@@ -102,7 +102,7 @@ interface RawPlaylist {
  * @param seconds Duration in seconds
  * @returns Formatted string like "3:45"
  */
-function formatDuration(seconds?: number): string {
+export function formatDuration(seconds?: number): string {
   if (!seconds || seconds <= 0) {
     return '0:00';
   }

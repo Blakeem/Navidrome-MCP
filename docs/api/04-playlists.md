@@ -200,22 +200,169 @@ GET `/api/playlist/{playlistId}/tracks` with Accept header `audio/x-mpegurl`:
 
 ## Smart Playlists
 
-Smart playlists use rules to dynamically generate track lists:
+Smart playlists in Navidrome are dynamic playlists that automatically update based on specified criteria. They are created using `.nsp` (Navidrome Smart Playlist) files and follow a specific JSON structure.
 
-**Rule Structure:**
+### Creating Smart Playlists
+
+Smart playlists are created by placing `.nsp` files in your music library or playlist folder. These files contain JSON objects with rules that define which tracks should be included.
+
+### Basic Structure
+
 ```json
 {
-  "rules": {
-    "conditions": "all|any",
-    "rules": [
-      {
-        "field": "genre|year|playCount|rating|etc",
-        "operator": "is|contains|gt|lt|between",
-        "value": "value"
-      }
-    ],
-    "limit": number,
-    "order": "random|name|playCount|etc"
-  }
+  "name": "My Smart Playlist",
+  "comment": "Description of the playlist",
+  "all": [
+    // Rules that ALL must be true
+  ],
+  "any": [
+    // Rules where ANY can be true
+  ],
+  "sort": "field_name",
+  "order": "asc|desc",
+  "limit": number,
+  "offset": number
 }
 ```
+
+### Available Fields
+
+**Media Information:**
+- `title`, `album`, `artist`, `albumartist`
+- `year`, `originalyear`, `releaseyear`
+- `date`, `originaldate`, `releasedate` (format: "YYYY-MM-DD")
+- `tracknumber`, `discnumber`, `discsubtitle`
+- `genre`, `comment`, `lyrics`
+- `compilation` (boolean)
+- `albumtype`, `albumcomment`, `catalognumber`
+
+**File Properties:**
+- `filepath` (relative to music library)
+- `filetype` (file extension)
+- `duration` (seconds)
+- `bitrate`, `bitdepth`, `bpm`, `channels`
+- `size` (bytes)
+- `dateadded`, `datemodified`
+
+**User Data:**
+- `loved` (boolean)
+- `dateloved`
+- `lastplayed`
+- `playcount`
+- `rating` (0-5)
+
+**MusicBrainz IDs:**
+- `mbz_album_id`, `mbz_artist_id`, `mbz_recording_id`
+- `mbz_album_artist_id`, `mbz_release_track_id`, `mbz_release_group_id`
+
+**System:**
+- `library_id`
+
+### Operators
+
+**Equality/Comparison:**
+- `is`: Exact match
+- `isNot`: Not equal
+- `gt`: Greater than
+- `lt`: Less than
+- `gte`: Greater than or equal
+- `lte`: Less than or equal
+
+**Text Matching:**
+- `contains`: Contains substring
+- `notContains`: Does not contain
+- `startsWith`: Starts with
+- `endsWith`: Ends with
+
+**Range/Date:**
+- `inTheRange`: Within range [min, max]
+- `notInTheRange`: Outside range
+- `inTheLast`: Within last N days
+- `notInTheLast`: Not in last N days
+- `before`: Before date
+- `after`: After date
+- `today`: Today
+- `yesterday`: Yesterday
+- `thisWeek`: This week
+- `lastWeek`: Last week
+- `thisMonth`: This month
+- `lastMonth`: Last month
+- `thisYear`: This year
+- `lastYear`: Last year
+
+**Playlist References:**
+- `inPlaylist`: Track is in specified playlist
+- `notInPlaylist`: Track is not in specified playlist
+
+### Example Smart Playlists
+
+**Recently Played:**
+```json
+{
+  "name": "Recently Played",
+  "comment": "Tracks played in the last 30 days",
+  "all": [
+    {"inTheLast": {"lastplayed": 30}}
+  ],
+  "sort": "lastplayed",
+  "order": "desc",
+  "limit": 100
+}
+```
+
+**High Rated 80s Music:**
+```json
+{
+  "name": "80s Favorites",
+  "all": [
+    {"inTheRange": {"year": [1980, 1989]}},
+    {"gte": {"rating": 4}}
+  ],
+  "sort": "rating,year",
+  "order": "desc",
+  "limit": 50
+}
+```
+
+**Complex Multi-Condition:**
+```json
+{
+  "name": "Discovery Mix",
+  "all": [
+    {
+      "any": [
+        {"is": {"loved": true}},
+        {"gte": {"rating": 4}}
+      ]
+    },
+    {"lte": {"playcount": 2}},
+    {"inTheLast": {"dateadded": 90}}
+  ],
+  "sort": "random",
+  "limit": 25
+}
+```
+
+### File Management
+
+1. **Location**: Place `.nsp` files in your music library or the path specified by `PlaylistsPath` configuration
+2. **Import**: Smart playlists are imported during library scans
+3. **Updates**: Edit the `.nsp` file and rescan to update rules
+4. **Permissions**: Set `public: true` to make accessible to all users
+
+### API Integration
+
+Smart playlists appear in regular playlist API endpoints with:
+- `rules` field contains the criteria object
+- `evaluatedAt` timestamp shows last refresh
+- Tracks are read-only (cannot be manually modified)
+- Use `refreshSmartPlaylist=true` parameter to force re-evaluation
+
+### Important Notes
+
+- Dates must use "YYYY-MM-DD" format
+- Boolean values must not be in quotes: `{"is": {"loved": true}}`
+- File paths are relative to music library root
+- Smart playlists refresh automatically based on `SmartPlaylistRefreshDelay` config
+- Only publicly visible smart playlists can be referenced by other smart playlists
+- Currently requires manual `.nsp` file creation (UI planned for future releases)
