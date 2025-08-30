@@ -350,6 +350,14 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
   const params = AddTracksSchema.parse(args);
 
   try {
+    // Get track count before adding
+    const tracksBefore = await getPlaylistTracks(client, { 
+      playlistId: params.playlistId, 
+      limit: 500, 
+      offset: 0 
+    });
+    const countBefore = tracksBefore.tracks.length;
+
     const requestBody: AddTracksToPlaylistRequest = {};
     
     if (params.ids !== undefined) {
@@ -376,11 +384,24 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
       body: JSON.stringify(requestBody),
     });
 
-    const addedCount = response.added || 0;
+    // Get track count after adding
+    const tracksAfter = await getPlaylistTracks(client, { 
+      playlistId: params.playlistId, 
+      limit: 500, 
+      offset: 0 
+    });
+    const countAfter = tracksAfter.tracks.length;
+
+    // Use actual count difference as fallback if API response is incorrect
+    const apiCount = response.added || 0;
+    const actualCount = countAfter - countBefore;
+    const addedCount = Math.max(apiCount, actualCount);
+    const success = addedCount > 0;
+    
     return {
       added: addedCount,
       message: `Successfully added ${addedCount} track${addedCount !== 1 ? 's' : ''} to playlist`,
-      success: addedCount > 0,
+      success,
     };
   } catch (error) {
     throw new Error(
@@ -424,7 +445,7 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
 
   try {
     const requestBody: ReorderPlaylistTrackRequest = {
-      insert_before: params.insert_before,
+      insert_before: params.insert_before.toString(),
     };
 
     const response = await client.request<{ id: number }>(`/playlist/${params.playlistId}/tracks/${params.trackId}`, {

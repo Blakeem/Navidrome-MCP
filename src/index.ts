@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   const client = new NavidromeClient(config);
   await client.initialize();
 
-  registerTools(server, client);
+  registerTools(server, client, config);
   registerResources(server, client);
 
   const transport = new StdioServerTransport();

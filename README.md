@@ -5,7 +5,8 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 ## Features
 
 ### 🎵 Music Library Management
-- **Browse & Search**: List songs, albums, artists, and genres with smart filtering and pagination
+- **Browse & Discover**: List songs, albums, artists, and genres with smart filtering and pagination
+- **Powerful Search**: Full-text search across all content types or targeted searches for specific media
 - **Detailed Lookups**: Get comprehensive information about specific tracks, albums, and artists
 - **Clean Data**: All responses use optimized DTOs with essential fields (~10 key properties instead of 50+ raw fields)
 
@@ -108,6 +109,15 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
   --tool-arg name="My Test Playlist" \
   --tool-arg comment="Created via MCP" \
   --tool-arg public=false
+
+# Search for music
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call \
+  --tool-name search_all \
+  --tool-arg query="rock" \
+  --tool-arg artistCount=5 \
+  --tool-arg albumCount=5 \
+  --tool-arg songCount=10
 ```
 
 ## Available Tools
@@ -124,6 +134,12 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
 - **`get_album`**: Get detailed information about a specific album  
 - **`get_artist`**: Get detailed information about a specific artist
 - **`get_song_playlists`**: Find all playlists containing a specific song
+
+### 🔍 Search Tools
+- **`search_all`**: Search across artists, albums, and songs simultaneously with customizable result limits
+- **`search_songs`**: Search specifically for songs by title, artist, or album
+- **`search_albums`**: Search for albums by name or artist
+- **`search_artists`**: Search for artists by name
 
 ### 🎵 Playlist Tools
 - **`list_playlists`**: Browse all accessible playlists

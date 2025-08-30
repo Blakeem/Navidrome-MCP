@@ -260,8 +260,8 @@ export interface RemoveTracksFromPlaylistResponse {
  * Request DTO for reordering a track in a playlist
  */
 export interface ReorderPlaylistTrackRequest {
-  /** New position (0-based index) */
-  insert_before: number;
+  /** New position (0-based index) as string */
+  insert_before: string;
 }
 
 /**

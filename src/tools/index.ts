@@ -18,6 +18,7 @@
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import type { Config } from '../config.js';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
@@ -45,8 +46,14 @@ import {
   removeTracksFromPlaylist,
   reorderPlaylistTrack,
 } from './playlist-management.js';
+import {
+  searchAll,
+  searchSongs,
+  searchAlbums,
+  searchArtists,
+} from './search.js';
 
-export function registerTools(server: Server, client: NavidromeClient): void {
+export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
   // Define available tools
   const tools: Tool[] = [
     {
@@ -483,6 +490,104 @@ export function registerTools(server: Server, client: NavidromeClient): void {
         required: ['playlistId', 'trackId', 'insert_before'],
       },
     },
+    {
+      name: 'search_all',
+      description: 'Search across all content types (artists, albums, songs) using a single query',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search terms to look for',
+          },
+          artistCount: {
+            type: 'number',
+            description: 'Maximum number of artists to return',
+            minimum: 0,
+            maximum: 100,
+            default: 20,
+          },
+          albumCount: {
+            type: 'number',
+            description: 'Maximum number of albums to return',
+            minimum: 0,
+            maximum: 100,
+            default: 20,
+          },
+          songCount: {
+            type: 'number',
+            description: 'Maximum number of songs to return',
+            minimum: 0,
+            maximum: 100,
+            default: 20,
+          },
+        },
+        required: ['query'],
+      },
+    },
+    {
+      name: 'search_songs',
+      description: 'Search for songs by title, artist, or album',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search terms to look for in song titles, artists, or albums',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of songs to return',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+        },
+        required: ['query'],
+      },
+    },
+    {
+      name: 'search_albums',
+      description: 'Search for albums by name or artist',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search terms to look for in album names or artists',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of albums to return',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+        },
+        required: ['query'],
+      },
+    },
+    {
+      name: 'search_artists',
+      description: 'Search for artists by name',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search terms to look for in artist names',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of artists to return',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+        },
+        required: ['query'],
+      },
+    },
   ];
 
   // Register list tools handler
@@ -710,6 +815,53 @@ export function registerTools(server: Server, client: NavidromeClient): void {
       };
     }
 
+    if (name === 'search_all') {
+      const result = await searchAll(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'search_songs') {
+      const result = await searchSongs(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'search_albums') {
+      const result = await searchAlbums(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'search_artists') {
+      const result = await searchArtists(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
 
     throw new Error(`Unknown tool: ${name}`);
   });

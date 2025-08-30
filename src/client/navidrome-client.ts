@@ -38,7 +38,7 @@ export class NavidromeClient {
     const token = await this.authManager.getToken();
 
     const defaultHeaders: Record<string, string> = {
-      'x-nd-authorization': `Bearer ${token}`,
+      'X-ND-Authorization': `Bearer ${token}`,
     };
 
     // Only set Content-Type for non-GET requests
@@ -55,7 +55,8 @@ export class NavidromeClient {
     });
 
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
 
     // Handle different content types
