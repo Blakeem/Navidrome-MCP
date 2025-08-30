@@ -5,52 +5,60 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 ## Features
 
 ### 🎵 Music Library Management
-- **Browse & Discover**: List songs, albums, artists, and genres with smart filtering and pagination
-- **Powerful Search**: Full-text search across all content types or targeted searches for specific media
-- **Detailed Lookups**: Get comprehensive information about specific tracks, albums, and artists
-- **Clean Data**: All responses use optimized DTOs with essential fields (~10 key properties instead of 50+ raw fields)
+
+* **Browse & Discover**: List songs, albums, artists, and genres with smart filtering and pagination
+* **Powerful Search**: Full-text search across all content types or targeted searches for specific media
+* **Detailed Lookups**: Get comprehensive information about specific tracks, albums, and artists
+* **Clean Data**: All responses use optimized DTOs with essential fields (\~10 key properties instead of 50+ raw fields)
 
 ### 🎶 Playlist Management
-- **Full CRUD Operations**: Create, read, update, and delete playlists
-- **Track Management**: Add tracks by song ID, album ID, artist ID, or specific disc
-- **Advanced Controls**: Remove tracks and reorder playlist items
+
+* **Full CRUD Operations**: Create, read, update, and delete playlists
+* **Track Management**: Add tracks by song ID, album ID, artist ID, or specific disc
+* **Advanced Controls**: Remove tracks and reorder playlist items
 
 ### ⭐ User Preferences & Rating System
-- **Star/Favorite Management**: Star and unstar songs, albums, and artists
-- **Rating System**: Set 0-5 star ratings for any content
-- **List Starred Content**: Browse your favorited songs, albums, and artists
-- **Top Rated Content**: Find your highest-rated music with customizable minimum ratings
+
+* **Star/Favorite Management**: Star and unstar songs, albums, and artists
+* **Rating System**: Set 0-5 star ratings for any content
+* **List Starred Content**: Browse your favorited songs, albums, and artists
+* **Top Rated Content**: Find your highest-rated music with customizable minimum ratings
 
 ### 🎵 Playback Queue Management
-- **Queue Operations**: View, set, and clear the playback queue
-- **Queue Control**: Add specific songs to queue with position control
-- **Real-time Status**: Get current queue state with track information
+
+* **Queue Operations**: View, set, and clear the playback queue
+* **Queue Control**: Add specific songs to queue with position control
+* **Real-time Status**: Get current queue state with track information
 
 ### 📊 Listening History & Analytics
-- **Recently Played**: View recent tracks with play dates and filtering by time range
-- **Most Played Content**: Discover your most-played songs, albums, and artists
-- **Play Statistics**: Track play counts and listening patterns
+
+* **Recently Played**: View recent tracks with play dates and filtering by time range
+* **Most Played Content**: Discover your most-played songs, albums, and artists
+* **Play Statistics**: Track play counts and listening patterns
 
 ### 🎼 Music Discovery (Last.fm Integration)
-- **Similar Content**: Find artists and tracks similar to your favorites
-- **Artist Information**: Get detailed biographies, tags, and statistics
-- **Top Tracks**: Discover an artist's most popular songs
-- **Global Charts**: Browse trending artists, tracks, and tags worldwide
+
+* **Similar Content**: Find artists and tracks similar to your favorites
+* **Artist Information**: Get detailed biographies, tags, and statistics
+* **Top Tracks**: Discover an artist's most popular songs
+* **Global Charts**: Browse trending artists, tracks, and tags worldwide
 
 ### 🔄 Real-time Resources
-- **Server Status**: Monitor Navidrome connection and server health
 
-## Installation for Claude Desktop Users
+* **Server Status**: Monitor Navidrome connection and server health
+
+## Installation for MCP Clients (Claude Desktop & OpenAI ChatGPT Desktop)
 
 ### Prerequisites
 
-- **Node.js 20+** ([Download here](https://nodejs.org/))
-- **pnpm** package manager ([Install instructions](https://pnpm.io/installation))
-- **Running Navidrome server** with your music library
+* **Node.js 20+** ([Download here](https://nodejs.org/))
+* **pnpm** package manager ([Install instructions](https://pnpm.io/installation))
+* **Running Navidrome server** with your music library
 
 ### Quick Setup (3 Steps)
 
 #### 1. **Download and Build**
+
 ```bash
 git clone https://github.com/Blakeem/Navidrome-MCP.git
 cd navidrome-mcp
@@ -58,13 +66,16 @@ pnpm install
 pnpm build
 ```
 
-#### 2. **Configure Claude Desktop**
+#### 2A. **Configure Claude Desktop**
 
-Find your Claude Desktop configuration file:
-- **Windows**: `%APPDATA%/Roaming/Claude/claude_desktop_config.json`  
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+Find your Claude Desktop configuration file and add the MCP server entry.
+
+* **Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
+* **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+* **Linux**: `~/.config/Claude/claude_desktop_config.json` *(path may vary by distro)*
 
 Add your Navidrome server configuration:
+
 ```json
 {
   "mcpServers": {
@@ -83,105 +94,143 @@ Add your Navidrome server configuration:
 ```
 
 **Important**: Replace the following values:
-- `/absolute/path/to/navidrome-mcp` - Full path where you cloned the project
-- `http://your-server:4533` - Your Navidrome server URL
-- `your_username` - Your Navidrome username
-- `your_password` - Your Navidrome password  
-- `your_lastfm_api_key_here` - Get free API key at [Last.fm](https://www.last.fm/api)
 
-#### 3. **Restart Claude Desktop**
+* `/absolute/path/to/navidrome-mcp` - Full path where you cloned the project
+* `http://your-server:4533` - Your Navidrome server URL
+* `your_username` / `your_password` - Your Navidrome credentials
+* `your_lastfm_api_key_here` - Get a free API key at [Last.fm](https://www.last.fm/api)
 
-After saving the config file, completely quit and restart Claude Desktop. You'll see an MCP indicator (🔌) in the bottom-right corner of the chat input box when the server is connected.
+#### 2B. **Configure OpenAI ChatGPT Desktop (macOS/Windows)**
 
-## Usage with Claude
+ChatGPT Desktop connects to tools via in-app **Connectors**. You do **not** need a local JSON file. To add this MCP server:
 
-Once configured, you can ask Claude to:
-- 🔍 "Search for songs by Pink Floyd"
-- ⭐ "Show my starred albums"
-- 🎵 "Create a playlist called 'Weekend Vibes'"
-- 📊 "What did I listen to most this month?"
-- 🎼 "Find artists similar to Radiohead"
-- 🎯 "Rate this album 5 stars"
+1. Open **ChatGPT Desktop**.
+2. Go to **Settings → Connectors**.
+3. Click **Create** and follow the prompts to add a new connector that launches your local MCP server command:
 
-Claude will use the MCP tools to interact with your Navidrome server directly.
+   * **Command**: `node`
+   * **Args**: `/absolute/path/to/navidrome-mcp/dist/index.js`
+   * **Environment**: set the same variables shown above (`NAVIDROME_*`, `LASTFM_API_KEY`).
+4. Save the connector.
+
+> If your ChatGPT build doesn’t show **Connectors**, ensure you’re on a recent version and signed in. Some features may roll out gradually; see Help Center for details.
+
+#### 3. **Restart Your Client**
+
+* **Claude Desktop**: Quit and relaunch. You should see an MCP indicator (🔌) in the chat input when connected.
+* **ChatGPT Desktop**: Close and reopen the app (or toggle the connector) so the new MCP server is detected.
+
+## Usage with AI Assistants
+
+Once configured, ask your assistant to use the Navidrome tools, for example:
+
+* 🔍 "Search for songs by Pink Floyd"
+* ⭐ "Show my starred albums"
+* 🎵 "Create a playlist called 'Weekend Vibes'"
+* 📊 "What did I listen to most this month?"
+* 🎼 "Find artists similar to Radiohead"
+* 🎯 "Rate this album 5 stars"
 
 ## Available Tools
 
 ### 🔧 System Tools
-- **`test_connection`**: Test Navidrome server connectivity and optionally get server info
+
+* **`test_connection`**: Test Navidrome server connectivity and optionally get server info
 
 ### 📚 Library Tools
-- **`list_songs`**: Browse songs with filtering, sorting, and pagination
-- **`list_albums`**: Browse albums with clean metadata
-- **`list_artists`**: Browse artists with album/song counts
-- **`list_genres`**: Browse all music genres
-- **`get_song`**: Get detailed information about a specific song
-- **`get_album`**: Get detailed information about a specific album  
-- **`get_artist`**: Get detailed information about a specific artist
-- **`get_song_playlists`**: Find all playlists containing a specific song
+
+* **`list_songs`**: Browse songs with filtering, sorting, and pagination
+* **`list_albums`**: Browse albums with clean metadata
+* **`list_artists`**: Browse artists with album/song counts
+* **`list_genres`**: Browse all music genres
+* **`get_song`**: Get detailed information about a specific song
+* **`get_album`**: Get detailed information about a specific album
+* **`get_artist`**: Get detailed information about a specific artist
+* **`get_song_playlists`**: Find all playlists containing a specific song
 
 ### 🔍 Search Tools
-- **`search_all`**: Search across artists, albums, and songs simultaneously with customizable result limits
-- **`search_songs`**: Search specifically for songs by title, artist, or album
-- **`search_albums`**: Search for albums by name or artist
-- **`search_artists`**: Search for artists by name
+
+* **`search_all`**: Search across artists, albums, and songs simultaneously with customizable result limits
+* **`search_songs`**: Search specifically for songs by title, artist, or album
+* **`search_albums`**: Search for albums by name or artist
+* **`search_artists`**: Search for artists by name
 
 ### 🎵 Playlist Tools
-- **`list_playlists`**: Browse all accessible playlists
-- **`get_playlist`**: Get detailed playlist information
-- **`create_playlist`**: Create new playlists with name, description, and visibility
-- **`update_playlist`**: Update playlist metadata
-- **`delete_playlist`**: Delete playlists (owner/admin only)
-- **`get_playlist_tracks`**: Get all tracks in a playlist (JSON or M3U format)
-- **`add_tracks_to_playlist`**: Add tracks by song/album/artist/disc IDs
-- **`remove_tracks_from_playlist`**: Remove tracks by position IDs
-- **`reorder_playlist_track`**: Reorder tracks within playlists
+
+* **`list_playlists`**: Browse all accessible playlists
+* **`get_playlist`**: Get detailed playlist information
+* **`create_playlist`**: Create new playlists with name, description, and visibility
+* **`update_playlist`**: Update playlist metadata
+* **`delete_playlist`**: Delete playlists (owner/admin only)
+* **`get_playlist_tracks`**: Get all tracks in a playlist (JSON or M3U format)
+* **`add_tracks_to_playlist`**: Add tracks by song/album/artist/disc IDs
+* **`remove_tracks_from_playlist`**: Remove tracks by position IDs
+* **`reorder_playlist_track`**: Reorder tracks within playlists
 
 ### ⭐ User Preferences & Rating Tools
-- **`star_item`**: Star/favorite songs, albums, or artists
-- **`unstar_item`**: Remove favorites from songs, albums, or artists
-- **`set_rating`**: Set 0-5 star ratings for songs, albums, or artists
-- **`list_starred_items`**: List starred songs, albums, or artists
-- **`list_top_rated`**: List top-rated content with customizable minimum rating
+
+* **`star_item`**: Star/favorite songs, albums, or artists
+* **`unstar_item`**: Remove favorites from songs, albums, or artists
+* **`set_rating`**: Set 0-5 star ratings for songs, albums, or artists
+* **`list_starred_items`**: List starred songs, albums, or artists
+* **`list_top_rated`**: List top-rated content with customizable minimum rating
 
 ### 🎵 Queue Management Tools
-- **`get_queue`**: View current playback queue with track details
-- **`set_queue`**: Set queue with specific songs and position
-- **`clear_queue`**: Empty the playback queue
+
+* **`get_queue`**: View current playback queue with track details
+* **`set_queue`**: Set queue with specific songs and position
+* **`clear_queue`**: Empty the playback queue
 
 **⚠️ Queue Management Limitations:**
-- **Works with**: Jukebox mode clients (DSub, play:Sub, Ultrasonic, Tempo), multi-device scenarios
-- **Doesn't control**: Direct playback (play/pause/skip) - handled by your music player app
-- **Use case**: Set up playlists remotely, queue management across devices, automation scenarios
-- **Currently playing**: Check `list_recently_played` - tracks appear after completion/skip
+
+* **Works with**: Jukebox mode clients (DSub, play\:Sub, Ultrasonic, Tempo), multi-device scenarios
+* **Doesn't control**: Direct playback (play/pause/skip) — handled by your music player app
+* **Use case**: Set up playlists remotely, queue management across devices, automation scenarios
+* **Currently playing**: Check `list_recently_played` — tracks appear after completion/skip
 
 ### 📊 Listening History Tools
-- **`list_recently_played`**: Get recently played tracks with time filtering (today/week/month/all)
-- **`list_most_played`**: Get most played songs, albums, or artists with play counts
+
+* **`list_recently_played`**: Get recently played tracks with time filtering (today/week/month/all)
+* **`list_most_played`**: Get most played songs, albums, or artists with play counts
 
 ### 🎼 Music Discovery Tools (Last.fm)
-- **`get_similar_artists`**: Find similar artists using Last.fm data
-- **`get_similar_tracks`**: Find similar tracks using Last.fm data
-- **`get_artist_info`**: Get detailed artist information, biography, and tags
-- **`get_top_tracks_by_artist`**: Get an artist's top tracks from Last.fm
-- **`get_trending_music`**: Get global trending charts (artists/tracks/tags)
+
+* **`get_similar_artists`**: Find similar artists using Last.fm data
+* **`get_similar_tracks`**: Find similar tracks using Last.fm data
+* **`get_artist_info`**: Get detailed artist information, biography, and tags
+* **`get_top_tracks_by_artist`**: Get an artist's top tracks from Last.fm
+* **`get_trending_music`**: Get global trending charts (artists/tracks/tags)
 
 ### 📊 Resources
-- **`navidrome://server/status`**: Real-time server connection status
+
+* **`navidrome://server/status`**: Real-time server connection status
 
 ## Security & Privacy
 
-- **No data storage**: This server only proxies requests to your Navidrome instance
-- **Local authentication**: Credentials are only used for Navidrome API authentication
-- **Secure tokens**: JWT tokens are managed securely with automatic refresh
+* **No data storage**: This server only proxies requests to your Navidrome instance
+* **Local authentication**: Credentials are only used for Navidrome API authentication
+* **Secure tokens**: JWT tokens are managed securely with automatic refresh
 
 ## Troubleshooting
 
-### Claude Desktop Issues
-- Ensure config file path is correct for your OS
-- Use absolute paths in configuration
-- Restart Claude Desktop completely after config changes
-- Check for MCP indicator in bottom-right of chat input
+### Common MCP Client Issues (Claude & ChatGPT)
+
+* Use absolute paths in configuration/connector setup
+* Restart the app after changes
+* Ensure Node.js is installed and on your PATH
+* Verify environment variables are set (in JSON or connector fields)
+* If your client supports indicators, verify the MCP server is connected (e.g., plug icon)
+
+### Claude Desktop
+
+* Confirm the config file path for your OS (see above)
+* Validate JSON syntax
+* Check the Claude Desktop logs if the server fails to start
+
+### ChatGPT Desktop
+
+* Ensure **Connectors** are available in your build and that the connector is enabled
+* If the connector won’t start, try re-saving environment variables and restarting the app
 
 ## License
 
@@ -189,10 +238,9 @@ Claude will use the MCP tools to interact with your Navidrome server directly.
 
 All source code is licensed under the GNU Affero General Public License v3.0. See [LICENSE](LICENSE) for details.
 
-### Documentation: CC-BY-SA-4.0  
+### Documentation: CC-BY-SA-4.0
 
 All documentation in the `/docs` directory is licensed under Creative Commons Attribution-ShareAlike 4.0 International.
-
 
 ## Support
 
@@ -203,78 +251,91 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 ### 🚀 Next Priority Features (High Value for LLMs)
 
 #### ✅ User Preferences & Ratings (COMPLETED)
-- [x] **Star/Favorite Management**: `star_item`, `unstar_item` for songs, albums, and artists
-- [x] **List Favorites**: `list_starred_items` for songs, albums, and artists
-- [x] **Rating System**: `set_rating` for songs, albums, and artists (0-5 stars)
-- [x] **Top Rated Content**: `list_top_rated` with customizable minimum rating
+
+* [x] **Star/Favorite Management**: `star_item`, `unstar_item` for songs, albums, and artists
+* [x] **List Favorites**: `list_starred_items` for songs, albums, and artists
+* [x] **Rating System**: `set_rating` for songs, albums, and artists (0-5 stars)
+* [x] **Top Rated Content**: `list_top_rated` with customizable minimum rating
 
 *Perfect for voice commands: "Star this song", "Rate this album 5 stars", "Show my favorite artists"*
 
 #### ✅ Playback Queue Management (COMPLETED)
-- [x] **Queue Operations**: `get_queue`, `set_queue`, `clear_queue`
-- [x] **Queue Control**: Add specific songs to queue with position control
-- [x] **Queue Status**: Real-time queue state with track information
+
+* [x] **Queue Operations**: `get_queue`, `set_queue`, `clear_queue`
+* [x] **Queue Control**: Add specific songs to queue with position control
+* [x] **Queue Status**: Real-time queue state with track information
 
 *Essential for: "Add to queue", "Clear the queue", "Show current queue"*
 
 #### ✅ Listening History & Analytics (COMPLETED)
-- [x] **Recently Played**: `list_recently_played` with time filtering (today/week/month/all)
-- [x] **Listening Stats**: `list_most_played` for songs, albums, and artists
-- [x] **Play Statistics**: Track play counts and listening patterns
+
+* [x] **Recently Played**: `list_recently_played` with time filtering (today/week/month/all)
+* [x] **Listening Stats**: `list_most_played` for songs, albums, and artists
+* [x] **Play Statistics**: Track play counts and listening patterns
 
 *Great for: "What did I listen to yesterday?", "Show my most played tracks this month"*
 
 #### ✅ Music Discovery & Recommendations (Last.fm Integration) (COMPLETED)
-- [x] **Similar Artists**: `get_similar_artists` with match scores and metadata
-- [x] **Similar Tracks**: `get_similar_tracks` with artist and match information
-- [x] **Discovery Features**: `get_top_tracks_by_artist`, `get_trending_music`
-- [x] **Artist Information**: `get_artist_info` with biography, tags, and statistics
+
+* [x] **Similar Artists**: `get_similar_artists` with match scores and metadata
+* [x] **Similar Tracks**: `get_similar_tracks` with artist and match information
+* [x] **Discovery Features**: `get_top_tracks_by_artist`, `get_trending_music`
+* [x] **Artist Information**: `get_artist_info` with biography, tags, and statistics
 
 *Powerful discovery: "Find artists similar to Radiohead", "Get trending music", "Tell me about this artist"*
 
 ### 🎯 Medium Priority Features
 
 #### 📻 Internet Radio Integration
-- [ ] **Radio Management**: `list_radio_stations`, `create_radio_station`, `delete_radio_station`
-- [ ] **Radio Playback**: `play_radio_station`, `get_current_radio_info`
+
+* [ ] **Radio Management**: `list_radio_stations`, `create_radio_station`, `delete_radio_station`
+* [ ] **Radio Playback**: `play_radio_station`, `get_current_radio_info`
 
 *Voice-friendly: "Play jazz radio", "Add this station to my radios"*
 
 #### 🏷️ Advanced Tag Operations
-- [ ] **Tag Search**: `search_by_tags`, `list_songs_by_composer`, `filter_by_label`
-- [ ] **Tag Analysis**: `get_tag_distribution`, `list_unique_tags`
+
+* [ ] **Tag Search**: `search_by_tags`, `list_songs_by_composer`, `filter_by_label`
+* [ ] **Tag Analysis**: `get_tag_distribution`, `list_unique_tags`
 
 *Advanced queries: "Show me all Bach compositions", "Find jazz from Blue Note Records"*
 
-#### 🔗 Content Sharing  
-- [ ] **Share Management**: `create_share`, `list_my_shares`, `delete_share`
-- [ ] **Quick Sharing**: `share_playlist`, `share_album`, `share_song`
-- [ ] **Share Settings**: `set_share_expiry`, `toggle_share_downloads`
+#### 🔗 Content Sharing
+
+* [ ] **Share Management**: `create_share`, `list_my_shares`, `delete_share`
+* [ ] **Quick Sharing**: `share_playlist`, `share_album`, `share_song`
+* [ ] **Share Settings**: `set_share_expiry`, `toggle_share_downloads`
 
 *Social features: "Share this playlist publicly", "Create a download link for this album"*
 
 #### 👤 Multi-Device Support
-- [ ] **Player Management**: `list_players`, `register_player`, `update_player_settings`
-- [ ] **Device Control**: `set_active_player`, `sync_across_devices`
+
+* [ ] **Player Management**: `list_players`, `register_player`, `update_player_settings`
+* [ ] **Device Control**: `set_active_player`, `sync_across_devices`
 
 ### 🗂️ File System Access Features (Future)
+
 *These require local file system access and will be implemented as separate tools:*
 
 #### 📁 Smart Playlists
-- [ ] **Smart Playlist Management**: `create_smart_playlist`, `update_smart_playlist_rules`
-- [ ] **Smart Playlist Operations**: `refresh_smart_playlist`, `list_smart_playlists`
-- [ ] **Rule Builder**: `validate_smart_playlist_rules`, `preview_smart_playlist`
+
+* [ ] **Smart Playlist Management**: `create_smart_playlist`, `update_smart_playlist_rules`
+* [ ] **Smart Playlist Operations**: `refresh_smart_playlist`, `list_smart_playlists`
+* [ ] **Rule Builder**: `validate_smart_playlist_rules`, `preview_smart_playlist`
 
 #### 📥 Import/Export
-- [ ] **M3U Operations**: `import_m3u_playlist`, `export_playlist_as_m3u`
-- [ ] **Playlist Sync**: `import_from_spotify`, `export_to_streaming_service`
+
+* [ ] **M3U Operations**: `import_m3u_playlist`, `export_playlist_as_m3u`
+* [ ] **Playlist Sync**: `import_from_spotify`, `export_to_streaming_service`
 
 ### ❌ Features Not Planned
+
 *These are not suitable for LLM integration:*
-- Admin features (user management, server configuration)
-- Direct streaming URLs (client-specific, security concerns)  
-- Transcoding controls (technical server settings)
-- Library scanning/management (admin-only operations)
+
+* Admin features (user management, server configuration)
+* Direct streaming URLs (client-specific, security concerns)
+* Transcoding controls (technical server settings)
+* Library scanning/management (admin-only operations)
 
 ## Development & Testing
 
@@ -283,6 +344,7 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 For developers and contributors who want to test or modify the server:
 
 #### 1. **Environment Configuration**
+
 ```bash
 # Copy the example environment file
 cp .env.example .env
@@ -291,6 +353,7 @@ cp .env.example .env
 ```
 
 The `.env` file contains:
+
 ```env
 NAVIDROME_URL=http://your-server:4533
 NAVIDROME_USERNAME=your_username
@@ -303,7 +366,7 @@ CACHE_TTL=300
 TOKEN_EXPIRY=86400
 ```
 
-**Note**: The `.env` file is only for development and testing with MCP Inspector. Production users should configure credentials in `claude_desktop_config.json`.
+**Note**: The `.env` file is only for development and testing with MCP Inspector. Production users should configure credentials in their MCP client (Claude JSON or ChatGPT connector settings).
 
 #### 2. **Testing with MCP Inspector**
 
@@ -331,6 +394,7 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
 ```
 
 #### 3. **Development Commands**
+
 ```bash
 pnpm dev       # Development mode with hot reload
 pnpm build     # Build TypeScript to JavaScript
@@ -342,9 +406,9 @@ pnpm format    # Auto-format code
 
 ### Project Structure
 
-- **`src/`** - TypeScript source code
-- **`dist/`** - Compiled JavaScript (generated by build, not in git)
-- **`docs/`** - API documentation and specs
-- **`tests/`** - Test files
-- **`.env.example`** - Template for development environment
-- **`CLAUDE.md`** - Instructions for AI assistants
+* **`src/`** - TypeScript source code
+* **`dist/`** - Compiled JavaScript (generated by build, not in git)
+* **`docs/`** - API documentation and specs
+* **`tests/`** - Test files
+* **`.env.example`** - Template for development environment
+* **`CLAUDE.md`** - Instructions for AI assistants
