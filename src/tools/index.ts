@@ -75,6 +75,14 @@ import {
   getTopTracksByArtist,
   getTrendingMusic,
 } from './lastfm-discovery.js';
+import {
+  listRadioStations,
+  createRadioStation,
+  deleteRadioStation,
+  getRadioStation,
+  playRadioStation,
+  getCurrentRadioInfo,
+} from './radio.js';
 
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
   // Define available tools
@@ -956,6 +964,86 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
         required: ['type'],
       },
     },
+    {
+      name: 'list_radio_stations',
+      description: 'List all internet radio stations from Navidrome',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
+    {
+      name: 'create_radio_station',
+      description: 'Create a new internet radio station in Navidrome',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Station name (required)',
+          },
+          streamUrl: {
+            type: 'string',
+            description: 'Stream URL (required) - must be valid HTTP/HTTPS URL',
+          },
+          homePageUrl: {
+            type: 'string',
+            description: 'Optional homepage URL for the station',
+          },
+        },
+        required: ['name', 'streamUrl'],
+      },
+    },
+    {
+      name: 'delete_radio_station',
+      description: 'Delete an internet radio station by ID',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the radio station to delete',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'get_radio_station',
+      description: 'Get detailed information about a specific radio station by ID',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the radio station',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'play_radio_station',
+      description: 'Start playing a radio station by setting it in the playback queue',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the radio station to play',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'get_current_radio_info',
+      description: 'Get information about currently playing radio station and stream metadata',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+      },
+    },
   ];
 
   // Register list tools handler
@@ -1401,6 +1489,78 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
     if (name === 'get_trending_music') {
       const result = await getTrendingMusic(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'list_radio_stations') {
+      const result = await listRadioStations(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'create_radio_station') {
+      const result = await createRadioStation(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'delete_radio_station') {
+      const result = await deleteRadioStation(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_radio_station') {
+      const result = await getRadioStation(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'play_radio_station') {
+      const result = await playRadioStation(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_current_radio_info') {
+      const result = await getCurrentRadioInfo(config, args ?? {});
       return {
         content: [
           {

@@ -215,6 +215,77 @@ export interface UpdatePlaylistRequest {
   public?: boolean;
 }
 
+/** Radio station from Navidrome API */
+export interface RadioStationDTO {
+  /** Unique radio station ID */
+  id: string;
+  /** Stream URL for the radio station */
+  streamUrl: string;
+  /** Station name/title */
+  name: string;
+  /** Optional homepage URL */
+  homePageUrl?: string;
+  /** ISO 8601 timestamp when created */
+  createdAt: string;
+  /** ISO 8601 timestamp when last updated */
+  updatedAt: string;
+}
+
+/** Request to create a new radio station */
+export interface CreateRadioStationRequest {
+  /** Station name (required) */
+  name: string;
+  /** Stream URL (required) */
+  streamUrl: string;
+  /** Optional homepage URL */
+  homePageUrl?: string;
+}
+
+/** Response from creating a radio station */
+export interface CreateRadioStationResponse {
+  /** Success status */
+  success: boolean;
+  /** Created radio station */
+  station?: RadioStationDTO;
+  /** Error message if failed */
+  error?: string;
+}
+
+/** Response from deleting a radio station */
+export interface DeleteRadioStationResponse {
+  /** Success status */
+  success: boolean;
+  /** ID of deleted station */
+  id?: string;
+  /** Error message if failed */
+  error?: string;
+}
+
+/** Response from listing radio stations */
+export interface ListRadioStationsResponse {
+  /** Array of radio stations */
+  stations: RadioStationDTO[];
+  /** Total count */
+  total: number;
+}
+
+/** Radio playback status information */
+export interface RadioPlaybackInfo {
+  /** Whether radio is currently playing */
+  playing: boolean;
+  /** Current radio station info if playing */
+  currentStation?: RadioStationDTO;
+  /** Current stream metadata if available */
+  metadata?: {
+    /** Current track/show title */
+    title?: string;
+    /** Current artist/host */
+    artist?: string;
+    /** Station description */
+    description?: string;
+  };
+}
+
 /**
  * Request DTO for adding tracks to a playlist
  */

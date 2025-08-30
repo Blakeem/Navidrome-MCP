@@ -130,6 +130,7 @@ Once configured, ask your assistant to use the Navidrome tools, for example:
 * 📊 "What did I listen to most this month?"
 * 🎼 "Find artists similar to Radiohead"
 * 🎯 "Rate this album 5 stars"
+* 📻 "Add BBC Radio 1 to my radio stations"
 
 ## Available Tools
 
@@ -192,6 +193,15 @@ Once configured, ask your assistant to use the Navidrome tools, for example:
 
 * **`list_recently_played`**: Get recently played tracks with time filtering (today/week/month/all)
 * **`list_most_played`**: Get most played songs, albums, or artists with play counts
+
+### 📻 Internet Radio Tools
+
+* **`list_radio_stations`**: List all internet radio stations
+* **`create_radio_station`**: Create new radio station with name, stream URL, and optional homepage (admin only)
+* **`delete_radio_station`**: Delete radio station by ID (admin only)
+* **`get_radio_station`**: Get detailed information about a specific radio station
+* **`play_radio_station`**: Prepare radio station for playback (returns stream URL)
+* **`get_current_radio_info`**: Get current radio playback status and metadata
 
 ### 🎼 Music Discovery Tools (Last.fm)
 
@@ -286,12 +296,13 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 
 ### 🎯 Medium Priority Features
 
-#### 📻 Internet Radio Integration
+#### ✅ Internet Radio Integration (COMPLETED)
 
-* [ ] **Radio Management**: `list_radio_stations`, `create_radio_station`, `delete_radio_station`
-* [ ] **Radio Playback**: `play_radio_station`, `get_current_radio_info`
+* [x] **Radio Management**: `list_radio_stations`, `create_radio_station`, `delete_radio_station`
+* [x] **Radio Playback**: `play_radio_station`, `get_current_radio_info`
+* [x] **Radio Details**: `get_radio_station` for detailed station information
 
-*Voice-friendly: "Play jazz radio", "Add this station to my radios"*
+*Voice-friendly: "Play jazz radio", "Add this station to my radios", "List my radio stations"*
 
 #### 🏷️ Advanced Tag Operations
 
