@@ -61,7 +61,7 @@ pnpm build
 #### 2. **Configure Claude Desktop**
 
 Find your Claude Desktop configuration file:
-- **Windows**: `%APPDATA%/Claude/config.json`  
+- **Windows**: `%APPDATA%/Roaming/Claude/claude_desktop_config.json`  
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 Add your Navidrome server configuration:
