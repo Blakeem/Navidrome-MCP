@@ -220,6 +220,14 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 
 *Great for: "What did I listen to yesterday?", "Show my most played tracks this month"*
 
+#### 🎼 Music Discovery & Recommendations (Last.fm Integration)
+- [ ] **Similar Artists**: `get_similar_artists`, `get_artist_info`
+- [ ] **Similar Tracks**: `get_similar_songs`, `get_track_recommendations`
+- [ ] **Discovery Features**: `get_top_tracks_by_artist`, `get_trending_music`
+- [ ] **Personalized Recommendations**: `get_recommendations_based_on_history`
+
+*Powerful discovery: "Find artists similar to Radiohead", "Recommend music based on my favorites"*
+
 ### 🎯 Medium Priority Features
 
 #### 📻 Internet Radio Integration
