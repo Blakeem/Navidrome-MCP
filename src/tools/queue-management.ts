@@ -72,9 +72,9 @@ export async function getQueue(client: NavidromeClient, _args: unknown): Promise
     trackCount: response.items?.length || 0,
     tracks: (response.items || []).map((track: QueueTrack) => ({
       id: track.id,
-      title: track.title || 'Unknown',
-      artist: track.artist || 'Unknown',
-      album: track.album || 'Unknown',
+      title: track.title || '',
+      artist: track.artist || '',
+      album: track.album || '',
       duration: track.duration || 0,
     })),
   };

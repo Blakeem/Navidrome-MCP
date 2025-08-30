@@ -20,6 +20,29 @@ import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import type { Config } from '../config.js';
+import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
+
+// Helper function to parse duration from MM:SS format to seconds
+function parseDuration(durationFormatted: string): number {
+  const parts = durationFormatted.split(':');
+  if (parts.length === 2) {
+    const minutes = parseInt(parts[0] || '0', 10);
+    const seconds = parseInt(parts[1] || '0', 10);
+    return minutes * 60 + seconds;
+  }
+  return 0;
+}
+
+// Helper function to extract starredAt timestamp from raw data
+function extractStarredAt(item: unknown): string | undefined {
+  // The transformers don't currently include starredAt, so we need to check the raw data
+  // This is a limitation that should be addressed in the transformers later
+  if (typeof item === 'object' && item !== null && 'starredAt' in item) {
+    const starredAt = (item as { starredAt?: unknown }).starredAt;
+    return typeof starredAt === 'string' ? starredAt : undefined;
+  }
+  return undefined;
+}
 
 export interface StarItemResult {
   success: boolean;
@@ -209,49 +232,63 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
   logger.info(`Listing starred ${type}`);
   
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
-  const filter = JSON.stringify({ starred: true });
   
-  const response = await client.request<StarredItem[]>(
-    `${endpoint}?filter=${encodeURIComponent(filter)}&_start=${offset}&_end=${offset + limit}`
+  // Use starred parameter instead of filter for better compatibility
+  const response = await client.request<unknown>(
+    `${endpoint}?starred=true&_start=${offset}&_end=${offset + limit}`
   );
   
-  const items = response.map((item: StarredItem) => {
-    if (type === 'songs') {
-      const result: Record<string, unknown> = {
-        id: item.id,
-      };
-      if (item.title) result['title'] = item.title;
-      if (item.artist) result['artist'] = item.artist;
-      if (item.album) result['album'] = item.album;
-      if (item.duration) result['duration'] = item.duration;
-      if (item.starredAt) result['starredAt'] = item.starredAt;
-      return result;
-    } else if (type === 'albums') {
-      const result: Record<string, unknown> = {
-        id: item.id,
-      };
-      if (item.name) result['name'] = item.name;
-      if (item.artist) result['artist'] = item.artist;
-      if (item.year) result['year'] = item.year;
-      if (item.songCount) result['songCount'] = item.songCount;
-      if (item.starredAt) result['starredAt'] = item.starredAt;
-      return result;
-    } else {
-      const result: Record<string, unknown> = {
-        id: item.id,
-      };
-      if (item.name) result['name'] = item.name;
-      if (item.albumCount) result['albumCount'] = item.albumCount;
-      if (item.songCount) result['songCount'] = item.songCount;
-      if (item.starredAt) result['starredAt'] = item.starredAt;
-      return result;
-    }
-  });
+  // Transform using the appropriate transformer
+  let transformedItems: StarredItem[];
+  if (type === 'songs') {
+    const songs = transformSongsToDTO(response);
+    transformedItems = songs
+      .filter(song => song.starred) // Filter on client side to ensure we only get starred items
+      .map(song => {
+        const item: StarredItem = { id: song.id };
+        if (song.title) item.title = song.title;
+        if (song.artist) item.artist = song.artist;
+        if (song.album) item.album = song.album;
+        if (song.durationFormatted) {
+          item.duration = parseDuration(song.durationFormatted);
+        }
+        const starredAt = extractStarredAt(song);
+        if (starredAt) item.starredAt = starredAt;
+        return item;
+      });
+  } else if (type === 'albums') {
+    const albums = transformAlbumsToDTO(response);
+    transformedItems = albums
+      .filter(album => album.starred)
+      .map(album => {
+        const item: StarredItem = { id: album.id };
+        if (album.name) item.name = album.name;
+        if (album.artist) item.artist = album.artist;
+        if (album.releaseYear) item.year = album.releaseYear;
+        item.songCount = album.songCount; // Always present in albums
+        const starredAt = extractStarredAt(album);
+        if (starredAt) item.starredAt = starredAt;
+        return item;
+      });
+  } else {
+    const artists = transformArtistsToDTO(response);
+    transformedItems = artists
+      .filter(artist => artist.starred)
+      .map(artist => {
+        const item: StarredItem = { id: artist.id };
+        if (artist.name) item.name = artist.name;
+        item.albumCount = artist.albumCount; // Always present
+        item.songCount = artist.songCount; // Always present
+        const starredAt = extractStarredAt(artist);
+        if (starredAt) item.starredAt = starredAt;
+        return item;
+      });
+  }
   
   return {
     type,
-    count: items.length,
-    items: items as unknown as StarredItem[],
+    count: transformedItems.length,
+    items: transformedItems,
   };
 }
 
@@ -261,49 +298,70 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
   logger.info(`Listing top rated ${type} (min rating: ${minRating})`);
   
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
-  const filter = JSON.stringify({ rating: { gte: minRating } });
   
-  const response = await client.request<RatedItem[]>(
-    `${endpoint}?filter=${encodeURIComponent(filter)}&_sort=rating&_order=DESC&_start=${offset}&_end=${offset + limit}`
+  // Fetch more items to account for filtering by minRating
+  // We'll fetch 3x the requested amount to ensure we have enough after filtering
+  const fetchLimit = limit * 3;
+  
+  const response = await client.request<unknown>(
+    `${endpoint}?_sort=rating&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
   
-  const items = response.map((item: RatedItem) => {
-    if (type === 'songs') {
-      const result: Record<string, unknown> = {
-        id: item.id,
-        rating: item.rating,
-      };
-      if (item.title) result['title'] = item.title;
-      if (item.artist) result['artist'] = item.artist;
-      if (item.album) result['album'] = item.album;
-      if (item.playCount) result['playCount'] = item.playCount;
-      return result;
-    } else if (type === 'albums') {
-      const result: Record<string, unknown> = {
-        id: item.id,
-        rating: item.rating,
-      };
-      if (item.name) result['name'] = item.name;
-      if (item.artist) result['artist'] = item.artist;
-      if (item.year) result['year'] = item.year;
-      if (item.playCount) result['playCount'] = item.playCount;
-      return result;
-    } else {
-      const result: Record<string, unknown> = {
-        id: item.id,
-        rating: item.rating,
-      };
-      if (item.name) result['name'] = item.name;
-      if (item.albumCount) result['albumCount'] = item.albumCount;
-      if (item.songCount) result['songCount'] = item.songCount;
-      return result;
-    }
-  });
+  // Transform using the appropriate transformer
+  let transformedItems: RatedItem[];
+  if (type === 'songs') {
+    const songs = transformSongsToDTO(response);
+    transformedItems = songs
+      .filter(song => (song.rating || 0) >= minRating) // Filter on client side
+      .map(song => {
+        const item: RatedItem = { 
+          id: song.id,
+          rating: song.rating || 0
+        };
+        if (song.title) item.title = song.title;
+        if (song.artist) item.artist = song.artist;
+        if (song.album) item.album = song.album;
+        if (song.playCount) item.playCount = song.playCount;
+        return item;
+      })
+      .slice(0, limit);
+  } else if (type === 'albums') {
+    const albums = transformAlbumsToDTO(response);
+    transformedItems = albums
+      .filter(album => (album.rating || 0) >= minRating)
+      .map(album => {
+        const item: RatedItem = { 
+          id: album.id,
+          rating: album.rating || 0
+        };
+        if (album.name) item.name = album.name;
+        if (album.artist) item.artist = album.artist;
+        if (album.releaseYear) item.year = album.releaseYear;
+        if (album.playCount) item.playCount = album.playCount;
+        return item;
+      })
+      .slice(0, limit);
+  } else {
+    const artists = transformArtistsToDTO(response);
+    transformedItems = artists
+      .filter(artist => (artist.rating || 0) >= minRating)
+      .map(artist => {
+        const item: RatedItem = { 
+          id: artist.id,
+          rating: artist.rating || 0
+        };
+        if (artist.name) item.name = artist.name;
+        item.albumCount = artist.albumCount;
+        item.songCount = artist.songCount;
+        return item;
+      })
+      .slice(0, limit);
+  }
   
   return {
     type,
     minRating,
-    count: items.length,
-    items: items as unknown as RatedItem[],
+    count: transformedItems.length,
+    items: transformedItems,
   };
 }

@@ -158,10 +158,10 @@ function extractAllGenres(rawSong: RawSong): string[] | undefined {
 export function transformToSongDTO(rawSong: RawSong): SongDTO {
   const dto: SongDTO = {
     id: rawSong.id,
-    title: rawSong.title || 'Unknown Title',
-    artist: rawSong.artist || 'Unknown Artist',
+    title: rawSong.title || '',
+    artist: rawSong.artist || '',
     artistId: rawSong.artistId,
-    album: rawSong.album || 'Unknown Album',
+    album: rawSong.album || '',
     albumId: rawSong.albumId,
     durationFormatted: formatDuration(rawSong.duration),
     addedDate: rawSong.createdAt || new Date().toISOString(),
@@ -224,8 +224,8 @@ export function transformSongsToDTO(rawSongs: unknown): SongDTO[] {
 export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
   const dto: AlbumDTO = {
     id: rawAlbum.id,
-    name: rawAlbum.name || 'Unknown Album',
-    artist: rawAlbum.artist || 'Unknown Artist',
+    name: rawAlbum.name || '',
+    artist: rawAlbum.artist || '',
     artistId: rawAlbum.artistId,
     songCount: rawAlbum.songCount || 0,
     durationFormatted: formatDuration(rawAlbum.duration),
@@ -283,7 +283,7 @@ export function transformAlbumsToDTO(rawAlbums: unknown): AlbumDTO[] {
 export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
   const dto: ArtistDTO = {
     id: rawArtist.id,
-    name: rawArtist.name || 'Unknown Artist',
+    name: rawArtist.name || '',
     albumCount: rawArtist.albumCount || 0,
     songCount: rawArtist.songCount || 0,
   };
@@ -322,7 +322,7 @@ export function transformArtistsToDTO(rawArtists: unknown): ArtistDTO[] {
 export function transformToGenreDTO(rawGenre: RawGenre): GenreDTO {
   return {
     id: rawGenre.id,
-    name: rawGenre.name || 'Unknown Genre',
+    name: rawGenre.name || '',
     songCount: rawGenre.songCount || 0,
     albumCount: rawGenre.albumCount || 0,
   };
@@ -339,11 +339,11 @@ export function transformGenresToDTO(rawGenres: unknown): GenreDTO[] {
 export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
   const dto: PlaylistDTO = {
     id: rawPlaylist.id,
-    name: rawPlaylist.name || 'Unknown Playlist',
+    name: rawPlaylist.name || '',
     public: rawPlaylist.public || false,
     songCount: rawPlaylist.songCount || 0,
     durationFormatted: formatDuration(rawPlaylist.duration),
-    owner: rawPlaylist.owner || 'Unknown Owner',
+    owner: rawPlaylist.owner || '',
   };
 
   if (rawPlaylist.comment !== undefined) {

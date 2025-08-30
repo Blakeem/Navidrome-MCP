@@ -166,8 +166,8 @@ export async function listGenres(_client: NavidromeClient, config: Config, args:
     
     // Transform Subsonic genre format to our DTO
     const allGenres: GenreDTO[] = subsonicGenres.map((genre) => ({
-      id: genre.value || 'Unknown', // Subsonic uses 'value' for genre name as ID
-      name: genre.value || 'Unknown Genre',
+      id: genre.value || '', // Subsonic uses 'value' for genre name as ID
+      name: genre.value || '',
       songCount: genre.songCount || 0,
       albumCount: genre.albumCount || 0,
     }));
