@@ -12,6 +12,7 @@ build/
 .env
 .env.local
 .env.*.local
+.mcp.json
 
 # IDE
 .vscode/
@@ -58,3 +59,4 @@ debug/
 # OS files
 Thumbs.db
 Desktop.ini
+

@@ -26,6 +26,13 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 - **pnpm** package manager (NOT npm or yarn)
 - **Running Navidrome server** (tested with v0.49+)
 
+### Project Structure
+
+This is a **TypeScript project** that compiles to JavaScript:
+- **`src/`** - TypeScript source code (`.ts` files)
+- **`dist/`** - Compiled JavaScript output (auto-generated, not in git)
+- **Build required** - You must run `pnpm build` to generate the executable JavaScript files
+
 ### Setup
 
 1. **Clone and install**:
@@ -52,10 +59,12 @@ CACHE_TTL=300
 TOKEN_EXPIRY=86400
 ```
 
-4. **Build the server**:
+4. **Build the server** (compiles TypeScript to JavaScript):
 ```bash
 pnpm build
 ```
+
+**Important**: The `pnpm build` step is **required** - it compiles the TypeScript source code in `src/` into executable JavaScript in `dist/`. The `dist/` folder is auto-generated and not included in git.
 
 ## Claude Desktop Configuration
 
@@ -87,7 +96,7 @@ Add the server to your Claude Desktop config file:
 Use the official MCP Inspector to test server functionality:
 
 ```bash
-# Build first
+# Build first (required - compiles TypeScript to JavaScript)
 pnpm build
 
 # Test with web UI

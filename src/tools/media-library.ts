@@ -199,7 +199,20 @@ export async function getSongPlaylists(client: NavidromeClient, args: unknown): 
 
   try {
     const rawPlaylists = await client.request<unknown>(`/song/${params.songId}/playlists`);
-    const playlists = transformPlaylistsToDTO(rawPlaylists);
+    
+    // Workaround: This specific endpoint returns JSON data but with text/plain content-type
+    // So we need to parse it manually if it's a string
+    let playlistData = rawPlaylists;
+    if (typeof rawPlaylists === 'string') {
+      try {
+        playlistData = JSON.parse(rawPlaylists);
+      } catch (parseError) {
+        console.error('Failed to parse playlist data:', parseError);
+        playlistData = [];
+      }
+    }
+    
+    const playlists = transformPlaylistsToDTO(playlistData);
 
     return {
       playlists,
