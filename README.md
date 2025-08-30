@@ -40,66 +40,31 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 ### 🔄 Real-time Resources
 - **Server Status**: Monitor Navidrome connection and server health
 
-## Installation
+## Installation for Claude Desktop Users
 
 ### Prerequisites
 
-- **Node.js 20+** (required)
-- **pnpm** package manager (NOT npm or yarn)
-- **Running Navidrome server** (tested with v0.49+)
+- **Node.js 20+** ([Download here](https://nodejs.org/))
+- **pnpm** package manager ([Install instructions](https://pnpm.io/installation))
+- **Running Navidrome server** with your music library
 
-### Project Structure
+### Quick Setup (3 Steps)
 
-This is a **TypeScript project** that compiles to JavaScript:
-- **`src/`** - TypeScript source code (`.ts` files)
-- **`dist/`** - Compiled JavaScript output (auto-generated, not in git)
-- **Build required** - You must run `pnpm build` to generate the executable JavaScript files
-
-### Setup
-
-1. **Clone and install**:
+#### 1. **Download and Build**
 ```bash
 git clone https://github.com/Blakeem/Navidrome-MCP.git
 cd navidrome-mcp
 pnpm install
-```
-
-2. **Configure environment**:
-```bash
-cp .env.example .env
-```
-
-3. **Edit `.env` with your Navidrome details**:
-```env
-NAVIDROME_URL=http://your-server:4533
-NAVIDROME_USERNAME=your_username
-NAVIDROME_PASSWORD=your_password
-
-# Music Discovery (Last.fm Integration)
-LASTFM_API_KEY=your_lastfm_api_key_here
-
-# Optional settings
-DEBUG=false
-CACHE_TTL=300
-TOKEN_EXPIRY=86400
-```
-
-**Note**: Last.fm API key is required for music discovery features. Get a free API key at [https://www.last.fm/api](https://www.last.fm/api).
-
-4. **Build the server** (compiles TypeScript to JavaScript):
-```bash
 pnpm build
 ```
 
-**Important**: The `pnpm build` step is **required** - it compiles the TypeScript source code in `src/` into executable JavaScript in `dist/`. The `dist/` folder is auto-generated and not included in git.
+#### 2. **Configure Claude Desktop**
 
-## Claude Desktop Configuration
+Find your Claude Desktop configuration file:
+- **Windows**: `%APPDATA%/Claude/config.json`  
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-Add the server to your Claude Desktop config file:
-
-**Windows**: `%APPDATA%/Claude/config.json`  
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-
+Add your Navidrome server configuration:
 ```json
 {
   "mcpServers": {
@@ -117,45 +82,28 @@ Add the server to your Claude Desktop config file:
 }
 ```
 
-**After saving the config**: Completely quit and restart Claude Desktop. You'll see an MCP indicator in the bottom-right of the chat input.
+**Important**: Replace the following values:
+- `/absolute/path/to/navidrome-mcp` - Full path where you cloned the project
+- `http://your-server:4533` - Your Navidrome server URL
+- `your_username` - Your Navidrome username
+- `your_password` - Your Navidrome password  
+- `your_lastfm_api_key_here` - Get free API key at [Last.fm](https://www.last.fm/api)
 
-## Testing
+#### 3. **Restart Claude Desktop**
 
-Use the official MCP Inspector to test server functionality:
+After saving the config file, completely quit and restart Claude Desktop. You'll see an MCP indicator (🔌) in the bottom-right corner of the chat input box when the server is connected.
 
-```bash
-# Build first (required - compiles TypeScript to JavaScript)
-pnpm build
+## Usage with Claude
 
-# Test with web UI
-npx @modelcontextprotocol/inspector node dist/index.js
+Once configured, you can ask Claude to:
+- 🔍 "Search for songs by Pink Floyd"
+- ⭐ "Show my starred albums"
+- 🎵 "Create a playlist called 'Weekend Vibes'"
+- 📊 "What did I listen to most this month?"
+- 🎼 "Find artists similar to Radiohead"
+- 🎯 "Rate this album 5 stars"
 
-# Test with CLI - list all tools
-npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
-
-# Test connection
-npx @modelcontextprotocol/inspector --cli node dist/index.js \
-  --method tools/call \
-  --tool-name test_connection \
-  --tool-arg includeServerInfo=true
-
-# Create a test playlist
-npx @modelcontextprotocol/inspector --cli node dist/index.js \
-  --method tools/call \
-  --tool-name create_playlist \
-  --tool-arg name="My Test Playlist" \
-  --tool-arg comment="Created via MCP" \
-  --tool-arg public=false
-
-# Search for music
-npx @modelcontextprotocol/inspector --cli node dist/index.js \
-  --method tools/call \
-  --tool-name search_all \
-  --tool-arg query="rock" \
-  --tool-arg artistCount=5 \
-  --tool-arg albumCount=5 \
-  --tool-arg songCount=10
-```
+Claude will use the MCP tools to interact with your Navidrome server directly.
 
 ## Available Tools
 
@@ -327,3 +275,76 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 - Direct streaming URLs (client-specific, security concerns)  
 - Transcoding controls (technical server settings)
 - Library scanning/management (admin-only operations)
+
+## Development & Testing
+
+### Developer Setup
+
+For developers and contributors who want to test or modify the server:
+
+#### 1. **Environment Configuration**
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit .env with your Navidrome credentials for testing
+```
+
+The `.env` file contains:
+```env
+NAVIDROME_URL=http://your-server:4533
+NAVIDROME_USERNAME=your_username
+NAVIDROME_PASSWORD=your_password
+LASTFM_API_KEY=your_lastfm_api_key_here
+
+# Optional settings
+DEBUG=false
+CACHE_TTL=300
+TOKEN_EXPIRY=86400
+```
+
+**Note**: The `.env` file is only for development and testing with MCP Inspector. Production users should configure credentials in `claude_desktop_config.json`.
+
+#### 2. **Testing with MCP Inspector**
+
+```bash
+# Build the TypeScript code
+pnpm build
+
+# Test with web UI
+npx @modelcontextprotocol/inspector node dist/index.js
+
+# Test with CLI - list all tools
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+
+# Test connection
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call \
+  --tool-name test_connection \
+  --tool-arg includeServerInfo=true
+
+# Search for music
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call \
+  --tool-name search_all \
+  --tool-arg query="rock"
+```
+
+#### 3. **Development Commands**
+```bash
+pnpm dev       # Development mode with hot reload
+pnpm build     # Build TypeScript to JavaScript
+pnpm test      # Run test suite
+pnpm lint      # Check code style
+pnpm typecheck # Type checking
+pnpm format    # Auto-format code
+```
+
+### Project Structure
+
+- **`src/`** - TypeScript source code
+- **`dist/`** - Compiled JavaScript (generated by build, not in git)
+- **`docs/`** - API documentation and specs
+- **`tests/`** - Test files
+- **`.env.example`** - Template for development environment
+- **`CLAUDE.md`** - Instructions for AI assistants
