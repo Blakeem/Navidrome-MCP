@@ -57,12 +57,16 @@ export async function getQueue(client: NavidromeClient, _args: unknown): Promise
   
   if (!response || Object.keys(response).length === 0) {
     return {
+      current: 0,
+      position: 0,
+      trackCount: 0,
+      tracks: [],
       message: 'Queue is empty',
       queue: null,
     };
   }
   
-  return {
+  const result: QueueResult = {
     current: response.current || 0,
     position: response.position || 0,
     trackCount: response.items?.length || 0,
@@ -73,8 +77,11 @@ export async function getQueue(client: NavidromeClient, _args: unknown): Promise
       album: track.album || 'Unknown',
       duration: track.duration || 0,
     })),
-    updatedAt: response.updatedAt,
   };
+  if (response.updatedAt) {
+    result.updatedAt = response.updatedAt;
+  }
+  return result;
 }
 
 const SetQueueSchema = z.object({

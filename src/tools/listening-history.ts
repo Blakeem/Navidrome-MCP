@@ -96,7 +96,7 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
     artist: track.artist,
     album: track.album,
     playCount: track.playCount,
-    lastPlayed: track.playDate,
+    lastPlayed: track.lastPlayed,
     duration: track.duration,
   }));
   
@@ -128,31 +128,34 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
   
   const items = response.map((item: MostPlayedItem) => {
     if (type === 'songs') {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        title: item.title,
-        artist: item.artist,
-        album: item.album,
         playCount: item.playCount,
-        lastPlayed: item.playDate,
       };
+      if (item.title) result['title'] = item.title;
+      if (item.artist) result['artist'] = item.artist;
+      if (item.album) result['album'] = item.album;
+      if (item.lastPlayed) result['lastPlayed'] = item.lastPlayed;
+      return result;
     } else if (type === 'albums') {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        name: item.name,
-        artist: item.artist,
         playCount: item.playCount,
-        songCount: item.songCount,
-        lastPlayed: item.playDate,
       };
+      if (item.name) result['name'] = item.name;
+      if (item.artist) result['artist'] = item.artist;
+      if (item.songCount) result['songCount'] = item.songCount;
+      if (item.lastPlayed) result['lastPlayed'] = item.lastPlayed;
+      return result;
     } else {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        name: item.name,
         playCount: item.playCount,
-        albumCount: item.albumCount,
-        songCount: item.songCount,
       };
+      if (item.name) result['name'] = item.name;
+      if (item.albumCount) result['albumCount'] = item.albumCount;
+      if (item.songCount) result['songCount'] = item.songCount;
+      return result;
     }
   });
   
@@ -160,6 +163,6 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
     type,
     minPlayCount,
     count: items.length,
-    items,
+    items: items as unknown as MostPlayedItem[],
   };
 }

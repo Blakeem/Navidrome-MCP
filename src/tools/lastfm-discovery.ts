@@ -134,8 +134,8 @@ async function callLastFmApi(method: string, params: Record<string, string>, api
   
   const data = await response.json() as Record<string, unknown>;
   
-  if (data.error) {
-    throw new Error(`Last.fm API error: ${data.message || 'Unknown error'}`);
+  if (data['error']) {
+    throw new Error(`Last.fm API error: ${data['message'] || 'Unknown error'}`);
   }
   
   return data;
@@ -161,17 +161,20 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
     autocorrect: '1',
   }, config.lastFmApiKey);
   
-  const similarArtists = (data.similarartists as { artist?: unknown[] })?.artist || [];
+  const similarArtists = (data['similarartists'] as { artist?: unknown[] })?.artist || [];
   
   return {
     artist,
     count: similarArtists.length,
-    similarArtists: similarArtists.map((a: Record<string, unknown>) => ({
-      name: String(a.name || ''),
-      match: parseFloat(String(a.match || 0)),
-      url: String(a.url || ''),
-      mbid: (a.mbid as string) || null,
-    })),
+    similarArtists: similarArtists.map((a: unknown) => {
+      const artist = a as Record<string, unknown>;
+      return {
+        name: String(artist['name'] || ''),
+        match: parseFloat(String(artist['match'] || 0)),
+        url: String(artist['url'] || ''),
+        mbid: (artist['mbid'] as string) || null,
+      };
+    }),
   };
 }
 
@@ -197,18 +200,22 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
     autocorrect: '1',
   }, config.lastFmApiKey);
   
-  const similarTracks = (data.similartracks as { track?: unknown[] })?.track || [];
+  const similarTracks = (data['similartracks'] as { track?: unknown[] })?.track || [];
   
   return {
     originalTrack: { artist, track },
     count: similarTracks.length,
-    similarTracks: similarTracks.map((t: Record<string, unknown>) => ({
-      name: String(t.name || ''),
-      artist: String((t.artist as Record<string, unknown>)?.name || (t.artist as Record<string, unknown>)?.['#text'] || 'Unknown'),
-      match: parseFloat(String(t.match || 0)),
-      url: String(t.url || ''),
-      mbid: (t.mbid as string) || null,
-    })),
+    similarTracks: similarTracks.map((t: unknown) => {
+      const track = t as Record<string, unknown>;
+      const trackArtist = track['artist'] as Record<string, unknown> | undefined;
+      return {
+        name: String(track['name'] || ''),
+        artist: String(trackArtist?.['name'] || trackArtist?.['#text'] || 'Unknown'),
+        match: parseFloat(String(track['match'] || 0)),
+        url: String(track['url'] || ''),
+        mbid: (track['mbid'] as string) || null,
+      };
+    }),
   };
 }
 
@@ -232,20 +239,24 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
     autocorrect: '1',
   }, config.lastFmApiKey);
   
-  const artistInfo = (data.artist as Record<string, unknown>) || {};
+  const artistInfo = (data['artist'] as Record<string, unknown>) || {};
+  const stats = artistInfo['stats'] as Record<string, unknown> | undefined;
+  const bio = artistInfo['bio'] as Record<string, unknown> | undefined;
+  const tags = artistInfo['tags'] as Record<string, unknown> | undefined;
+  const similar = artistInfo['similar'] as Record<string, unknown> | undefined;
   
   return {
-    name: artistInfo.name,
-    mbid: artistInfo.mbid || null,
-    url: artistInfo.url,
-    listeners: parseInt(artistInfo.stats?.listeners || '0', 10),
-    playcount: parseInt(artistInfo.stats?.playcount || '0', 10),
-    biography: artistInfo.bio?.summary?.replace(/<[^>]*>/g, '') || null,
-    tags: ((artistInfo.tags as Record<string, unknown>)?.tag as Record<string, unknown>[] || []).map((t: Record<string, unknown>) => ({
-      name: String(t.name || ''),
-      url: String(t.url || ''),
+    name: String(artistInfo['name'] || ''),
+    mbid: (artistInfo['mbid'] as string) || null,
+    url: String(artistInfo['url'] || ''),
+    listeners: parseInt(String(stats?.['listeners'] || '0'), 10),
+    playcount: parseInt(String(stats?.['playcount'] || '0'), 10),
+    biography: bio?.['summary'] ? String(bio['summary']).replace(/<[^>]*>/g, '') : null,
+    tags: ((tags?.['tag'] as Record<string, unknown>[]) || []).map((t: Record<string, unknown>) => ({
+      name: String(t['name'] || ''),
+      url: String(t['url'] || ''),
     })),
-    similar: ((artistInfo.similar as Record<string, unknown>)?.artist as Record<string, unknown>[] || []).slice(0, 5).map((a: Record<string, unknown>) => String(a.name || '')),
+    similar: ((similar?.['artist'] as Record<string, unknown>[]) || []).slice(0, 5).map((a: Record<string, unknown>) => String(a['name'] || '')),
   };
 }
 
@@ -269,18 +280,18 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
     autocorrect: '1',
   }, config.lastFmApiKey);
   
-  const topTracks = (data.toptracks as Record<string, unknown>)?.track as Record<string, unknown>[] || [];
+  const topTracks = (data['toptracks'] as Record<string, unknown>)?.['track'] as Record<string, unknown>[] || [];
   
   return {
     artist,
     count: topTracks.length,
     tracks: topTracks.map((t: Record<string, unknown>, index: number) => ({
       rank: index + 1,
-      name: t.name,
-      playcount: parseInt(t.playcount || '0', 10),
-      listeners: parseInt(t.listeners || '0', 10),
-      url: t.url,
-      mbid: t.mbid || null,
+      name: String(t['name'] || ''),
+      playcount: parseInt(String(t['playcount'] || '0'), 10),
+      listeners: parseInt(String(t['listeners'] || '0'), 10),
+      url: String(t['url'] || ''),
+      mbid: (t['mbid'] as string) || null,
     })),
   };
 }
@@ -309,41 +320,55 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
     page: page.toString(),
   }, config.lastFmApiKey);
   
-  let items: (TrendingArtistItem | TrendingTrackItem | TrendingTagItem)[] = [];
-  
   if (type === 'artists') {
-    items = ((data.artists as Record<string, unknown>)?.artist as Record<string, unknown>[] || []).map((a: Record<string, unknown>, index: number) => ({
+    const artists = ((data['artists'] as Record<string, unknown>)?.['artist'] as Record<string, unknown>[] || []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
       rank: (page - 1) * limit + index + 1,
-      name: a.name,
-      playcount: parseInt(a.playcount || '0', 10),
-      listeners: parseInt(a.listeners || '0', 10),
-      url: a.url,
-      mbid: a.mbid || null,
+      name: String(a['name'] || ''),
+      playcount: parseInt(String(a['playcount'] || '0'), 10),
+      listeners: parseInt(String(a['listeners'] || '0'), 10),
+      url: String(a['url'] || ''),
+      mbid: (a['mbid'] as string) || null,
     }));
+    
+    return {
+      type,
+      page,
+      perPage: limit,
+      count: artists.length,
+      items: artists,
+    };
   } else if (type === 'tracks') {
-    items = ((data.tracks as Record<string, unknown>)?.track as Record<string, unknown>[] || []).map((t: Record<string, unknown>, index: number) => ({
+    const tracks = ((data['tracks'] as Record<string, unknown>)?.['track'] as Record<string, unknown>[] || []).map((t: Record<string, unknown>, index: number): TrendingTrackItem => ({
       rank: (page - 1) * limit + index + 1,
-      name: t.name,
-      artist: String((t.artist as Record<string, unknown>)?.name || 'Unknown'),
-      playcount: parseInt(t.playcount || '0', 10),
-      listeners: parseInt(t.listeners || '0', 10),
-      url: t.url,
-      mbid: t.mbid || null,
+      name: String(t['name'] || ''),
+      artist: String(((t['artist'] as Record<string, unknown>)?.['name']) || 'Unknown'),
+      playcount: parseInt(String(t['playcount'] || '0'), 10),
+      listeners: parseInt(String(t['listeners'] || '0'), 10),
+      url: String(t['url'] || ''),
+      mbid: (t['mbid'] as string) || null,
     }));
+    
+    return {
+      type,
+      page,
+      perPage: limit,
+      count: tracks.length,
+      items: tracks,
+    };
   } else {
-    items = ((data.tags as Record<string, unknown>)?.tag as Record<string, unknown>[] || []).map((t: Record<string, unknown>, index: number) => ({
+    const tags = ((data['tags'] as Record<string, unknown>)?.['tag'] as Record<string, unknown>[] || []).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
       rank: (page - 1) * limit + index + 1,
-      name: t.name,
-      count: parseInt(t.count || '0', 10),
-      url: t.url,
+      name: String(t['name'] || ''),
+      count: parseInt(String(t['count'] || '0'), 10),
+      url: String(t['url'] || ''),
     }));
+    
+    return {
+      type,
+      page,
+      perPage: limit,
+      count: tags.length,
+      items: tags,
+    };
   }
-  
-  return {
-    type,
-    page,
-    perPage: limit,
-    count: items.length,
-    items,
-  };
 }

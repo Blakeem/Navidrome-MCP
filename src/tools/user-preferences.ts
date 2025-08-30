@@ -217,38 +217,41 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
   
   const items = response.map((item: StarredItem) => {
     if (type === 'songs') {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        title: item.title,
-        artist: item.artist,
-        album: item.album,
-        duration: item.duration,
-        starredAt: item.starredAt,
       };
+      if (item.title) result['title'] = item.title;
+      if (item.artist) result['artist'] = item.artist;
+      if (item.album) result['album'] = item.album;
+      if (item.duration) result['duration'] = item.duration;
+      if (item.starredAt) result['starredAt'] = item.starredAt;
+      return result;
     } else if (type === 'albums') {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        name: item.name,
-        artist: item.artist,
-        year: item.year,
-        songCount: item.songCount,
-        starredAt: item.starredAt,
       };
+      if (item.name) result['name'] = item.name;
+      if (item.artist) result['artist'] = item.artist;
+      if (item.year) result['year'] = item.year;
+      if (item.songCount) result['songCount'] = item.songCount;
+      if (item.starredAt) result['starredAt'] = item.starredAt;
+      return result;
     } else {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        name: item.name,
-        albumCount: item.albumCount,
-        songCount: item.songCount,
-        starredAt: item.starredAt,
       };
+      if (item.name) result['name'] = item.name;
+      if (item.albumCount) result['albumCount'] = item.albumCount;
+      if (item.songCount) result['songCount'] = item.songCount;
+      if (item.starredAt) result['starredAt'] = item.starredAt;
+      return result;
     }
   });
   
   return {
     type,
     count: items.length,
-    items,
+    items: items as unknown as StarredItem[],
   };
 }
 
@@ -266,31 +269,34 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
   
   const items = response.map((item: RatedItem) => {
     if (type === 'songs') {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        title: item.title,
-        artist: item.artist,
-        album: item.album,
         rating: item.rating,
-        playCount: item.playCount,
       };
+      if (item.title) result['title'] = item.title;
+      if (item.artist) result['artist'] = item.artist;
+      if (item.album) result['album'] = item.album;
+      if (item.playCount) result['playCount'] = item.playCount;
+      return result;
     } else if (type === 'albums') {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        name: item.name,
-        artist: item.artist,
-        year: item.year,
         rating: item.rating,
-        playCount: item.playCount,
       };
+      if (item.name) result['name'] = item.name;
+      if (item.artist) result['artist'] = item.artist;
+      if (item.year) result['year'] = item.year;
+      if (item.playCount) result['playCount'] = item.playCount;
+      return result;
     } else {
-      return {
+      const result: Record<string, unknown> = {
         id: item.id,
-        name: item.name,
         rating: item.rating,
-        albumCount: item.albumCount,
-        songCount: item.songCount,
       };
+      if (item.name) result['name'] = item.name;
+      if (item.albumCount) result['albumCount'] = item.albumCount;
+      if (item.songCount) result['songCount'] = item.songCount;
+      return result;
     }
   });
   
@@ -298,6 +304,6 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
     type,
     minRating,
     count: items.length,
-    items,
+    items: items as unknown as RatedItem[],
   };
 }
