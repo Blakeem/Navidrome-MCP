@@ -648,7 +648,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
     }
 
     if (name === 'list_genres') {
-      const result = await listGenres(client, args ?? {});
+      const result = await listGenres(client, config, args ?? {});
       return {
         content: [
           {

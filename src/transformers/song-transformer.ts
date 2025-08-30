@@ -81,8 +81,8 @@ interface RawArtist {
 interface RawGenre {
   id: string;
   name: string;
-  songCount: number;
-  albumCount: number;
+  songCount?: number; // Optional since API doesn't provide this
+  albumCount?: number; // Optional since API doesn't provide this
   [key: string]: unknown;
 }
 

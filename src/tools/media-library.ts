@@ -17,11 +17,12 @@
  */
 
 import { z } from 'zod';
+import crypto from 'crypto';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import type { Config } from '../config.js';
 import {
   transformAlbumsToDTO,
   transformArtistsToDTO,
-  transformGenresToDTO,
   transformPlaylistsToDTO,
   transformToSongDTO,
   transformToAlbumDTO,
@@ -112,8 +113,25 @@ export async function listArtists(client: NavidromeClient, args: unknown): Promi
   }
 }
 
+/**
+ * Create Subsonic API authentication parameters for genres
+ */
+function createSubsonicAuthForGenres(config: Config): URLSearchParams {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const token = crypto.createHash('md5').update(config.password + salt).digest('hex');
+  
+  return new URLSearchParams({
+    u: config.username,
+    t: token,
+    s: salt,
+    v: '1.16.1',
+    c: 'NavidromeMCP',
+    f: 'json',
+  });
+}
+
 // List Genres
-export async function listGenres(client: NavidromeClient, args: unknown): Promise<{
+export async function listGenres(_client: NavidromeClient, config: Config, args: unknown): Promise<{
   genres: GenreDTO[];
   total: number;
   offset: number;
@@ -122,19 +140,46 @@ export async function listGenres(client: NavidromeClient, args: unknown): Promis
   const params = PaginationSchema.parse(args);
 
   try {
-    const queryParams = new URLSearchParams({
-      _start: params.offset.toString(),
-      _end: (params.offset + params.limit).toString(),
-      _sort: params.sort,
-      _order: params.order,
-    });
+    // Use direct fetch to Subsonic API (not through our client since it adds /api prefix)
+    const authParams = createSubsonicAuthForGenres(config);
+    const subsonicUrl = `${config.navidromeUrl}/rest/getGenres?${authParams.toString()}`;
+    
+    const subsonicResponse = await fetch(subsonicUrl);
+    if (!subsonicResponse.ok) {
+      throw new Error(`Subsonic API request failed: ${subsonicResponse.status} ${subsonicResponse.statusText}`);
+    }
+    
+    const response = await subsonicResponse.json() as {
+      'subsonic-response'?: {
+        genres?: {
+          genre?: Array<{
+            value?: string;
+            songCount?: number;
+            albumCount?: number;
+          }>;
+        };
+      };
+    };
+    
+    // Extract genres from Subsonic response structure
+    const subsonicGenres = response?.['subsonic-response']?.genres?.genre || [];
+    
+    // Transform Subsonic genre format to our DTO
+    const allGenres: GenreDTO[] = subsonicGenres.map((genre) => ({
+      id: genre.value || 'Unknown', // Subsonic uses 'value' for genre name as ID
+      name: genre.value || 'Unknown Genre',
+      songCount: genre.songCount || 0,
+      albumCount: genre.albumCount || 0,
+    }));
 
-    const rawGenres = await client.request<unknown>(`/genre?${queryParams.toString()}`);
-    const genres = transformGenresToDTO(rawGenres);
+    // Apply pagination manually since Subsonic getGenres doesn't support it
+    const startIndex = params.offset;
+    const endIndex = Math.min(startIndex + params.limit, allGenres.length);
+    const paginatedGenres = allGenres.slice(startIndex, endIndex);
 
     return {
-      genres,
-      total: genres.length,
+      genres: paginatedGenres,
+      total: allGenres.length,
       offset: params.offset,
       limit: params.limit,
     };
