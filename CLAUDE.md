@@ -376,11 +376,10 @@ import type { SongDTO, AlbumDTO } from '../types/dto.js';
 
 ## Important Reminders
 
-1. This is specifically for Navidrome, not generic Subsonic
-2. Always use pnpm, never npm or yarn
-3. Follow TypeScript strict mode requirements
-4. No placeholder code or TODOs in committed code
-5. Test against the live server at 192.168.86.100:4533
-6. Keep security as a top priority
-7. Maintain production-quality code at all times
-8. Use only working API endpoints
+1. Always use pnpm, never npm or yarn
+2. Follow TypeScript strict mode requirements
+3. No placeholder code or TODOs in committed code
+4. Test against the live server at 192.168.86.100:4533
+5. Keep security as a top priority
+6. Maintain production-quality code at all times
+7. Use only working API endpoints
