@@ -83,6 +83,13 @@ import {
   playRadioStation,
   getCurrentRadioInfo,
 } from './radio.js';
+import {
+  listTags,
+  getTag,
+  searchByTags,
+  getTagDistribution,
+  listUniqueTags,
+} from './tags.js';
 
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
   // Define available tools
@@ -1044,6 +1051,126 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
         properties: {},
       },
     },
+    {
+      name: 'list_tags',
+      description: 'List all metadata tags with optional filtering by tag name and pagination',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: {
+            type: 'number',
+            description: 'Maximum number of tags to return (1-500)',
+            minimum: 1,
+            maximum: 500,
+            default: 20,
+          },
+          offset: {
+            type: 'number',
+            description: 'Number of tags to skip for pagination',
+            minimum: 0,
+            default: 0,
+          },
+          sort: {
+            type: 'string',
+            description: 'Field to sort by',
+            enum: ['tagName', 'tagValue', 'albumCount', 'songCount'],
+            default: 'tagName',
+          },
+          order: {
+            type: 'string',
+            description: 'Sort order',
+            enum: ['ASC', 'DESC'],
+            default: 'ASC',
+          },
+          tagName: {
+            type: 'string',
+            description: 'Filter by specific tag name (e.g., "genre", "composer", "label")',
+          },
+        },
+      },
+    },
+    {
+      name: 'get_tag',
+      description: 'Get detailed information about a specific tag by ID',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the tag',
+          },
+        },
+        required: ['id'],
+      },
+    },
+    {
+      name: 'search_by_tags',
+      description: 'Search for songs/albums by specific tag criteria (e.g., find all songs with genre "Jazz" or composer "Bach")',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tagName: {
+            type: 'string',
+            description: 'Tag name to search by (e.g., "genre", "composer", "label")',
+          },
+          tagValue: {
+            type: 'string',
+            description: 'Optional tag value to match exactly',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of matching tags to return',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+        },
+        required: ['tagName'],
+      },
+    },
+    {
+      name: 'get_tag_distribution',
+      description: 'Analyze tag usage patterns and distribution across the music library',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tagNames: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Specific tag names to analyze (if omitted, analyzes all)',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of tag names to analyze',
+            minimum: 1,
+            maximum: 50,
+            default: 10,
+          },
+        },
+      },
+    },
+    {
+      name: 'list_unique_tags',
+      description: 'List all unique tag names with statistics (how many unique values, total usage)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: {
+            type: 'number',
+            description: 'Maximum number of tag names to return',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
+          minUsage: {
+            type: 'number',
+            description: 'Minimum song count to include a tag name',
+            minimum: 1,
+            default: 1,
+          },
+        },
+      },
+    },
   ];
 
   // Register list tools handler
@@ -1561,6 +1688,66 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
     if (name === 'get_current_radio_info') {
       const result = await getCurrentRadioInfo(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'list_tags') {
+      const result = await listTags(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_tag') {
+      const result = await getTag(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'search_by_tags') {
+      const result = await searchByTags(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_tag_distribution') {
+      const result = await getTagDistribution(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'list_unique_tags') {
+      const result = await listUniqueTags(client, args ?? {});
       return {
         content: [
           {

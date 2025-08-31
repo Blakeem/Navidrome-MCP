@@ -1,6 +1,6 @@
 # Navidrome MCP Server
 
-A comprehensive MCP (Model Context Protocol) server that enables AI assistants to interact with Navidrome music servers through natural language. Browse your music library, manage playlists, and discover music with clean, LLM-friendly interfaces.
+A comprehensive MCP (Model Context Protocol) server that enables AI assistants to interact with Navidrome music servers through natural language. Browse your music library, manage playlists, analyze metadata tags, and discover music with clean, LLM-friendly interfaces.
 
 ## Features
 
@@ -9,6 +9,7 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 * **Browse & Discover**: List songs, albums, artists, and genres with smart filtering and pagination
 * **Powerful Search**: Full-text search across all content types or targeted searches for specific media
 * **Detailed Lookups**: Get comprehensive information about specific tracks, albums, and artists
+* **Advanced Tag Management**: Browse, search, and analyze metadata tags (genre, composer, label, technical metadata, etc.)
 * **Clean Data**: All responses use optimized DTOs with essential fields (\~10 key properties instead of 50+ raw fields)
 
 ### 🎶 Playlist Management
@@ -129,8 +130,10 @@ Once configured, ask your assistant to use the Navidrome tools, for example:
 * 🎵 "Create a playlist called 'Weekend Vibes'"
 * 📊 "What did I listen to most this month?"
 * 🎼 "Find artists similar to Radiohead"
-* 🎯 "Rate this album 5 stars"
+* 🎯 "Rate the last played song 5 stars"
+* 🏷️ "Show me all songs with the composer Bach"
 * 📻 "Add BBC Radio 1 to my radio stations"
+* 🏷️ "What are my most common genres?"
 
 ## Available Tools
 
@@ -202,6 +205,16 @@ Once configured, ask your assistant to use the Navidrome tools, for example:
 * **`get_radio_station`**: Get detailed information about a specific radio station
 * **`play_radio_station`**: Prepare radio station for playback (returns stream URL)
 * **`get_current_radio_info`**: Get current radio playback status and metadata
+
+### 🏷️ Advanced Tag Management Tools
+
+* **`list_tags`**: Browse all metadata tags with filtering by tag name and pagination
+* **`get_tag`**: Get detailed information about a specific tag by ID
+* **`search_by_tags`**: Search for tags by name and optionally filter by specific values
+* **`get_tag_distribution`**: Analyze tag usage patterns across your music library
+* **`list_unique_tags`**: Get all unique tag names with comprehensive usage statistics
+
+**Tag Types Supported**: genre, composer, conductor, label, catalog, grouping, originalyear, musicbrainz IDs, technical metadata, and more
 
 ### 🎼 Music Discovery Tools (Last.fm)
 
@@ -304,12 +317,14 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 
 *Voice-friendly: "Play jazz radio", "Add this station to my radios", "List my radio stations"*
 
-#### 🏷️ Advanced Tag Operations
+#### ✅ Advanced Tag Operations (COMPLETED)
 
-* [ ] **Tag Search**: `search_by_tags`, `list_songs_by_composer`, `filter_by_label`
-* [ ] **Tag Analysis**: `get_tag_distribution`, `list_unique_tags`
+* [x] **Tag Management**: `list_tags`, `get_tag` for browsing all metadata tags
+* [x] **Tag Search**: `search_by_tags` for finding songs by composer, label, genre, etc.
+* [x] **Tag Analysis**: `get_tag_distribution`, `list_unique_tags` for library metadata insights
+* [x] **Rich Metadata**: Support for 20+ tag types (genre, composer, conductor, label, catalog, MusicBrainz IDs, etc.)
 
-*Advanced queries: "Show me all Bach compositions", "Find jazz from Blue Note Records"*
+*Advanced queries: "Show me all Bach compositions", "Find jazz from Blue Note Records", "What are my most common genres?"*
 
 #### 🔗 Content Sharing
 

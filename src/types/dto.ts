@@ -364,3 +364,61 @@ export interface RecentlyAddedSongsResponse {
   /** Array of recently added songs */
   songs: SongDTO[];
 }
+
+/**
+ * Clean DTO for tags, representing metadata key-value pairs
+ */
+export interface TagDTO {
+  /** Unique tag ID */
+  id: string;
+  /** Tag name (e.g., "genre", "composer", "label") */
+  tagName: string;
+  /** Tag value */
+  tagValue: string;
+  /** Number of albums with this tag */
+  albumCount: number;
+  /** Number of songs with this tag */
+  songCount: number;
+}
+
+/**
+ * Response format for listing tags with pagination
+ */
+export interface ListTagsResponse {
+  /** Array of tags */
+  tags: TagDTO[];
+  /** Total number of tags available */
+  total: number;
+  /** Pagination offset used */
+  offset: number;
+  /** Pagination limit used */
+  limit: number;
+}
+
+/**
+ * Tag distribution analysis for a specific tag name
+ */
+export interface TagDistribution {
+  /** Tag name being analyzed */
+  tagName: string;
+  /** Number of unique values for this tag name */
+  uniqueValues: number;
+  /** Total songs across all values */
+  totalSongs: number;
+  /** Total albums across all values */
+  totalAlbums: number;
+  /** Most common tag value */
+  mostCommon: TagDTO;
+  /** Distribution of values (sorted by usage) */
+  distribution: TagDTO[];
+}
+
+/**
+ * Response format for tag distribution analysis
+ */
+export interface TagDistributionResponse {
+  /** Array of tag distributions by name */
+  distributions: TagDistribution[];
+  /** Total unique tag names */
+  totalTagNames: number;
+}

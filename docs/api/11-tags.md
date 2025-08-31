@@ -13,7 +13,7 @@ List all unique tags with their usage statistics.
 - `_end` (number): Ending index
 - `_sort` (string): Sort field
 - `_order` (string): ASC/DESC
-- `filter` (string): JSON filter criteria
+- `filter` (string): JSON filter criteria **⚠️ BROKEN - See Known Issues below**
 
 **Response (200 OK):**
 ```json
@@ -58,6 +58,34 @@ Update a tag (admin-only, use with caution).
 
 ### DELETE /api/tag/{id}
 Delete a tag (admin-only, removes from all associated files).
+
+## Known Issues
+
+### ⚠️ Filter Parameter Non-Functional
+
+**Issue**: The `filter` query parameter is documented but completely broken. All filter criteria are ignored.
+
+**Expected Behavior**: 
+```bash
+# Should return only genre tags
+curl "/api/tag?filter=%7B%22tagName%22%3A%22genre%22%7D"
+```
+
+**Actual Behavior**: Returns all tags (no filtering applied)
+
+**Root Cause**: The tag repository's filter mappings in `/persistence/sql_tags.go` only include:
+- `name` - filters by tag value (not tag name)  
+- `library_id` - filters by library access
+
+Missing filter mapping for `tagName` field.
+
+**Workaround**: Use client-side filtering after fetching all tags:
+```javascript
+const allTags = await fetch('/api/tag').then(r => r.json())
+const genreTags = allTags.filter(tag => tag.tagName === 'genre')
+```
+
+**Status**: This is a bug in the Navidrome codebase that needs to be fixed upstream.
 
 ## Common Tag Names
 
@@ -165,8 +193,9 @@ const findSimilar = (tags, threshold = 0.8) => {
 ### Genre Cloud
 Generate a tag cloud from genre tags:
 ```javascript
-const genreTags = await fetch('/api/tag?filter={"tagName":"genre"}')
-  .then(r => r.json())
+// ⚠️ Note: Using client-side filtering due to broken server-side filter
+const allTags = await fetch('/api/tag').then(r => r.json())
+const genreTags = allTags.filter(tag => tag.tagName === 'genre')
 
 const tagCloud = genreTags.map(tag => ({
   text: tag.tagValue,
