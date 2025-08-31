@@ -317,14 +317,17 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 
 *Voice-friendly: "Play jazz radio", "Add this station to my radios", "List my radio stations"*
 
-#### ✅ Advanced Tag Operations (COMPLETED)
+#### ✅ Advanced Tag Operations (COMPLETED - Read-Only)
 
 * [x] **Tag Management**: `list_tags`, `get_tag` for browsing all metadata tags
 * [x] **Tag Search**: `search_by_tags` for finding songs by composer, label, genre, etc.
 * [x] **Tag Analysis**: `get_tag_distribution`, `list_unique_tags` for library metadata insights
 * [x] **Rich Metadata**: Support for 20+ tag types (genre, composer, conductor, label, catalog, MusicBrainz IDs, etc.)
+* [x] **Client-Side Filtering**: Workaround for broken server-side filtering in Navidrome API
 
 *Advanced queries: "Show me all Bach compositions", "Find jazz from Blue Note Records", "What are my most common genres?"*
+
+**⚠️ Note**: Tag modification operations (POST/PUT/DELETE) are documented in Navidrome API but not implemented in version 0.58.0. These return `405 Method Not Allowed`. Tag changes must be made through external metadata editors like Mp3tag or MusicBrainz Picard, followed by library rescanning.
 
 #### 🔗 Content Sharing
 

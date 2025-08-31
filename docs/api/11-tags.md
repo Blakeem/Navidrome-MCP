@@ -34,8 +34,10 @@ Get a specific tag by ID.
 **Response (200 OK):**
 Single tag object with usage statistics
 
-### POST /api/tag
+### POST /api/tag ⚠️ NOT IMPLEMENTED
 Create a new tag (admin-only, typically not needed).
+
+**Status**: Returns `405 Method Not Allowed` - endpoint documented but not implemented in Navidrome 0.58.0
 
 **Request Body:**
 ```json
@@ -45,8 +47,10 @@ Create a new tag (admin-only, typically not needed).
 }
 ```
 
-### PUT /api/tag/{id}
+### PUT /api/tag/{id} ⚠️ NOT IMPLEMENTED
 Update a tag (admin-only, use with caution).
+
+**Status**: Returns `405 Method Not Allowed` - endpoint documented but not implemented in Navidrome 0.58.0
 
 **Request Body:**
 ```json
@@ -56,10 +60,36 @@ Update a tag (admin-only, use with caution).
 }
 ```
 
-### DELETE /api/tag/{id}
+### DELETE /api/tag/{id} ⚠️ NOT IMPLEMENTED
 Delete a tag (admin-only, removes from all associated files).
 
+**Status**: Returns `405 Method Not Allowed` - endpoint documented but not implemented in Navidrome 0.58.0
+
 ## Known Issues
+
+### ⚠️ Tag Modification Operations Not Implemented
+
+**Issue**: POST, PUT, and DELETE operations for tags are documented but return `405 Method Not Allowed`.
+
+**Affected Operations**: 
+- `POST /api/tag` - Create new tag
+- `PUT /api/tag/{id}` - Update existing tag  
+- `DELETE /api/tag/{id}` - Delete tag
+
+**Root Cause**: The Navidrome codebase (version 0.58.0) includes API documentation for these endpoints but the actual HTTP handlers are not implemented in the routing layer.
+
+**Evidence**:
+- CORS preflight (OPTIONS) correctly shows `Access-Control-Allow-Methods: POST`
+- Admin authentication works fine for other operations (playlist creation)
+- All modification attempts return identical `405 Method Not Allowed` responses
+- File permissions are not the issue (verified 777 permissions)
+
+**Status**: This is a gap between API documentation and actual implementation in Navidrome that needs to be addressed upstream.
+
+**Workaround**: Tag modification is currently only possible through:
+1. **File metadata editing**: Use external tools like Mp3tag, Picard, or similar
+2. **Library rescanning**: After editing files, rescan the library to update tags
+3. **Direct database manipulation**: Advanced users can modify the database directly (not recommended)
 
 ### ⚠️ Filter Parameter Non-Functional
 
