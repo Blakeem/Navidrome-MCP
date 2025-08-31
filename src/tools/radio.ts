@@ -9,6 +9,7 @@ import type {
   RadioPlaybackInfo 
 } from '../types/dto.js';
 import { logger } from '../utils/logger.js';
+import { getMessageManager } from '../utils/message-manager.js';
 
 interface SubsonicResponse<T = unknown> {
   'subsonic-response': {
@@ -56,13 +57,13 @@ export async function listRadioStations(
     logger.debug('Listing radio stations', args);
     
     const authParams = createSubsonicAuth(config);
-    const response = await fetch(`${config.navidromeUrl}/rest/getInternetRadioStations?${authParams.toString()}`);
+    const httpResponse = await fetch(`${config.navidromeUrl}/rest/getInternetRadioStations?${authParams.toString()}`);
     
-    if (!response.ok) {
-      throw new Error(`Subsonic API request failed: ${response.status} ${response.statusText}`);
+    if (!httpResponse.ok) {
+      throw new Error(`Subsonic API request failed: ${httpResponse.status} ${httpResponse.statusText}`);
     }
 
-    const data = await response.json() as SubsonicResponse;
+    const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
       const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
@@ -85,11 +86,22 @@ export async function listRadioStations(
       
       return stationDto;
     });
+
+    // Get one-time message for radio list tip
+    const messageManager = getMessageManager();
+    const tip = messageManager.getMessage('radio.list_tip');
     
-    return {
+    const apiResponse: ListRadioStationsResponse = {
       stations,
       total: stations.length,
     };
+
+    // Add tip if this is the first time showing the list
+    if (tip) {
+      apiResponse.tip = tip;
+    }
+    
+    return apiResponse;
   } catch (error) {
     logger.error('Error listing radio stations:', error);
     throw new Error(`Failed to list radio stations: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -119,15 +131,15 @@ export async function createRadioStation(
       authParams.set('homePageUrl', params.homePageUrl);
     }
     
-    const response = await fetch(`${config.navidromeUrl}/rest/createInternetRadioStation?${authParams.toString()}`, {
+    const httpResponse = await fetch(`${config.navidromeUrl}/rest/createInternetRadioStation?${authParams.toString()}`, {
       method: 'POST',
     });
     
-    if (!response.ok) {
-      throw new Error(`Subsonic API request failed: ${response.status} ${response.statusText}`);
+    if (!httpResponse.ok) {
+      throw new Error(`Subsonic API request failed: ${httpResponse.status} ${httpResponse.statusText}`);
     }
 
-    const data = await response.json() as SubsonicResponse;
+    const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
       const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
@@ -145,11 +157,22 @@ export async function createRadioStation(
     if (params.homePageUrl) {
       createdStation.homePageUrl = params.homePageUrl;
     }
+
+    // Get one-time validation reminder message
+    const messageManager = getMessageManager();
+    const validationReminder = messageManager.getMessage('radio.validation_reminder');
     
-    return {
+    const apiResponse: CreateRadioStationResponse = {
       success: true,
       station: createdStation,
     };
+
+    // Add validation reminder if this is the first time creating a station
+    if (validationReminder) {
+      apiResponse.validation_reminder = validationReminder;
+    }
+    
+    return apiResponse;
   } catch (error) {
     logger.error('Error creating radio station:', error);
     return {
@@ -178,15 +201,15 @@ export async function deleteRadioStation(
     const authParams = createSubsonicAuth(config);
     authParams.set('id', params.id);
     
-    const response = await fetch(`${config.navidromeUrl}/rest/deleteInternetRadioStation?${authParams.toString()}`, {
+    const httpResponse = await fetch(`${config.navidromeUrl}/rest/deleteInternetRadioStation?${authParams.toString()}`, {
       method: 'POST',
     });
     
-    if (!response.ok) {
-      throw new Error(`Subsonic API request failed: ${response.status} ${response.statusText}`);
+    if (!httpResponse.ok) {
+      throw new Error(`Subsonic API request failed: ${httpResponse.status} ${httpResponse.statusText}`);
     }
 
-    const data = await response.json() as SubsonicResponse;
+    const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
       const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';

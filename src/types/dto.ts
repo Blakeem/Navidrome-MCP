@@ -249,6 +249,8 @@ export interface CreateRadioStationResponse {
   station?: RadioStationDTO;
   /** Error message if failed */
   error?: string;
+  /** One-time validation reminder message */
+  validation_reminder?: string;
 }
 
 /** Response from deleting a radio station */
@@ -267,6 +269,8 @@ export interface ListRadioStationsResponse {
   stations: RadioStationDTO[];
   /** Total count */
   total: number;
+  /** One-time tip message */
+  tip?: string;
 }
 
 /** Radio playback status information */

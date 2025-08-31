@@ -75,6 +75,7 @@ import {
   getTopTracksByArtist,
   getTrendingMusic,
 } from './lastfm-discovery.js';
+import { validateRadioStream } from './radio-validation.js';
 import {
   listRadioStations,
   createRadioStation,
@@ -1171,6 +1172,33 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
         },
       },
     },
+    {
+      name: 'validate_radio_stream',
+      description: 'Tests if a radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and attempts to verify audio data.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            format: 'uri',
+            description: 'The radio stream URL to validate (required)',
+          },
+          timeout: {
+            type: 'number',
+            description: 'Timeout in milliseconds (default: 8000, max: 30000)',
+            minimum: 1000,
+            maximum: 30000,
+            default: 8000,
+          },
+          followRedirects: {
+            type: 'boolean',
+            description: 'Follow HTTP redirects (default: true)',
+            default: true,
+          },
+        },
+        required: ['url'],
+      },
+    },
   ];
 
   // Register list tools handler
@@ -1748,6 +1776,18 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
     if (name === 'list_unique_tags') {
       const result = await listUniqueTags(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'validate_radio_stream') {
+      const result = await validateRadioStream(client, args ?? {});
       return {
         content: [
           {
