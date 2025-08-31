@@ -26,29 +26,52 @@ import { logger } from './utils/logger.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
 
 async function main(): Promise<void> {
-  const config = await loadConfig();
-  logger.setDebug(config.debug);
-
-  const server = new Server(
-    {
-      name: 'navidrome-mcp',
-      version: '1.0.0',
-    },
-    {
-      capabilities: MCP_CAPABILITIES,
+  try {
+    // Add startup diagnostics for troubleshooting
+    if (process.env['DEBUG'] === 'true') {
+      console.error('[DEBUG] Starting Navidrome MCP Server...');
+      console.error('[DEBUG] Node version:', process.version);
+      console.error('[DEBUG] Platform:', process.platform);
+      console.error('[DEBUG] Environment variables present:', {
+        NAVIDROME_URL: !!process.env['NAVIDROME_URL'],
+        NAVIDROME_USERNAME: !!process.env['NAVIDROME_USERNAME'],
+        NAVIDROME_PASSWORD: !!process.env['NAVIDROME_PASSWORD'],
+      });
     }
-  );
 
-  const client = new NavidromeClient(config);
-  await client.initialize();
+    const config = await loadConfig();
+    logger.setDebug(config.debug);
 
-  registerTools(server, client, config);
-  registerResources(server, client);
+    const server = new Server(
+      {
+        name: 'navidrome-mcp',
+        version: '1.0.0',
+      },
+      {
+        capabilities: MCP_CAPABILITIES,
+      }
+    );
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+    const client = new NavidromeClient(config);
+    await client.initialize();
 
-  logger.info('Navidrome MCP Server started successfully');
+    registerTools(server, client, config);
+    registerResources(server, client);
+
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+
+    logger.info('Navidrome MCP Server started successfully');
+  } catch (error) {
+    // Provide detailed error information for debugging
+    console.error('[FATAL] Failed to start Navidrome MCP Server');
+    console.error('[FATAL] Error details:', error);
+    if (error instanceof Error) {
+      console.error('[FATAL] Error message:', error.message);
+      console.error('[FATAL] Stack trace:', error.stack);
+    }
+    throw error; // Re-throw to be caught by outer handler
+  }
 }
 
 main().catch((error) => {
