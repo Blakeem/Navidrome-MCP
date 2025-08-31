@@ -33,7 +33,7 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 
 ### 📊 Listening History & Analytics
 
-* **Recently Played**: View recent tracks with play dates and filtering by time range
+* **Recently Played**: View recently played or skipped tracks
 * **Most Played Content**: Discover your most-played songs, albums, and artists
 * **Play Statistics**: Track play counts and listening patterns
 
