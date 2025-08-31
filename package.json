@@ -45,6 +45,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
     "dotenv": "^16.4.7",
+    "file-type": "^21.0.0",
     "zod": "^4.1.4"
   },
   "devDependencies": {
