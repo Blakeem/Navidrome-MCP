@@ -55,6 +55,34 @@ const ConfigSchema = z.object({
 export type Config = z.infer<typeof ConfigSchema>;
 
 export async function loadConfig(): Promise<Config> {
+  // Try to safely load .env file only in development mode
+  // MCP servers get their environment from the host application
+  if (!process.env['NAVIDROME_URL']) {
+    // Only attempt to load .env if we're missing required environment variables
+    // This suggests we're in development mode
+    try {
+      // Use import.meta.url to get absolute path, avoiding process.cwd() entirely
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      const projectRoot = join(__dirname, '..');
+      const envPath = join(projectRoot, '.env');
+      
+      // Check if we can actually access the file system
+      // This will fail gracefully if we can't
+      loadDotenv({ 
+        path: envPath,
+        // Don't override existing environment variables
+        override: false 
+      });
+    } catch {
+      // Silently ignore dotenv errors - environment variables should be
+      // provided by the MCP host (Claude Desktop) directly
+      if (process.env['DEBUG'] === 'true') {
+        console.warn('[WARN] Could not load .env file (this is expected when running as MCP server)');
+      }
+    }
+  }
+
   const rawConfig = {
     navidromeUrl: process.env['NAVIDROME_URL'],
     navidromeUsername: process.env['NAVIDROME_USERNAME'],
