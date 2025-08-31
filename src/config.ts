@@ -18,8 +18,29 @@
 
 import { z } from 'zod';
 import { config as loadDotenv } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
-loadDotenv();
+// Safely load dotenv - it's optional since environment variables
+// can be provided directly (e.g., by Claude MCP configuration)
+try {
+  // Try to load from the project root directory
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const projectRoot = join(__dirname, '..');
+  
+  loadDotenv({ 
+    path: join(projectRoot, '.env'),
+    // Don't override existing environment variables
+    override: false 
+  });
+} catch (error) {
+  // Silently ignore dotenv errors - environment variables may be
+  // provided by the MCP host (Claude) directly
+  if (process.env['DEBUG'] === 'true') {
+    console.warn('[WARN] Could not load .env file (this is normal when running as MCP server):', error);
+  }
+}
 
 const ConfigSchema = z.object({
   navidromeUrl: z.string().url('NAVIDROME_URL must be a valid URL'),
