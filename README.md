@@ -366,7 +366,6 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 * Admin features (user management, server configuration)
 * Direct streaming URLs (client-specific, security concerns)
 * Transcoding controls (technical server settings)
-* Library scanning/management (admin-only operations)
 
 ## Development & Testing
 
