@@ -1,6 +1,6 @@
 # Navidrome MCP Server
 
-A comprehensive MCP (Model Context Protocol) server that enables AI assistants to interact with Navidrome music servers through natural language. Browse your music library, manage playlists, analyze metadata tags, and discover music with clean, LLM-friendly interfaces.
+A comprehensive MCP (Model Context Protocol) server that enables AI assistants to interact with Navidrome music servers through natural language. Browse your music library, manage playlists, analyze metadata tags, discover music, and validate internet radio streams with clean, LLM-friendly interfaces.
 
 ## Features
 
@@ -47,6 +47,13 @@ A comprehensive MCP (Model Context Protocol) server that enables AI assistants t
 ### 🔄 Real-time Resources
 
 * **Server Status**: Monitor Navidrome connection and server health
+
+### 💬 Smart Contextual Messages
+
+* **One-Time Tips**: Helpful tips and recommendations that appear only once per session to avoid repetition
+* **Contextual Guidance**: Smart validation reminders when creating radio stations or managing content
+* **Progressive Disclosure**: Advanced features are introduced naturally as you use the system
+* **Session Memory**: Messages reset when you restart your AI assistant, ensuring fresh guidance when needed
 
 ## Installation for MCP Clients (Claude Desktop & OpenAI ChatGPT Desktop)
 
@@ -133,6 +140,8 @@ Once configured, ask your assistant to use the Navidrome tools, for example:
 * 🎯 "Rate the last played song 5 stars"
 * 🏷️ "Show me all songs with the composer Bach"
 * 📻 "Add BBC Radio 1 to my radio stations"
+* 🔍 "Validate this radio stream URL before I add it: https://ice1.somafm.com/groovesalad-256-mp3"
+* 📡 "Test if this SHOUTcast stream works: http://stream.example.com:8000/live"
 * 🏷️ "What are my most common genres?"
 
 ## Available Tools
@@ -199,12 +208,23 @@ Once configured, ask your assistant to use the Navidrome tools, for example:
 
 ### 📻 Internet Radio Tools
 
-* **`list_radio_stations`**: List all internet radio stations
+* **`list_radio_stations`**: List all internet radio stations with helpful tips
 * **`create_radio_station`**: Create new radio station with name, stream URL, and optional homepage (admin only)
 * **`delete_radio_station`**: Delete radio station by ID (admin only)
 * **`get_radio_station`**: Get detailed information about a specific radio station
 * **`play_radio_station`**: Prepare radio station for playback (returns stream URL)
 * **`get_current_radio_info`**: Get current radio playback status and metadata
+* **`validate_radio_stream`**: **🆕 Test radio stream URLs for validity, accessibility, and audio format**
+
+**🎯 Stream Validation Features:**
+* **Comprehensive Testing**: HTTP accessibility, content type, streaming headers, and audio data verification
+* **Format Detection**: Automatically detects MP3, AAC, OGG, FLAC, and other audio formats
+* **SHOUTcast/Icecast Support**: Extracts station metadata (name, bitrate, genre) from streaming headers
+* **Smart Recommendations**: Provides actionable feedback for valid streams or troubleshooting failed ones
+* **Timeout Handling**: Configurable validation timeouts (1-30 seconds) with graceful error handling
+* **Redirect Support**: Follows HTTP redirects to final stream destinations
+
+**💡 Pro Tip**: Always use `validate_radio_stream` before adding radio stations to avoid playback issues. Many internet radio URLs change frequently or go offline.
 
 ### 🏷️ Advanced Tag Management Tools
 
@@ -324,6 +344,13 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
   --method tools/call \
   --tool-name search_all \
   --tool-arg query="rock"
+
+# Validate a radio stream
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call \
+  --tool-name validate_radio_stream \
+  --tool-arg url="https://ice1.somafm.com/groovesalad-256-mp3" \
+  --tool-arg timeout=8000
 ```
 
 #### 3. **Development Commands**
