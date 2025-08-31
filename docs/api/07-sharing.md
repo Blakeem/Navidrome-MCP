@@ -1,5 +1,13 @@
 # Sharing API
 
+## ⚠️ Implementation Status
+
+**NOT IMPLEMENTED IN NAVIDROME**: As of Navidrome v0.58.0, sharing endpoints return:
+- **Status Code**: `501 Not Implemented`
+- **Message**: "This endpoint is not implemented, but may be in future releases"
+
+This documentation describes the planned API that will be available in future Navidrome releases.
+
 ## Overview
 Create and manage public shares for songs, albums, and playlists. Sharing must be enabled in server configuration.
 

@@ -329,7 +329,9 @@ For issues and feature requests, please use the [GitHub issue tracker](https://g
 
 **⚠️ Note**: Tag modification operations (POST/PUT/DELETE) are documented in Navidrome API but not implemented in version 0.58.0. These return `405 Method Not Allowed`. Tag changes must be made through external metadata editors like Mp3tag or MusicBrainz Picard, followed by library rescanning.
 
-#### 🔗 Content Sharing
+#### 🔗 Content Sharing (Not Yet Implemented in Navidrome)
+
+**⚠️ Note**: Sharing endpoints return `501 Not Implemented` with message "This endpoint is not implemented, but may be in future releases" (tested on Navidrome 0.58.0).
 
 * [ ] **Share Management**: `create_share`, `list_my_shares`, `delete_share`
 * [ ] **Quick Sharing**: `share_playlist`, `share_album`, `share_song`
