@@ -142,9 +142,9 @@ Add the Navidrome MCP server:
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
         "LASTFM_API_KEY": "your_api_key",
-        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)",
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
-        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)"
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"
       }
     }
   }
