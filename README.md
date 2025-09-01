@@ -74,6 +74,8 @@ This isn't just another music tool – it's your personal music curator powered 
 
 * **Global Station Database**: Access thousands of internet radio stations worldwide via Radio Browser
 * **Advanced Filtering**: Search by genre, country, language, codec, bitrate, and more
+* **Automatic Stream Validation**: All discovered stations are automatically tested for working streams
+* **Real-Time Quality Check**: Each discovery shows validation results with response times
 * **Quality Control**: Filter out broken stations and focus on high-quality streams
 * **Popularity Metrics**: Discover stations by vote count and listener engagement
 * **Station Management**: Tools for AI assistants to add discovered stations to your collection
@@ -192,10 +194,10 @@ Add the Navidrome MCP server:
 
 ### 🌍 Internet Radio Discovery
 
-* **"Discover high-quality jazz radio stations from the US with at least 128kbps bitrate"**
-* **"Find classical music stations from Europe that are currently working"**
-* **"Search for smooth jazz stations with the most votes and add the best ones to my collection"**
-* **"Show me all available radio genres and find stations for my favorite ones"**
+* **"Discover high-quality jazz radio stations from the US with at least 128kbps bitrate"** *(automatically validated)*
+* **"Find classical music stations from Europe that are currently working"** *(shows validation results)*
+* **"Search for smooth jazz stations with the most votes and add only the working ones to my collection"**
+* **"Show me all available radio genres and find stations for my favorite ones with stream testing"**
 
 ### 🎤 Lyrics & Timestamps
 
@@ -291,7 +293,7 @@ Add the Navidrome MCP server:
 | `list_radio_stations` | View all stations |
 | `create_radio_station` | Add new station |
 | `play_radio_station` | Start radio playback |
-| `discover_radio_stations` | Find internet radio stations globally |
+| `discover_radio_stations` | Find internet radio stations globally with automatic validation |
 | `get_radio_filters` | Get available search filters (genres, countries, etc.) |
 | `get_station_by_uuid` | Get detailed station information |
 | `click_station` | Register play click for popularity metrics |

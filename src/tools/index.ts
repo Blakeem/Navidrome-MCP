@@ -2274,7 +2274,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
     }
 
     if (name === 'discover_radio_stations' && hasRadioBrowser) {
-      const result = await discoverRadioStations(args ?? {});
+      const result = await discoverRadioStations(client, args ?? {});
       return {
         content: [
           {

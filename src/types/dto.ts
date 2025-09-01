@@ -461,6 +461,17 @@ export interface ExternalRadioStationDTO {
   lastCheckOk: boolean;
   /** ISO 8601 timestamp of last check */
   lastCheckTime?: string;
+  /** Stream validation results (if validated) */
+  validation?: {
+    /** Whether validation was performed */
+    validated: boolean;
+    /** Whether stream passed validation */
+    isValid: boolean;
+    /** Brief validation status */
+    status: string;
+    /** Validation duration in ms */
+    duration?: number;
+  };
 }
 
 /**
@@ -473,6 +484,13 @@ export interface DiscoverRadioStationsResponse {
   source: 'radio-browser';
   /** Mirror server used */
   mirrorUsed: string;
+  /** Validation summary (if validation was performed) */
+  validationSummary?: {
+    totalStations: number;
+    validatedStations: number;
+    workingStations: number;
+    message: string;
+  };
 }
 
 /**

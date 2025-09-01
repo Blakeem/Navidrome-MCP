@@ -24,6 +24,8 @@ import type {
   ClickRadioStationResponse,
   VoteRadioStationResponse
 } from '../types/dto.js';
+import { validateRadioStream } from './radio-validation.js';
+import type { NavidromeClient } from '../client/navidrome-client.js';
 
 const RADIO_BROWSER_BASE = process.env['RADIO_BROWSER_BASE'] || 'https://de1.api.radio-browser.info';
 const USER_AGENT = process.env['RADIO_BROWSER_USER_AGENT'] || 'Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)';
@@ -186,9 +188,81 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
 }
 
 /**
+ * Validate discovered radio stations
+ */
+async function validateDiscoveredStations(
+  client: NavidromeClient,
+  stations: ExternalRadioStationDTO[]
+): Promise<ExternalRadioStationDTO[]> {
+  // Only validate first 2 stations to keep response time reasonable
+  const maxValidations = 2;
+  const stationsToValidate = stations.slice(0, maxValidations);
+  const remainingStations = stations.slice(maxValidations);
+  
+  // Validate stations in parallel with very short timeout for discovery
+  const validationPromises = stationsToValidate.map(async (station): Promise<ExternalRadioStationDTO> => {
+    try {
+      // Very quick validation with 2 second timeout for discovery
+      const validationResult = await validateRadioStream(client, {
+        url: station.playUrl,
+        timeout: 2000
+      });
+      
+      const validation = {
+        validated: true,
+        isValid: validationResult.success,
+        status: validationResult.success 
+          ? `✅ Valid (${validationResult.testDuration}ms)`
+          : `❌ ${validationResult.status}`,
+        duration: validationResult.testDuration
+      };
+      
+      return {
+        ...station,
+        validation
+      };
+    } catch {
+      // If validation fails, mark as failed but include the station
+      return {
+        ...station,
+        validation: {
+          validated: true,
+          isValid: false,
+          status: '❌ validation failed',
+        }
+      };
+    }
+  });
+  
+  // Wait for all validations to complete with overall timeout
+  let validatedStations: ExternalRadioStationDTO[];
+  try {
+    validatedStations = await Promise.race([
+      Promise.all(validationPromises),
+      new Promise<ExternalRadioStationDTO[]>((_, reject) => 
+        setTimeout(() => reject(new Error('Validation timeout')), 5000)
+      )
+    ]);
+  } catch {
+    // If validation times out, return stations without validation
+    return [...stationsToValidate, ...remainingStations];
+  }
+  
+  // Add remaining stations without validation
+  const allStations = [...validatedStations, ...remainingStations];
+  
+  // Message manager no longer needed here since we return validation summary in response
+  
+  return allStations;
+}
+
+/**
  * Discover radio stations via Radio Browser API
  */
-export async function discoverRadioStations(args: unknown): Promise<DiscoverRadioStationsResponse> {
+export async function discoverRadioStations(
+  client: NavidromeClient,
+  args: unknown
+): Promise<DiscoverRadioStationsResponse> {
   const params = DiscoverRadioStationsArgsSchema.parse(args);
   
   try {
@@ -222,11 +296,29 @@ export async function discoverRadioStations(args: unknown): Promise<DiscoverRadi
     const data = await response.json() as RadioBrowserStation[];
     const stations = data.map(mapStationToDTO);
     
-    return {
-      stations,
+    // Automatically validate all discovered stations
+    const validatedStations = await validateDiscoveredStations(client, stations);
+    
+    // Create validation summary
+    const validatedCount = validatedStations.filter(s => s.validation?.validated).length;
+    const workingCount = validatedStations.filter(s => s.validation?.isValid).length;
+    
+    const result: DiscoverRadioStationsResponse = {
+      stations: validatedStations,
       source: 'radio-browser',
       mirrorUsed: RADIO_BROWSER_BASE
     };
+    
+    if (validatedCount > 0) {
+      result.validationSummary = {
+        totalStations: stations.length,
+        validatedStations: validatedCount,
+        workingStations: workingCount,
+        message: `Auto-validated first ${validatedCount} stations: ${workingCount} working, ${validatedCount - workingCount} not working.`
+      };
+    }
+    
+    return result;
   } catch (error) {
     throw new Error(`Failed to discover radio stations: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
