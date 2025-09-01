@@ -350,7 +350,6 @@ Documentation is licensed under Creative Commons Attribution-ShareAlike 4.0 Inte
 
 - **Issues**: [GitHub Issues](https://github.com/Blakeem/Navidrome-MCP/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/Blakeem/Navidrome-MCP/discussions)
-- **Wiki**: [Project Wiki](https://github.com/Blakeem/Navidrome-MCP/wiki)
 
 ---
 
