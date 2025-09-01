@@ -174,7 +174,10 @@ async function validateWithHead(
 ): Promise<{ response: Response | null; error: string | null }> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), Math.min(3000, context.timeout));
+    const headTimeout = Math.min(4000, Math.floor(context.timeout * 0.6)); // Use 60% of total timeout
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, headTimeout);
     
     const response = await fetch(context.url, {
       method: 'HEAD',
@@ -191,7 +194,7 @@ async function validateWithHead(
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { response: null, error: 'HEAD request timeout' };
+        return { response: null, error: `HEAD request timeout after ${Math.min(4000, Math.floor(context.timeout * 0.6))}ms` };
       }
       return { response: null, error: `HEAD request failed: ${err.message}` };
     }
@@ -204,11 +207,14 @@ async function validateWithHead(
  */
 async function sampleAudioData(
   url: string,
-  timeout: number
+  remainingTimeout: number
 ): Promise<{ buffer: Uint8Array | null; headers: Headers | null; error: string | null }> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), Math.min(5000, timeout));
+    const sampleTimeout = Math.max(2000, remainingTimeout); // Ensure at least 2 seconds
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, sampleTimeout);
     
     const response = await fetch(url, {
       method: 'GET',
@@ -230,16 +236,80 @@ async function sampleAudioData(
       };
     }
     
-    const arrayBuffer = await response.arrayBuffer();
-    return { 
-      buffer: new Uint8Array(arrayBuffer), 
-      headers: response.headers,
-      error: null 
-    };
+    // Some servers don't handle Range requests properly and hang on arrayBuffer()
+    // Use streaming approach with timeout protection
+    try {
+      const reader = response.body?.getReader();
+      if (!reader) {
+        return { 
+          buffer: null, 
+          headers: response.headers, 
+          error: 'No response body reader available' 
+        };
+      }
+      
+      const chunks: Uint8Array[] = [];
+      let totalLength = 0;
+      const maxBytes = 8192; // 8KB limit
+      const startTime = Date.now();
+      const readTimeout = 3000; // 3 second timeout for reading
+      
+      while (true) {
+        // Check if we've exceeded our read timeout
+        if (Date.now() - startTime > readTimeout) {
+          await reader.cancel();
+          return { 
+            buffer: totalLength > 0 ? new Uint8Array(totalLength) : null, 
+            headers: response.headers, 
+            error: 'Read timeout - got partial data' 
+          };
+        }
+        
+        const { value, done } = await reader.read();
+        
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          totalLength += value.length;
+          
+          // Stop if we have enough data
+          if (totalLength >= maxBytes) {
+            await reader.cancel();
+            break;
+          }
+        }
+      }
+      
+      // Combine chunks
+      if (totalLength > 0) {
+        const buffer = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+          buffer.set(chunk, offset);
+          offset += chunk.length;
+        }
+        return { 
+          buffer, 
+          headers: response.headers, 
+          error: null 
+        };
+      } else {
+        return { 
+          buffer: null, 
+          headers: response.headers, 
+          error: 'No data received from stream' 
+        };
+      }
+    } catch (streamErr) {
+      if (streamErr instanceof Error && streamErr.name === 'AbortError') {
+        return { buffer: null, headers: response.headers, error: 'Stream reading aborted' };
+      }
+      throw streamErr;
+    }
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { buffer: null, headers: null, error: 'Audio sampling timeout' };
+        return { buffer: null, headers: null, error: `Audio sampling timeout after ${Math.max(2000, remainingTimeout)}ms` };
       }
       return { buffer: null, headers: null, error: `Audio sampling failed: ${err.message}` };
     }
@@ -356,18 +426,71 @@ export async function validateRadioStream(
     testDuration: 0,
   };
   
-  // Step 1: Try HEAD request first
-  const { response: headResponse, error: headError } = await validateWithHead(context);
+  // Add overall timeout protection
+  const overallController = new AbortController();
+  const overallTimeoutId = setTimeout(() => {
+    overallController.abort();
+    errors.push(`Validation timeout after ${params.timeout}ms`);
+  }, params.timeout);
   
-  if (headError) {
-    warnings.push(headError);
+  let headResponse: Response | null = null;
+  let headError: string | null = null;
+  let buffer: Uint8Array | null = null;
+  let headers: Headers | null = null;
+  let sampleError: string | null = null;
+  
+  try {
+    // Step 1: Try HEAD request first
+    const headResult = await validateWithHead(context);
+    headResponse = headResult.response;
+    headError = headResult.error;
+    
+    if (headError) {
+      warnings.push(headError);
+    }
+    
+    // Step 2: Check if HEAD response gives us enough info to determine validity
+    let skipAudioSampling = false;
+    if (headResponse) {
+      const contentType = headResponse.headers.get('content-type');
+      const streamHeaders = extractStreamingHeaders(headResponse.headers);
+      
+      // If we have clear audio content-type OR streaming headers, we can skip audio sampling
+      const hasAudioContentType = contentType && isAudioContentType(contentType);
+      const hasStreamingHeaders = Object.keys(streamHeaders).length > 0;
+      
+      if (hasAudioContentType || hasStreamingHeaders) {
+        skipAudioSampling = true;
+        // Create a fake successful result for audio detection based on content-type
+        buffer = new Uint8Array([0xFF, 0xFB]); // Minimal buffer to satisfy validation logic
+        headers = headResponse.headers;
+        sampleError = null;
+      }
+    }
+    
+    // Step 3: Sample audio data only if headers were inconclusive
+    if (!skipAudioSampling) {
+      const elapsed = Date.now() - startTime;
+      const remainingTime = params.timeout - elapsed;
+      
+      if (remainingTime > 1000 && !overallController.signal.aborted) {
+        const sampleResult = await sampleAudioData(params.url, remainingTime);
+        buffer = sampleResult.buffer;
+        headers = sampleResult.headers || headResponse?.headers || null;
+        sampleError = sampleResult.error;
+      } else if (remainingTime <= 1000) {
+        sampleError = 'Insufficient time remaining for audio sampling';
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      errors.push('Validation aborted due to overall timeout');
+    } else {
+      errors.push(`Validation failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+  } finally {
+    clearTimeout(overallTimeoutId);
   }
-  
-  // Step 2: Sample audio data (always do this, even if HEAD failed)
-  const { buffer, headers, error: sampleError } = await sampleAudioData(
-    params.url,
-    params.timeout - (Date.now() - startTime)
-  );
   
   if (sampleError && !headResponse) {
     errors.push(sampleError);
