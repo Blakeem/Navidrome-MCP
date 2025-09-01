@@ -89,7 +89,11 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
       "env": {
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "username", 
-        "NAVIDROME_PASSWORD": "password"
+        "NAVIDROME_PASSWORD": "password",
+        "LASTFM_API_KEY": "your_api_key",
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)",
+        "LYRICS_PROVIDER": "lrclib",
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)"
       }
     }
   }

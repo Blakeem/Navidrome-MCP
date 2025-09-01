@@ -24,12 +24,14 @@ Transform your Navidrome music server with an AI-powered music assistant. This M
 
 ## Why Navidrome MCP?
 
-Imagine having an AI assistant that truly understands your music taste. One that can:
+Imagine having an AI assistant that truly understands your music taste. This MCP server enables AI assistants to:
 
 - **Analyze your listening patterns** and create perfectly curated playlists
 - **Discover hidden gems** in your library based on your mood or activity
 - **Build custom radio stations** from your favorite tracks
 - **Find music similar to what you love** using Last.fm's recommendation engine
+- **Discover internet radio stations** from around the world with advanced filtering
+- **Get synchronized lyrics** with millisecond-precision timestamps for your favorite tracks
 - **Manage your library** with simple conversational commands
 
 This isn't just another music tool – it's your personal music curator powered by AI.
@@ -46,7 +48,7 @@ This isn't just another music tool – it's your personal music curator powered 
 
 ### 🎶 Intelligent Playlist Creation
 
-* **AI-Curated Playlists**: Let AI analyze your taste and build themed playlists
+* **AI Assistant Integration**: Enables AI assistants to analyze your taste and build themed playlists
 * **Smart Management**: Create, update, and organize playlists conversationally
 * **Flexible Track Addition**: Add songs by ID, entire albums, artist discographies, or specific discs
 * **Dynamic Reordering**: Rearrange tracks with simple commands
@@ -54,11 +56,11 @@ This isn't just another music tool – it's your personal music curator powered 
 
 ### 🎼 Personalized Music Discovery
 
-* **Taste Analysis**: AI understands your preferences from listening history
+* **Listening Data Access**: Provides listening history data for AI assistants to understand your preferences
 * **Similar Artist/Track Finding**: Discover music similar to your favorites via Last.fm
 * **Artist Deep Dives**: Get biographies, popular tracks, and related artists
 * **Global Trends**: Browse worldwide music charts and trending genres
-* **Hidden Gem Detection**: Find overlooked tracks in your library that match your taste
+* **Library Analysis Tools**: Access data to help AI assistants find overlooked tracks in your library
 
 ### 📻 Smart Radio Management
 
@@ -68,20 +70,36 @@ This isn't just another music tool – it's your personal music curator powered 
 * **Custom Station Creation**: Build radio stations from your collection
 * **One-Time Setup Tips**: Smart contextual help that appears only when needed
 
+### 🌍 Internet Radio Discovery
+
+* **Global Station Database**: Access thousands of internet radio stations worldwide via Radio Browser
+* **Advanced Filtering**: Search by genre, country, language, codec, bitrate, and more
+* **Quality Control**: Filter out broken stations and focus on high-quality streams
+* **Popularity Metrics**: Discover stations by vote count and listener engagement
+* **Station Management**: Tools for AI assistants to add discovered stations to your collection
+
+### 🎤 Synchronized Lyrics
+
+* **Time-Synchronized Lyrics**: Get lyrics with millisecond-precision timestamps for line-by-line timing
+* **Dual Format Support**: Access both time-synced and plain text lyrics
+* **Community-Powered**: Lyrics sourced from LRCLIB's community database
+* **Smart Matching**: Automatic matching by title, artist, album, and duration
+* **No API Keys Required**: Free lyrics access without registration
+
 ### 📊 Analytics & Insights
 
 * **Listening Patterns**: Understand your music habits with play statistics
 * **Taste Evolution**: Track how your preferences change over time
 * **Most/Least Played**: Discover your true favorites and forgotten tracks
-* **Genre Distribution**: Visualize your library's composition
-* **Smart Recommendations**: Get AI-powered suggestions based on your history
+* **Genre Distribution**: Access data about your library's composition for analysis
+* **Recommendation Data**: Provides data for AI assistants to generate suggestions based on your history
 
 ### ⭐ Preference Management
 
 * **Star System**: Mark favorites for quick access
 * **5-Star Ratings**: Rate content for better recommendations
 * **Queue Control**: Manage playback queues across devices
-* **Collection Organization**: AI helps organize based on your preferences
+* **Data Access for Organization**: Provides preference data for AI assistants to help organize your collection
 
 ## Installation
 
@@ -122,7 +140,10 @@ Add the Navidrome MCP server:
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
-        "LASTFM_API_KEY": "your_api_key"
+        "LASTFM_API_KEY": "your_api_key",
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)",
+        "LYRICS_PROVIDER": "lrclib",
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)"
       }
     }
   }
@@ -131,7 +152,10 @@ Add the Navidrome MCP server:
 
 **Important**: 
 - Use absolute paths (full path from root)
-- Get a free Last.fm API key at [Last.fm](https://www.last.fm/api)
+- Get a free Last.fm API key at [Last.fm](https://www.last.fm/api) (optional - enables music discovery)
+- Radio Browser integration requires a User-Agent string (enables station discovery)
+- Lyrics integration works without API keys (LRCLIB is free)
+- Features are automatically enabled/disabled based on available configuration
 - Restart Claude Desktop after saving
 
 ### Configure ChatGPT Desktop
@@ -166,6 +190,20 @@ Add the Navidrome MCP server:
 * **"Create custom radio stations based on my top 3 genres"**
 * **"Find working jazz radio streams and validate them before adding"**
 
+### 🌍 Internet Radio Discovery
+
+* **"Discover high-quality jazz radio stations from the US with at least 128kbps bitrate"**
+* **"Find classical music stations from Europe that are currently working"**
+* **"Search for smooth jazz stations with the most votes and add the best ones to my collection"**
+* **"Show me all available radio genres and find stations for my favorite ones"**
+
+### 🎤 Lyrics & Timestamps
+
+* **"Get the synchronized lyrics for 'Bohemian Rhapsody' with timing data"**
+* **"Find lyrics with timestamps for my entire playlist"**
+* **"Show me both the time-synced and plain text lyrics for this song"**
+* **"Get lyrics for the currently playing track with line timing data"**
+
 ### 📊 Library Intelligence
 
 * **"What's my music taste evolution over the last 6 months?"**
@@ -186,7 +224,7 @@ Add the Navidrome MCP server:
 
 | Tool | Description |
 |------|-------------|
-| `test_connection` | Verify Navidrome server connectivity |
+| `test_connection` | Verify Navidrome server connectivity and feature status |
 
 ### 📚 Library Management
 
@@ -253,6 +291,17 @@ Add the Navidrome MCP server:
 | `list_radio_stations` | View all stations |
 | `create_radio_station` | Add new station |
 | `play_radio_station` | Start radio playback |
+| `discover_radio_stations` | Find internet radio stations globally |
+| `get_radio_filters` | Get available search filters (genres, countries, etc.) |
+| `get_station_by_uuid` | Get detailed station information |
+| `click_station` | Register play click for popularity metrics |
+| `vote_station` | Vote for a radio station |
+
+### 🎤 Lyrics & Timestamps
+
+| Tool | Description |
+|------|-------------|
+| `get_lyrics` | Get synchronized and plain text lyrics |
 
 ### 🏷️ Metadata & Tags
 

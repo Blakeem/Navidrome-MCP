@@ -48,6 +48,12 @@ Required environment variables:
 - `NAVIDROME_URL`: Full URL to Navidrome server (e.g., http://192.168.86.100:4533)
 - `NAVIDROME_USERNAME`: Username for authentication
 - `NAVIDROME_PASSWORD`: Password for authentication
+
+Optional environment variables (enable additional features):
+- `LASTFM_API_KEY`: Last.fm API key for music discovery and recommendations
+- `RADIO_BROWSER_USER_AGENT`: User agent for Radio Browser API (enables radio station discovery)
+- `LYRICS_PROVIDER`: Lyrics provider (set to "lrclib" to enable lyrics)
+- `LRCLIB_USER_AGENT`: User agent for LRCLIB API (enables synchronized lyrics)
 - `DEBUG`: Enable debug logging (optional, default: false)
 - `CACHE_TTL`: Cache time-to-live in seconds (optional, default: 300)
 - `TOKEN_EXPIRY`: JWT token expiry in seconds (optional, default: 86400)

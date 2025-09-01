@@ -67,7 +67,10 @@ Valid example:
         "NAVIDROME_URL": "https://your-server.com",
         "NAVIDROME_USERNAME": "your-username",
         "NAVIDROME_PASSWORD": "your-password",
-        "LASTFM_API_KEY": "your-api-key"
+        "LASTFM_API_KEY": "your-api-key",
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)",
+        "LYRICS_PROVIDER": "lrclib",
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)"
       }
     }
   }
@@ -121,6 +124,10 @@ For troubleshooting, add debug mode to your configuration:
         "NAVIDROME_URL": "https://your-server.com",
         "NAVIDROME_USERNAME": "your-username",
         "NAVIDROME_PASSWORD": "your-password",
+        "LASTFM_API_KEY": "your-api-key",
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)",
+        "LYRICS_PROVIDER": "lrclib",
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/your-username/Navidrome-MCP)",
         "DEBUG": "true"
       }
     }

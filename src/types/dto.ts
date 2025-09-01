@@ -426,3 +426,143 @@ export interface TagDistributionResponse {
   /** Total unique tag names */
   totalTagNames: number;
 }
+
+/**
+ * External radio station from Radio Browser API
+ */
+export interface ExternalRadioStationDTO {
+  /** Unique station UUID */
+  stationUuid: string;
+  /** Station name */
+  name: string;
+  /** Resolved play URL (preferred over raw URL) */
+  playUrl: string;
+  /** Station homepage URL */
+  homepage?: string;
+  /** Station favicon/logo URL */
+  favicon?: string;
+  /** Tags/genres for the station */
+  tags: string[];
+  /** Country code (ISO 3166) */
+  countryCode?: string;
+  /** Language codes */
+  languageCodes: string[];
+  /** Audio codec (MP3, AAC, OGG, etc.) */
+  codec?: string;
+  /** Bitrate in kbps */
+  bitrate?: number;
+  /** Whether station uses HLS streaming */
+  hls: boolean;
+  /** Number of votes */
+  votes: number;
+  /** Total click count */
+  clickCount: number;
+  /** Whether last check was successful */
+  lastCheckOk: boolean;
+  /** ISO 8601 timestamp of last check */
+  lastCheckTime?: string;
+}
+
+/**
+ * Response from radio station discovery
+ */
+export interface DiscoverRadioStationsResponse {
+  /** Array of discovered stations */
+  stations: ExternalRadioStationDTO[];
+  /** Data source */
+  source: 'radio-browser';
+  /** Mirror server used */
+  mirrorUsed: string;
+}
+
+/**
+ * Radio filter options for UI pickers
+ */
+export interface RadioFiltersResponse {
+  /** Available tags/genres */
+  tags?: Array<{
+    name: string;
+    stationCount: number;
+  }>;
+  /** Available countries */
+  countries?: Array<{
+    code: string;
+    name: string;
+    stationCount: number;
+  }>;
+  /** Available languages */
+  languages?: Array<{
+    code: string;
+    name: string;
+    stationCount: number;
+  }>;
+  /** Available codecs */
+  codecs?: Array<{
+    name: string;
+    stationCount: number;
+  }>;
+}
+
+/**
+ * Response from clicking/playing a radio station
+ */
+export interface ClickRadioStationResponse {
+  /** Success status */
+  ok: boolean;
+  /** Canonical play URL */
+  playUrl: string;
+  /** Response message */
+  message: string;
+}
+
+/**
+ * Response from voting for a radio station
+ */
+export interface VoteRadioStationResponse {
+  /** Success status */
+  ok: boolean;
+  /** Response message */
+  message: string;
+}
+
+/**
+ * Synced lyrics line with timestamp
+ */
+export interface LyricsLine {
+  /** Time in milliseconds */
+  timeMs: number;
+  /** Lyrics text for this line */
+  text: string;
+}
+
+/**
+ * Lyrics response DTO
+ */
+export interface LyricsDTO {
+  /** Track information */
+  track: {
+    /** Track title */
+    title: string;
+    /** Artist name */
+    artist: string;
+    /** Album name */
+    album?: string;
+    /** Duration in milliseconds */
+    durationMs?: number;
+  };
+  /** Synced lyrics (LRC format) */
+  synced?: LyricsLine[];
+  /** Plain unsynced lyrics */
+  unsynced?: string;
+  /** Whether track is instrumental */
+  isInstrumental: boolean;
+  /** Lyrics provider */
+  provider: 'lrclib';
+  /** Attribution information */
+  attribution: {
+    /** Provider URL */
+    url: string;
+    /** License information */
+    license?: string;
+  };
+}

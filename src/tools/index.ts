@@ -91,9 +91,46 @@ import {
   getTagDistribution,
   listUniqueTags,
 } from './tags.js';
+import {
+  discoverRadioStations,
+  getRadioFilters,
+  getStationByUuid,
+  clickStation,
+  voteStation,
+} from './radio-discovery.js';
+import { getLyrics } from './lyrics.js';
 
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
-  // Define available tools
+  // Check feature configurations
+  const hasLastFm = (() => {
+    const apiKey = process.env['LASTFM_API_KEY'];
+    const configured = !!(apiKey && apiKey.trim());
+    if (!configured && config.debug) {
+      console.log('[DEBUG] Last.fm tools disabled: LASTFM_API_KEY not configured');
+    }
+    return configured;
+  })();
+
+  const hasRadioBrowser = (() => {
+    const userAgent = process.env['RADIO_BROWSER_USER_AGENT'];
+    const configured = !!(userAgent && userAgent.trim());
+    if (!configured && config.debug) {
+      console.log('[DEBUG] Radio Browser discovery tools disabled: RADIO_BROWSER_USER_AGENT not configured');
+    }
+    return configured;
+  })();
+
+  const hasLyrics = (() => {
+    const provider = process.env['LYRICS_PROVIDER'];
+    const userAgent = process.env['LRCLIB_USER_AGENT'];
+    const configured = !!(provider && provider.trim() && userAgent && userAgent.trim());
+    if (!configured && config.debug) {
+      console.log('[DEBUG] Lyrics tools disabled: LYRICS_PROVIDER and LRCLIB_USER_AGENT must be configured');
+    }
+    return configured;
+  })();
+
+  // Define core tools (always available)
   const tools: Tool[] = [
     {
       name: 'test_connection',
@@ -1199,7 +1236,445 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
         required: ['url'],
       },
     },
+    {
+      name: 'discover_radio_stations',
+      description: 'Find internet radio stations via Radio Browser API. Search by query, tags/genres, country, language, codec, bitrate, and more.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query for station names',
+          },
+          tag: {
+            type: 'string',
+            description: 'Filter by tag/genre (e.g., "jazz", "rock", "classical")',
+          },
+          countryCode: {
+            type: 'string',
+            description: 'ISO country code (e.g., "US", "GB", "FR")',
+          },
+          language: {
+            type: 'string',
+            description: 'Language code (e.g., "english", "spanish", "french")',
+          },
+          codec: {
+            type: 'string',
+            description: 'Audio codec (e.g., "MP3", "AAC", "OGG")',
+          },
+          bitrateMin: {
+            type: 'number',
+            description: 'Minimum bitrate in kbps',
+            minimum: 0,
+          },
+          isHttps: {
+            type: 'boolean',
+            description: 'Filter for HTTPS streams only',
+          },
+          order: {
+            type: 'string',
+            description: 'Sort order',
+            enum: ['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random'],
+          },
+          reverse: {
+            type: 'boolean',
+            description: 'Reverse sort order',
+          },
+          offset: {
+            type: 'number',
+            description: 'Pagination offset',
+            minimum: 0,
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum results (1-500)',
+            minimum: 1,
+            maximum: 500,
+            default: 50,
+          },
+          hideBroken: {
+            type: 'boolean',
+            description: 'Hide broken stations',
+            default: true,
+          },
+        },
+      },
+    },
+    {
+      name: 'get_radio_filters',
+      description: 'Get available filter options for radio station discovery (tags, countries, languages, codecs)',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          kinds: {
+            type: 'array',
+            description: 'Filter types to retrieve',
+            items: {
+              type: 'string',
+              enum: ['tags', 'countries', 'languages', 'codecs'],
+            },
+            default: ['tags', 'countries', 'languages', 'codecs'],
+          },
+        },
+      },
+    },
+    {
+      name: 'get_station_by_uuid',
+      description: 'Get detailed information about a specific radio station by its UUID',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          stationUuid: {
+            type: 'string',
+            description: 'The unique UUID of the radio station',
+          },
+        },
+        required: ['stationUuid'],
+      },
+    },
+    {
+      name: 'click_station',
+      description: 'Register a play click for a radio station (helps with popularity metrics). Call this when starting playback.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          stationUuid: {
+            type: 'string',
+            description: 'The unique UUID of the radio station',
+          },
+        },
+        required: ['stationUuid'],
+      },
+    },
+    {
+      name: 'vote_station',
+      description: 'Vote for a radio station to increase its popularity',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          stationUuid: {
+            type: 'string',
+            description: 'The unique UUID of the radio station',
+          },
+        },
+        required: ['stationUuid'],
+      },
+    },
+    {
+      name: 'get_lyrics',
+      description: 'Get lyrics for a song (both synced and unsynced). Returns timed lyrics for karaoke-style display when available.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Song title',
+          },
+          artist: {
+            type: 'string',
+            description: 'Artist name',
+          },
+          album: {
+            type: 'string',
+            description: 'Album name (improves match accuracy)',
+          },
+          durationMs: {
+            type: 'number',
+            description: 'Song duration in milliseconds (improves match accuracy)',
+            minimum: 0,
+          },
+          id: {
+            type: 'string',
+            description: 'LRCLIB record ID if known',
+          },
+        },
+        required: ['title', 'artist'],
+      },
+    },
   ];
+
+  // Add conditional tools based on configuration
+  if (hasLastFm) {
+    tools.push(
+      {
+        name: 'get_similar_artists',
+        description: 'Get similar artists using Last.fm API',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            artist: {
+              type: 'string',
+              description: 'Name of the artist to find similar artists for',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of similar artists to return (1-100)',
+              minimum: 1,
+              maximum: 100,
+              default: 20,
+            },
+          },
+          required: ['artist'],
+        },
+      },
+      {
+        name: 'get_similar_tracks',
+        description: 'Get similar tracks using Last.fm API',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            artist: {
+              type: 'string',
+              description: 'Name of the track artist',
+            },
+            track: {
+              type: 'string',
+              description: 'Name of the track',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of similar tracks to return (1-100)',
+              minimum: 1,
+              maximum: 100,
+              default: 20,
+            },
+          },
+          required: ['artist', 'track'],
+        },
+      },
+      {
+        name: 'get_artist_info',
+        description: 'Get detailed artist information from Last.fm',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            artist: {
+              type: 'string',
+              description: 'Name of the artist to get information for',
+            },
+            lang: {
+              type: 'string',
+              description: 'Language for the biography (ISO 639 code)',
+              default: 'en',
+            },
+          },
+          required: ['artist'],
+        },
+      },
+      {
+        name: 'get_top_tracks_by_artist',
+        description: 'Get top tracks for an artist from Last.fm',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            artist: {
+              type: 'string',
+              description: 'Name of the artist',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of top tracks to return (1-50)',
+              minimum: 1,
+              maximum: 50,
+              default: 10,
+            },
+          },
+          required: ['artist'],
+        },
+      },
+      {
+        name: 'get_trending_music',
+        description: 'Get trending music charts from Last.fm',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            type: {
+              type: 'string',
+              description: 'Type of chart to get',
+              enum: ['artists', 'tracks', 'tags'],
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum number of items to return (1-100)',
+              minimum: 1,
+              maximum: 100,
+              default: 20,
+            },
+            page: {
+              type: 'number',
+              description: 'Page number for pagination',
+              minimum: 1,
+              default: 1,
+            },
+          },
+          required: ['type'],
+        },
+      }
+    );
+  }
+
+  if (hasRadioBrowser) {
+    tools.push(
+      {
+        name: 'discover_radio_stations',
+        description: 'Find internet radio stations via Radio Browser API. Search by query, tags/genres, country, language, codec, bitrate, and more.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search query for station names',
+            },
+            tag: {
+              type: 'string',
+              description: 'Filter by tag/genre (e.g., "jazz", "rock", "classical")',
+            },
+            countryCode: {
+              type: 'string',
+              description: 'ISO country code (e.g., "US", "GB", "FR")',
+            },
+            language: {
+              type: 'string',
+              description: 'Language code (e.g., "english", "spanish", "french")',
+            },
+            codec: {
+              type: 'string',
+              description: 'Audio codec (e.g., "MP3", "AAC", "OGG")',
+            },
+            bitrateMin: {
+              type: 'number',
+              description: 'Minimum bitrate in kbps',
+              minimum: 0,
+            },
+            isHttps: {
+              type: 'boolean',
+              description: 'Filter for HTTPS streams only',
+            },
+            order: {
+              type: 'string',
+              description: 'Sort order',
+              enum: ['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random'],
+            },
+            reverse: {
+              type: 'boolean',
+              description: 'Reverse sort order',
+            },
+            offset: {
+              type: 'number',
+              description: 'Pagination offset',
+              minimum: 0,
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum results (1-500)',
+              minimum: 1,
+              maximum: 500,
+              default: 50,
+            },
+            hideBroken: {
+              type: 'boolean',
+              description: 'Hide broken stations',
+              default: true,
+            },
+          },
+        },
+      },
+      {
+        name: 'get_radio_filters',
+        description: 'Get available filter options for radio station discovery (tags, countries, languages, codecs)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            kinds: {
+              type: 'array',
+              description: 'Filter types to retrieve',
+              items: {
+                type: 'string',
+                enum: ['tags', 'countries', 'languages', 'codecs'],
+              },
+              default: ['tags', 'countries', 'languages', 'codecs'],
+            },
+          },
+        },
+      },
+      {
+        name: 'get_station_by_uuid',
+        description: 'Get detailed information about a specific radio station by its UUID',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            stationUuid: {
+              type: 'string',
+              description: 'The unique UUID of the radio station',
+            },
+          },
+          required: ['stationUuid'],
+        },
+      },
+      {
+        name: 'click_station',
+        description: 'Register a play click for a radio station (helps with popularity metrics). Call this when starting playback.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            stationUuid: {
+              type: 'string',
+              description: 'The unique UUID of the radio station',
+            },
+          },
+          required: ['stationUuid'],
+        },
+      },
+      {
+        name: 'vote_station',
+        description: 'Vote for a radio station to increase its popularity',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            stationUuid: {
+              type: 'string',
+              description: 'The unique UUID of the radio station',
+            },
+          },
+          required: ['stationUuid'],
+        },
+      }
+    );
+  }
+
+  if (hasLyrics) {
+    tools.push({
+      name: 'get_lyrics',
+      description: 'Get lyrics for a song (both synced and unsynced). Returns timed lyrics for karaoke-style display when available.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Song title',
+          },
+          artist: {
+            type: 'string',
+            description: 'Artist name',
+          },
+          album: {
+            type: 'string',
+            description: 'Album name (improves match accuracy)',
+          },
+          durationMs: {
+            type: 'number',
+            description: 'Song duration in milliseconds (improves match accuracy)',
+            minimum: 0,
+          },
+          id: {
+            type: 'string',
+            description: 'LRCLIB record ID if known',
+          },
+        },
+        required: ['title', 'artist'],
+      },
+    });
+  }
 
   // Register list tools handler
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -1594,7 +2069,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       };
     }
 
-    if (name === 'get_similar_artists') {
+    if (name === 'get_similar_artists' && hasLastFm) {
       const result = await getSimilarArtists(config, args ?? {});
       return {
         content: [
@@ -1606,7 +2081,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       };
     }
 
-    if (name === 'get_similar_tracks') {
+    if (name === 'get_similar_tracks' && hasLastFm) {
       const result = await getSimilarTracks(config, args ?? {});
       return {
         content: [
@@ -1618,7 +2093,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       };
     }
 
-    if (name === 'get_artist_info') {
+    if (name === 'get_artist_info' && hasLastFm) {
       const result = await getArtistInfo(config, args ?? {});
       return {
         content: [
@@ -1630,7 +2105,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       };
     }
 
-    if (name === 'get_top_tracks_by_artist') {
+    if (name === 'get_top_tracks_by_artist' && hasLastFm) {
       const result = await getTopTracksByArtist(config, args ?? {});
       return {
         content: [
@@ -1642,7 +2117,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       };
     }
 
-    if (name === 'get_trending_music') {
+    if (name === 'get_trending_music' && hasLastFm) {
       const result = await getTrendingMusic(config, args ?? {});
       return {
         content: [
@@ -1788,6 +2263,78 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
     if (name === 'validate_radio_stream') {
       const result = await validateRadioStream(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'discover_radio_stations' && hasRadioBrowser) {
+      const result = await discoverRadioStations(args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_radio_filters' && hasRadioBrowser) {
+      const result = await getRadioFilters(args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_station_by_uuid' && hasRadioBrowser) {
+      const result = await getStationByUuid(args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'click_station' && hasRadioBrowser) {
+      const result = await clickStation(args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'vote_station' && hasRadioBrowser) {
+      const result = await voteStation(args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'get_lyrics' && hasLyrics) {
+      const result = await getLyrics(args ?? {});
       return {
         content: [
           {

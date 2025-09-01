@@ -30,6 +30,23 @@ export interface TestConnectionResult {
     url: string;
     authenticated: boolean;
     timestamp: string;
+    features?: {
+      lastfm: {
+        enabled: boolean;
+        description: string;
+        tools: string[];
+      };
+      radioBrowser: {
+        enabled: boolean;
+        description: string;
+        tools: string[];
+      };
+      lyrics: {
+        enabled: boolean;
+        description: string;
+        tools: string[];
+      };
+    };
   };
 }
 
@@ -54,10 +71,56 @@ export async function testConnection(
     };
 
     if (params.includeServerInfo) {
+      // Check feature configurations
+      const hasLastFm = (() => {
+        const apiKey = process.env['LASTFM_API_KEY'];
+        return !!(apiKey && apiKey.trim());
+      })();
+
+      const hasRadioBrowser = (() => {
+        const userAgent = process.env['RADIO_BROWSER_USER_AGENT'];
+        return !!(userAgent && userAgent.trim());
+      })();
+
+      const hasLyrics = (() => {
+        const provider = process.env['LYRICS_PROVIDER'];
+        const userAgent = process.env['LRCLIB_USER_AGENT'];
+        return !!(provider && provider.trim() && userAgent && userAgent.trim());
+      })();
+
       result.serverInfo = {
         url: 'Connected to Navidrome',
         authenticated: true,
         timestamp: new Date().toISOString(),
+        features: {
+          lastfm: {
+            enabled: hasLastFm,
+            description: hasLastFm 
+              ? 'Last.fm integration enabled - music discovery and recommendations available'
+              : 'Last.fm integration disabled - LASTFM_API_KEY not configured',
+            tools: hasLastFm 
+              ? ['get_similar_artists', 'get_similar_tracks', 'get_artist_info', 'get_top_tracks_by_artist', 'get_trending_music']
+              : []
+          },
+          radioBrowser: {
+            enabled: hasRadioBrowser,
+            description: hasRadioBrowser
+              ? 'Radio Browser integration enabled - internet radio station discovery available'
+              : 'Radio Browser integration disabled - RADIO_BROWSER_USER_AGENT not configured',
+            tools: hasRadioBrowser
+              ? ['discover_radio_stations', 'get_radio_filters', 'get_station_by_uuid', 'click_station', 'vote_station']
+              : []
+          },
+          lyrics: {
+            enabled: hasLyrics,
+            description: hasLyrics
+              ? 'Lyrics integration enabled via LRCLIB - synced and unsynced lyrics available'
+              : 'Lyrics integration disabled - LYRICS_PROVIDER and LRCLIB_USER_AGENT must be configured',
+            tools: hasLyrics
+              ? ['get_lyrics']
+              : []
+          }
+        }
       };
     }
 
