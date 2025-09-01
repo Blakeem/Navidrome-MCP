@@ -171,53 +171,40 @@ Add the Navidrome MCP server:
 
 ## Powerful Usage Examples
 
-### 🎯 Intelligent Playlist Creation
+### 🎯 Smart Discovery & Playlist Creation
 
-* **"Analyze my top 50 most played songs and create a 'Ultimate Favorites' playlist with similar tracks I haven't discovered yet"**
-* **"Build me a workout playlist with high-energy tracks from my library, focusing on 120-140 BPM"**
-* **"Create a 'Sunday Morning' playlist with mellow tracks from my jazz and acoustic collections"**
-* **"Make a road trip playlist mixing my favorite rock with some hidden gems I've never played"**
+* **"Look at my most played artists, find what albums I'm missing from their discographies, and tell me which ones are most popular"**
+* **"Create a 'Best of Pink Floyd' playlist using Last.fm's top tracks data, but only with songs I actually own"**
+* **"Analyze my recently played songs, find similar tracks in my library I haven't played in 6 months, and create a rediscovery playlist"**
+* **"Build me a playlist mixing my top 10 most played songs with similar tracks from artists I own but rarely listen to"**
 
-### 🔍 Music Discovery & Analysis
+### 🔍 Collection Gap Analysis
 
-* **"What genres do I listen to most? Show me artists I own but rarely play"**
-* **"Find all songs in my library similar to Radiohead but from different artists"**
-* **"Analyze my listening patterns and suggest 10 albums I should explore more"**
-* **"Show me all the progressive rock tracks longer than 8 minutes that I've rated 4+ stars"**
+* **"Show me which albums are missing from my top 5 most played artists and rank them by Last.fm popularity"**
+* **"Find artists where I only own singles or compilations, not their main albums"**
+* **"Identify my favorite genres, then show me highly-rated albums in those genres that I don't own"**
+* **"Look at artists similar to my favorites and tell me which ones I already have in my library but never play"**
 
-### 📻 Smart Radio Station Management
+### 📻 Radio Station Maintenance
 
-* **"Test these 5 radio stream URLs and add only the working ones to my collection"**
-* **"Create custom radio stations based on my top 3 genres"**
-* **"Find working jazz radio streams and validate them before adding"**
+* **"Go through all my existing radio stations, validate each one, and create a list of broken stations to remove"**
+* **"Here are 10 jazz radio URLs I found online - test them all and add only the working ones with good bitrates"**
+* **"Find the top-voted jazz and classical stations worldwide, validate them, and add the best 5 of each genre"**
+* **"Check all my radio stations and replace any broken ones with similar working stations"**
 
-### 🌍 Internet Radio Discovery
+### 🎼 Advanced Playlist Automation
 
-* **"Discover high-quality jazz radio stations from the US with at least 128kbps bitrate"**
-* **"Find classical music stations from Europe that are currently working"**
-* **"Search for smooth jazz stations with the most votes and add only the working ones to my collection"**
-* **"Show me all available radio genres and find stations for my favorite ones"**
+* **"Create a 'Hidden Gems' playlist with 5-star rated songs that have less than 5 plays"**
+* **"Build weekly playlists based on what I listened to most each month of last year"**
+* **"Make a 'Complete Artist Journey' playlist with one top track from each album of my top 10 artists, in chronological order"**
+* **"Generate mood playlists by analyzing my listening patterns: what I play in mornings vs evenings vs weekends"**
 
-### 🎤 Lyrics & Timestamps
+### 📊 Listening Insights & Organization
 
-* **"Get the synchronized lyrics for 'Bohemian Rhapsody' with timing data"**
-* **"Find lyrics with timestamps for my entire playlist"**
-* **"Show me both the time-synced and plain text lyrics for this song"**
-* **"Get lyrics for the currently playing track with line timing data"**
-
-### 📊 Library Intelligence
-
-* **"What's my music taste evolution over the last 6 months?"**
-* **"Find albums I've only listened to once that match my usual preferences"**
-* **"Show me artists where I own less than 20% of their discography"**
-* **"Which songs do I skip most often? Maybe I should remove them"**
-
-### 🎼 Advanced Curation
-
-* **"Find all classical music by Bach and create separate playlists for each instrument type"**
-* **"Build a 'Discovery' playlist with one song from each artist I've added this year"**
-* **"Create mood-based playlists: Happy, Melancholic, Energetic, and Relaxing based on my ratings"**
-* **"Find cover versions of songs in my library and create a 'Covers vs Originals' playlist"**
+* **"Analyze my jazz collection: show play counts, ratings, and find which albums I've never fully listened to"**
+* **"Find duplicate songs across different albums and create a cleanup list"**
+* **"Show me my listening evolution: which genres I've moved away from and which I'm playing more"**
+* **"Identify 'one-hit wonders' in my library - artists where I only play one song repeatedly"**
 
 ## Available Tools
 
