@@ -72,17 +72,17 @@ export async function testConnection(
 
     if (params.includeServerInfo) {
       // Check feature configurations
-      const hasLastFm = (() => {
+      const hasLastFm = ((): boolean => {
         const apiKey = process.env['LASTFM_API_KEY'];
         return !!(apiKey && apiKey.trim());
       })();
 
-      const hasRadioBrowser = (() => {
+      const hasRadioBrowser = ((): boolean => {
         const userAgent = process.env['RADIO_BROWSER_USER_AGENT'];
         return !!(userAgent && userAgent.trim());
       })();
 
-      const hasLyrics = (() => {
+      const hasLyrics = ((): boolean => {
         const provider = process.env['LYRICS_PROVIDER'];
         const userAgent = process.env['LRCLIB_USER_AGENT'];
         return !!(provider && provider.trim() && userAgent && userAgent.trim());

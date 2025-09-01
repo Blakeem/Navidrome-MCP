@@ -102,30 +102,30 @@ import { getLyrics } from './lyrics.js';
 
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
   // Check feature configurations
-  const hasLastFm = (() => {
+  const hasLastFm = ((): boolean => {
     const apiKey = process.env['LASTFM_API_KEY'];
     const configured = !!(apiKey && apiKey.trim());
     if (!configured && config.debug) {
-      console.log('[DEBUG] Last.fm tools disabled: LASTFM_API_KEY not configured');
+      console.warn('[DEBUG] Last.fm tools disabled: LASTFM_API_KEY not configured');
     }
     return configured;
   })();
 
-  const hasRadioBrowser = (() => {
+  const hasRadioBrowser = ((): boolean => {
     const userAgent = process.env['RADIO_BROWSER_USER_AGENT'];
     const configured = !!(userAgent && userAgent.trim());
     if (!configured && config.debug) {
-      console.log('[DEBUG] Radio Browser discovery tools disabled: RADIO_BROWSER_USER_AGENT not configured');
+      console.warn('[DEBUG] Radio Browser discovery tools disabled: RADIO_BROWSER_USER_AGENT not configured');
     }
     return configured;
   })();
 
-  const hasLyrics = (() => {
+  const hasLyrics = ((): boolean => {
     const provider = process.env['LYRICS_PROVIDER'];
     const userAgent = process.env['LRCLIB_USER_AGENT'];
     const configured = !!(provider && provider.trim() && userAgent && userAgent.trim());
     if (!configured && config.debug) {
-      console.log('[DEBUG] Lyrics tools disabled: LYRICS_PROVIDER and LRCLIB_USER_AGENT must be configured');
+      console.warn('[DEBUG] Lyrics tools disabled: LYRICS_PROVIDER and LRCLIB_USER_AGENT must be configured');
     }
     return configured;
   })();

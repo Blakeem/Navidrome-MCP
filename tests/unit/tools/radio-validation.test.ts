@@ -63,7 +63,8 @@ describe('Radio Stream Validation', () => {
     });
 
     it('should accept valid parameters', async () => {
-      // Mock successful HEAD request
+      // Mock successful HEAD request with audio content-type and streaming headers
+      // This will trigger smart validation that skips audio sampling
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -74,16 +75,7 @@ describe('Radio Stream Validation', () => {
         }),
       });
 
-      // Mock successful audio sampling
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 206,
-        headers: new Headers({
-          'content-type': 'audio/mpeg',
-        }),
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
-      });
-
+      // With smart validation, audio sampling should be skipped
       const result = await validateRadioStream(mockClient, {
         url: 'https://example.com/stream.mp3',
         timeout: 5000,
@@ -91,7 +83,9 @@ describe('Radio Stream Validation', () => {
       });
 
       expect(result.url).toBe('https://example.com/stream.mp3');
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      // Should only make HEAD request due to smart validation
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
     });
   });
 
@@ -293,11 +287,12 @@ describe('Radio Stream Validation', () => {
     it('should handle file-type detection failure', async () => {
       const { fileTypeFromBuffer } = vi.mocked(await import('file-type'));
       
+      // Use non-audio content-type to force audio sampling
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
         headers: new Headers({
-          'content-type': 'audio/mpeg',
+          'content-type': 'application/octet-stream', // Generic type
         }),
       });
 
@@ -315,7 +310,8 @@ describe('Radio Stream Validation', () => {
       });
 
       expect(result.validation.audioDataDetected).toBe(false);
-      expect(result.audioFormat?.detected).toBe(false);
+      // When no audio data is detected, audioFormat may be undefined
+      expect(result.audioFormat?.detected ?? false).toBe(false);
     });
 
     it('should detect MP3 signature manually', async () => {
@@ -454,13 +450,104 @@ describe('Radio Stream Validation', () => {
     });
   });
 
-  describe('Edge Cases', () => {
-    it('should handle empty audio data', async () => {
+  describe('Smart Header-Based Validation', () => {
+    it('should skip audio sampling for Shoutcast streams with full headers', async () => {
+      // This tests the fix for hanging streams like http://188.40.97.185:8179/stream
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
         headers: new Headers({
           'content-type': 'audio/mpeg',
+          'icy-name': '',
+          'icy-genre': 'Synthwave',
+          'icy-br': '320',
+          'icy-sr': '44100',
+          'icy-url': 'https://www.synthwavecityfm.com',
+          'icy-pub': '1',
+          'icy-notice1': '<BR>This stream requires <a href="http://www.winamp.com">Winamp</a><BR>',
+          'icy-notice2': 'Shoutcast DNAS/posix(linux x64) v2.6.1.777<BR>',
+        }),
+      });
+
+      // Since we skip audio sampling, this should NOT be called
+      const result = await validateRadioStream(mockClient, {
+        url: 'http://188.40.97.185:8179/stream',
+      });
+
+      // Should only make HEAD request, not audio sampling request
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('valid');
+      expect(result.validation.httpAccessible).toBe(true);
+      expect(result.validation.hasAudioContentType).toBe(true);
+      expect(result.validation.hasStreamingHeaders).toBe(true);
+      expect(result.validation.audioDataDetected).toBe(true);
+      expect(result.streamingHeaders['icy-br']).toBe('320');
+      expect(result.streamingHeaders['icy-genre']).toBe('Synthwave');
+      expect(result.audioFormat?.format).toBe('mp3');
+      expect(result.audioFormat?.mime).toBe('audio/mpeg');
+      expect(result.recommendations).toContain('✅ Stream validated successfully');
+    });
+
+    it('should skip audio sampling when only content-type indicates audio', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          'content-type': 'audio/mpeg',
+          // No streaming headers
+        }),
+      });
+
+      const result = await validateRadioStream(mockClient, {
+        url: 'https://simple-audio-stream.com/stream.mp3',
+      });
+
+      // Should only make HEAD request
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(true);
+      expect(result.validation.hasAudioContentType).toBe(true);
+      expect(result.validation.hasStreamingHeaders).toBe(false);
+      expect(result.validation.audioDataDetected).toBe(true); // Inferred from content-type
+    });
+
+    it('should fall back to audio sampling when headers are inconclusive', async () => {
+      // HEAD request with no useful headers
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          'content-type': 'application/octet-stream', // Generic type
+        }),
+      });
+
+      // Audio sampling should be attempted
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 206,
+        headers: new Headers(),
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
+      });
+
+      const result = await validateRadioStream(mockClient, {
+        url: 'https://mystery-stream.com/audio',
+      });
+
+      // Should make both HEAD and GET requests
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(result.validation.hasAudioContentType).toBe(false);
+      expect(result.validation.hasStreamingHeaders).toBe(false);
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle empty audio data', async () => {
+      // Use non-audio content-type to force audio sampling
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({
+          'content-type': 'application/octet-stream', // Generic type
         }),
       });
 
