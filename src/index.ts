@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Navidrome MCP Server
  * Copyright (C) 2025

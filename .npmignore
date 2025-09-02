@@ -1,0 +1,32 @@
+# Source files
+src/
+tests/
+*.test.ts
+*.test.js
+
+# Development files
+.github/
+.vscode/
+.eslintrc.*
+.prettierrc.*
+tsconfig.json
+vitest.config.ts
+nodemon.json
+
+# Environment and temp files
+.env
+.env.*
+*.log
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Only include built dist and essential files
+# (package.json automatically includes files listed in "files" field)

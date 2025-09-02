@@ -32,12 +32,24 @@
   "license": "AGPL-3.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yourusername/navidrome-mcp.git"
+    "url": "git+https://github.com/Blakeem/Navidrome-MCP.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/navidrome-mcp/issues"
+    "url": "https://github.com/Blakeem/Navidrome-MCP/issues"
   },
-  "homepage": "https://github.com/yourusername/navidrome-mcp#readme",
+  "homepage": "https://github.com/Blakeem/Navidrome-MCP#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "bin": {
+    "navidrome-mcp": "./dist/index.js"
+  },
   "packageManager": "pnpm@10.15.0",
   "engines": {
     "node": ">=18.0.0"
