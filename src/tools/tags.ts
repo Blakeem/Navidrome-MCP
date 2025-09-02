@@ -46,7 +46,8 @@ const SearchByTagsSchema = z.object({
 const GetTagDistributionSchema = z.object({
   tagNames: z.array(z.string()).optional(),
   limit: z.number().min(1).max(50).optional().default(10),
-});
+  distributionLimit: z.number().min(1).max(100).optional().default(20),
+});;
 
 const ListUniqueTagsSchema = z.object({
   limit: z.number().min(1).max(100).optional().default(20),
@@ -286,7 +287,8 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
           totalSongs: tags.reduce((sum, tag) => sum + tag.songCount, 0),
           totalAlbums: tags.reduce((sum, tag) => sum + tag.albumCount, 0),
           mostCommon,
-          distribution: sortedTags,
+          // Limit distribution to prevent massive output
+          distribution: sortedTags.slice(0, params.distributionLimit),
         };
       })
       .filter((dist) => dist.uniqueValues > 0);

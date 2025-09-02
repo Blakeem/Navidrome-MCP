@@ -1276,6 +1276,13 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             maximum: 50,
             default: 10,
           },
+          distributionLimit: {
+            type: 'number',
+            description: 'Maximum number of tag values to show in distribution (prevents huge output)',
+            minimum: 1,
+            maximum: 100,
+            default: 20,
+          },
         },
       },
     },
