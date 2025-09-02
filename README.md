@@ -187,7 +187,7 @@ Add the Navidrome MCP server:
 
 ### 📻 Radio Station Maintenance
 
-* **"Go through all my existing radio stations, validate each one, and create a list of broken stations to remove"**
+* **"Go through all my existing radio stations, validate each one, and remove the broken ones"**
 * **"Here are 10 jazz radio URLs I found online - test them all and add only the working ones with good bitrates"**
 * **"Find the top-voted jazz and classical stations worldwide, validate them, and add the best 5 of each genre"**
 * **"Check all my radio stations and replace any broken ones with similar working stations"**
