@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This is an MCP (Model Context Protocol) server that provides AI assistants with tools to interact with a Navidrome music server. The project enables sophisticated music library operations through natural language, including discovery, playlist management, and playback control.
+This is an MCP (Model Context Protocol) server that provides AI assistants with tools to interact with a Navidrome music server, and various other APIs.
 
 **Package Manager**: pnpm (NOT npm or yarn)
 **Language**: TypeScript with strict mode enabled

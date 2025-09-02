@@ -411,6 +411,78 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
 }
 
 /**
+ * Batch add multiple sets of tracks to a playlist
+ */
+export async function batchAddTracksToPlaylist(
+  client: NavidromeClient, 
+  args: unknown
+): Promise<{ results: AddTracksToPlaylistResponse[]; summary: string }> {
+  const params = args as {
+    playlistId: string;
+    trackSets: Array<{
+      ids?: string[];
+      albumIds?: string[];
+      artistIds?: string[];
+      discs?: Array<{ albumId: string; discNumber: number }>;
+    }>;
+  };
+  
+  if (!params.playlistId) {
+    throw new Error('Playlist ID is required');
+  }
+  
+  if (!params.trackSets || !Array.isArray(params.trackSets)) {
+    throw new Error('Track sets array is required');
+  }
+  
+  if (params.trackSets.length === 0) {
+    throw new Error('At least one track set must be provided');
+  }
+  
+  const results: AddTracksToPlaylistResponse[] = [];
+  let totalAdded = 0;
+  let successCount = 0;
+  let failedCount = 0;
+  
+  for (const trackSet of params.trackSets) {
+    try {
+      const result = await addTracksToPlaylist(client, {
+        playlistId: params.playlistId,
+        ...trackSet
+      });
+      
+      results.push(result);
+      
+      if (result.success) {
+        successCount++;
+        totalAdded += result.added;
+      } else {
+        failedCount++;
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      results.push({
+        added: 0,
+        message: `Failed to add tracks: ${errorMessage}`,
+        success: false
+      });
+      failedCount++;
+    }
+  }
+  
+  let summary = `Successfully processed ${successCount} of ${params.trackSets.length} track sets. `;
+  summary += `Total tracks added: ${totalAdded}.`;
+  if (failedCount > 0) {
+    summary += ` ${failedCount} sets failed.`;
+  }
+  
+  return {
+    results,
+    summary
+  };
+}
+
+/**
  * Remove tracks from a playlist
  */
 export async function removeTracksFromPlaylist(client: NavidromeClient, args: unknown): Promise<RemoveTracksFromPlaylistResponse> {

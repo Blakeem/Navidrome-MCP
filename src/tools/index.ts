@@ -45,6 +45,7 @@ import {
   addTracksToPlaylist,
   removeTracksFromPlaylist,
   reorderPlaylistTrack,
+  batchAddTracksToPlaylist,
 } from './playlist-management.js';
 import {
   searchAll,
@@ -83,6 +84,7 @@ import {
   getRadioStation,
   playRadioStation,
   getCurrentRadioInfo,
+  batchCreateRadioStations,
 } from './radio.js';
 import {
   listTags,
@@ -567,6 +569,56 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       },
     },
     {
+      name: 'batch_add_tracks_to_playlist',
+      description: 'Batch add multiple sets of tracks to a playlist',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          playlistId: {
+            type: 'string',
+            description: 'The unique ID of the playlist',
+          },
+          trackSets: {
+            type: 'array',
+            description: 'Array of track sets to add to the playlist',
+            items: {
+              type: 'object',
+              properties: {
+                ids: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Array of song IDs to add',
+                },
+                albumIds: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Array of album IDs to add (all tracks)',
+                },
+                artistIds: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Array of artist IDs to add (all tracks)',
+                },
+                discs: {
+                  type: 'array',
+                  description: 'Array of specific discs to add',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      albumId: { type: 'string' },
+                      discNumber: { type: 'number' },
+                    },
+                    required: ['albumId', 'discNumber'],
+                  },
+                },
+              },
+            },
+          },
+        },
+        required: ['playlistId', 'trackSets'],
+      },
+    },
+    {
       name: 'search_all',
       description: 'Search across all content types (artists, albums, songs) using a single query',
       inputSchema: {
@@ -1035,6 +1087,10 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             type: 'string',
             description: 'Optional homepage URL for the station',
           },
+          validateBeforeAdd: {
+            type: 'boolean',
+            description: 'Validate stream URL before adding (default: false)',
+          },
         },
         required: ['name', 'streamUrl'],
       },
@@ -1087,6 +1143,42 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       inputSchema: {
         type: 'object',
         properties: {},
+      },
+    },
+    {
+      name: 'batch_create_radio_stations',
+      description: 'Batch create multiple internet radio stations in Navidrome',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          stations: {
+            type: 'array',
+            description: 'Array of radio stations to create',
+            items: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  description: 'Station name (required)',
+                },
+                streamUrl: {
+                  type: 'string',
+                  description: 'Stream URL (required)',
+                },
+                homePageUrl: {
+                  type: 'string',
+                  description: 'Optional homepage URL',
+                },
+              },
+              required: ['name', 'streamUrl'],
+            },
+          },
+          validateBeforeAdd: {
+            type: 'boolean',
+            description: 'Validate all stream URLs before adding (default: false)',
+          },
+        },
+        required: ['stations'],
       },
     },
     {
@@ -1901,6 +1993,18 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
       };
     }
 
+    if (name === 'batch_add_tracks_to_playlist') {
+      const result = await batchAddTracksToPlaylist(client, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
     if (name === 'search_all') {
       const result = await searchAll(config, args ?? {});
       return {
@@ -2191,6 +2295,18 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
     if (name === 'get_current_radio_info') {
       const result = await getCurrentRadioInfo(config, args ?? {});
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    }
+
+    if (name === 'batch_create_radio_stations') {
+      const result = await batchCreateRadioStations(config, args ?? {});
       return {
         content: [
           {

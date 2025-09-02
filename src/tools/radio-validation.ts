@@ -19,11 +19,16 @@
 import { z } from 'zod';
 import { fileTypeFromBuffer } from 'file-type';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import { 
+  SINGLE_VALIDATION_TIMEOUT, 
+  MIN_VALIDATION_TIMEOUT, 
+  MAX_VALIDATION_TIMEOUT 
+} from '../constants/timeouts.js';
 
 // Validation parameter schema
 const ValidateStreamSchema = z.object({
   url: z.string().url('URL must be a valid URL'),
-  timeout: z.number().min(1000).max(30000).optional().default(8000),
+  timeout: z.number().min(MIN_VALIDATION_TIMEOUT).max(MAX_VALIDATION_TIMEOUT).optional().default(SINGLE_VALIDATION_TIMEOUT),
   followRedirects: z.boolean().optional().default(true),
 });
 

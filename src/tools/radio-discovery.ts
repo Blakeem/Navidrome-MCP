@@ -25,6 +25,7 @@ import type {
   VoteRadioStationResponse
 } from '../types/dto.js';
 import { validateRadioStream } from './radio-validation.js';
+import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 
 const RADIO_BROWSER_BASE = process.env['RADIO_BROWSER_BASE'] || 'https://de1.api.radio-browser.info';
@@ -202,10 +203,10 @@ async function validateDiscoveredStations(
   // Validate stations in parallel with very short timeout for discovery
   const validationPromises = stationsToValidate.map(async (station): Promise<ExternalRadioStationDTO> => {
     try {
-      // Very quick validation with 2 second timeout for discovery
+      // Quick validation with discovery timeout for batch discovery
       const validationResult = await validateRadioStream(client, {
         url: station.playUrl,
-        timeout: 2000
+        timeout: DISCOVERY_VALIDATION_TIMEOUT
       });
       
       const validation = {

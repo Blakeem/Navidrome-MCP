@@ -249,6 +249,7 @@ Add the Navidrome MCP server:
 | `delete_playlist` | Remove playlist |
 | `get_playlist_tracks` | Get playlist contents |
 | `add_tracks_to_playlist` | Add songs/albums/artists |
+| `batch_add_tracks_to_playlist` | Batch add multiple sets of tracks |
 | `remove_tracks_from_playlist` | Remove specific tracks |
 | `reorder_playlist_track` | Rearrange track order |
 
@@ -277,13 +278,16 @@ Add the Navidrome MCP server:
 |------|-------------|
 | `validate_radio_stream` | Test stream URL validity |
 | `list_radio_stations` | View all stations |
-| `create_radio_station` | Add new station |
+| `create_radio_station` | Add new station (with optional validation*) |
+| `batch_create_radio_stations` | Batch add multiple stations (with optional validation*) |
 | `play_radio_station` | Start radio playback |
 | `discover_radio_stations` | Find internet radio stations globally |
 | `get_radio_filters` | Get available search filters (genres, countries, etc.) |
 | `get_station_by_uuid` | Get detailed station information |
 | `click_station` | Register play click for popularity metrics |
 | `vote_station` | Vote for a radio station |
+
+*Note: Both `create_radio_station` and `batch_create_radio_stations` support an optional `validateBeforeAdd` parameter that will test stream URLs before adding them to Navidrome.
 
 ### 🎤 Lyrics & Timestamps
 
