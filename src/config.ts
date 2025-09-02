@@ -90,7 +90,7 @@ export async function loadConfig(): Promise<Config> {
     debug: process.env['DEBUG'] === 'true',
     cacheTtl: process.env['CACHE_TTL'] ? parseInt(process.env['CACHE_TTL'], 10) : 300,
     tokenExpiry: process.env['TOKEN_EXPIRY'] ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
-    lastFmApiKey: process.env['LASTFM_API_KEY'] || '6c5482a9477a682ed972cbf6df122cda',
+    lastFmApiKey: process.env['LASTFM_API_KEY'] || undefined,
   };
 
   try {

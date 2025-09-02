@@ -41,6 +41,7 @@ This is an MCP (Model Context Protocol) server that provides AI assistants with 
 5. **Performance**: Implement intelligent caching to minimize API calls
 6. **Security**: Never log or expose credentials, use secure token management
 7. **Quality First**: Every line of code must meet the highest standards
+8. **No Hardcoded Secrets**: NEVER hardcode API keys, tokens, or credentials in the source code. All sensitive configuration must come from environment variables only
 
 ## Environment Configuration
 
