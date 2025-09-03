@@ -49,7 +49,23 @@ const ConfigSchema = z.object({
   debug: z.boolean().default(false),
   cacheTtl: z.number().positive().default(300),
   tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
+  
+  // Feature Configuration
+  features: z.object({
+    lastfm: z.boolean().default(false),
+    radioBrowser: z.boolean().default(false),
+    lyrics: z.boolean().default(false),
+  }),
+
+  // API Keys and External Service Configuration
   lastFmApiKey: z.string().optional(),
+  radioBrowserUserAgent: z.string().optional(),
+  radioBrowserBase: z.string().url().default('https://de1.api.radio-browser.info'),
+  
+  // Lyrics Configuration
+  lyricsProvider: z.string().optional(),
+  lrclibUserAgent: z.string().optional(),
+  lrclibBase: z.string().url().default('https://lrclib.net'),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -83,6 +99,12 @@ export async function loadConfig(): Promise<Config> {
     }
   }
 
+  // Centralized environment variable access
+  const lastFmApiKey = process.env['LASTFM_API_KEY'] || undefined;
+  const radioBrowserUserAgent = process.env['RADIO_BROWSER_USER_AGENT'] || undefined;
+  const lyricsProvider = process.env['LYRICS_PROVIDER'] || undefined;
+  const lrclibUserAgent = process.env['LRCLIB_USER_AGENT'] || undefined;
+
   const rawConfig = {
     navidromeUrl: process.env['NAVIDROME_URL'],
     navidromeUsername: process.env['NAVIDROME_USERNAME'],
@@ -90,7 +112,23 @@ export async function loadConfig(): Promise<Config> {
     debug: process.env['DEBUG'] === 'true',
     cacheTtl: process.env['CACHE_TTL'] ? parseInt(process.env['CACHE_TTL'], 10) : 300,
     tokenExpiry: process.env['TOKEN_EXPIRY'] ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
-    lastFmApiKey: process.env['LASTFM_API_KEY'] || undefined,
+    
+    // Feature detection based on available configuration
+    features: {
+      lastfm: !!(lastFmApiKey && lastFmApiKey.trim()),
+      radioBrowser: !!(radioBrowserUserAgent && radioBrowserUserAgent.trim()),
+      lyrics: !!(lyricsProvider && lyricsProvider.trim() && lrclibUserAgent && lrclibUserAgent.trim()),
+    },
+
+    // API Keys and External Service Configuration
+    lastFmApiKey,
+    radioBrowserUserAgent,
+    radioBrowserBase: process.env['RADIO_BROWSER_BASE'] || 'https://de1.api.radio-browser.info',
+    
+    // Lyrics Configuration
+    lyricsProvider,
+    lrclibUserAgent,
+    lrclibBase: process.env['LRCLIB_BASE'] || 'https://lrclib.net',
   };
 
   try {

@@ -17,7 +17,10 @@
  */
 
 import { z } from 'zod';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import type { Config } from '../config.js';
+import type { ToolCategory } from './handlers/registry.js';
 
 const TestConnectionSchema = z.object({
   includeServerInfo: z.boolean().optional().default(false),
@@ -52,6 +55,7 @@ export interface TestConnectionResult {
 
 export async function testConnection(
   client: NavidromeClient,
+  config: Config,
   args: unknown
 ): Promise<TestConnectionResult> {
   const params = TestConnectionSchema.parse(args);
@@ -71,22 +75,10 @@ export async function testConnection(
     };
 
     if (params.includeServerInfo) {
-      // Check feature configurations
-      const hasLastFm = ((): boolean => {
-        const apiKey = process.env['LASTFM_API_KEY'];
-        return !!(apiKey && apiKey.trim());
-      })();
-
-      const hasRadioBrowser = ((): boolean => {
-        const userAgent = process.env['RADIO_BROWSER_USER_AGENT'];
-        return !!(userAgent && userAgent.trim());
-      })();
-
-      const hasLyrics = ((): boolean => {
-        const provider = process.env['LYRICS_PROVIDER'];
-        const userAgent = process.env['LRCLIB_USER_AGENT'];
-        return !!(provider && provider.trim() && userAgent && userAgent.trim());
-      })();
+      // Use feature flags from config
+      const hasLastFm = config.features.lastfm;
+      const hasRadioBrowser = config.features.radioBrowser;
+      const hasLyrics = config.features.lyrics;
 
       result.serverInfo = {
         url: 'Connected to Navidrome',
@@ -131,4 +123,44 @@ export async function testConnection(
       message: `Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
     };
   }
+}
+
+// Tool definitions
+const tools: Tool[] = [
+  {
+    name: 'test_connection',
+    description: 'Test the connection to the Navidrome server',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        includeServerInfo: {
+          type: 'boolean',
+          description: 'Include detailed server information in the response',
+          default: false,
+        },
+      },
+    },
+  },
+];
+
+// Tool category export for registry
+export const testToolCategory: ToolCategory = {
+  tools,
+  async handleToolCall(name: string, _args: unknown): Promise<unknown> {
+    // This will be called with client and config from the registry
+    throw new Error(`Test tools need client and config access. Tool: ${name}`);
+  }
+};
+
+// Factory function for creating tool category with dependencies
+export function createTestToolCategory(client: NavidromeClient, config: Config): ToolCategory {
+  return {
+    tools,
+    async handleToolCall(name: string, args: unknown): Promise<unknown> {
+      if (name === 'test_connection') {
+        return await testConnection(client, config, args);
+      }
+      throw new Error(`Unknown test tool: ${name}`);
+    }
+  };
 }

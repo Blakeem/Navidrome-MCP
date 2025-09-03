@@ -22,6 +22,7 @@ import {
   transformPlaylistsToDTO,
   transformToPlaylistDTO,
   formatDuration,
+  type RawPlaylist,
 } from '../transformers/song-transformer.js';
 import type {
   PlaylistDTO,
@@ -91,26 +92,66 @@ const GetPlaylistTracksSchema = z.object({
 });
 
 /**
+ * Raw playlist track data from Navidrome API
+ */
+interface RawPlaylistTrack {
+  id: number;
+  mediaFileId?: string;
+  playlistId: string;
+  title?: string;
+  album?: string;
+  artist?: string;
+  albumArtist?: string;
+  duration?: number;
+  bitRate?: number;
+  path?: string;
+  trackNumber?: number;
+  year?: number;
+  genre?: string;
+  [key: string]: unknown;
+}
+
+/**
  * Transform raw playlist track data to DTO
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function transformToPlaylistTrackDTO(rawTrack: any): PlaylistTrackDTO {
-  return {
+function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackDTO {
+  const dto: PlaylistTrackDTO = {
     id: rawTrack.id,
-    mediaFileId: rawTrack.mediaFileId || rawTrack.id,
+    mediaFileId: rawTrack.mediaFileId || String(rawTrack.id),
     playlistId: rawTrack.playlistId,
     title: rawTrack.title || '',
     album: rawTrack.album || '',
     artist: rawTrack.artist || '',
-    albumArtist: rawTrack.albumArtist,
     duration: rawTrack.duration || 0,
     durationFormatted: formatDuration(rawTrack.duration),
-    bitRate: rawTrack.bitRate,
-    path: rawTrack.path,
-    trackNumber: rawTrack.trackNumber,
-    year: rawTrack.year,
-    genre: rawTrack.genre,
   };
+
+  // Add optional fields only if they have values
+  if (rawTrack.albumArtist) {
+    dto.albumArtist = rawTrack.albumArtist;
+  }
+
+  if (rawTrack.bitRate !== undefined) {
+    dto.bitRate = rawTrack.bitRate;
+  }
+
+  if (rawTrack.path) {
+    dto.path = rawTrack.path;
+  }
+
+  if (rawTrack.trackNumber !== undefined) {
+    dto.trackNumber = rawTrack.trackNumber;
+  }
+
+  if (rawTrack.year !== undefined) {
+    dto.year = rawTrack.year;
+  }
+
+  if (rawTrack.genre) {
+    dto.genre = rawTrack.genre;
+  }
+
+  return dto;
 }
 
 /**
@@ -156,8 +197,7 @@ export async function getPlaylist(client: NavidromeClient, args: unknown): Promi
 
   try {
     const rawPlaylist = await client.request<unknown>(`/playlist/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToPlaylistDTO(rawPlaylist as any);
+    return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
   } catch (error) {
     throw new Error(
       `Failed to fetch playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -189,8 +229,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const playlist = transformToPlaylistDTO(rawPlaylist as any);
+    const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
     
     // Fix the name if it's not properly returned from API
     if (!playlist.name || playlist.name === 'Unknown Playlist') {
@@ -239,8 +278,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const playlist = transformToPlaylistDTO(rawPlaylist as any);
+    const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
     
     // Fix the name if it was updated but not properly returned from API
     if (params.name && (!playlist.name || playlist.name === 'Unknown Playlist')) {
@@ -326,7 +364,7 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
     }
 
     const tracks = Array.isArray(response) 
-      ? response.map(track => transformToPlaylistTrackDTO(track))
+      ? response.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack))
       : [];
 
     return {

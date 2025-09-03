@@ -123,31 +123,15 @@ const ListTopRatedSchema = z.object({
   offset: z.number().min(0).optional().default(0),
 });
 
-export async function starItem(_client: NavidromeClient, config: Config, args: unknown): Promise<StarItemResult> {
+export async function starItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
   
   logger.info(`Starring ${type}: ${id}`);
   
-  const params = new URLSearchParams({
-    u: config.navidromeUsername,
-    p: config.navidromePassword,
-    v: '1.16.1',
-    c: 'navidrome-mcp',
-    f: 'json',
-    id,
-  });
+  // Use Subsonic REST API for starring
+  const response = await client.subsonicRequest('/star', { id });
   
-  const response = await fetch(`${config.navidromeUrl}/rest/star?${params}`);
-  
-  if (!response.ok) {
-    throw new Error(`Failed to star ${type}: ${response.status} ${response.statusText}`);
-  }
-  
-  const data = await response.json() as { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
-  
-  if (data['subsonic-response']?.status !== 'ok') {
-    throw new Error(`Failed to star ${type}: ${data['subsonic-response']?.error?.message || 'Unknown error'}`);
-  }
+  logger.debug('Star response:', response);
   
   return {
     success: true,
@@ -157,31 +141,15 @@ export async function starItem(_client: NavidromeClient, config: Config, args: u
   };
 }
 
-export async function unstarItem(_client: NavidromeClient, config: Config, args: unknown): Promise<StarItemResult> {
+export async function unstarItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
   
   logger.info(`Unstarring ${type}: ${id}`);
   
-  const params = new URLSearchParams({
-    u: config.navidromeUsername,
-    p: config.navidromePassword,
-    v: '1.16.1',
-    c: 'navidrome-mcp',
-    f: 'json',
-    id,
-  });
+  // Use Subsonic REST API for unstarring  
+  const response = await client.subsonicRequest('/unstar', { id });
   
-  const response = await fetch(`${config.navidromeUrl}/rest/unstar?${params}`);
-  
-  if (!response.ok) {
-    throw new Error(`Failed to unstar ${type}: ${response.status} ${response.statusText}`);
-  }
-  
-  const data = await response.json() as { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
-  
-  if (data['subsonic-response']?.status !== 'ok') {
-    throw new Error(`Failed to unstar ${type}: ${data['subsonic-response']?.error?.message || 'Unknown error'}`);
-  }
+  logger.debug('Unstar response:', response);
   
   return {
     success: true,
@@ -191,32 +159,18 @@ export async function unstarItem(_client: NavidromeClient, config: Config, args:
   };
 }
 
-export async function setRating(_client: NavidromeClient, config: Config, args: unknown): Promise<SetRatingResult> {
+export async function setRating(client: NavidromeClient, _config: Config, args: unknown): Promise<SetRatingResult> {
   const { id, type, rating } = SetRatingSchema.parse(args);
   
   logger.info(`Setting rating ${rating} for ${type}: ${id}`);
   
-  const params = new URLSearchParams({
-    u: config.navidromeUsername,
-    p: config.navidromePassword,
-    v: '1.16.1',
-    c: 'navidrome-mcp',
-    f: 'json',
-    id,
-    rating: rating.toString(),
+  // Use Subsonic REST API for setting rating
+  const response = await client.subsonicRequest('/setRating', { 
+    id, 
+    rating: rating.toString() 
   });
   
-  const response = await fetch(`${config.navidromeUrl}/rest/setRating?${params}`);
-  
-  if (!response.ok) {
-    throw new Error(`Failed to set rating for ${type}: ${response.status} ${response.statusText}`);
-  }
-  
-  const data = await response.json() as { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
-  
-  if (data['subsonic-response']?.status !== 'ok') {
-    throw new Error(`Failed to set rating: ${data['subsonic-response']?.error?.message || 'Unknown error'}`);
-  }
+  logger.debug('Set rating response:', response);
   
   return {
     success: true,
@@ -234,9 +188,11 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
   
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
   
-  // Use starred parameter instead of filter for better compatibility
+  // Fetch more items to account for client-side filtering
+  const fetchLimit = Math.min(limit * 5, 500); // Fetch 5x requested or max 500
+  
   const response = await client.request<unknown>(
-    `${endpoint}?starred=true&_start=${offset}&_end=${offset + limit}`
+    `${endpoint}?_start=${offset}&_end=${offset + fetchLimit}&_sort=starredAt&_order=DESC`
   );
   
   // Transform using the appropriate transformer

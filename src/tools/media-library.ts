@@ -27,6 +27,9 @@ import {
   transformToSongDTO,
   transformToAlbumDTO,
   transformToArtistDTO,
+  type RawSong,
+  type RawAlbum,
+  type RawArtist,
 } from '../transformers/song-transformer.js';
 import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/dto.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
@@ -197,8 +200,7 @@ export async function getSong(client: NavidromeClient, args: unknown): Promise<S
 
   try {
     const rawSong = await client.request<unknown>(`/song/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToSongDTO(rawSong as any);
+    return transformToSongDTO(rawSong as RawSong);
   } catch (error) {
     throw new Error(
       `Failed to fetch song: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -212,8 +214,7 @@ export async function getAlbum(client: NavidromeClient, args: unknown): Promise<
 
   try {
     const rawAlbum = await client.request<unknown>(`/album/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToAlbumDTO(rawAlbum as any);
+    return transformToAlbumDTO(rawAlbum as RawAlbum);
   } catch (error) {
     throw new Error(
       `Failed to fetch album: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -227,8 +228,7 @@ export async function getArtist(client: NavidromeClient, args: unknown): Promise
 
   try {
     const rawArtist = await client.request<unknown>(`/artist/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToArtistDTO(rawArtist as any);
+    return transformToArtistDTO(rawArtist as RawArtist);
   } catch (error) {
     throw new Error(
       `Failed to fetch artist: ${error instanceof Error ? error.message : 'Unknown error'}`

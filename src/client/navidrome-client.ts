@@ -23,10 +23,12 @@ import { logger } from '../utils/logger.js';
 export class NavidromeClient {
   private authManager: AuthManager;
   private baseUrl: string;
+  private config: Config;
 
   constructor(config: Config) {
     this.baseUrl = config.navidromeUrl;
     this.authManager = new AuthManager(config);
+    this.config = config;
   }
 
   async initialize(): Promise<void> {
@@ -66,5 +68,31 @@ export class NavidromeClient {
     } else {
       return response.text() as Promise<T>;
     }
+  }
+
+  async subsonicRequest(endpoint: string, params: Record<string, string> = {}): Promise<unknown> {
+    // Build Subsonic REST API parameters
+    const queryParams = new URLSearchParams({
+      u: this.config.navidromeUsername,
+      p: this.config.navidromePassword,
+      v: '1.16.1',
+      c: 'navidrome-mcp',
+      f: 'json',
+      ...params,
+    });
+
+    const response = await fetch(`${this.baseUrl}/rest${endpoint}?${queryParams}`);
+
+    if (!response.ok) {
+      throw new Error(`Subsonic API request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json() as { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
+
+    if (data['subsonic-response']?.status !== 'ok') {
+      throw new Error(`Subsonic API error: ${data['subsonic-response']?.error?.message || 'Unknown error'}`);
+    }
+
+    return data['subsonic-response'];
   }
 }
