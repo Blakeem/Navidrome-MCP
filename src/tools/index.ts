@@ -103,6 +103,19 @@ import {
 import { getLyrics } from './lyrics.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 
+/**
+ * Helper function to create a standardized tool response
+ * Reduces duplication across tool handlers
+ */
+function createToolResponse(result: unknown): { content: Array<{ type: string; text: string }> } {
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify(result, null, 2),
+    }],
+  };
+}
+
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
   // Check feature configurations
   const hasLastFm = ((): boolean => {
@@ -1518,688 +1531,290 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
+    // Simple tool handlers using the helper function
     if (name === 'test_connection') {
       const result = await testConnection(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_songs') {
       const result = await listSongs(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_albums') {
       const result = await listAlbums(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_artists') {
       const result = await listArtists(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_genres') {
       const result = await listGenres(client, config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_song') {
       const result = await getSong(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_album') {
       const result = await getAlbum(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_artist') {
       const result = await getArtist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_song_playlists') {
       const result = await getSongPlaylists(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_playlists') {
       const result = await listPlaylists(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_playlist') {
       const result = await getPlaylist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'create_playlist') {
       const result = await createPlaylist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'update_playlist') {
       const result = await updatePlaylist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'delete_playlist') {
       const result = await deletePlaylist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_playlist_tracks') {
       const result = await getPlaylistTracks(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'add_tracks_to_playlist') {
       const result = await addTracksToPlaylist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'remove_tracks_from_playlist') {
       const result = await removeTracksFromPlaylist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'reorder_playlist_track') {
       const result = await reorderPlaylistTrack(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'batch_add_tracks_to_playlist') {
       const result = await batchAddTracksToPlaylist(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'search_all') {
       const result = await searchAll(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'search_songs') {
       const result = await searchSongs(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'search_albums') {
       const result = await searchAlbums(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'search_artists') {
       const result = await searchArtists(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'star_item') {
       const result = await starItem(client, config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'unstar_item') {
       const result = await unstarItem(client, config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'set_rating') {
       const result = await setRating(client, config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_starred_items') {
       const result = await listStarredItems(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_top_rated') {
       const result = await listTopRated(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_queue') {
       const result = await getQueue(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'set_queue') {
       const result = await setQueue(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'clear_queue') {
       const result = await clearQueue(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_recently_played') {
       const result = await listRecentlyPlayed(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_most_played') {
       const result = await listMostPlayed(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_similar_artists' && hasLastFm) {
       const result = await getSimilarArtists(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_similar_tracks' && hasLastFm) {
       const result = await getSimilarTracks(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_artist_info' && hasLastFm) {
       const result = await getArtistInfo(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_top_tracks_by_artist' && hasLastFm) {
       const result = await getTopTracksByArtist(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_trending_music' && hasLastFm) {
       const result = await getTrendingMusic(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_radio_stations') {
       const result = await listRadioStations(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'create_radio_station') {
       const result = await createRadioStation(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'delete_radio_station') {
       const result = await deleteRadioStation(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_radio_station') {
       const result = await getRadioStation(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'play_radio_station') {
       const result = await playRadioStation(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_current_radio_info') {
       const result = await getCurrentRadioInfo(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'batch_create_radio_stations') {
       const result = await batchCreateRadioStations(config, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_tags') {
       const result = await listTags(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_tag') {
       const result = await getTag(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'search_by_tags') {
       const result = await searchByTags(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_tag_distribution') {
       const result = await getTagDistribution(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'list_unique_tags') {
       const result = await listUniqueTags(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'validate_radio_stream') {
       const result = await validateRadioStream(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'discover_radio_stations' && hasRadioBrowser) {
       const result = await discoverRadioStations(client, args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_radio_filters' && hasRadioBrowser) {
       const result = await getRadioFilters(args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_station_by_uuid' && hasRadioBrowser) {
       const result = await getStationByUuid(args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'click_station' && hasRadioBrowser) {
       const result = await clickStation(args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'vote_station' && hasRadioBrowser) {
       const result = await voteStation(args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     if (name === 'get_lyrics' && hasLyrics) {
       const result = await getLyrics(args ?? {});
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(result, null, 2),
-          },
-        ],
-      };
+      return createToolResponse(result);
     }
 
     throw new Error(`Unknown tool: ${name}`);

@@ -22,6 +22,7 @@ import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/dto.js';
 import crypto from 'crypto';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 const SearchSchema = z.object({
   query: z.string().min(1, 'Search query is required'),
@@ -96,13 +97,13 @@ export async function searchAll(config: Config, args: unknown): Promise<{
     const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
     
     if (!response.ok) {
-      throw new Error(`Search request failed: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.apiRequest('search', response));
     }
 
     const data = await response.json() as SubsonicSearchResult;
     
     if (data['subsonic-response'].status !== 'ok') {
-      throw new Error('Subsonic API returned error status');
+      throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
     const searchResult = data['subsonic-response'].searchResult3 || {};
@@ -119,9 +120,7 @@ export async function searchAll(config: Config, args: unknown): Promise<{
       totalResults: artists.length + albums.length + songs.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to search: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.operationFailed('search', error));
   }
 }
 
@@ -145,13 +144,13 @@ export async function searchSongs(config: Config, args: unknown): Promise<{
     const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
     
     if (!response.ok) {
-      throw new Error(`Search request failed: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.apiRequest('search', response));
     }
 
     const data = await response.json() as SubsonicSearchResult;
     
     if (data['subsonic-response'].status !== 'ok') {
-      throw new Error('Subsonic API returned error status');
+      throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
     const searchResult = data['subsonic-response'].searchResult3 || {};
@@ -189,13 +188,13 @@ export async function searchAlbums(config: Config, args: unknown): Promise<{
     const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
     
     if (!response.ok) {
-      throw new Error(`Search request failed: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.apiRequest('search', response));
     }
 
     const data = await response.json() as SubsonicSearchResult;
     
     if (data['subsonic-response'].status !== 'ok') {
-      throw new Error('Subsonic API returned error status');
+      throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
     const searchResult = data['subsonic-response'].searchResult3 || {};
@@ -233,13 +232,13 @@ export async function searchArtists(config: Config, args: unknown): Promise<{
     const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
     
     if (!response.ok) {
-      throw new Error(`Search request failed: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.apiRequest('search', response));
     }
 
     const data = await response.json() as SubsonicSearchResult;
     
     if (data['subsonic-response'].status !== 'ok') {
-      throw new Error('Subsonic API returned error status');
+      throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
     const searchResult = data['subsonic-response'].searchResult3 || {};

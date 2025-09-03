@@ -24,9 +24,43 @@ interface CacheEntry<T> {
 export class Cache<T> {
   private store = new Map<string, CacheEntry<T>>();
   private ttl: number;
+  private cleanupInterval?: NodeJS.Timeout;
+  private cleanupIntervalMs: number;
 
-  constructor(ttlSeconds = 300) {
+  constructor(ttlSeconds = 300, enableAutoCleanup = true) {
     this.ttl = ttlSeconds * 1000;
+    // Run cleanup every ttl period or at least once per hour
+    this.cleanupIntervalMs = Math.min(this.ttl, 3600000); 
+    
+    if (enableAutoCleanup) {
+      this.startAutoCleanup();
+    }
+  }
+
+  private startAutoCleanup(): void {
+    // Clear any existing interval first
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    
+    // Set up periodic cleanup
+    this.cleanupInterval = setInterval(() => {
+      this.cleanup();
+    }, this.cleanupIntervalMs);
+    
+    // Ensure cleanup runs when process exits
+    if (this.cleanupInterval.unref) {
+      this.cleanupInterval.unref(); // Don't keep process alive just for cleanup
+    }
+  }
+
+  private cleanup(): void {
+    const now = new Date();
+    for (const [key, entry] of this.store.entries()) {
+      if (entry.expiry < now) {
+        this.store.delete(key);
+      }
+    }
   }
 
   set(key: string, value: T): void {
@@ -54,5 +88,14 @@ export class Cache<T> {
 
   delete(key: string): boolean {
     return this.store.delete(key);
+  }
+
+  destroy(): void {
+    // Clean up resources when cache is no longer needed
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      delete this.cleanupInterval;
+    }
+    this.store.clear();
   }
 }
