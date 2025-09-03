@@ -17,7 +17,7 @@
  */
 
 import { z } from 'zod';
-import type { LyricsDTO, LyricsLine } from '../types/dto.js';
+import type { LyricsDTO, LyricsLine } from '../types/index.js';
 import type { Config } from '../config.js';
 
 /**

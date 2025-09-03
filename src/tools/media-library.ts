@@ -31,7 +31,7 @@ import {
   type RawAlbum,
   type RawArtist,
 } from '../transformers/song-transformer.js';
-import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/dto.js';
+import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/index.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Common pagination schema

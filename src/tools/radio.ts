@@ -7,7 +7,7 @@ import type {
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
   RadioPlaybackInfo 
-} from '../types/dto.js';
+} from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { getMessageManager } from '../utils/message-manager.js';
 import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';

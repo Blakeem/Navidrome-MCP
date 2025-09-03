@@ -21,7 +21,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { transformSongsToDTO } from '../transformers/song-transformer.js';
-import type { SongDTO } from '../types/dto.js';
+import type { SongDTO } from '../types/index.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import type { ToolCategory } from './handlers/registry.js';
 import {

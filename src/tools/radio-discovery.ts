@@ -23,7 +23,7 @@ import type {
   RadioFiltersResponse,
   ClickRadioStationResponse,
   VoteRadioStationResponse
-} from '../types/dto.js';
+} from '../types/index.js';
 import type { Config } from '../config.js';
 import { validateRadioStream } from './radio-validation.js';
 import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';

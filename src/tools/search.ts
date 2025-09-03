@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
-import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/dto.js';
+import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/index.js';
 import crypto from 'crypto';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
