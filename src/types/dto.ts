@@ -455,8 +455,6 @@ export interface ExternalRadioStationDTO {
   votes: number;
   /** Total click count */
   clickCount: number;
-  /** Whether last check was successful */
-  lastCheckOk: boolean;
   /** Stream validation results (if validated) */
   validation?: {
     /** Whether validation was performed */

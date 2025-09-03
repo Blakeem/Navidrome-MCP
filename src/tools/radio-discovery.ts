@@ -174,8 +174,7 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
     languageCodes: station.languagecodes ? station.languagecodes.split(',').filter((l: string) => l.trim()) : [],
     hls: Boolean(station.hls),
     votes: station.votes || 0,
-    clickCount: station.clickcount || 0,
-    lastCheckOk: Boolean(station.lastcheckok)
+    clickCount: station.clickcount || 0
   };
   
   // Only include essential fields for cleaner LLM context
@@ -195,15 +194,17 @@ async function validateDiscoveredStations(
   client: NavidromeClient,
   stations: ExternalRadioStationDTO[]
 ): Promise<ExternalRadioStationDTO[]> {
-  // Only validate first 2 stations to keep response time reasonable
-  const maxValidations = 2;
+  // Validate up to 8 stations with individual timeouts to handle rate limiting
+  const maxValidations = Math.min(stations.length, 8);
   const stationsToValidate = stations.slice(0, maxValidations);
   const remainingStations = stations.slice(maxValidations);
   
-  // Validate stations in parallel with very short timeout for discovery
-  const validationPromises = stationsToValidate.map(async (station): Promise<ExternalRadioStationDTO> => {
+  // Process validations with individual timeouts, not in parallel to avoid rate limiting
+  const validatedStations: ExternalRadioStationDTO[] = [];
+  
+  for (const station of stationsToValidate) {
     try {
-      // Quick validation with discovery timeout for batch discovery
+      // Each validation gets its own timeout - no overall time limit
       const validationResult = await validateRadioStream(client, {
         url: station.playUrl,
         timeout: DISCOVERY_VALIDATION_TIMEOUT
@@ -212,49 +213,29 @@ async function validateDiscoveredStations(
       const validation = {
         validated: true,
         isValid: validationResult.success,
-        status: validationResult.success 
-          ? `✅ Valid (${validationResult.testDuration}ms)`
-          : `❌ ${validationResult.status}`,
+        status: validationResult.success ? 'OK' : 'FAIL',
         duration: validationResult.testDuration
       };
       
-      return {
+      validatedStations.push({
         ...station,
         validation
-      };
+      });
     } catch {
       // If validation fails, mark as failed but include the station
-      return {
+      validatedStations.push({
         ...station,
         validation: {
           validated: true,
           isValid: false,
-          status: '❌ validation failed',
+          status: 'FAIL',
         }
-      };
+      });
     }
-  });
-  
-  // Wait for all validations to complete with overall timeout
-  let validatedStations: ExternalRadioStationDTO[];
-  try {
-    validatedStations = await Promise.race([
-      Promise.all(validationPromises),
-      new Promise<ExternalRadioStationDTO[]>((_, reject) => 
-        setTimeout(() => reject(new Error('Validation timeout')), 5000)
-      )
-    ]);
-  } catch {
-    // If validation times out, return stations without validation
-    return [...stationsToValidate, ...remainingStations];
   }
   
   // Add remaining stations without validation
-  const allStations = [...validatedStations, ...remainingStations];
-  
-  // Message manager no longer needed here since we return validation summary in response
-  
-  return allStations;
+  return [...validatedStations, ...remainingStations];
 }
 
 /**

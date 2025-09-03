@@ -381,6 +381,35 @@ import type { SongDTO, AlbumDTO } from '../types/dto.js';
 4. Implement retry logic for transient failures
 5. Provide actionable error messages for users
 
+## Response Format Standards
+
+### LLM-Optimized Error Responses
+To keep responses concise and context-efficient for LLM consumption:
+
+1. **Status Fields**: Use brief, consistent values
+   - `"OK"` for success (not "Valid", "Success", etc.)
+   - `"FAIL"` for failure (not "Error", "Invalid", etc.)
+   - `"TIMEOUT"` for timeout cases
+   - `"UNKNOWN"` for undefined states
+
+2. **Error Messages**: Prioritize brevity over verbosity
+   - ❌ `"Radio Browser API error: 404 Not Found - Station not found in database"`
+   - ✅ `"Station not found"`
+   - ❌ `"Failed to validate stream: Connection timeout after 5000ms"`
+   - ✅ `"Timeout"`
+
+3. **Validation Results**: Use minimal context
+   - Status: `"OK"` or `"FAIL"`
+   - Duration in ms for performance tracking
+   - No emoji or verbose descriptions in automated responses
+
+4. **Batch Operations**: Provide summary, not details
+   - Focus on counts and success rates
+   - Avoid listing individual failures unless requested
+   - Use structured data over prose
+
+**Rationale**: LLM context is precious. Every character saved allows for more functional data in responses while maintaining clarity for both LLMs and humans.
+
 ## Important Reminders
 
 1. Always use pnpm, never npm or yarn
@@ -390,3 +419,4 @@ import type { SongDTO, AlbumDTO } from '../types/dto.js';
 5. Keep security as a top priority
 6. Maintain production-quality code at all times
 7. Use only working API endpoints
+8. **Apply LLM-optimized response formats** to all tool outputs
