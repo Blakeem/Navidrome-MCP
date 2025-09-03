@@ -178,12 +178,12 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
     lastCheckOk: Boolean(station.lastcheckok)
   };
   
+  // Only include essential fields for cleaner LLM context
   if (station.homepage) dto.homepage = station.homepage;
-  if (station.favicon) dto.favicon = station.favicon;
   if (station.countrycode) dto.countryCode = station.countrycode;
   if (station.codec) dto.codec = station.codec;
   if (station.bitrate !== undefined) dto.bitrate = station.bitrate;
-  if (station.lastchecktime_iso8601) dto.lastCheckTime = station.lastchecktime_iso8601;
+  // Skip favicon and lastCheckTime to reduce context size
   
   return dto;
 }
