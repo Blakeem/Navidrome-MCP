@@ -113,7 +113,31 @@ This isn't just another music tool – it's your personal music curator powered 
 
 ### Quick Setup
 
-#### 1. Clone and Build
+#### Option 1: NPM (Recommended - Always Latest)
+
+The easiest way is to use the published NPM package:
+
+```json
+{
+  "mcpServers": {
+    "navidrome": {
+      "command": "npx",
+      "args": ["navidrome-mcp@latest"],
+      "env": {
+        "NAVIDROME_URL": "http://your-server:4533",
+        "NAVIDROME_USERNAME": "your_username",
+        "NAVIDROME_PASSWORD": "your_password"
+      }
+    }
+  }
+}
+```
+
+This automatically downloads and runs the latest version every time Claude starts.
+
+#### Option 2: Clone and Build (Development)
+
+For development or if you prefer manual control:
 
 ```bash
 git clone https://github.com/Blakeem/Navidrome-MCP.git
@@ -129,7 +153,29 @@ Find your configuration file:
 * **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 * **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-Add the Navidrome MCP server:
+#### If using NPM (Option 1):
+
+```json
+{
+  "mcpServers": {
+    "navidrome": {
+      "command": "npx",
+      "args": ["navidrome-mcp@latest"],
+      "env": {
+        "NAVIDROME_URL": "http://your-server:4533",
+        "NAVIDROME_USERNAME": "your_username",
+        "NAVIDROME_PASSWORD": "your_password",
+        "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
+        "LYRICS_PROVIDER": "lrclib",
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"
+      }
+    }
+  }
+}
+```
+
+#### If using manual build (Option 2):
 
 ```json
 {
@@ -141,7 +187,7 @@ Add the Navidrome MCP server:
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
-        "LASTFM_API_KEY": "your_api_key",
+        "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
         "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
         "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"

@@ -45,6 +45,11 @@ List all users (admin-only).
 ### GET /api/user/{id}
 Get a specific user by ID (admin-only or own user).
 
+**🔑 Access Pattern:**
+- **Regular users**: Can only access their own user data (`{id}` must match their user ID)
+- **Admin users**: Can access any user's data
+- **Best practice**: Regular users should use this endpoint to get their own user information, including library access
+
 **Response (200 OK):**
 ```json
 {
@@ -56,7 +61,29 @@ Get a specific user by ID (admin-only or own user).
   "lastAccessAt": "ISO-8601 timestamp",
   "lastLoginAt": "ISO-8601 timestamp",
   "createdAt": "ISO-8601 timestamp",
-  "updatedAt": "ISO-8601 timestamp"
+  "updatedAt": "ISO-8601 timestamp",
+  "libraries": [                    // ✨ Libraries user has access to
+    {
+      "id": number,                 // Library ID for API filtering
+      "name": "string",             // Display name
+      "path": "string",             // File system path
+      "remotePath": "string",
+      "lastScanAt": "ISO-8601",
+      "lastScanStartedAt": "ISO-8601",
+      "fullScanInProgress": boolean,
+      "updatedAt": "ISO-8601",
+      "createdAt": "ISO-8601",
+      "totalSongs": number,
+      "totalAlbums": number,
+      "totalArtists": number,
+      "totalFolders": number,
+      "totalFiles": number,
+      "totalMissingFiles": number,
+      "totalSize": number,
+      "totalDuration": number,
+      "defaultNewUsers": boolean
+    }
+  ]
 }
 ```
 
@@ -135,14 +162,45 @@ Delete a user (admin-only).
 - 404 Not Found: User not found
 - 409 Conflict: Cannot delete the last admin user
 
+## Getting Library Information
+
+### 🎯 Recommended Approach for Regular Users
+**Use `GET /api/user/{your_user_id}` to get your library access.**
+
+This is the **preferred method** for regular users because:
+- ✅ No admin privileges required
+- ✅ Returns complete library information including stats
+- ✅ Works for all user types
+- ✅ Single API call to get both user info and library access
+
+### Example Usage
+```javascript
+// 1. Get user ID from login response
+const { id: userId, token } = await login(username, password);
+
+// 2. Get user's libraries
+const userResponse = await fetch(`/api/user/${userId}`, {
+  headers: { 'X-ND-Authorization': `Bearer ${token}` }
+});
+const { libraries } = await userResponse.json();
+
+// 3. User can now select from available libraries
+libraries.forEach(lib => {
+  console.log(`Library: ${lib.name} (ID: ${lib.id})`);
+  console.log(`  Songs: ${lib.totalSongs}, Albums: ${lib.totalAlbums}`);
+});
+```
+
 ## User Permissions
 
 | Action | Own User | Other Users | Admin Required |
 |--------|----------|-------------|----------------|
 | List all | No | No | Yes |
 | View | Yes | No | Yes (for others) |
+| View Libraries | Yes* | No | Yes (for others) |
 | Create | No | No | Yes |
-| Update | Partial* | No | Yes (for others) |
+| Update | Partial** | No | Yes (for others) |
 | Delete | No | No | Yes |
 
-*Non-admin users can only update their own name, email, and password
+*Users get library information via their own user endpoint (`GET /api/user/{own_id}`)  
+**Non-admin users can only update their own name, email, and password

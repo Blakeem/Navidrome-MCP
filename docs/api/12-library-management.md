@@ -3,6 +3,18 @@
 ## Overview
 Manage music libraries and user access permissions. These endpoints are primarily admin-only.
 
+## 🚨 Important: Library Access for Regular Users
+
+**For regular users wanting to get their library information:**
+- ❌ **Don't use** `/api/user/{userId}/library` (admin-only, will fail)  
+- ✅ **Use** `/api/user/{your_user_id}` instead (see [Users API](02-users.md#getting-library-information))
+
+**For client applications implementing library switching:**
+1. Login and get user ID from response
+2. Call `GET /api/user/{user_id}` to get user's libraries
+3. Present library selection to user
+4. Filter API calls by library ID (if supported by specific endpoints)
+
 ## Library Endpoints
 
 ### Base URL: `/api/library` (Admin-only)
@@ -69,7 +81,12 @@ Remove a library (admin-only, removes all associated music).
 ## User-Library Association
 
 ### GET /api/user/{userId}/library
-Get libraries accessible to a specific user (admin-only).
+Get libraries accessible to a specific user (**admin-only**).
+
+**⚠️ Access Restriction:**
+- **Admin users only**: Can access any user's library information
+- **Regular users**: Cannot use this endpoint, even for their own data
+- **Alternative for regular users**: Use `GET /api/user/{own_id}` to get library information (see [Users API](02-users.md#getting-library-information))
 
 **Response (200 OK):**
 ```json
@@ -83,8 +100,12 @@ Get libraries accessible to a specific user (admin-only).
 ]
 ```
 
+**Error Responses:**
+- 401 Unauthorized: Not authenticated
+- 403 Forbidden: Not an admin user (even for own user data)
+
 ### PUT /api/user/{userId}/library
-Set which libraries a user can access (admin-only).
+Set which libraries a user can access (**admin-only**).
 
 **Request Body:**
 ```json
