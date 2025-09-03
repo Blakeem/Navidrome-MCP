@@ -17,8 +17,10 @@
  */
 
 import { z } from 'zod';
+import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
+import type { ToolCategory } from './handlers/registry.js';
 
 const TestConnectionSchema = z.object({
   includeServerInfo: z.boolean().optional().default(false),
@@ -121,4 +123,44 @@ export async function testConnection(
       message: `Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
     };
   }
+}
+
+// Tool definitions
+const tools: Tool[] = [
+  {
+    name: 'test_connection',
+    description: 'Test the connection to the Navidrome server',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        includeServerInfo: {
+          type: 'boolean',
+          description: 'Include detailed server information in the response',
+          default: false,
+        },
+      },
+    },
+  },
+];
+
+// Tool category export for registry
+export const testToolCategory: ToolCategory = {
+  tools,
+  async handleToolCall(name: string, _args: unknown): Promise<unknown> {
+    // This will be called with client and config from the registry
+    throw new Error(`Test tools need client and config access. Tool: ${name}`);
+  }
+};
+
+// Factory function for creating tool category with dependencies
+export function createTestToolCategory(client: NavidromeClient, config: Config): ToolCategory {
+  return {
+    tools,
+    async handleToolCall(name: string, args: unknown): Promise<unknown> {
+      if (name === 'test_connection') {
+        return await testConnection(client, config, args);
+      }
+      throw new Error(`Unknown test tool: ${name}`);
+    }
+  };
 }
