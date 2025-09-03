@@ -19,6 +19,7 @@
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 export interface LastFmArtist {
   name: string;
@@ -143,7 +144,7 @@ async function callLastFmApi(method: string, params: Record<string, string>, api
 
 const SimilarArtistsSchema = z.object({
   artist: z.string().min(1),
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SIMILAR_ARTISTS_LIMIT),
 });
 
 export async function getSimilarArtists(config: Config, args: unknown): Promise<SimilarArtistsResult> {
@@ -181,7 +182,7 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
 const SimilarTracksSchema = z.object({
   artist: z.string().min(1),
   track: z.string().min(1),
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SIMILAR_TRACKS_LIMIT),
 });
 
 export async function getSimilarTracks(config: Config, args: unknown): Promise<SimilarTracksResult> {
@@ -262,7 +263,7 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
 
 const TopTracksByArtistSchema = z.object({
   artist: z.string().min(1),
-  limit: z.number().min(1).max(50).optional().default(10),
+  limit: z.number().min(1).max(50).optional().default(DEFAULT_VALUES.TOP_TRACKS_BY_ARTIST_LIMIT),
 });
 
 export async function getTopTracksByArtist(config: Config, args: unknown): Promise<TopTracksByArtistResult> {
@@ -298,7 +299,7 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
 
 const GlobalChartsSchema = z.object({
   type: z.enum(['artists', 'tracks', 'tags']),
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.TRENDING_MUSIC_LIMIT),
   page: z.number().min(1).optional().default(1),
 });
 

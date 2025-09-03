@@ -141,7 +141,7 @@ Add the Navidrome MCP server:
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
-        "LASTFM_API_KEY": "your_api_key",
+        "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
         "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
         "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"

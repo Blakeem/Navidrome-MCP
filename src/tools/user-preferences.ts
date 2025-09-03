@@ -21,6 +21,7 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import type { Config } from '../config.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Helper function to parse duration from MM:SS format to seconds
 function parseDuration(durationFormatted: string): number {
@@ -111,14 +112,14 @@ const SetRatingSchema = z.object({
 
 const ListStarredSchema = z.object({
   type: z.enum(['songs', 'albums', 'artists']),
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.STARRED_ITEMS_LIMIT),
   offset: z.number().min(0).optional().default(0),
 });
 
 const ListTopRatedSchema = z.object({
   type: z.enum(['songs', 'albums', 'artists']),
   minRating: z.number().min(1).max(5).optional().default(4),
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.TOP_RATED_LIMIT),
   offset: z.number().min(0).optional().default(0),
 });
 

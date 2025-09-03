@@ -439,8 +439,6 @@ export interface ExternalRadioStationDTO {
   playUrl: string;
   /** Station homepage URL */
   homepage?: string;
-  /** Station favicon/logo URL */
-  favicon?: string;
   /** Tags/genres for the station */
   tags: string[];
   /** Country code (ISO 3166) */
@@ -457,10 +455,6 @@ export interface ExternalRadioStationDTO {
   votes: number;
   /** Total click count */
   clickCount: number;
-  /** Whether last check was successful */
-  lastCheckOk: boolean;
-  /** ISO 8601 timestamp of last check */
-  lastCheckTime?: string;
   /** Stream validation results (if validated) */
   validation?: {
     /** Whether validation was performed */

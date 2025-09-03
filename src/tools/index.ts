@@ -101,6 +101,7 @@ import {
   voteStation,
 } from './radio-discovery.js';
 import { getLyrics } from './lyrics.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
   // Check feature configurations
@@ -159,7 +160,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of songs to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: DEFAULT_VALUES.SONGS_LIMIT,
           },
           offset: {
             type: 'number',
@@ -197,7 +198,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of albums to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: DEFAULT_VALUES.ALBUMS_LIMIT,
           },
           offset: {
             type: 'number',
@@ -230,7 +231,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of artists to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -263,7 +264,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of genres to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -352,7 +353,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of playlists to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -633,21 +634,21 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of artists to return',
             minimum: 0,
             maximum: 100,
-            default: 20,
+            default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
           },
           albumCount: {
             type: 'number',
             description: 'Maximum number of albums to return',
             minimum: 0,
             maximum: 100,
-            default: 20,
+            default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
           },
           songCount: {
             type: 'number',
             description: 'Maximum number of songs to return',
             minimum: 0,
             maximum: 100,
-            default: 20,
+            default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
           },
         },
         required: ['query'],
@@ -668,7 +669,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of songs to return',
             minimum: 1,
             maximum: 100,
-            default: 20,
+            default: 100,
           },
         },
         required: ['query'],
@@ -689,7 +690,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of albums to return',
             minimum: 1,
             maximum: 100,
-            default: 20,
+            default: 100,
           },
         },
         required: ['query'],
@@ -710,7 +711,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of artists to return',
             minimum: 1,
             maximum: 100,
-            default: 20,
+            default: 100,
           },
         },
         required: ['query'],
@@ -795,7 +796,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of items to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -830,7 +831,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of items to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -896,7 +897,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of tracks to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -930,7 +931,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of items to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -945,120 +946,6 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             default: 1,
           },
         },
-      },
-    },
-    {
-      name: 'get_similar_artists',
-      description: 'Get similar artists using Last.fm API',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          artist: {
-            type: 'string',
-            description: 'Name of the artist to find similar artists for',
-          },
-          limit: {
-            type: 'number',
-            description: 'Maximum number of similar artists to return (1-100)',
-            minimum: 1,
-            maximum: 100,
-            default: 20,
-          },
-        },
-        required: ['artist'],
-      },
-    },
-    {
-      name: 'get_similar_tracks',
-      description: 'Get similar tracks using Last.fm API',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          artist: {
-            type: 'string',
-            description: 'Name of the track artist',
-          },
-          track: {
-            type: 'string',
-            description: 'Name of the track',
-          },
-          limit: {
-            type: 'number',
-            description: 'Maximum number of similar tracks to return (1-100)',
-            minimum: 1,
-            maximum: 100,
-            default: 20,
-          },
-        },
-        required: ['artist', 'track'],
-      },
-    },
-    {
-      name: 'get_artist_info',
-      description: 'Get detailed artist information from Last.fm',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          artist: {
-            type: 'string',
-            description: 'Name of the artist to get information for',
-          },
-          lang: {
-            type: 'string',
-            description: 'Language for the biography (ISO 639 code)',
-            default: 'en',
-          },
-        },
-        required: ['artist'],
-      },
-    },
-    {
-      name: 'get_top_tracks_by_artist',
-      description: 'Get top tracks for an artist from Last.fm',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          artist: {
-            type: 'string',
-            description: 'Name of the artist',
-          },
-          limit: {
-            type: 'number',
-            description: 'Maximum number of top tracks to return (1-50)',
-            minimum: 1,
-            maximum: 50,
-            default: 10,
-          },
-        },
-        required: ['artist'],
-      },
-    },
-    {
-      name: 'get_trending_music',
-      description: 'Get trending music charts from Last.fm',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          type: {
-            type: 'string',
-            description: 'Type of chart to get',
-            enum: ['artists', 'tracks', 'tags'],
-          },
-          limit: {
-            type: 'number',
-            description: 'Maximum number of items to return (1-100)',
-            minimum: 1,
-            maximum: 100,
-            default: 20,
-          },
-          page: {
-            type: 'number',
-            description: 'Page number for pagination',
-            minimum: 1,
-            default: 1,
-          },
-        },
-        required: ['type'],
       },
     },
     {
@@ -1192,7 +1079,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of tags to return (1-500)',
             minimum: 1,
             maximum: 500,
-            default: 20,
+            default: 100,
           },
           offset: {
             type: 'number',
@@ -1252,7 +1139,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of matching tags to return',
             minimum: 1,
             maximum: 100,
-            default: 20,
+            default: 100,
           },
         },
         required: ['tagName'],
@@ -1297,7 +1184,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
             description: 'Maximum number of tag names to return',
             minimum: 1,
             maximum: 100,
-            default: 20,
+            default: 100,
           },
           minUsage: {
             type: 'number',
@@ -1335,161 +1222,6 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
         required: ['url'],
       },
     },
-    {
-      name: 'discover_radio_stations',
-      description: 'Find internet radio stations via Radio Browser API. Search by query, tags/genres, country, language, codec, bitrate, and more.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          query: {
-            type: 'string',
-            description: 'Search query for station names',
-          },
-          tag: {
-            type: 'string',
-            description: 'Filter by tag/genre (e.g., "jazz", "rock", "classical")',
-          },
-          countryCode: {
-            type: 'string',
-            description: 'ISO country code (e.g., "US", "GB", "FR")',
-          },
-          language: {
-            type: 'string',
-            description: 'Language code (e.g., "english", "spanish", "french")',
-          },
-          codec: {
-            type: 'string',
-            description: 'Audio codec (e.g., "MP3", "AAC", "OGG")',
-          },
-          bitrateMin: {
-            type: 'number',
-            description: 'Minimum bitrate in kbps',
-            minimum: 0,
-          },
-          isHttps: {
-            type: 'boolean',
-            description: 'Filter for HTTPS streams only',
-          },
-          order: {
-            type: 'string',
-            description: 'Sort order',
-            enum: ['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random'],
-          },
-          reverse: {
-            type: 'boolean',
-            description: 'Reverse sort order',
-          },
-          offset: {
-            type: 'number',
-            description: 'Pagination offset',
-            minimum: 0,
-          },
-          limit: {
-            type: 'number',
-            description: 'Maximum results (1-500)',
-            minimum: 1,
-            maximum: 500,
-            default: 50,
-          },
-          hideBroken: {
-            type: 'boolean',
-            description: 'Hide broken stations',
-            default: true,
-          },
-        },
-      },
-    },
-    {
-      name: 'get_radio_filters',
-      description: 'Get available filter options for radio station discovery (tags, countries, languages, codecs)',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          kinds: {
-            type: 'array',
-            description: 'Filter types to retrieve',
-            items: {
-              type: 'string',
-              enum: ['tags', 'countries', 'languages', 'codecs'],
-            },
-            default: ['tags', 'countries', 'languages', 'codecs'],
-          },
-        },
-      },
-    },
-    {
-      name: 'get_station_by_uuid',
-      description: 'Get detailed information about a specific radio station by its UUID',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stationUuid: {
-            type: 'string',
-            description: 'The unique UUID of the radio station',
-          },
-        },
-        required: ['stationUuid'],
-      },
-    },
-    {
-      name: 'click_station',
-      description: 'Register a play click for a radio station (helps with popularity metrics). Call this when starting playback.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stationUuid: {
-            type: 'string',
-            description: 'The unique UUID of the radio station',
-          },
-        },
-        required: ['stationUuid'],
-      },
-    },
-    {
-      name: 'vote_station',
-      description: 'Vote for a radio station to increase its popularity',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stationUuid: {
-            type: 'string',
-            description: 'The unique UUID of the radio station',
-          },
-        },
-        required: ['stationUuid'],
-      },
-    },
-    {
-      name: 'get_lyrics',
-      description: 'Get lyrics for a song (both synced and unsynced). Returns timed lyrics for karaoke-style display when available.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          title: {
-            type: 'string',
-            description: 'Song title',
-          },
-          artist: {
-            type: 'string',
-            description: 'Artist name',
-          },
-          album: {
-            type: 'string',
-            description: 'Album name (improves match accuracy)',
-          },
-          durationMs: {
-            type: 'number',
-            description: 'Song duration in milliseconds (improves match accuracy)',
-            minimum: 0,
-          },
-          id: {
-            type: 'string',
-            description: 'LRCLIB record ID if known',
-          },
-        },
-        required: ['title', 'artist'],
-      },
-    },
   ];
 
   // Add conditional tools based on configuration
@@ -1510,7 +1242,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
               description: 'Maximum number of similar artists to return (1-100)',
               minimum: 1,
               maximum: 100,
-              default: 20,
+              default: 100,
             },
           },
           required: ['artist'],
@@ -1535,7 +1267,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
               description: 'Maximum number of similar tracks to return (1-100)',
               minimum: 1,
               maximum: 100,
-              default: 20,
+              default: 100,
             },
           },
           required: ['artist', 'track'],
@@ -1597,7 +1329,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
               description: 'Maximum number of items to return (1-100)',
               minimum: 1,
               maximum: 100,
-              default: 20,
+              default: 100,
             },
             page: {
               type: 'number',
@@ -1616,63 +1348,65 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
     tools.push(
       {
         name: 'discover_radio_stations',
-        description: 'Find internet radio stations via Radio Browser API. Search by query, tags/genres, country, language, codec, bitrate, and more.',
+        description: 'Discover internet radio stations worldwide via Radio Browser API. Search by genre/tag, country, language, quality, and more. Returns validated streams with metadata, sorted by popularity by default.',
         inputSchema: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'Search query for station names',
+              description: 'Search query for station names (e.g., "BBC", "Classic FM", "Jazz FM")',
             },
             tag: {
               type: 'string',
-              description: 'Filter by tag/genre (e.g., "jazz", "rock", "classical")',
+              description: 'Filter by music genre/tag (e.g., "jazz", "rock", "classical", "electronic", "hip-hop", "country", "reggae", "latin")',
             },
             countryCode: {
               type: 'string',
-              description: 'ISO country code (e.g., "US", "GB", "FR")',
+              description: 'ISO 2-letter country code (e.g., "US"=United States, "GB"=United Kingdom, "FR"=France, "DE"=Germany, "JP"=Japan, "AU"=Australia)',
             },
             language: {
               type: 'string',
-              description: 'Language code (e.g., "english", "spanish", "french")',
+              description: 'Broadcast language (e.g., "english", "spanish", "french", "german", "japanese", "portuguese", "italian")',
             },
             codec: {
               type: 'string',
-              description: 'Audio codec (e.g., "MP3", "AAC", "OGG")',
+              description: 'Audio codec preference (e.g., "MP3" for best compatibility, "AAC" for better quality, "OGG" for open standard)',
             },
             bitrateMin: {
               type: 'number',
-              description: 'Minimum bitrate in kbps',
+              description: 'Minimum audio quality in kbps (e.g., 128 for standard quality, 256 for high quality, 320 for maximum quality)',
               minimum: 0,
             },
             isHttps: {
               type: 'boolean',
-              description: 'Filter for HTTPS streams only',
+              description: 'Require secure HTTPS streams (recommended for security)',
             },
             order: {
               type: 'string',
-              description: 'Sort order',
+              description: 'Sort results by: "votes"=popularity, "name"=alphabetical, "clickcount"=most played, "bitrate"=quality, "lastcheckok"=reliability, "random"=shuffle',
               enum: ['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random'],
+              default: 'votes',
             },
             reverse: {
               type: 'boolean',
-              description: 'Reverse sort order',
+              description: 'Reverse sort order (true=descending/best first, false=ascending)',
+              default: true,
             },
             offset: {
               type: 'number',
-              description: 'Pagination offset',
+              description: 'Skip first N results for pagination',
               minimum: 0,
             },
             limit: {
               type: 'number',
-              description: 'Maximum results (1-500)',
+              description: 'Maximum number of stations to return (15=quick discovery, 50=extensive search, 500=maximum)',
               minimum: 1,
               maximum: 500,
-              default: 50,
+              default: DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT,
             },
             hideBroken: {
               type: 'boolean',
-              description: 'Hide broken stations',
+              description: 'Hide stations that failed recent connectivity checks (recommended: true)',
               default: true,
             },
           },

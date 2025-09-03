@@ -34,10 +34,11 @@ import type {
   ReorderPlaylistTrackRequest,
   ReorderPlaylistTrackResponse,
 } from '../types/dto.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Common pagination schema
 const PaginationSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.PLAYLISTS_LIMIT),
   offset: z.number().min(0).optional().default(0),
   sort: z.string().optional().default('name'),
   order: z.enum(['ASC', 'DESC']).optional().default('ASC'),
@@ -84,7 +85,7 @@ const ReorderTrackSchema = z.object({
 
 const GetPlaylistTracksSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required'),
-  limit: z.number().min(1).max(500).optional().default(100),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.PLAYLIST_TRACKS_LIMIT),
   offset: z.number().min(0).optional().default(0),
   format: z.enum(['json', 'm3u']).optional().default('json'),
 });

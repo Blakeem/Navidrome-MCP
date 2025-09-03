@@ -21,27 +21,28 @@ import type { Config } from '../config.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/dto.js';
 import crypto from 'crypto';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 const SearchSchema = z.object({
   query: z.string().min(1, 'Search query is required'),
-  artistCount: z.number().min(0).max(100).optional().default(20),
-  albumCount: z.number().min(0).max(100).optional().default(20), 
-  songCount: z.number().min(0).max(100).optional().default(20),
+  artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT), 
+  songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
 });
 
 const SearchSongsSchema = z.object({
   query: z.string().min(1, 'Search query is required'),
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SEARCH_LIMIT),
 });
 
 const SearchAlbumsSchema = z.object({
   query: z.string().min(1, 'Search query is required'),
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SEARCH_LIMIT),
 });
 
 const SearchArtistsSchema = z.object({
   query: z.string().min(1, 'Search query is required'),
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SEARCH_LIMIT),
 });
 
 interface SubsonicSearchResult {
