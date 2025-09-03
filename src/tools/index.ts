@@ -117,34 +117,21 @@ function createToolResponse(result: unknown): { content: Array<{ type: string; t
 }
 
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
-  // Check feature configurations
-  const hasLastFm = ((): boolean => {
-    const apiKey = process.env['LASTFM_API_KEY'];
-    const configured = !!(apiKey && apiKey.trim());
-    if (!configured && config.debug) {
-      console.warn('[DEBUG] Last.fm tools disabled: LASTFM_API_KEY not configured');
-    }
-    return configured;
-  })();
+  // Use feature flags from config instead of direct environment access
+  const hasLastFm = config.features.lastfm;
+  const hasRadioBrowser = config.features.radioBrowser;
+  const hasLyrics = config.features.lyrics;
 
-  const hasRadioBrowser = ((): boolean => {
-    const userAgent = process.env['RADIO_BROWSER_USER_AGENT'];
-    const configured = !!(userAgent && userAgent.trim());
-    if (!configured && config.debug) {
-      console.warn('[DEBUG] Radio Browser discovery tools disabled: RADIO_BROWSER_USER_AGENT not configured');
-    }
-    return configured;
-  })();
-
-  const hasLyrics = ((): boolean => {
-    const provider = process.env['LYRICS_PROVIDER'];
-    const userAgent = process.env['LRCLIB_USER_AGENT'];
-    const configured = !!(provider && provider.trim() && userAgent && userAgent.trim());
-    if (!configured && config.debug) {
-      console.warn('[DEBUG] Lyrics tools disabled: LYRICS_PROVIDER and LRCLIB_USER_AGENT must be configured');
-    }
-    return configured;
-  })();
+  // Debug logging for disabled features
+  if (!hasLastFm && config.debug) {
+    console.warn('[DEBUG] Last.fm tools disabled: LASTFM_API_KEY not configured');
+  }
+  if (!hasRadioBrowser && config.debug) {
+    console.warn('[DEBUG] Radio Browser discovery tools disabled: RADIO_BROWSER_USER_AGENT not configured');
+  }
+  if (!hasLyrics && config.debug) {
+    console.warn('[DEBUG] Lyrics tools disabled: LYRICS_PROVIDER and LRCLIB_USER_AGENT must be configured');
+  }
 
   // Define core tools (always available)
   const tools: Tool[] = [
@@ -1533,7 +1520,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
     // Simple tool handlers using the helper function
     if (name === 'test_connection') {
-      const result = await testConnection(client, args ?? {});
+      const result = await testConnection(client, config, args ?? {});
       return createToolResponse(result);
     }
 
@@ -1788,32 +1775,32 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
     }
 
     if (name === 'discover_radio_stations' && hasRadioBrowser) {
-      const result = await discoverRadioStations(client, args ?? {});
+      const result = await discoverRadioStations(config, client, args ?? {});
       return createToolResponse(result);
     }
 
     if (name === 'get_radio_filters' && hasRadioBrowser) {
-      const result = await getRadioFilters(args ?? {});
+      const result = await getRadioFilters(config, args ?? {});
       return createToolResponse(result);
     }
 
     if (name === 'get_station_by_uuid' && hasRadioBrowser) {
-      const result = await getStationByUuid(args ?? {});
+      const result = await getStationByUuid(config, args ?? {});
       return createToolResponse(result);
     }
 
     if (name === 'click_station' && hasRadioBrowser) {
-      const result = await clickStation(args ?? {});
+      const result = await clickStation(config, args ?? {});
       return createToolResponse(result);
     }
 
     if (name === 'vote_station' && hasRadioBrowser) {
-      const result = await voteStation(args ?? {});
+      const result = await voteStation(config, args ?? {});
       return createToolResponse(result);
     }
 
     if (name === 'get_lyrics' && hasLyrics) {
-      const result = await getLyrics(args ?? {});
+      const result = await getLyrics(config, args ?? {});
       return createToolResponse(result);
     }
 

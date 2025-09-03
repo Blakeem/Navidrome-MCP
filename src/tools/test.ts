@@ -18,6 +18,7 @@
 
 import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import type { Config } from '../config.js';
 
 const TestConnectionSchema = z.object({
   includeServerInfo: z.boolean().optional().default(false),
@@ -52,6 +53,7 @@ export interface TestConnectionResult {
 
 export async function testConnection(
   client: NavidromeClient,
+  config: Config,
   args: unknown
 ): Promise<TestConnectionResult> {
   const params = TestConnectionSchema.parse(args);
@@ -71,22 +73,10 @@ export async function testConnection(
     };
 
     if (params.includeServerInfo) {
-      // Check feature configurations
-      const hasLastFm = ((): boolean => {
-        const apiKey = process.env['LASTFM_API_KEY'];
-        return !!(apiKey && apiKey.trim());
-      })();
-
-      const hasRadioBrowser = ((): boolean => {
-        const userAgent = process.env['RADIO_BROWSER_USER_AGENT'];
-        return !!(userAgent && userAgent.trim());
-      })();
-
-      const hasLyrics = ((): boolean => {
-        const provider = process.env['LYRICS_PROVIDER'];
-        const userAgent = process.env['LRCLIB_USER_AGENT'];
-        return !!(provider && provider.trim() && userAgent && userAgent.trim());
-      })();
+      // Use feature flags from config
+      const hasLastFm = config.features.lastfm;
+      const hasRadioBrowser = config.features.radioBrowser;
+      const hasLyrics = config.features.lyrics;
 
       result.serverInfo = {
         url: 'Connected to Navidrome',

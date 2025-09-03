@@ -18,9 +18,7 @@
 
 import { z } from 'zod';
 import type { LyricsDTO, LyricsLine } from '../types/dto.js';
-
-const LRCLIB_BASE = process.env['LRCLIB_BASE'] || 'https://lrclib.net';
-const USER_AGENT = process.env['LRCLIB_USER_AGENT'] || 'Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)';
+import type { Config } from '../config.js';
 
 /**
  * Schema for getting lyrics
@@ -76,9 +74,9 @@ function parseSyncedLyrics(lrcText: string): LyricsLine[] {
 /**
  * Try to get lyrics using exact match
  */
-async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>): Promise<LRCLIBResponse | null> {
+async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>, config: Config): Promise<LRCLIBResponse | null> {
   try {
-    const url = new URL('/api/get', LRCLIB_BASE);
+    const url = new URL('/api/get', config.lrclibBase);
     
     if (params.id) {
       url.searchParams.set('id', params.id);
@@ -91,7 +89,7 @@ async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>): Promi
     
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': USER_AGENT,
+        'User-Agent': config.lrclibUserAgent || 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
@@ -114,9 +112,9 @@ async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>): Promi
 /**
  * Search for lyrics and find best match
  */
-async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>): Promise<LRCLIBResponse | null> {
+async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config: Config): Promise<LRCLIBResponse | null> {
   try {
-    const url = new URL('/api/search', LRCLIB_BASE);
+    const url = new URL('/api/search', config.lrclibBase);
     url.searchParams.set('query', `${params.title} ${params.artist}`);
     if (params.durationMs) {
       url.searchParams.set('duration', String(Math.round(params.durationMs / 1000)));
@@ -124,7 +122,7 @@ async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>): Promis
     
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': USER_AGENT,
+        'User-Agent': config.lrclibUserAgent || 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
@@ -190,16 +188,16 @@ async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>): Promis
 /**
  * Get lyrics for a song
  */
-export async function getLyrics(args: unknown): Promise<LyricsDTO> {
+export async function getLyrics(config: Config, args: unknown): Promise<LyricsDTO> {
   const params = GetLyricsArgsSchema.parse(args);
   
   try {
     // Try exact match first
-    let lyricsData = await tryExactMatch(params);
+    let lyricsData = await tryExactMatch(params, config);
     
     // If no exact match, try searching
     if (!lyricsData) {
-      lyricsData = await searchLyrics(params);
+      lyricsData = await searchLyrics(params, config);
     }
     
     // If still no match, return empty lyrics
