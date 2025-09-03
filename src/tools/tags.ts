@@ -24,9 +24,10 @@ import type {
   TagDistributionResponse, 
   TagDistribution 
 } from '../types/dto.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 const ListTagsSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.TAGS_LIMIT),
   offset: z.number().min(0).optional().default(0),
   sort: z.enum(['tagName', 'tagValue', 'albumCount', 'songCount']).optional().default('tagName'),
   order: z.enum(['ASC', 'DESC']).optional().default('ASC'),
@@ -40,17 +41,17 @@ const GetTagSchema = z.object({
 const SearchByTagsSchema = z.object({
   tagName: z.string().min(1),
   tagValue: z.string().optional(),
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.TAG_SEARCH_LIMIT),
 });
 
 const GetTagDistributionSchema = z.object({
   tagNames: z.array(z.string()).optional(),
-  limit: z.number().min(1).max(50).optional().default(10),
-  distributionLimit: z.number().min(1).max(100).optional().default(20),
-});;
+  limit: z.number().min(1).max(50).optional().default(DEFAULT_VALUES.TAG_DISTRIBUTION_LIMIT),
+  distributionLimit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.TAG_DISTRIBUTION_VALUES_LIMIT),
+});
 
 const ListUniqueTagsSchema = z.object({
-  limit: z.number().min(1).max(100).optional().default(20),
+  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.UNIQUE_TAGS_LIMIT),
   minUsage: z.number().min(1).optional().default(1),
 });
 

@@ -29,10 +29,11 @@ import {
   transformToArtistDTO,
 } from '../transformers/song-transformer.js';
 import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/dto.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Common pagination schema
 const PaginationSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.ALBUMS_LIMIT),
   offset: z.number().min(0).optional().default(0),
   sort: z.string().optional().default('name'),
   order: z.enum(['ASC', 'DESC']).optional().default('ASC'),

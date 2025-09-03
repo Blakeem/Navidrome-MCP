@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Helper function to parse duration from MM:SS format to seconds
 function parseDuration(durationFormatted: string): number {
@@ -67,7 +68,7 @@ export interface MostPlayedResult {
 }
 
 const RecentlyPlayedSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.RECENTLY_PLAYED_LIMIT),
   offset: z.number().min(0).optional().default(0),
   timeRange: z.enum(['today', 'week', 'month', 'all']).optional().default('all'),
 });
@@ -117,7 +118,7 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
 
 const MostPlayedSchema = z.object({
   type: z.enum(['songs', 'albums', 'artists']).optional().default('songs'),
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.MOST_PLAYED_LIMIT),
   offset: z.number().min(0).optional().default(0),
   minPlayCount: z.number().min(1).optional().default(1),
 });

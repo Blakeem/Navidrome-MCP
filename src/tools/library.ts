@@ -20,9 +20,10 @@ import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { transformSongsToDTO } from '../transformers/song-transformer.js';
 import type { SongDTO } from '../types/dto.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 const ListSongsSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(20),
+  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.SONGS_LIMIT),
   offset: z.number().min(0).optional().default(0),
   sort: z
     .enum(['title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating'])

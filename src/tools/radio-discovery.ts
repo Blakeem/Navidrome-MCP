@@ -26,11 +26,11 @@ import type {
 } from '../types/dto.js';
 import { validateRadioStream } from './radio-validation.js';
 import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
+import { DEFAULT_VALUES } from '../constants/defaults.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 
 const RADIO_BROWSER_BASE = process.env['RADIO_BROWSER_BASE'] || 'https://de1.api.radio-browser.info';
 const USER_AGENT = process.env['RADIO_BROWSER_USER_AGENT'] || 'Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)';
-const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
 
 /**
@@ -127,10 +127,10 @@ export const DiscoverRadioStationsArgsSchema = z.object({
   codec: z.string().optional(),
   bitrateMin: z.number().min(0).optional(),
   isHttps: z.boolean().optional(),
-  order: z.enum(['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random']).optional(),
-  reverse: z.boolean().optional(),
+  order: z.enum(['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random']).default('votes'),
+  reverse: z.boolean().default(true),
   offset: z.number().min(0).optional(),
-  limit: z.number().min(1).max(MAX_LIMIT).default(DEFAULT_LIMIT),
+  limit: z.number().min(1).max(MAX_LIMIT).default(DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT),
   hideBroken: z.boolean().default(true)
 });
 
