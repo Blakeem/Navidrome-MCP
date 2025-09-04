@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { Config } from '../../../src/config.js';
 import { loadConfig } from '../../../src/config.js';
+import { shouldSkipLiveTests, getSkipReason, describeLive } from '../../helpers/env-detection.js';
 
 // Import search functions
 import {
@@ -23,11 +24,15 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
   let config: Config;
 
   beforeAll(async () => {
+    if (shouldSkipLiveTests()) {
+      console.log(`Skipping live tests: ${getSkipReason()}`);
+      return;
+    }
     // Load configuration for live testing
     config = await loadConfig();
   });
 
-  describe('Live Search Operations - API Compatibility', () => {
+  describeLive('Live Search Operations - API Compatibility', () => {
     // Use a generic search term that should exist in most music libraries
     const testQuery = 'the';
 
@@ -275,7 +280,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       ).rejects.toThrow();
     });
 
-    it('should handle special characters in query', async () => {
+    it.skipIf(shouldSkipLiveTests())('should handle special characters in query', async () => {
       const result = await searchAll(config, { 
         query: '!@#$%^&*()', 
         artistCount: 1, 
@@ -288,7 +293,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       expect(typeof result.totalResults).toBe('number');
     });
 
-    it('should handle unicode characters in query', async () => {
+    it.skipIf(shouldSkipLiveTests())('should handle unicode characters in query', async () => {
       const result = await searchSongs(config, { 
         query: 'café naïve résumé', 
         limit: 1 
@@ -378,7 +383,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
   describe('Performance Validation', () => {
     const testQuery = 'the';
 
-    it('should complete searches within reasonable time', async () => {
+    it.skipIf(shouldSkipLiveTests())('should complete searches within reasonable time', async () => {
       const startTime = Date.now();
       
       await searchAll(config, { 
@@ -394,7 +399,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       expect(duration).toBeLessThan(10000);
     });
 
-    it('should handle multiple concurrent searches', async () => {
+    it.skipIf(shouldSkipLiveTests())('should handle multiple concurrent searches', async () => {
       const searches = [
         searchSongs(config, { query: 'rock', limit: 5 }),
         searchAlbums(config, { query: 'jazz', limit: 5 }),

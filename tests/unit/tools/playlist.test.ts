@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, vi } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { getSharedLiveClient, createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import { mockPlaylist, mockSong, mockResponses } from '../../factories/mock-data.js';
+import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
 // Import playlist management functions
 import {
@@ -30,11 +31,15 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
   let liveClient: NavidromeClient;
 
   beforeAll(async () => {
+    if (shouldSkipLiveTests()) {
+      console.log(`Skipping live tests: ${getSkipReason()}`);
+      return;
+    }
     // Use shared client for read operations testing (avoids rate limiting)
     liveClient = await getSharedLiveClient();
   });
 
-  describe('Live Read Operations - API Compatibility', () => {
+  describeLive('Live Read Operations - API Compatibility', () => {
     describe('listPlaylists', () => {
       it('should return valid playlist structure from live server', async () => {
         // Test with minimal parameters to avoid large responses

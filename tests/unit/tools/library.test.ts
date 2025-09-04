@@ -3,17 +3,24 @@
  * 
  * Following UNIT-TEST-STRATEGY.md - tests live read operations against real server
  * to validate API compatibility and response structure without testing specific content.
+ * 
+ * Note: These tests automatically skip in CI environments without Navidrome configuration.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { getSharedLiveClient } from '../../factories/mock-client.js';
 import { listSongs } from '../../../src/tools/library.js';
+import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
-describe('Library Tools - Live Read Operations', () => {
+describeLive('Library Tools - Live Read Operations', () => {
   let liveClient: NavidromeClient;
 
   beforeAll(async () => {
+    if (shouldSkipLiveTests()) {
+      console.log(`Skipping live tests: ${getSkipReason()}`);
+      return;
+    }
     // Use shared client connection for read testing (avoids rate limiting)
     liveClient = await getSharedLiveClient();
   });

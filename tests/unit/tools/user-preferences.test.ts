@@ -12,6 +12,7 @@ import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { loadConfig } from '../../../src/config.js';
 import { getSharedLiveClient, createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
+import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
 // Import user preference functions
 import {
@@ -27,12 +28,16 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
   let config: Config;
 
   beforeAll(async () => {
+    if (shouldSkipLiveTests()) {
+      console.log(`Skipping live tests: ${getSkipReason()}`);
+      return;
+    }
     // Use shared client and config for read operations testing (avoids rate limiting)
     liveClient = await getSharedLiveClient();
     config = await loadConfig();
   });
 
-  describe('Live Read Operations - API Compatibility', () => {
+  describeLive('Live Read Operations - API Compatibility', () => {
     describe('listStarredItems', () => {
       it('should return valid starred songs structure from live server', async () => {
         const result = await listStarredItems(liveClient, { 

@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:ci": "SKIP_INTEGRATION_TESTS=true MOCK_ONLY_TESTS=true NAVIDROME_URL=http://ci-dummy:4533 NAVIDROME_USERNAME=ci-user NAVIDROME_PASSWORD=ci-pass vitest run",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",

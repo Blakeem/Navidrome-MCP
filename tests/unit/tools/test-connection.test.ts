@@ -11,19 +11,24 @@ import type { Config } from '../../../src/config.js';
 import { getSharedLiveClient } from '../../factories/mock-client.js';
 import { testConnection } from '../../../src/tools/test.js';
 import { loadConfig } from '../../../src/config.js';
+import { shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
 describe('Test Connection Tool - Live Connection Testing', () => {
   let liveClient: NavidromeClient;
   let config: Config;
 
   beforeAll(async () => {
+    if (shouldSkipLiveTests()) {
+      console.log(`Skipping live tests: ${getSkipReason()}`);
+      return;
+    }
     // Use shared client and config for connection testing (avoids rate limiting)
     config = await loadConfig();
     liveClient = await getSharedLiveClient();
   });
 
   describe('testConnection', () => {
-    it('should successfully connect to live Navidrome server', async () => {
+    it.skipIf(shouldSkipLiveTests())('should successfully connect to live Navidrome server', async () => {
       const result = await testConnection(liveClient, config, { includeServerInfo: false });
 
       // Validate basic connection response structure
@@ -36,7 +41,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(result.message).toMatch(/successfully connected/i);
     });
 
-    it('should return detailed server info when requested', async () => {
+    it.skipIf(shouldSkipLiveTests())('should return detailed server info when requested', async () => {
       const result = await testConnection(liveClient, config, { includeServerInfo: true });
 
       // Validate detailed response structure
@@ -94,7 +99,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(Array.isArray(features.lyrics.tools)).toBe(true);
     });
 
-    it('should detect enabled features correctly based on environment', async () => {
+    it.skipIf(shouldSkipLiveTests())('should detect enabled features correctly based on environment', async () => {
       const result = await testConnection(liveClient, config, { includeServerInfo: true });
       
       expect(result.success).toBe(true);
@@ -129,7 +134,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       }
     });
 
-    it('should handle connection with default parameters', async () => {
+    it.skipIf(shouldSkipLiveTests())('should handle connection with default parameters', async () => {
       // Test without explicit parameters (should default to includeServerInfo: false)
       const result = await testConnection(liveClient, config, {});
 
@@ -141,7 +146,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(result.serverInfo).toBeUndefined();
     });
 
-    it('should provide consistent response format', async () => {
+    it.skipIf(shouldSkipLiveTests())('should provide consistent response format', async () => {
       const basicResult = await testConnection(liveClient, config, { includeServerInfo: false });
       const detailedResult = await testConnection(liveClient, config, { includeServerInfo: true });
 

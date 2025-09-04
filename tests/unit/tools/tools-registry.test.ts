@@ -11,6 +11,7 @@ import type { Config } from '../../../src/config.js';
 import { getSharedLiveClient } from '../../factories/mock-client.js';
 import { loadConfig } from '../../../src/config.js';
 import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
+import { shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
 // Import category factory functions to count tools directly
 import { createTestToolCategory } from '../../../src/tools/test.js';
@@ -39,6 +40,12 @@ describe('Tools Registry - Tool Count Verification', () => {
   let config: Config;
 
   beforeAll(async () => {
+    if (shouldSkipLiveTests()) {
+      console.log(`Skipping live tests: ${getSkipReason()}`);
+      // Still load config for registry testing, but skip client
+      config = await loadConfig();
+      return;
+    }
     // Use shared client and config for tools registration (avoids rate limiting)
     config = await loadConfig();
     liveClient = await getSharedLiveClient();
