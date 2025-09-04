@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
-import { createLiveClient } from '../../factories/mock-client.js';
+import { getSharedLiveClient } from '../../factories/mock-client.js';
 import { testConnection } from '../../../src/tools/test.js';
 import { loadConfig } from '../../../src/config.js';
 
@@ -17,9 +17,9 @@ describe('Test Connection Tool - Live Connection Testing', () => {
   let config: Config;
 
   beforeAll(async () => {
-    // Create live client and config for connection testing
+    // Use shared client and config for connection testing (avoids rate limiting)
     config = await loadConfig();
-    liveClient = await createLiveClient();
+    liveClient = await getSharedLiveClient();
   });
 
   describe('testConnection', () => {

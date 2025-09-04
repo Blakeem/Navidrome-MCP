@@ -7,15 +7,15 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
-import { createLiveClient } from '../../factories/mock-client.js';
+import { getSharedLiveClient } from '../../factories/mock-client.js';
 import { listSongs } from '../../../src/tools/library.js';
 
 describe('Library Tools - Live Read Operations', () => {
   let liveClient: NavidromeClient;
 
   beforeAll(async () => {
-    // Create live client connection for read testing
-    liveClient = await createLiveClient();
+    // Use shared client connection for read testing (avoids rate limiting)
+    liveClient = await getSharedLiveClient();
   });
 
   describe('listSongs', () => {
