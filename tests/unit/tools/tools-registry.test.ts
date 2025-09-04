@@ -43,18 +43,36 @@ describe('Tools Registry - Tool Count Verification', () => {
   let config: Config;
 
   beforeAll(async () => {
-    // Load config for registry testing
-    config = await loadConfig();
+    // For deterministic testing, always use a consistent configuration
+    // This ensures we get the same tool count (57) regardless of environment
+    const originalEnv = { ...process.env };
     
-    if (shouldSkipLiveTests()) {
-      console.log(`Skipping live tests: ${getSkipReason()}`);
-      // Create a mock client for tool registration in CI
+    // Set deterministic environment for tool counting
+    process.env.NAVIDROME_URL = 'http://deterministic-test:4533';
+    process.env.NAVIDROME_USERNAME = 'test-user';
+    process.env.NAVIDROME_PASSWORD = 'test-password';
+    process.env.LASTFM_API_KEY = 'test-lastfm-key';
+    process.env.RADIO_BROWSER_USER_AGENT = 'Test-Agent/1.0';
+    process.env.LYRICS_PROVIDER = 'lrclib';
+    
+    try {
+      // Load config with deterministic environment
+      config = await loadConfig();
+      
+      // Always use mock client for deterministic tool registry testing
+      // since we're using a fake URL for consistency
       const { createMockClient } = await import('../../factories/mock-client.js');
       liveClient = createMockClient() as any; // Tool registry only needs client interface for creation
-      return;
+      
+      console.log(`Using deterministic configuration - Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
+    } finally {
+      // Restore original environment (except for variables we want to keep for consistency)
+      Object.keys(originalEnv).forEach(key => {
+        if (!['NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD', 'LASTFM_API_KEY', 'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER'].includes(key)) {
+          process.env[key] = originalEnv[key];
+        }
+      });
     }
-    // Use shared client for live testing
-    liveClient = await getSharedLiveClient();
   });
 
   describe('Tool Registration', () => {
