@@ -25,7 +25,7 @@ export const createPaginationSchema = (
   limitDefault: number,
   maxLimit = 500,
   sortDefault = 'name'
-): ReturnType<typeof z.object> => z.object({
+) => z.object({
   limit: createLimitSchema(1, maxLimit, limitDefault),
   offset: OffsetSchema,
   sort: z.string().optional().default(sortDefault),
