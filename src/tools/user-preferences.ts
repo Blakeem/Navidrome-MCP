@@ -16,12 +16,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import type { Config } from '../config.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
+import {
+  StarItemSchema,
+  SetRatingSchema,
+  StarredItemsPaginationSchema,
+  TopRatedItemsPaginationSchema,
+} from '../schemas/index.js';
 
 // Helper function to parse duration from MM:SS format to seconds
 function parseDuration(durationFormatted: string): number {
@@ -99,29 +103,6 @@ export interface SetRatingResult {
   rating: number;
 }
 
-const StarItemSchema = z.object({
-  id: z.string().min(1),
-  type: z.enum(['song', 'album', 'artist']),
-});
-
-const SetRatingSchema = z.object({
-  id: z.string().min(1),
-  type: z.enum(['song', 'album', 'artist']),
-  rating: z.number().min(0).max(5),
-});
-
-const ListStarredSchema = z.object({
-  type: z.enum(['songs', 'albums', 'artists']),
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.STARRED_ITEMS_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-});
-
-const ListTopRatedSchema = z.object({
-  type: z.enum(['songs', 'albums', 'artists']),
-  minRating: z.number().min(1).max(5).optional().default(4),
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.TOP_RATED_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-});
 
 export async function starItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
@@ -182,7 +163,7 @@ export async function setRating(client: NavidromeClient, _config: Config, args: 
 }
 
 export async function listStarredItems(client: NavidromeClient, args: unknown): Promise<ListStarredResult> {
-  const { type, limit = 20, offset = 0 } = ListStarredSchema.parse(args);
+  const { type, limit, offset } = StarredItemsPaginationSchema.parse(args);
   
   logger.info(`Listing starred ${type}`);
   
@@ -250,7 +231,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
 }
 
 export async function listTopRated(client: NavidromeClient, args: unknown): Promise<ListTopRatedResult> {
-  const { type, minRating = 4, limit = 20, offset = 0 } = ListTopRatedSchema.parse(args);
+  const { type, minRating, limit, offset } = TopRatedItemsPaginationSchema.parse(args);
   
   logger.info(`Listing top rated ${type} (min rating: ${minRating})`);
   

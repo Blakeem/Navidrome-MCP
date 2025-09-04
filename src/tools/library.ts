@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
@@ -33,17 +32,7 @@ import {
   getArtist,
   getSongPlaylists,
 } from './media-library.js';
-
-const ListSongsSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.SONGS_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  sort: z
-    .enum(['title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating'])
-    .optional()
-    .default('title'),
-  order: z.enum(['ASC', 'DESC']).optional().default('ASC'),
-  starred: z.boolean().optional(),
-});
+import { SongPaginationSchema } from '../schemas/index.js';
 
 // Using the clean DTO for song data
 export type Song = SongDTO;
@@ -56,7 +45,7 @@ export interface ListSongsResult {
 }
 
 export async function listSongs(client: NavidromeClient, args: unknown): Promise<ListSongsResult> {
-  const params = ListSongsSchema.parse(args);
+  const params = SongPaginationSchema.parse(args);
 
   try {
     // Build query parameters for Navidrome API
