@@ -2,6 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -140,7 +141,7 @@ export function createQueueToolCategory(client: NavidromeClient, _config: Config
         case 'list_most_played':
           return await listMostPlayed(client, args);
         default:
-          throw new Error(`Unknown queue tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(`queue ${name}`));
       }
     }
   };

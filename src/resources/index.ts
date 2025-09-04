@@ -23,6 +23,7 @@ import {
   ReadResourceRequestSchema,
   type Resource,
 } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 export function registerResources(server: Server, client: NavidromeClient): void {
   // Define available resources
@@ -98,6 +99,6 @@ export function registerResources(server: Server, client: NavidromeClient): void
       }
     }
 
-    throw new Error(`Unknown resource: ${baseUri}`);
+    throw new Error(ErrorFormatter.unknownResource(baseUri || uri));
   });
 }

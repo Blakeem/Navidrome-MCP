@@ -3,6 +3,7 @@ import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { DEFAULT_VALUES } from '../../constants/defaults.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -343,7 +344,7 @@ export function createRadioToolCategory(client: NavidromeClient, config: Config)
         case 'vote_station':
           return await voteStation(config, args);
         default:
-          throw new Error(`Unknown radio tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(`radio ${name}`));
       }
     }
   };

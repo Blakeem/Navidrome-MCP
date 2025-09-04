@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { config as loadDotenv } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { ErrorFormatter } from './utils/error-formatter.js';
 
 // Safely load dotenv - it's optional since environment variables
 // can be provided directly (e.g., by Claude MCP configuration)
@@ -136,7 +137,7 @@ export async function loadConfig(): Promise<Config> {
   } catch (error) {
     if (error instanceof z.ZodError) {
       const messages = error.issues.map((e) => `${e.path.join('.')}: ${e.message}`);
-      throw new Error(`Configuration validation failed:\n${messages.join('\n')}`);
+      throw new Error(ErrorFormatter.configValidation(messages));
     }
     throw error;
   }

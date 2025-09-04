@@ -19,6 +19,7 @@
 import type { Config } from '../config.js';
 import { AuthManager } from './auth-manager.js';
 import { logger } from '../utils/logger.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 export class NavidromeClient {
   private authManager: AuthManager;
@@ -58,7 +59,7 @@ export class NavidromeClient {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`API request failed: ${response.status} ${response.statusText} - ${errorText}`);
+      throw new Error(ErrorFormatter.httpRequest('navidrome API', response, errorText));
     }
 
     // Handle different content types
@@ -84,13 +85,13 @@ export class NavidromeClient {
     const response = await fetch(`${this.baseUrl}/rest${endpoint}?${queryParams}`);
 
     if (!response.ok) {
-      throw new Error(`Subsonic API request failed: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.subsonicApi(response));
     }
 
     const data = await response.json() as { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
 
     if (data['subsonic-response']?.status !== 'ok') {
-      throw new Error(`Subsonic API error: ${data['subsonic-response']?.error?.message || 'Unknown error'}`);
+      throw new Error(ErrorFormatter.subsonicResponse(data['subsonic-response']?.error?.message));
     }
 
     return data['subsonic-response'];

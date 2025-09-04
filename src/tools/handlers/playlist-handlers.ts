@@ -2,6 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -325,7 +326,7 @@ export function createPlaylistToolCategory(client: NavidromeClient, _config: Con
         case 'batch_add_tracks_to_playlist':
           return await batchAddTracksToPlaylist(client, args);
         default:
-          throw new Error(`Unknown playlist tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(`playlist ${name}`));
       }
     }
   };

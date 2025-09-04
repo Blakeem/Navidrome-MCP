@@ -19,6 +19,7 @@
 import { z } from 'zod';
 import type { LyricsDTO, LyricsLine } from '../types/index.js';
 import type { Config } from '../config.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 /**
  * Schema for getting lyrics
@@ -99,7 +100,7 @@ async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>, config
     }
     
     if (!response.ok) {
-      throw new Error(`LRCLIB API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.httpRequest('LRCLIB API', response));
     }
     
     return await response.json() as LRCLIBResponse;
@@ -128,7 +129,7 @@ async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config:
     });
     
     if (!response.ok) {
-      throw new Error(`LRCLIB search error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.httpRequest('LRCLIB search API', response));
     }
     
     const results = await response.json() as LRCLIBResponse[];
@@ -259,6 +260,6 @@ export async function getLyrics(config: Config, args: unknown): Promise<LyricsDT
     
     return result;
   } catch (error) {
-    throw new Error(`Failed to get lyrics: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('getLyrics', error));
   }
 }

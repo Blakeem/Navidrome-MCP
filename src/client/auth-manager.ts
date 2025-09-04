@@ -18,6 +18,7 @@
 
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 export class AuthManager {
   private token: string | null = null;
@@ -39,7 +40,7 @@ export class AuthManager {
     });
 
     if (!response.ok) {
-      throw new Error(`Authentication failed: ${response.status}`);
+      throw new Error(ErrorFormatter.authentication(`${response.status} ${response.statusText}`));
     }
 
     const data = (await response.json()) as { token: string };
@@ -54,7 +55,7 @@ export class AuthManager {
     }
 
     if (!this.token) {
-      throw new Error('Failed to obtain authentication token');
+      throw new Error(ErrorFormatter.authentication('token not available after authentication'));
     }
 
     return this.token;
