@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
-import { createLiveClient } from '../../factories/mock-client.js';
+import { getSharedLiveClient } from '../../factories/mock-client.js';
 import { loadConfig } from '../../../src/config.js';
 import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
 
@@ -39,9 +39,9 @@ describe('Tools Registry - Tool Count Verification', () => {
   let config: Config;
 
   beforeAll(async () => {
-    // Create live client and config for tools registration
+    // Use shared client and config for tools registration (avoids rate limiting)
     config = await loadConfig();
-    liveClient = await createLiveClient();
+    liveClient = await getSharedLiveClient();
   });
 
   describe('Tool Registration', () => {
