@@ -24,6 +24,7 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { NavidromeClient } from './client/navidrome-client.js';
 import { logger } from './utils/logger.js';
+import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
 
 async function main(): Promise<void> {
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
     const server = new Server(
       {
         name: 'navidrome-mcp',
-        version: '1.0.0',
+        version: getPackageVersion(),
       },
       {
         capabilities: MCP_CAPABILITIES,
