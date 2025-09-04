@@ -23,22 +23,42 @@ class Logger {
     this.debugMode = enabled;
   }
 
+  /**
+   * Sanitize URLs and other sensitive data from log messages
+   * Removes credentials from URLs to prevent accidental exposure
+   */
+  private sanitizeArgs(args: unknown[]): unknown[] {
+    return args.map(arg => {
+      if (typeof arg === 'string' && arg.includes('://')) {
+        // Check if string contains URL with potential credentials
+        return arg.replace(
+          /(https?:\/\/)[^:/\s]*:[^@/\s]*@/g, 
+          '$1[CREDENTIALS_REDACTED]@'
+        ).replace(
+          /([?&])[up]=[^&\s]*/g, 
+          '$1[CREDENTIAL_REDACTED]'
+        );
+      }
+      return arg;
+    });
+  }
+
   debug(...args: unknown[]): void {
     if (this.debugMode) {
-      console.error('[DEBUG]', ...args);
+      console.error('[DEBUG]', ...this.sanitizeArgs(args));
     }
   }
 
   info(...args: unknown[]): void {
-    console.error('[INFO]', ...args);
+    console.error('[INFO]', ...this.sanitizeArgs(args));
   }
 
   warn(...args: unknown[]): void {
-    console.error('[WARN]', ...args);
+    console.error('[WARN]', ...this.sanitizeArgs(args));
   }
 
   error(...args: unknown[]): void {
-    console.error('[ERROR]', ...args);
+    console.error('[ERROR]', ...this.sanitizeArgs(args));
   }
 }
 

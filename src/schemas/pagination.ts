@@ -25,6 +25,7 @@ export const createPaginationSchema = (
   limitDefault: number,
   maxLimit = 500,
   sortDefault = 'name'
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 ) => z.object({
   limit: createLimitSchema(1, maxLimit, limitDefault),
   offset: OffsetSchema,

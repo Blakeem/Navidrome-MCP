@@ -22,7 +22,6 @@ export type {
   AlbumDTO,
   ArtistDTO,
   GenreDTO,
-  RecentlyAddedSongDTO,
   RecentlyAddedSongsResponse
 } from './core.js';
 

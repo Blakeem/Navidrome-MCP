@@ -24,7 +24,7 @@ interface CacheEntry<T> {
 export class Cache<T> {
   private store = new Map<string, CacheEntry<T>>();
   private ttl: number;
-  private cleanupInterval?: NodeJS.Timeout;
+  private cleanupInterval: NodeJS.Timeout | undefined = undefined;
   private cleanupIntervalMs: number;
 
   constructor(ttlSeconds = 300, enableAutoCleanup = true) {
@@ -94,7 +94,7 @@ export class Cache<T> {
     // Clean up resources when cache is no longer needed
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
-      delete this.cleanupInterval;
+      this.cleanupInterval = undefined;
     }
     this.store.clear();
   }

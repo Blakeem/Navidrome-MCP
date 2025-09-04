@@ -54,8 +54,6 @@ export interface SongDTO {
   starred?: boolean;
 }
 
-// Keep old name for backward compatibility
-export type RecentlyAddedSongDTO = SongDTO;
 
 /**
  * Clean DTO for albums, optimized for LLM consumption

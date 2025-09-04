@@ -18,8 +18,6 @@
 
 import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/index.js';
 
-// For backward compatibility
-export type RecentlyAddedSongDTO = SongDTO;
 
 /**
  * Raw song data from Navidrome API
@@ -205,8 +203,6 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
   return dto;
 }
 
-// Keep old function name for backward compatibility
-export const transformToRecentlyAddedSongDTO = transformToSongDTO;
 
 /**
  * Transform an array of raw songs to DTOs
