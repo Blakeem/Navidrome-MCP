@@ -107,13 +107,29 @@ This isn't just another music tool – it's your personal music curator powered 
 ### Prerequisites
 
 * **Node.js 20+** ([Download here](https://nodejs.org/))
-* **pnpm** package manager ([Install instructions](https://pnpm.io/installation))
 * **Running Navidrome server** with your music library
 * **Claude Desktop** or **ChatGPT Desktop** (or any MCP-compatible client)
 
+**Additional for manual build:**
+* **pnpm** package manager ([Install instructions](https://pnpm.io/installation))
+
 ### Quick Setup
 
-#### 1. Clone and Build
+#### Method 1: NPM Package (Recommended)
+
+The easiest way to get started is using the published npm package, which auto-updates on launch:
+
+```bash
+npm install -g navidrome-mcp
+```
+
+📦 **Package**: [navidrome-mcp on npm](https://www.npmjs.com/package/navidrome-mcp)
+
+This installs the MCP server globally and keeps it up-to-date automatically.
+
+#### Method 2: Manual Build (Development)
+
+For development or custom builds:
 
 ```bash
 git clone https://github.com/Blakeem/Navidrome-MCP.git
@@ -130,6 +146,30 @@ Find your configuration file:
 * **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 Add the Navidrome MCP server:
+
+#### Using NPM Package (Recommended)
+
+```json
+{
+  "mcpServers": {
+    "navidrome": {
+      "command": "npx",
+      "args": ["navidrome-mcp"],
+      "env": {
+        "NAVIDROME_URL": "http://your-server:4533",
+        "NAVIDROME_USERNAME": "your_username",
+        "NAVIDROME_PASSWORD": "your_password",
+        "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
+        "LYRICS_PROVIDER": "lrclib",
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"
+      }
+    }
+  }
+}
+```
+
+#### Using Manual Build (Alternative)
 
 ```json
 {
@@ -152,7 +192,8 @@ Add the Navidrome MCP server:
 ```
 
 **Important**: 
-- Use absolute paths (full path from root)
+- **NPM method**: Uses `npx navidrome-mcp` which auto-updates on each launch
+- **Manual method**: Requires absolute paths (full path from root) and manual updates
 - Get a free Last.fm API key at [Last.fm](https://www.last.fm/api) (optional - enables music discovery)
 - Radio Browser integration requires a User-Agent string (enables station discovery)
 - Lyrics integration works without API keys (LRCLIB is free)
@@ -160,6 +201,18 @@ Add the Navidrome MCP server:
 - Restart Claude Desktop after saving
 
 ### Configure ChatGPT Desktop
+
+#### Using NPM Package (Recommended)
+
+1. Open **ChatGPT Desktop**
+2. Go to **Settings → Connectors**
+3. Click **Create** and add:
+   - **Command**: `npx`
+   - **Args**: `navidrome-mcp`
+   - **Environment variables**: Same as above
+4. Save and restart
+
+#### Using Manual Build (Alternative)
 
 1. Open **ChatGPT Desktop**
 2. Go to **Settings → Connectors**

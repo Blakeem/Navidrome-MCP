@@ -58,6 +58,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(serverInfo).toHaveProperty('url');
       expect(serverInfo).toHaveProperty('authenticated');
       expect(serverInfo).toHaveProperty('timestamp');
+      expect(serverInfo).toHaveProperty('version');
       expect(serverInfo).toHaveProperty('features');
       
       // URL should be a string
@@ -67,6 +68,11 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       // Authenticated should be boolean
       expect(typeof serverInfo.authenticated).toBe('boolean');
       expect(serverInfo.authenticated).toBe(true);
+
+      // Version should be a string with proper format
+      expect(typeof serverInfo.version).toBe('string');
+      expect(serverInfo.version.length).toBeGreaterThan(0);
+      expect(serverInfo.version).toMatch(/^\d+\.\d+\.\d+$/); // Should match semantic versioning pattern
 
       // Features should be an object with detailed information
       const features = serverInfo.features;

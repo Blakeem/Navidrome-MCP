@@ -21,6 +21,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import type { ToolCategory } from './handlers/registry.js';
+import { getPackageVersion } from '../utils/version.js';
 
 const TestConnectionSchema = z.object({
   includeServerInfo: z.boolean().optional().default(false),
@@ -33,6 +34,7 @@ export interface TestConnectionResult {
     url: string;
     authenticated: boolean;
     timestamp: string;
+    version: string;
     features?: {
       lastfm: {
         enabled: boolean;
@@ -84,6 +86,7 @@ export async function testConnection(
         url: 'Connected to Navidrome',
         authenticated: true,
         timestamp: new Date().toISOString(),
+        version: getPackageVersion(),
         features: {
           lastfm: {
             enabled: hasLastFm,
