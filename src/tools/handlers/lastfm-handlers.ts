@@ -2,6 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -147,7 +148,7 @@ export function createLastFmToolCategory(_client: NavidromeClient, config: Confi
         case 'get_trending_music':
           return await getTrendingMusic(config, args);
         default:
-          throw new Error(`Unknown Last.fm tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(`Last.fm ${name}`));
       }
     }
   };

@@ -20,6 +20,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
+import { logger } from '../utils/logger.js';
 import {
   transformAlbumsToDTO,
   transformArtistsToDTO,
@@ -31,7 +32,7 @@ import {
   type RawAlbum,
   type RawArtist,
 } from '../transformers/song-transformer.js';
-import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/dto.js';
+import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/index.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Common pagination schema
@@ -253,7 +254,7 @@ export async function getSongPlaylists(client: NavidromeClient, args: unknown): 
       try {
         playlistData = JSON.parse(rawPlaylists);
       } catch (parseError) {
-        console.error('Failed to parse playlist data:', parseError);
+        logger.error('Failed to parse playlist data:', parseError);
         playlistData = [];
       }
     }

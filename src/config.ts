@@ -20,6 +20,8 @@ import { z } from 'zod';
 import { config as loadDotenv } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { ErrorFormatter } from './utils/error-formatter.js';
+import { logger } from './utils/logger.js';
 
 // Safely load dotenv - it's optional since environment variables
 // can be provided directly (e.g., by Claude MCP configuration)
@@ -38,7 +40,7 @@ try {
   // Silently ignore dotenv errors - environment variables may be
   // provided by the MCP host (Claude) directly
   if (process.env['DEBUG'] === 'true') {
-    console.warn('[WARN] Could not load .env file (this is normal when running as MCP server):', error);
+    logger.warn('Could not load .env file (this is normal when running as MCP server):', error);
   }
 }
 
@@ -94,7 +96,7 @@ export async function loadConfig(): Promise<Config> {
       // Silently ignore dotenv errors - environment variables should be
       // provided by the MCP host (Claude Desktop) directly
       if (process.env['DEBUG'] === 'true') {
-        console.warn('[WARN] Could not load .env file (this is expected when running as MCP server)');
+        logger.warn('Could not load .env file (this is expected when running as MCP server)');
       }
     }
   }
@@ -136,7 +138,7 @@ export async function loadConfig(): Promise<Config> {
   } catch (error) {
     if (error instanceof z.ZodError) {
       const messages = error.issues.map((e) => `${e.path.join('.')}: ${e.message}`);
-      throw new Error(`Configuration validation failed:\n${messages.join('\n')}`);
+      throw new Error(ErrorFormatter.configValidation(messages));
     }
     throw error;
   }

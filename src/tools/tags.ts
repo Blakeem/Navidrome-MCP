@@ -23,7 +23,7 @@ import type {
   ListTagsResponse, 
   TagDistributionResponse, 
   TagDistribution 
-} from '../types/dto.js';
+} from '../types/index.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 const ListTagsSchema = z.object({

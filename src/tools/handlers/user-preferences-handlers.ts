@@ -2,6 +2,7 @@ import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -159,7 +160,7 @@ export function createUserPreferencesToolCategory(client: NavidromeClient, confi
         case 'list_top_rated':
           return await listTopRated(client, args);
         default:
-          throw new Error(`Unknown user preference tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(`user preference ${name}`));
       }
     }
   };

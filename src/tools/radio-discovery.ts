@@ -23,12 +23,13 @@ import type {
   RadioFiltersResponse,
   ClickRadioStationResponse,
   VoteRadioStationResponse
-} from '../types/dto.js';
+} from '../types/index.js';
 import type { Config } from '../config.js';
 import { validateRadioStream } from './radio-validation.js';
 import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 const MAX_LIMIT = 500;
 
 /**
@@ -271,7 +272,7 @@ export async function discoverRadioStations(
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserStation[];
@@ -301,7 +302,7 @@ export async function discoverRadioStations(
     
     return result;
   } catch (error) {
-    throw new Error(`Failed to discover radio stations: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('discoverRadioStations', error));
   }
 }
 
@@ -385,7 +386,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     await Promise.all(fetchPromises);
     return result;
   } catch (error) {
-    throw new Error(`Failed to get radio filters: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('getRadioFilters', error));
   }
 }
 
@@ -406,23 +407,23 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserStation[];
     
     if (!data || data.length === 0) {
-      throw new Error(`Station not found: ${params.stationUuid}`);
+      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
     
     const firstStation = data[0];
     if (!firstStation) {
-      throw new Error(`Station not found: ${params.stationUuid}`);
+      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
     
     return mapStationToDTO(firstStation);
   } catch (error) {
-    throw new Error(`Failed to get station: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('getStationByUuid', error));
   }
 }
 
@@ -443,7 +444,7 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserActionResponse;
@@ -454,7 +455,7 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
       message: data.message || 'Click registered successfully'
     };
   } catch (error) {
-    throw new Error(`Failed to click station: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('clickStation', error));
   }
 }
 
@@ -475,7 +476,7 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserActionResponse;
@@ -485,6 +486,6 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
       message: data.message || 'Vote registered successfully'
     };
   } catch (error) {
-    throw new Error(`Failed to vote for station: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('voteStation', error));
   }
 }
