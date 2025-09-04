@@ -278,6 +278,7 @@ Add the Navidrome MCP server:
 | `get_song` | Detailed song information |
 | `get_album` | Detailed album information |
 | `get_artist` | Detailed artist information |
+| `get_song_playlists` | Get all playlists that contain a specific song |
 
 ### 🔍 Search & Discovery
 
@@ -290,6 +291,7 @@ Add the Navidrome MCP server:
 | `get_similar_artists` | Find similar artists (Last.fm) |
 | `get_similar_tracks` | Find similar tracks (Last.fm) |
 | `get_artist_info` | Artist biography and tags |
+| `get_top_tracks_by_artist` | Get top tracks for an artist from Last.fm |
 | `get_trending_music` | Global music trends |
 
 ### 🎵 Playlist Operations
@@ -297,6 +299,7 @@ Add the Navidrome MCP server:
 | Tool | Description |
 |------|-------------|
 | `list_playlists` | View all playlists |
+| `get_playlist` | Get detailed information about a specific playlist by ID |
 | `create_playlist` | Create new playlist |
 | `update_playlist` | Update playlist metadata |
 | `delete_playlist` | Remove playlist |
@@ -324,6 +327,7 @@ Add the Navidrome MCP server:
 | `list_most_played` | Find most played content |
 | `get_queue` | View playback queue |
 | `set_queue` | Set playback queue |
+| `clear_queue` | Clear the playback queue |
 
 ### 📻 Radio Management
 
@@ -331,9 +335,12 @@ Add the Navidrome MCP server:
 |------|-------------|
 | `validate_radio_stream` | Test stream URL validity |
 | `list_radio_stations` | View all stations |
+| `get_radio_station` | Get detailed information about a specific radio station by ID |
 | `create_radio_station` | Add new station (with optional validation*) |
+| `delete_radio_station` | Delete an internet radio station by ID |
 | `batch_create_radio_stations` | Batch add multiple stations (with optional validation*) |
 | `play_radio_station` | Start radio playback |
+| `get_current_radio_info` | Get information about currently playing radio station and stream metadata |
 | `discover_radio_stations` | Find internet radio stations globally |
 | `get_radio_filters` | Get available search filters (genres, countries, etc.) |
 | `get_station_by_uuid` | Get detailed station information |
@@ -353,8 +360,10 @@ Add the Navidrome MCP server:
 | Tool | Description |
 |------|-------------|
 | `list_tags` | Browse all metadata tags |
+| `get_tag` | Get detailed information about a specific tag by ID |
 | `search_by_tags` | Search by specific tags |
 | `get_tag_distribution` | Analyze tag usage |
+| `list_unique_tags` | List all unique tag names with statistics (how many unique values, total usage) |
 
 ## Troubleshooting
 
