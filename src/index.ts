@@ -28,20 +28,18 @@ import { MCP_CAPABILITIES } from './capabilities.js';
 
 async function main(): Promise<void> {
   try {
-    // Add startup diagnostics for troubleshooting
-    if (process.env['DEBUG'] === 'true') {
-      console.error('[DEBUG] Starting Navidrome MCP Server...');
-      console.error('[DEBUG] Node version:', process.version);
-      console.error('[DEBUG] Platform:', process.platform);
-      console.error('[DEBUG] Environment variables present:', {
-        NAVIDROME_URL: !!process.env['NAVIDROME_URL'],
-        NAVIDROME_USERNAME: !!process.env['NAVIDROME_USERNAME'],
-        NAVIDROME_PASSWORD: !!process.env['NAVIDROME_PASSWORD'],
-      });
-    }
-
     const config = await loadConfig();
     logger.setDebug(config.debug);
+
+    // Add startup diagnostics for troubleshooting
+    logger.debug('Starting Navidrome MCP Server...');
+    logger.debug('Node version:', process.version);
+    logger.debug('Platform:', process.platform);
+    logger.debug('Environment variables present:', {
+      NAVIDROME_URL: !!process.env['NAVIDROME_URL'],
+      NAVIDROME_USERNAME: !!process.env['NAVIDROME_USERNAME'],
+      NAVIDROME_PASSWORD: !!process.env['NAVIDROME_PASSWORD'],
+    });
 
     const server = new Server(
       {
@@ -65,11 +63,11 @@ async function main(): Promise<void> {
     logger.info('Navidrome MCP Server started successfully');
   } catch (error) {
     // Provide detailed error information for debugging
-    console.error('[FATAL] Failed to start Navidrome MCP Server');
-    console.error('[FATAL] Error details:', error);
+    logger.error('Failed to start Navidrome MCP Server');
+    logger.error('Error details:', error);
     if (error instanceof Error) {
-      console.error('[FATAL] Error message:', error.message);
-      console.error('[FATAL] Stack trace:', error.stack);
+      logger.error('Error message:', error.message);
+      logger.error('Stack trace:', error.stack);
     }
     throw error; // Re-throw to be caught by outer handler
   }

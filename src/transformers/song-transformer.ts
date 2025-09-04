@@ -16,15 +16,13 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/dto.js';
+import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/index.js';
 
-// For backward compatibility
-export type RecentlyAddedSongDTO = SongDTO;
 
 /**
  * Raw song data from Navidrome API
  */
-interface RawSong {
+export interface RawSong {
   id: string;
   title: string;
   artist: string;
@@ -46,7 +44,7 @@ interface RawSong {
   [key: string]: unknown; // Allow other fields we don't use
 }
 
-interface RawAlbum {
+export interface RawAlbum {
   id: string;
   name: string;
   artist: string;
@@ -65,7 +63,7 @@ interface RawAlbum {
   [key: string]: unknown;
 }
 
-interface RawArtist {
+export interface RawArtist {
   id: string;
   name: string;
   albumCount: number;
@@ -78,7 +76,7 @@ interface RawArtist {
   [key: string]: unknown;
 }
 
-interface RawGenre {
+export interface RawGenre {
   id: string;
   name: string;
   songCount?: number; // Optional since API doesn't provide this
@@ -86,7 +84,7 @@ interface RawGenre {
   [key: string]: unknown;
 }
 
-interface RawPlaylist {
+export interface RawPlaylist {
   id: string;
   name: string;
   comment?: string;
@@ -205,8 +203,6 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
   return dto;
 }
 
-// Keep old function name for backward compatibility
-export const transformToRecentlyAddedSongDTO = transformToSongDTO;
 
 /**
  * Transform an array of raw songs to DTOs

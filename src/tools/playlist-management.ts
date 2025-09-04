@@ -16,12 +16,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import {
   transformPlaylistsToDTO,
   transformToPlaylistDTO,
   formatDuration,
+  type RawPlaylist,
 } from '../transformers/song-transformer.js';
 import type {
   PlaylistDTO,
@@ -33,84 +33,79 @@ import type {
   RemoveTracksFromPlaylistResponse,
   ReorderPlaylistTrackRequest,
   ReorderPlaylistTrackResponse,
-} from '../types/dto.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
+} from '../types/index.js';
+import {
+  PlaylistPaginationSchema,
+  PlaylistTracksPaginationSchema,
+  CreatePlaylistSchema,
+  UpdatePlaylistSchema,
+  AddTracksToPlaylistSchema,
+  RemoveTracksFromPlaylistSchema,
+  ReorderPlaylistTrackSchema,
+  PlaylistIdSchema,
+} from '../schemas/index.js';
 
-// Common pagination schema
-const PaginationSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.PLAYLISTS_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  sort: z.string().optional().default('name'),
-  order: z.enum(['ASC', 'DESC']).optional().default('ASC'),
-});
-
-const GetByIdSchema = z.object({
-  id: z.string().min(1, 'Playlist ID is required'),
-});
-
-const CreatePlaylistSchema = z.object({
-  name: z.string().min(1, 'Playlist name is required'),
-  comment: z.string().optional(),
-  public: z.boolean().optional().default(false),
-});
-
-const UpdatePlaylistSchema = z.object({
-  id: z.string().min(1, 'Playlist ID is required'),
-  name: z.string().min(1).optional(),
-  comment: z.string().optional(),
-  public: z.boolean().optional(),
-});
-
-const AddTracksSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
-  ids: z.array(z.string()).optional(),
-  albumIds: z.array(z.string()).optional(),
-  artistIds: z.array(z.string()).optional(),
-  discs: z.array(z.object({
-    albumId: z.string(),
-    discNumber: z.number(),
-  })).optional(),
-});
-
-const RemoveTracksSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
-  trackIds: z.array(z.string()).min(1, 'At least one track ID is required'),
-});
-
-const ReorderTrackSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
-  trackId: z.string().min(1, 'Track ID is required'),
-  insert_before: z.number().min(0, 'Insert position must be non-negative'),
-});
-
-const GetPlaylistTracksSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.PLAYLIST_TRACKS_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  format: z.enum(['json', 'm3u']).optional().default('json'),
-});
+/**
+ * Raw playlist track data from Navidrome API
+ */
+interface RawPlaylistTrack {
+  id: number;
+  mediaFileId?: string;
+  playlistId: string;
+  title?: string;
+  album?: string;
+  artist?: string;
+  albumArtist?: string;
+  duration?: number;
+  bitRate?: number;
+  path?: string;
+  trackNumber?: number;
+  year?: number;
+  genre?: string;
+  [key: string]: unknown;
+}
 
 /**
  * Transform raw playlist track data to DTO
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function transformToPlaylistTrackDTO(rawTrack: any): PlaylistTrackDTO {
-  return {
+function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackDTO {
+  const dto: PlaylistTrackDTO = {
     id: rawTrack.id,
-    mediaFileId: rawTrack.mediaFileId || rawTrack.id,
+    mediaFileId: rawTrack.mediaFileId || String(rawTrack.id),
     playlistId: rawTrack.playlistId,
     title: rawTrack.title || '',
     album: rawTrack.album || '',
     artist: rawTrack.artist || '',
-    albumArtist: rawTrack.albumArtist,
     duration: rawTrack.duration || 0,
     durationFormatted: formatDuration(rawTrack.duration),
-    bitRate: rawTrack.bitRate,
-    path: rawTrack.path,
-    trackNumber: rawTrack.trackNumber,
-    year: rawTrack.year,
-    genre: rawTrack.genre,
   };
+
+  // Add optional fields only if they have values
+  if (rawTrack.albumArtist) {
+    dto.albumArtist = rawTrack.albumArtist;
+  }
+
+  if (rawTrack.bitRate !== undefined) {
+    dto.bitRate = rawTrack.bitRate;
+  }
+
+  if (rawTrack.path) {
+    dto.path = rawTrack.path;
+  }
+
+  if (rawTrack.trackNumber !== undefined) {
+    dto.trackNumber = rawTrack.trackNumber;
+  }
+
+  if (rawTrack.year !== undefined) {
+    dto.year = rawTrack.year;
+  }
+
+  if (rawTrack.genre) {
+    dto.genre = rawTrack.genre;
+  }
+
+  return dto;
 }
 
 /**
@@ -122,7 +117,7 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
   offset: number;
   limit: number;
 }> {
-  const params = PaginationSchema.parse(args);
+  const params = PlaylistPaginationSchema.parse(args);
 
   try {
     const queryParams = new URLSearchParams({
@@ -152,12 +147,11 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
  * Get a specific playlist by ID
  */
 export async function getPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
-  const params = GetByIdSchema.parse(args);
+  const params = PlaylistIdSchema.parse(args);
 
   try {
     const rawPlaylist = await client.request<unknown>(`/playlist/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToPlaylistDTO(rawPlaylist as any);
+    return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
   } catch (error) {
     throw new Error(
       `Failed to fetch playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -189,8 +183,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const playlist = transformToPlaylistDTO(rawPlaylist as any);
+    const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
     
     // Fix the name if it's not properly returned from API
     if (!playlist.name || playlist.name === 'Unknown Playlist') {
@@ -239,8 +232,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const playlist = transformToPlaylistDTO(rawPlaylist as any);
+    const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
     
     // Fix the name if it was updated but not properly returned from API
     if (params.name && (!playlist.name || playlist.name === 'Unknown Playlist')) {
@@ -264,7 +256,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
  * Delete a playlist (owner or admin only)
  */
 export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; id: string; message: string }> {
-  const params = GetByIdSchema.parse(args);
+  const params = PlaylistIdSchema.parse(args);
 
   try {
     await client.request<unknown>(`/playlist/${params.id}`, {
@@ -295,7 +287,7 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
   format: string;
   m3uContent?: string;
 }> {
-  const params = GetPlaylistTracksSchema.parse(args);
+  const params = PlaylistTracksPaginationSchema.parse(args);
 
   try {
     const queryParams = new URLSearchParams({
@@ -326,7 +318,7 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
     }
 
     const tracks = Array.isArray(response) 
-      ? response.map(track => transformToPlaylistTrackDTO(track))
+      ? response.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack))
       : [];
 
     return {
@@ -348,7 +340,7 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
  * Add tracks to a playlist
  */
 export async function addTracksToPlaylist(client: NavidromeClient, args: unknown): Promise<AddTracksToPlaylistResponse> {
-  const params = AddTracksSchema.parse(args);
+  const params = AddTracksToPlaylistSchema.parse(args);
 
   try {
     // Get track count before adding
@@ -487,7 +479,7 @@ export async function batchAddTracksToPlaylist(
  * Remove tracks from a playlist
  */
 export async function removeTracksFromPlaylist(client: NavidromeClient, args: unknown): Promise<RemoveTracksFromPlaylistResponse> {
-  const params = RemoveTracksSchema.parse(args);
+  const params = RemoveTracksFromPlaylistSchema.parse(args);
 
   try {
     const queryParams = new URLSearchParams();
@@ -514,7 +506,7 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
  * Reorder a track in the playlist
  */
 export async function reorderPlaylistTrack(client: NavidromeClient, args: unknown): Promise<ReorderPlaylistTrackResponse> {
-  const params = ReorderTrackSchema.parse(args);
+  const params = ReorderPlaylistTrackSchema.parse(args);
 
   try {
     const requestBody: ReorderPlaylistTrackRequest = {

@@ -20,6 +20,8 @@ import { z } from 'zod';
 import { config as loadDotenv } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { ErrorFormatter } from './utils/error-formatter.js';
+import { logger } from './utils/logger.js';
 
 // Safely load dotenv - it's optional since environment variables
 // can be provided directly (e.g., by Claude MCP configuration)
@@ -38,7 +40,7 @@ try {
   // Silently ignore dotenv errors - environment variables may be
   // provided by the MCP host (Claude) directly
   if (process.env['DEBUG'] === 'true') {
-    console.warn('[WARN] Could not load .env file (this is normal when running as MCP server):', error);
+    logger.warn('Could not load .env file (this is normal when running as MCP server):', error);
   }
 }
 
@@ -49,7 +51,23 @@ const ConfigSchema = z.object({
   debug: z.boolean().default(false),
   cacheTtl: z.number().positive().default(300),
   tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
+  
+  // Feature Configuration
+  features: z.object({
+    lastfm: z.boolean().default(false),
+    radioBrowser: z.boolean().default(false),
+    lyrics: z.boolean().default(false),
+  }),
+
+  // API Keys and External Service Configuration
   lastFmApiKey: z.string().optional(),
+  radioBrowserUserAgent: z.string().optional(),
+  radioBrowserBase: z.string().url().default('https://de1.api.radio-browser.info'),
+  
+  // Lyrics Configuration
+  lyricsProvider: z.string().optional(),
+  lrclibUserAgent: z.string().optional(),
+  lrclibBase: z.string().url().default('https://lrclib.net'),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -78,10 +96,16 @@ export async function loadConfig(): Promise<Config> {
       // Silently ignore dotenv errors - environment variables should be
       // provided by the MCP host (Claude Desktop) directly
       if (process.env['DEBUG'] === 'true') {
-        console.warn('[WARN] Could not load .env file (this is expected when running as MCP server)');
+        logger.warn('Could not load .env file (this is expected when running as MCP server)');
       }
     }
   }
+
+  // Centralized environment variable access
+  const lastFmApiKey = process.env['LASTFM_API_KEY'] || undefined;
+  const radioBrowserUserAgent = process.env['RADIO_BROWSER_USER_AGENT'] || undefined;
+  const lyricsProvider = process.env['LYRICS_PROVIDER'] || undefined;
+  const lrclibUserAgent = process.env['LRCLIB_USER_AGENT'] || undefined;
 
   const rawConfig = {
     navidromeUrl: process.env['NAVIDROME_URL'],
@@ -90,7 +114,23 @@ export async function loadConfig(): Promise<Config> {
     debug: process.env['DEBUG'] === 'true',
     cacheTtl: process.env['CACHE_TTL'] ? parseInt(process.env['CACHE_TTL'], 10) : 300,
     tokenExpiry: process.env['TOKEN_EXPIRY'] ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
-    lastFmApiKey: process.env['LASTFM_API_KEY'] || undefined,
+    
+    // Feature detection based on available configuration
+    features: {
+      lastfm: !!(lastFmApiKey && lastFmApiKey.trim()),
+      radioBrowser: !!(radioBrowserUserAgent && radioBrowserUserAgent.trim()),
+      lyrics: !!(lyricsProvider && lyricsProvider.trim() && lrclibUserAgent && lrclibUserAgent.trim()),
+    },
+
+    // API Keys and External Service Configuration
+    lastFmApiKey,
+    radioBrowserUserAgent,
+    radioBrowserBase: process.env['RADIO_BROWSER_BASE'] || 'https://de1.api.radio-browser.info',
+    
+    // Lyrics Configuration
+    lyricsProvider,
+    lrclibUserAgent,
+    lrclibBase: process.env['LRCLIB_BASE'] || 'https://lrclib.net',
   };
 
   try {
@@ -98,7 +138,7 @@ export async function loadConfig(): Promise<Config> {
   } catch (error) {
     if (error instanceof z.ZodError) {
       const messages = error.issues.map((e) => `${e.path.join('.')}: ${e.message}`);
-      throw new Error(`Configuration validation failed:\n${messages.join('\n')}`);
+      throw new Error(ErrorFormatter.configValidation(messages));
     }
     throw error;
   }

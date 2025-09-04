@@ -16,10 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import crypto from 'crypto';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
+import { logger } from '../utils/logger.js';
 import {
   transformAlbumsToDTO,
   transformArtistsToDTO,
@@ -27,26 +27,18 @@ import {
   transformToSongDTO,
   transformToAlbumDTO,
   transformToArtistDTO,
+  type RawSong,
+  type RawAlbum,
+  type RawArtist,
 } from '../transformers/song-transformer.js';
-import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/dto.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
-
-// Common pagination schema
-const PaginationSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.ALBUMS_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  sort: z.string().optional().default('name'),
-  order: z.enum(['ASC', 'DESC']).optional().default('ASC'),
-});
-
-
-const GetByIdSchema = z.object({
-  id: z.string().min(1, 'ID is required'),
-});
-
-const GetSongPlaylistsSchema = z.object({
-  songId: z.string().min(1, 'Song ID is required'),
-});
+import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/index.js';
+import {
+  AlbumPaginationSchema,
+  ArtistPaginationSchema,
+  GenrePaginationSchema,
+  IdSchema,
+  GetSongPlaylistsSchema,
+} from '../schemas/index.js';
 
 // List Albums
 export async function listAlbums(client: NavidromeClient, args: unknown): Promise<{
@@ -55,7 +47,7 @@ export async function listAlbums(client: NavidromeClient, args: unknown): Promis
   offset: number;
   limit: number;
 }> {
-  const params = PaginationSchema.parse(args);
+  const params = AlbumPaginationSchema.parse(args);
 
   try {
     const queryParams = new URLSearchParams({
@@ -88,7 +80,7 @@ export async function listArtists(client: NavidromeClient, args: unknown): Promi
   offset: number;
   limit: number;
 }> {
-  const params = PaginationSchema.parse(args);
+  const params = ArtistPaginationSchema.parse(args);
 
   try {
     const queryParams = new URLSearchParams({
@@ -138,7 +130,7 @@ export async function listGenres(_client: NavidromeClient, config: Config, args:
   offset: number;
   limit: number;
 }> {
-  const params = PaginationSchema.parse(args);
+  const params = GenrePaginationSchema.parse(args);
 
   try {
     // Use direct fetch to Subsonic API (not through our client since it adds /api prefix)
@@ -193,12 +185,11 @@ export async function listGenres(_client: NavidromeClient, config: Config, args:
 
 // Get Song by ID
 export async function getSong(client: NavidromeClient, args: unknown): Promise<SongDTO> {
-  const params = GetByIdSchema.parse(args);
+  const params = IdSchema.parse(args);
 
   try {
     const rawSong = await client.request<unknown>(`/song/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToSongDTO(rawSong as any);
+    return transformToSongDTO(rawSong as RawSong);
   } catch (error) {
     throw new Error(
       `Failed to fetch song: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -208,12 +199,11 @@ export async function getSong(client: NavidromeClient, args: unknown): Promise<S
 
 // Get Album by ID
 export async function getAlbum(client: NavidromeClient, args: unknown): Promise<AlbumDTO> {
-  const params = GetByIdSchema.parse(args);
+  const params = IdSchema.parse(args);
 
   try {
     const rawAlbum = await client.request<unknown>(`/album/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToAlbumDTO(rawAlbum as any);
+    return transformToAlbumDTO(rawAlbum as RawAlbum);
   } catch (error) {
     throw new Error(
       `Failed to fetch album: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -223,12 +213,11 @@ export async function getAlbum(client: NavidromeClient, args: unknown): Promise<
 
 // Get Artist by ID
 export async function getArtist(client: NavidromeClient, args: unknown): Promise<ArtistDTO> {
-  const params = GetByIdSchema.parse(args);
+  const params = IdSchema.parse(args);
 
   try {
     const rawArtist = await client.request<unknown>(`/artist/${params.id}`);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return transformToArtistDTO(rawArtist as any);
+    return transformToArtistDTO(rawArtist as RawArtist);
   } catch (error) {
     throw new Error(
       `Failed to fetch artist: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -253,7 +242,7 @@ export async function getSongPlaylists(client: NavidromeClient, args: unknown): 
       try {
         playlistData = JSON.parse(rawPlaylists);
       } catch (parseError) {
-        console.error('Failed to parse playlist data:', parseError);
+        logger.error('Failed to parse playlist data:', parseError);
         playlistData = [];
       }
     }

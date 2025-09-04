@@ -7,10 +7,11 @@ import type {
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
   RadioPlaybackInfo 
-} from '../types/dto.js';
+} from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { getMessageManager } from '../utils/message-manager.js';
 import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 interface SubsonicResponse<T = unknown> {
   'subsonic-response': {
@@ -61,14 +62,14 @@ export async function listRadioStations(
     const httpResponse = await fetch(`${config.navidromeUrl}/rest/getInternetRadioStations?${authParams.toString()}`);
     
     if (!httpResponse.ok) {
-      throw new Error(`Subsonic API request failed: ${httpResponse.status} ${httpResponse.statusText}`);
+      throw new Error(ErrorFormatter.subsonicApi(httpResponse));
     }
 
     const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
       const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
-      throw new Error(`Subsonic API error: ${errorMsg}`);
+      throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
     }
 
     const radioStations = data['subsonic-response'].internetRadioStations?.internetRadioStation || [];
@@ -105,7 +106,7 @@ export async function listRadioStations(
     return apiResponse;
   } catch (error) {
     logger.error('Error listing radio stations:', error);
-    throw new Error(`Failed to list radio stations: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('listRadioStations', error));
   }
 }
 
@@ -157,14 +158,14 @@ export async function createRadioStation(
     });
     
     if (!httpResponse.ok) {
-      throw new Error(`Subsonic API request failed: ${httpResponse.status} ${httpResponse.statusText}`);
+      throw new Error(ErrorFormatter.subsonicApi(httpResponse));
     }
 
     const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
       const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
-      throw new Error(`Subsonic API error: ${errorMsg}`);
+      throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
     }
     
     const createdStation: RadioStationDTO = {
@@ -227,14 +228,14 @@ export async function deleteRadioStation(
     });
     
     if (!httpResponse.ok) {
-      throw new Error(`Subsonic API request failed: ${httpResponse.status} ${httpResponse.statusText}`);
+      throw new Error(ErrorFormatter.subsonicApi(httpResponse));
     }
 
     const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
       const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
-      throw new Error(`Subsonic API error: ${errorMsg}`);
+      throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
     }
     
     return {
@@ -278,7 +279,7 @@ export async function getRadioStation(
     return station;
   } catch (error) {
     logger.error('Error getting radio station:', error);
-    throw new Error(`Failed to get radio station: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('getRadioStation', error));
   }
 }
 

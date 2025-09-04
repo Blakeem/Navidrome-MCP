@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 export interface LastFmArtist {
   name: string;
@@ -130,13 +131,13 @@ async function callLastFmApi(method: string, params: Record<string, string>, api
   const response = await fetch(url.toString());
   
   if (!response.ok) {
-    throw new Error(`Last.fm API error: ${response.status} ${response.statusText}`);
+    throw new Error(ErrorFormatter.lastfmApi(response));
   }
   
   const data = await response.json() as Record<string, unknown>;
   
   if (data['error']) {
-    throw new Error(`Last.fm API error: ${data['message'] || 'Unknown error'}`);
+    throw new Error(ErrorFormatter.lastfmResponse(data['message'] as string));
   }
   
   return data;
@@ -151,7 +152,7 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
   const { artist, limit = 20 } = SimilarArtistsSchema.parse(args);
   
   if (!config.lastFmApiKey) {
-    throw new Error('Last.fm API key not configured');
+    throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
   
   logger.info(`Getting similar artists for: ${artist}`);
@@ -189,7 +190,7 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
   const { artist, track, limit = 20 } = SimilarTracksSchema.parse(args);
   
   if (!config.lastFmApiKey) {
-    throw new Error('Last.fm API key not configured');
+    throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
   
   logger.info(`Getting similar tracks for: ${artist} - ${track}`);
@@ -229,7 +230,7 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
   const { artist, lang = 'en' } = ArtistInfoSchema.parse(args);
   
   if (!config.lastFmApiKey) {
-    throw new Error('Last.fm API key not configured');
+    throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
   
   logger.info(`Getting artist info for: ${artist}`);
@@ -270,7 +271,7 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
   const { artist, limit = 10 } = TopTracksByArtistSchema.parse(args);
   
   if (!config.lastFmApiKey) {
-    throw new Error('Last.fm API key not configured');
+    throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
   
   logger.info(`Getting top tracks for artist: ${artist}`);
@@ -307,7 +308,7 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
   const { type, limit = 20, page = 1 } = GlobalChartsSchema.parse(args);
   
   if (!config.lastFmApiKey) {
-    throw new Error('Last.fm API key not configured');
+    throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
   
   logger.info(`Getting global ${type} chart`);

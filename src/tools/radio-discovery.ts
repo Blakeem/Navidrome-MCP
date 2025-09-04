@@ -23,14 +23,13 @@ import type {
   RadioFiltersResponse,
   ClickRadioStationResponse,
   VoteRadioStationResponse
-} from '../types/dto.js';
+} from '../types/index.js';
+import type { Config } from '../config.js';
 import { validateRadioStream } from './radio-validation.js';
 import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
-
-const RADIO_BROWSER_BASE = process.env['RADIO_BROWSER_BASE'] || 'https://de1.api.radio-browser.info';
-const USER_AGENT = process.env['RADIO_BROWSER_USER_AGENT'] || 'Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 const MAX_LIMIT = 500;
 
 /**
@@ -242,13 +241,14 @@ async function validateDiscoveredStations(
  * Discover radio stations via Radio Browser API
  */
 export async function discoverRadioStations(
+  config: Config,
   client: NavidromeClient,
   args: unknown
 ): Promise<DiscoverRadioStationsResponse> {
   const params = DiscoverRadioStationsArgsSchema.parse(args);
   
   try {
-    const url = new URL('/json/stations/search', RADIO_BROWSER_BASE);
+    const url = new URL('/json/stations/search', config.radioBrowserBase);
     
     // Map parameters to Radio Browser API format
     if (params.query) url.searchParams.set('name', params.query);
@@ -266,13 +266,13 @@ export async function discoverRadioStations(
     
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': USER_AGENT,
+        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserStation[];
@@ -288,7 +288,7 @@ export async function discoverRadioStations(
     const result: DiscoverRadioStationsResponse = {
       stations: validatedStations,
       source: 'radio-browser',
-      mirrorUsed: RADIO_BROWSER_BASE
+      mirrorUsed: config.radioBrowserBase
     };
     
     if (validatedCount > 0) {
@@ -302,14 +302,14 @@ export async function discoverRadioStations(
     
     return result;
   } catch (error) {
-    throw new Error(`Failed to discover radio stations: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('discoverRadioStations', error));
   }
 }
 
 /**
  * Get available filter options for radio station discovery
  */
-export async function getRadioFilters(args: unknown): Promise<RadioFiltersResponse> {
+export async function getRadioFilters(config: Config, args: unknown): Promise<RadioFiltersResponse> {
   const params = GetRadioFiltersArgsSchema.parse(args);
   const result: RadioFiltersResponse = {};
   
@@ -318,8 +318,8 @@ export async function getRadioFilters(args: unknown): Promise<RadioFiltersRespon
     
     if (params.kinds.includes('tags')) {
       fetchPromises.push(
-        fetch(`${RADIO_BROWSER_BASE}/json/tags`, {
-          headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' }
+        fetch(`${config.radioBrowserBase}/json/tags`, {
+          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
@@ -332,8 +332,8 @@ export async function getRadioFilters(args: unknown): Promise<RadioFiltersRespon
     
     if (params.kinds.includes('countries')) {
       fetchPromises.push(
-        fetch(`${RADIO_BROWSER_BASE}/json/countries`, {
-          headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' }
+        fetch(`${config.radioBrowserBase}/json/countries`, {
+          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
@@ -350,8 +350,8 @@ export async function getRadioFilters(args: unknown): Promise<RadioFiltersRespon
     
     if (params.kinds.includes('languages')) {
       fetchPromises.push(
-        fetch(`${RADIO_BROWSER_BASE}/json/languages`, {
-          headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' }
+        fetch(`${config.radioBrowserBase}/json/languages`, {
+          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
@@ -368,8 +368,8 @@ export async function getRadioFilters(args: unknown): Promise<RadioFiltersRespon
     
     if (params.kinds.includes('codecs')) {
       fetchPromises.push(
-        fetch(`${RADIO_BROWSER_BASE}/json/codecs`, {
-          headers: { 'User-Agent': USER_AGENT, 'Accept': 'application/json' }
+        fetch(`${config.radioBrowserBase}/json/codecs`, {
+          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
@@ -386,65 +386,65 @@ export async function getRadioFilters(args: unknown): Promise<RadioFiltersRespon
     await Promise.all(fetchPromises);
     return result;
   } catch (error) {
-    throw new Error(`Failed to get radio filters: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('getRadioFilters', error));
   }
 }
 
 /**
  * Get a specific radio station by UUID
  */
-export async function getStationByUuid(args: unknown): Promise<ExternalRadioStationDTO> {
+export async function getStationByUuid(config: Config, args: unknown): Promise<ExternalRadioStationDTO> {
   const params = GetStationByUuidArgsSchema.parse(args);
   
   try {
-    const url = `${RADIO_BROWSER_BASE}/json/stations/byuuid?uuids=${encodeURIComponent(params.stationUuid)}`;
+    const url = `${config.radioBrowserBase}/json/stations/byuuid?uuids=${encodeURIComponent(params.stationUuid)}`;
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': USER_AGENT,
+        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserStation[];
     
     if (!data || data.length === 0) {
-      throw new Error(`Station not found: ${params.stationUuid}`);
+      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
     
     const firstStation = data[0];
     if (!firstStation) {
-      throw new Error(`Station not found: ${params.stationUuid}`);
+      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
     
     return mapStationToDTO(firstStation);
   } catch (error) {
-    throw new Error(`Failed to get station: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('getStationByUuid', error));
   }
 }
 
 /**
  * Register a play click for a station (helps with popularity metrics)
  */
-export async function clickStation(args: unknown): Promise<ClickRadioStationResponse> {
+export async function clickStation(config: Config, args: unknown): Promise<ClickRadioStationResponse> {
   const params = ClickStationArgsSchema.parse(args);
   
   try {
-    const url = `${RADIO_BROWSER_BASE}/json/url/${encodeURIComponent(params.stationUuid)}`;
+    const url = `${config.radioBrowserBase}/json/url/${encodeURIComponent(params.stationUuid)}`;
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': USER_AGENT,
+        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserActionResponse;
@@ -455,28 +455,28 @@ export async function clickStation(args: unknown): Promise<ClickRadioStationResp
       message: data.message || 'Click registered successfully'
     };
   } catch (error) {
-    throw new Error(`Failed to click station: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('clickStation', error));
   }
 }
 
 /**
  * Vote for a radio station
  */
-export async function voteStation(args: unknown): Promise<VoteRadioStationResponse> {
+export async function voteStation(config: Config, args: unknown): Promise<VoteRadioStationResponse> {
   const params = VoteStationArgsSchema.parse(args);
   
   try {
-    const url = `${RADIO_BROWSER_BASE}/json/vote/${encodeURIComponent(params.stationUuid)}`;
+    const url = `${config.radioBrowserBase}/json/vote/${encodeURIComponent(params.stationUuid)}`;
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': USER_AGENT,
+        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
     
     if (!response.ok) {
-      throw new Error(`Radio Browser API error: ${response.status} ${response.statusText}`);
+      throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
     
     const data = await response.json() as RadioBrowserActionResponse;
@@ -486,6 +486,6 @@ export async function voteStation(args: unknown): Promise<VoteRadioStationRespon
       message: data.message || 'Vote registered successfully'
     };
   } catch (error) {
-    throw new Error(`Failed to vote for station: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(ErrorFormatter.toolExecution('voteStation', error));
   }
 }

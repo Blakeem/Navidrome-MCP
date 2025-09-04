@@ -22,7 +22,8 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import { 
   SINGLE_VALIDATION_TIMEOUT, 
   MIN_VALIDATION_TIMEOUT, 
-  MAX_VALIDATION_TIMEOUT 
+  MAX_VALIDATION_TIMEOUT,
+  RADIO_VALIDATION
 } from '../constants/timeouts.js';
 
 // Validation parameter schema
@@ -179,7 +180,7 @@ async function validateWithHead(
 ): Promise<{ response: Response | null; error: string | null }> {
   try {
     const controller = new AbortController();
-    const headTimeout = Math.min(4000, Math.floor(context.timeout * 0.6)); // Use 60% of total timeout
+    const headTimeout = Math.min(RADIO_VALIDATION.FALLBACK_HEAD_TIMEOUT, Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO)); // Use 60% of total timeout
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, headTimeout);
@@ -199,7 +200,7 @@ async function validateWithHead(
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { response: null, error: `HEAD request timeout after ${Math.min(4000, Math.floor(context.timeout * 0.6))}ms` };
+        return { response: null, error: `HEAD request timeout after ${Math.min(RADIO_VALIDATION.FALLBACK_HEAD_TIMEOUT, Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO))}ms` };
       }
       return { response: null, error: `HEAD request failed: ${err.message}` };
     }
@@ -216,7 +217,7 @@ async function sampleAudioData(
 ): Promise<{ buffer: Uint8Array | null; headers: Headers | null; error: string | null }> {
   try {
     const controller = new AbortController();
-    const sampleTimeout = Math.max(2000, remainingTimeout); // Ensure at least 2 seconds
+    const sampleTimeout = Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout); // Ensure at least 2 seconds
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, sampleTimeout);
@@ -224,7 +225,7 @@ async function sampleAudioData(
     const response = await fetch(url, {
       method: 'GET',
       headers: {
-        'Range': 'bytes=0-8191', // Get first 8KB
+        'Range': `bytes=0-${RADIO_VALIDATION.SAMPLE_BUFFER_SIZE - 1}`, // Get first 8KB
         'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
         'Accept': 'audio/*',
       },
@@ -255,9 +256,9 @@ async function sampleAudioData(
       
       const chunks: Uint8Array[] = [];
       let totalLength = 0;
-      const maxBytes = 8192; // 8KB limit
+      const maxBytes = RADIO_VALIDATION.SAMPLE_BUFFER_SIZE; // 8KB limit
       const startTime = Date.now();
-      const readTimeout = 3000; // 3 second timeout for reading
+      const readTimeout = RADIO_VALIDATION.STREAM_READ_TIMEOUT; // 3 second timeout for reading
       
       while (true) {
         // Check if we've exceeded our read timeout
@@ -314,7 +315,7 @@ async function sampleAudioData(
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { buffer: null, headers: null, error: `Audio sampling timeout after ${Math.max(2000, remainingTimeout)}ms` };
+        return { buffer: null, headers: null, error: `Audio sampling timeout after ${Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout)}ms` };
       }
       return { buffer: null, headers: null, error: `Audio sampling failed: ${err.message}` };
     }

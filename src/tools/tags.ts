@@ -16,44 +16,20 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { 
   TagDTO, 
   ListTagsResponse, 
   TagDistributionResponse, 
   TagDistribution 
-} from '../types/dto.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
-
-const ListTagsSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.TAGS_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  sort: z.enum(['tagName', 'tagValue', 'albumCount', 'songCount']).optional().default('tagName'),
-  order: z.enum(['ASC', 'DESC']).optional().default('ASC'),
-  tagName: z.string().optional(),
-});
-
-const GetTagSchema = z.object({
-  id: z.string().min(1),
-});
-
-const SearchByTagsSchema = z.object({
-  tagName: z.string().min(1),
-  tagValue: z.string().optional(),
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.TAG_SEARCH_LIMIT),
-});
-
-const GetTagDistributionSchema = z.object({
-  tagNames: z.array(z.string()).optional(),
-  limit: z.number().min(1).max(50).optional().default(DEFAULT_VALUES.TAG_DISTRIBUTION_LIMIT),
-  distributionLimit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.TAG_DISTRIBUTION_VALUES_LIMIT),
-});
-
-const ListUniqueTagsSchema = z.object({
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.UNIQUE_TAGS_LIMIT),
-  minUsage: z.number().min(1).optional().default(1),
-});
+} from '../types/index.js';
+import {
+  TagsPaginationSchema,
+  IdSchema,
+  SearchByTagsSchema,
+  TagDistributionSchema,
+  UniqueTagsSchema,
+} from '../schemas/index.js';
 
 export type ListTagsResult = ListTagsResponse;
 
@@ -116,7 +92,7 @@ function transformTagsToDTO(rawTags: unknown): TagDTO[] {
  * Note: API filtering is broken, so we use client-side filtering
  */
 export async function listTags(client: NavidromeClient, args: unknown): Promise<ListTagsResult> {
-  const params = ListTagsSchema.parse(args);
+  const params = TagsPaginationSchema.parse(args);
 
   try {
     // Fetch all tags since API filtering is broken
@@ -183,7 +159,7 @@ export async function listTags(client: NavidromeClient, args: unknown): Promise<
  * Get a specific tag by ID
  */
 export async function getTag(client: NavidromeClient, args: unknown): Promise<GetTagResult> {
-  const params = GetTagSchema.parse(args);
+  const params = IdSchema.parse(args);
 
   try {
     const rawTag = await client.request<unknown>(`/tag/${params.id}`);
@@ -240,7 +216,7 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
  * Get distribution analysis of tags, optionally filtered by tag names
  */
 export async function getTagDistribution(client: NavidromeClient, args: unknown): Promise<GetTagDistributionResult> {
-  const params = GetTagDistributionSchema.parse(args);
+  const params = TagDistributionSchema.parse(args);
 
   try {
     // Get all tags first
@@ -309,7 +285,7 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
  * List all unique tag names with statistics
  */
 export async function listUniqueTags(client: NavidromeClient, args: unknown): Promise<ListUniqueTagsResult> {
-  const params = ListUniqueTagsSchema.parse(args);
+  const params = UniqueTagsSchema.parse(args);
 
   try {
     // Get all tags
