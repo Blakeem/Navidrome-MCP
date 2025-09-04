@@ -32,22 +32,28 @@ import { createTagsToolCategory } from '../../../src/tools/handlers/tag-handlers
 // - Conditional tools: lastfm (when LASTFM_API_KEY provided), lyrics (when LYRICS_PROVIDER provided)
 const EXPECTED_TOOL_COUNT_ALL_FEATURES = 57;
 
-// Expected count with minimal features (no external APIs)
-const EXPECTED_TOOL_COUNT_MINIMAL = 49; // Without Last.fm (7 tools) and Lyrics (1 tool)
+// Expected count with minimal features (no external APIs) - CI environment  
+const EXPECTED_TOOL_COUNT_MINIMAL = 46; // Core tools only (no Last.fm, lyrics, or radio browser discovery)
+
+// Expected count with standard local environment (.env with some features)
+const EXPECTED_TOOL_COUNT_STANDARD = 51; // Some features enabled
 
 describe('Tools Registry - Tool Count Verification', () => {
   let liveClient: NavidromeClient;
   let config: Config;
 
   beforeAll(async () => {
+    // Load config for registry testing
+    config = await loadConfig();
+    
     if (shouldSkipLiveTests()) {
       console.log(`Skipping live tests: ${getSkipReason()}`);
-      // Still load config for registry testing, but skip client
-      config = await loadConfig();
+      // Create a mock client for tool registration in CI
+      const { createMockClient } = await import('../../factories/mock-client.js');
+      liveClient = createMockClient() as any; // Tool registry only needs client interface for creation
       return;
     }
-    // Use shared client and config for tools registration (avoids rate limiting)
-    config = await loadConfig();
+    // Use shared client for live testing
     liveClient = await getSharedLiveClient();
   });
 
@@ -77,8 +83,8 @@ describe('Tools Registry - Tool Count Verification', () => {
 
       const allTools = registry.getAllTools();
 
-      // Calculate expected count based on enabled features
-      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL;
+      // Calculate expected count dynamically based on actual feature configuration
+      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (46)
       
       if (config.features.lastfm) {
         expectedCount += 7; // Last.fm tools: get_similar_artists, get_similar_tracks, get_artist_info, get_top_tracks_by_artist, get_trending_music
@@ -86,6 +92,17 @@ describe('Tools Registry - Tool Count Verification', () => {
       
       if (config.features.lyrics) {
         expectedCount += 1; // Lyrics tool: get_lyrics
+      }
+
+      if (config.features.radioBrowser) {
+        expectedCount += 3; // Radio Browser discovery tools (discover, validate, get_filters)
+      }
+
+      // Log actual vs expected for debugging
+      if (allTools.length !== expectedCount) {
+        console.log(`Tool count mismatch: expected ${expectedCount}, got ${allTools.length}`);
+        console.log(`Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
+        console.log('Available tools:', allTools.map(t => t.name).sort());
       }
 
       expect(allTools.length).toBe(expectedCount);
@@ -241,10 +258,11 @@ describe('Tools Registry - Tool Count Verification', () => {
       // All tool names should be unique
       expect(uniqueNames.size).toBe(toolNames.length);
       
-      // Should have expected count for current configuration
-      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL;
+      // Should have expected count for current configuration  
+      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (46)
       if (config.features.lastfm) expectedCount += 7;
       if (config.features.lyrics) expectedCount += 1;
+      if (config.features.radioBrowser) expectedCount += 3;
       
       expect(toolNames.length).toBe(expectedCount);
     });
