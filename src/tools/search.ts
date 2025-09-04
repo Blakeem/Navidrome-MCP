@@ -16,35 +16,17 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { Config } from '../config.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/index.js';
 import crypto from 'crypto';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
-
-const SearchSchema = z.object({
-  query: z.string().min(1, 'Search query is required'),
-  artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-  albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT), 
-  songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-});
-
-const SearchSongsSchema = z.object({
-  query: z.string().min(1, 'Search query is required'),
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SEARCH_LIMIT),
-});
-
-const SearchAlbumsSchema = z.object({
-  query: z.string().min(1, 'Search query is required'),
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SEARCH_LIMIT),
-});
-
-const SearchArtistsSchema = z.object({
-  query: z.string().min(1, 'Search query is required'),
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SEARCH_LIMIT),
-});
+import {
+  SearchAllSchema,
+  SearchSongsSchema,
+  SearchAlbumsSchema,
+  SearchArtistsSchema,
+} from '../schemas/index.js';
 
 interface SubsonicSearchResult {
   'subsonic-response': {
@@ -85,7 +67,7 @@ export async function searchAll(config: Config, args: unknown): Promise<{
   query: string;
   totalResults: number;
 }> {
-  const params = SearchSchema.parse(args);
+  const params = SearchAllSchema.parse(args);
 
   try {
     const searchParams = createSubsonicAuth(config);
