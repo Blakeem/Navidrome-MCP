@@ -20,6 +20,7 @@ import { z } from 'zod';
 import crypto from 'crypto';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
+import { logger } from '../utils/logger.js';
 import {
   transformAlbumsToDTO,
   transformArtistsToDTO,
@@ -253,7 +254,7 @@ export async function getSongPlaylists(client: NavidromeClient, args: unknown): 
       try {
         playlistData = JSON.parse(rawPlaylists);
       } catch (parseError) {
-        console.error('Failed to parse playlist data:', parseError);
+        logger.error('Failed to parse playlist data:', parseError);
         playlistData = [];
       }
     }

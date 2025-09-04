@@ -357,6 +357,70 @@ import type { SongDTO, AlbumDTO } from '../types/dto.js';
 
 **This approach prevents the need for extensive refactoring later!**
 
+## Standardized Code Quality Utilities
+
+### Error Handling - ALWAYS Use ErrorFormatter
+
+**The codebase has a comprehensive ErrorFormatter utility that MUST be used for all error handling:**
+
+```typescript
+import { ErrorFormatter } from '../utils/error-formatter.js';
+
+// ✅ DO: Use ErrorFormatter for consistent error messages
+throw new Error(ErrorFormatter.toolExecution('myTool', error));
+throw new Error(ErrorFormatter.httpRequest('Navidrome API', response));
+throw new Error(ErrorFormatter.authentication('invalid credentials'));
+throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
+throw new Error(ErrorFormatter.notFound('Song', songId));
+throw new Error(ErrorFormatter.toolUnknown('invalidTool'));
+
+// ❌ DON'T: Use inconsistent error patterns
+throw new Error(`Failed to execute tool: ${error instanceof Error ? error.message : 'Unknown error'}`);
+throw new Error(`API request failed: ${operation} - ${response.status}`);
+```
+
+**Available ErrorFormatter Methods:**
+- `toolExecution(toolName, error)` - MCP tool failures
+- `httpRequest(operation, response, errorText?)` - HTTP/API requests
+- `subsonicApi(response)` / `subsonicResponse(message)` - Subsonic API
+- `lastfmApi(response)` / `lastfmResponse(message)` - Last.fm API
+- `authentication(details?)` / `authorization(operation)` - Auth failures  
+- `configValidation(messages)` / `configMissing(service, key)` - Configuration
+- `toolUnknown(toolName)` / `notFound(type, id)` - Resource errors
+
+### Logging - ALWAYS Use Logger Utility
+
+**The codebase has a proper MCP-compliant logger that MUST be used instead of console:**
+
+```typescript
+import { logger } from '../utils/logger.js';
+
+// ✅ DO: Use logger for all output (goes to stderr for MCP)
+logger.debug('Starting operation...');  // Only shown when debug enabled
+logger.info('Operation completed successfully');
+logger.warn('Configuration issue detected');
+logger.error('Operation failed:', error);
+
+// ❌ DON'T: Use console methods (interferes with MCP protocol)
+console.log('This breaks MCP JSON-RPC communication');
+console.error('[ERROR] Manual error formatting');
+```
+
+**Logger Features:**
+- **MCP Compliant**: Uses stderr (console.error) for all output
+- **Debug Control**: `logger.setDebug(config.debug)` controls debug visibility
+- **Structured Output**: Consistent `[DEBUG]`, `[INFO]`, `[WARN]`, `[ERROR]` prefixes
+- **Production Ready**: Proper log levels for production debugging
+
+### Code Quality Enforcement
+
+**CRITICAL: These utilities are mandatory for maintaining code quality:**
+
+1. **Error Handling**: 88+ error patterns have been standardized - continue this pattern
+2. **Logging**: All console usage has been eliminated - never reintroduce console methods
+3. **Type Safety**: Ultra-strict TypeScript enforced - use proper interfaces always
+4. **Testing**: Quality gates require zero errors: `pnpm lint && pnpm typecheck && pnpm test`
+
 ## Implementation Guidelines
 
 ### API Client Design
