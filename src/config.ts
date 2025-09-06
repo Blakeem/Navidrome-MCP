@@ -75,7 +75,7 @@ export type Config = z.infer<typeof ConfigSchema>;
 export async function loadConfig(): Promise<Config> {
   // Try to safely load .env file only in development mode
   // MCP servers get their environment from the host application
-  if (!process.env['NAVIDROME_URL']) {
+  if (process.env['NAVIDROME_URL'] === null || process.env['NAVIDROME_URL'] === undefined || process.env['NAVIDROME_URL'] === '') {
     // Only attempt to load .env if we're missing required environment variables
     // This suggests we're in development mode
     try {
@@ -102,35 +102,35 @@ export async function loadConfig(): Promise<Config> {
   }
 
   // Centralized environment variable access
-  const lastFmApiKey = process.env['LASTFM_API_KEY'] || undefined;
-  const radioBrowserUserAgent = process.env['RADIO_BROWSER_USER_AGENT'] || undefined;
-  const lyricsProvider = process.env['LYRICS_PROVIDER'] || undefined;
-  const lrclibUserAgent = process.env['LRCLIB_USER_AGENT'] || undefined;
+  const lastFmApiKey = process.env['LASTFM_API_KEY'] ?? undefined;
+  const radioBrowserUserAgent = process.env['RADIO_BROWSER_USER_AGENT'] ?? undefined;
+  const lyricsProvider = process.env['LYRICS_PROVIDER'] ?? undefined;
+  const lrclibUserAgent = process.env['LRCLIB_USER_AGENT'] ?? undefined;
 
   const rawConfig = {
     navidromeUrl: process.env['NAVIDROME_URL'],
     navidromeUsername: process.env['NAVIDROME_USERNAME'],
     navidromePassword: process.env['NAVIDROME_PASSWORD'],
     debug: process.env['DEBUG'] === 'true',
-    cacheTtl: process.env['CACHE_TTL'] ? parseInt(process.env['CACHE_TTL'], 10) : 300,
-    tokenExpiry: process.env['TOKEN_EXPIRY'] ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
+    cacheTtl: (process.env['CACHE_TTL'] !== null && process.env['CACHE_TTL'] !== undefined && process.env['CACHE_TTL'] !== '') ? parseInt(process.env['CACHE_TTL'], 10) : 300,
+    tokenExpiry: (process.env['TOKEN_EXPIRY'] !== null && process.env['TOKEN_EXPIRY'] !== undefined && process.env['TOKEN_EXPIRY'] !== '') ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
     
     // Feature detection based on available configuration
     features: {
-      lastfm: !!(lastFmApiKey && lastFmApiKey.trim()),
-      radioBrowser: !!(radioBrowserUserAgent && radioBrowserUserAgent.trim()),
-      lyrics: !!(lyricsProvider && lyricsProvider.trim() && lrclibUserAgent && lrclibUserAgent.trim()),
+      lastfm: (lastFmApiKey !== null && lastFmApiKey !== undefined && lastFmApiKey.trim() !== ''),
+      radioBrowser: (radioBrowserUserAgent !== null && radioBrowserUserAgent !== undefined && radioBrowserUserAgent.trim() !== ''),
+      lyrics: (lyricsProvider !== null && lyricsProvider !== undefined && lyricsProvider.trim() !== '') && (lrclibUserAgent !== null && lrclibUserAgent !== undefined && lrclibUserAgent.trim() !== ''),
     },
 
     // API Keys and External Service Configuration
     lastFmApiKey,
     radioBrowserUserAgent,
-    radioBrowserBase: process.env['RADIO_BROWSER_BASE'] || 'https://de1.api.radio-browser.info',
+    radioBrowserBase: process.env['RADIO_BROWSER_BASE'] ?? 'https://de1.api.radio-browser.info',
     
     // Lyrics Configuration
     lyricsProvider,
     lrclibUserAgent,
-    lrclibBase: process.env['LRCLIB_BASE'] || 'https://lrclib.net',
+    lrclibBase: process.env['LRCLIB_BASE'] ?? 'https://lrclib.net',
   };
 
   try {

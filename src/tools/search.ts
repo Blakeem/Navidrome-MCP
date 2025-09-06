@@ -88,11 +88,11 @@ export async function searchAll(config: Config, args: unknown): Promise<{
       throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
-    const searchResult = data['subsonic-response'].searchResult3 || {};
+    const searchResult = data['subsonic-response'].searchResult3 ?? {};
     
-    const artists = transformArtistsToDTO(searchResult.artist || []);
-    const albums = transformAlbumsToDTO(searchResult.album || []);
-    const songs = transformSongsToDTO(searchResult.song || []);
+    const artists = transformArtistsToDTO(searchResult.artist ?? []);
+    const albums = transformAlbumsToDTO(searchResult.album ?? []);
+    const songs = transformSongsToDTO(searchResult.song ?? []);
 
     return {
       artists,
@@ -135,8 +135,8 @@ export async function searchSongs(config: Config, args: unknown): Promise<{
       throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
-    const searchResult = data['subsonic-response'].searchResult3 || {};
-    const songs = transformSongsToDTO(searchResult.song || []);
+    const searchResult = data['subsonic-response'].searchResult3 ?? {};
+    const songs = transformSongsToDTO(searchResult.song ?? []);
 
     return {
       songs,
@@ -179,8 +179,8 @@ export async function searchAlbums(config: Config, args: unknown): Promise<{
       throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
-    const searchResult = data['subsonic-response'].searchResult3 || {};
-    const albums = transformAlbumsToDTO(searchResult.album || []);
+    const searchResult = data['subsonic-response'].searchResult3 ?? {};
+    const albums = transformAlbumsToDTO(searchResult.album ?? []);
 
     return {
       albums,
@@ -223,8 +223,8 @@ export async function searchArtists(config: Config, args: unknown): Promise<{
       throw new Error(ErrorFormatter.apiResponse('search'));
     }
 
-    const searchResult = data['subsonic-response'].searchResult3 || {};
-    const artists = transformArtistsToDTO(searchResult.artist || []);
+    const searchResult = data['subsonic-response'].searchResult3 ?? {};
+    const artists = transformArtistsToDTO(searchResult.artist ?? []);
 
     return {
       artists,

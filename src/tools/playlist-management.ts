@@ -71,17 +71,17 @@ interface RawPlaylistTrack {
 function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackDTO {
   const dto: PlaylistTrackDTO = {
     id: rawTrack.id,
-    mediaFileId: rawTrack.mediaFileId || String(rawTrack.id),
+    mediaFileId: rawTrack.mediaFileId ?? String(rawTrack.id),
     playlistId: rawTrack.playlistId,
-    title: rawTrack.title || '',
-    album: rawTrack.album || '',
-    artist: rawTrack.artist || '',
-    duration: rawTrack.duration || 0,
+    title: rawTrack.title ?? '',
+    album: rawTrack.album ?? '',
+    artist: rawTrack.artist ?? '',
+    duration: rawTrack.duration ?? 0,
     durationFormatted: formatDuration(rawTrack.duration),
   };
 
   // Add optional fields only if they have values
-  if (rawTrack.albumArtist) {
+  if (rawTrack.albumArtist !== null && rawTrack.albumArtist !== undefined && rawTrack.albumArtist !== '') {
     dto.albumArtist = rawTrack.albumArtist;
   }
 
@@ -89,7 +89,7 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
     dto.bitRate = rawTrack.bitRate;
   }
 
-  if (rawTrack.path) {
+  if (rawTrack.path !== null && rawTrack.path !== undefined && rawTrack.path !== '') {
     dto.path = rawTrack.path;
   }
 
@@ -101,7 +101,7 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
     dto.year = rawTrack.year;
   }
 
-  if (rawTrack.genre) {
+  if (rawTrack.genre !== null && rawTrack.genre !== undefined && rawTrack.genre !== '') {
     dto.genre = rawTrack.genre;
   }
 
@@ -186,12 +186,12 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
     const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
     
     // Fix the name if it's not properly returned from API
-    if (!playlist.name || playlist.name === 'Unknown Playlist') {
+    if (playlist.name === null || playlist.name === undefined || playlist.name === '' || playlist.name === 'Unknown Playlist') {
       playlist.name = params.name;
     }
     
     // Fix the comment if it's not properly returned from API
-    if (params.comment && (!playlist.comment || playlist.comment === '')) {
+    if (params.comment !== null && params.comment !== undefined && params.comment !== '' && (playlist.comment === null || playlist.comment === undefined || playlist.comment === '')) {
       playlist.comment = params.comment;
     }
     
@@ -235,12 +235,12 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
     const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
     
     // Fix the name if it was updated but not properly returned from API
-    if (params.name && (!playlist.name || playlist.name === 'Unknown Playlist')) {
+    if (params.name !== null && params.name !== undefined && params.name !== '' && (playlist.name === null || playlist.name === undefined || playlist.name === '' || playlist.name === 'Unknown Playlist')) {
       playlist.name = params.name;
     }
     
     // Fix the comment if it was updated but not properly returned from API
-    if (params.comment !== undefined && (!playlist.comment || playlist.comment === '')) {
+    if (params.comment !== undefined && (playlist.comment === null || playlist.comment === undefined || playlist.comment === '')) {
       playlist.comment = params.comment;
     }
     
@@ -424,7 +424,7 @@ export async function batchAddTracksToPlaylist(
     throw new Error('Playlist ID is required');
   }
   
-  if (!params.trackSets || !Array.isArray(params.trackSets)) {
+  if (params.trackSets === null || params.trackSets === undefined || !Array.isArray(params.trackSets)) {
     throw new Error('Track sets array is required');
   }
   
@@ -489,7 +489,7 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
       method: 'DELETE',
     });
 
-    const removedIds = response.ids || params.trackIds;
+    const removedIds = response.ids ?? params.trackIds;
     return {
       ids: removedIds,
       message: `Successfully removed ${removedIds.length} track${removedIds.length !== 1 ? 's' : ''} from playlist`,

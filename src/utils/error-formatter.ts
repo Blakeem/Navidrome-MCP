@@ -36,7 +36,7 @@ export class ErrorFormatter {
    */
   static httpRequest(operation: string, response: Response, errorText?: string): string {
     const base = `API request failed: ${operation} - ${response.status} ${response.statusText}`;
-    return errorText ? `${base} - ${errorText}` : base;
+    return errorText !== null && errorText !== undefined && errorText !== '' ? `${base} - ${errorText}` : base;
   }
 
   /**
@@ -50,7 +50,7 @@ export class ErrorFormatter {
    * Format Subsonic API response errors (when subsonic-response.status !== 'ok')
    */
   static subsonicResponse(errorMessage?: string): string {
-    return `Subsonic API error: ${errorMessage || 'Unknown error'}`;
+    return `Subsonic API error: ${errorMessage ?? 'Unknown error'}`;
   }
 
   // === MCP TOOL ERRORS ===
@@ -75,7 +75,7 @@ export class ErrorFormatter {
    */
   static toolNotFound(resourceType: string, identifier?: string): string {
     const base = `${resourceType} not found`;
-    return identifier ? `${base}: ${identifier}` : base;
+    return identifier !== null && identifier !== undefined && identifier !== '' ? `${base}: ${identifier}` : base;
   }
 
   /**
@@ -99,7 +99,7 @@ export class ErrorFormatter {
    */
   static authentication(details?: string): string {
     const base = 'Authentication failed';
-    return details ? `${base}: ${details}` : base;
+    return details !== null && details !== undefined && details !== '' ? `${base}: ${details}` : base;
   }
 
   /**
@@ -122,7 +122,7 @@ export class ErrorFormatter {
    * Format Last.fm API response errors
    */
   static lastfmResponse(message?: string): string {
-    return `Last.fm API error: ${message || 'Unknown error'}`;
+    return `Last.fm API error: ${message ?? 'Unknown error'}`;
   }
 
   /**
@@ -143,7 +143,7 @@ export class ErrorFormatter {
    * Format generic API response errors
    */
   static apiResponse(apiName: string, message?: string): string {
-    return `${apiName} error: ${message || 'Unknown error'}`;
+    return `${apiName} error: ${message ?? 'Unknown error'}`;
   }
 
   // === CONFIGURATION ERRORS ===

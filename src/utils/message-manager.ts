@@ -22,8 +22,8 @@
  */
 export class MessageManager {
   private static instance: MessageManager | null = null;
-  private shownMessages: Set<string>;
-  private messageTemplates: Map<string, string>;
+  private readonly shownMessages: Set<string>;
+  private readonly messageTemplates: Map<string, string>;
 
   private constructor() {
     this.shownMessages = new Set();
@@ -35,9 +35,7 @@ export class MessageManager {
    * Get the singleton instance of MessageManager
    */
   public static getInstance(): MessageManager {
-    if (!MessageManager.instance) {
-      MessageManager.instance = new MessageManager();
-    }
+    MessageManager.instance ??= new MessageManager();
     return MessageManager.instance;
   }
 
@@ -87,11 +85,11 @@ export class MessageManager {
     this.shownMessages.add(messageKey);
 
     // Return custom message or template
-    if (customMessage) {
+    if (customMessage !== null && customMessage !== undefined && customMessage !== '') {
       return customMessage;
     }
 
-    return this.messageTemplates.get(messageKey) || null;
+    return this.messageTemplates.get(messageKey) ?? null;
   }
 
   /**
@@ -144,7 +142,7 @@ export class MessageManager {
     customMessage?: string
   ): string | null {
     const message = this.getMessage(messageKey, customMessage);
-    if (!message) return null;
+    if (message === null || message === undefined || message === '') return null;
 
     let formatted = message;
     for (const [key, value] of Object.entries(values)) {

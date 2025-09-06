@@ -24,7 +24,7 @@ export const IdSchema = z.object({
 });
 
 // Required ID with custom message
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types
 export const createIdSchema = (resourceType: string) => z.object({
   id: z.string().min(1, `${resourceType} ID is required`),
 });
@@ -39,7 +39,7 @@ export const ItemTypeSchema = z.enum(['song', 'album', 'artist']);
 export const ItemListTypeSchema = z.enum(['songs', 'albums', 'artists']);
 
 // Common limit validation patterns
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types
 export const createLimitSchema = (min = 1, max = 500, defaultValue?: number) => {
   if (defaultValue !== undefined) {
     return z.number().min(min).max(max).optional().default(defaultValue);
@@ -64,7 +64,7 @@ export const RequiredBooleanSchema = z.boolean();
 export const RatingSchema = z.number().min(0).max(5);
 
 // Duration validation for timeouts
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types
 export const createTimeoutSchema = (min: number, max: number, defaultValue: number) => 
   z.number().min(min).max(max).optional().default(defaultValue);
 

@@ -55,7 +55,7 @@ export async function getQueue(client: NavidromeClient, _args: unknown): Promise
   
   const response = await client.request<{ current?: number; position?: number; items?: QueueTrack[]; updatedAt?: string }>('/queue');
   
-  if (!response || Object.keys(response).length === 0) {
+  if (response === null || response === undefined || Object.keys(response).length === 0) {
     return {
       current: 0,
       position: 0,
@@ -67,18 +67,18 @@ export async function getQueue(client: NavidromeClient, _args: unknown): Promise
   }
   
   const result: QueueResult = {
-    current: response.current || 0,
-    position: response.position || 0,
-    trackCount: response.items?.length || 0,
-    tracks: (response.items || []).map((track: QueueTrack) => ({
+    current: response.current ?? 0,
+    position: response.position ?? 0,
+    trackCount: response.items?.length ?? 0,
+    tracks: (response.items ?? []).map((track: QueueTrack) => ({
       id: track.id,
-      title: track.title || '',
-      artist: track.artist || '',
-      album: track.album || '',
-      duration: track.duration || 0,
+      title: track.title ?? '',
+      artist: track.artist ?? '',
+      album: track.album ?? '',
+      duration: track.duration ?? 0,
     })),
   };
-  if (response.updatedAt) {
+  if (response.updatedAt !== null && response.updatedAt !== undefined && response.updatedAt !== '') {
     result.updatedAt = response.updatedAt;
   }
   return result;

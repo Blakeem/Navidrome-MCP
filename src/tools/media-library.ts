@@ -155,14 +155,14 @@ export async function listGenres(_client: NavidromeClient, config: Config, args:
     };
     
     // Extract genres from Subsonic response structure
-    const subsonicGenres = response?.['subsonic-response']?.genres?.genre || [];
+    const subsonicGenres = response?.['subsonic-response']?.genres?.genre ?? [];
     
     // Transform Subsonic genre format to our DTO
     const allGenres: GenreDTO[] = subsonicGenres.map((genre) => ({
-      id: genre.value || '', // Subsonic uses 'value' for genre name as ID
-      name: genre.value || '',
-      songCount: genre.songCount || 0,
-      albumCount: genre.albumCount || 0,
+      id: genre.value ?? '', // Subsonic uses 'value' for genre name as ID
+      name: genre.value ?? '',
+      songCount: genre.songCount ?? 0,
+      albumCount: genre.albumCount ?? 0,
     }));
 
     // Apply pagination manually since Subsonic getGenres doesn't support it

@@ -22,9 +22,9 @@ import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
 export class NavidromeClient {
-  private authManager: AuthManager;
-  private baseUrl: string;
-  private config: Config;
+  private readonly authManager: AuthManager;
+  private readonly baseUrl: string;
+  private readonly config: Config;
 
   constructor(config: Config) {
     this.baseUrl = config.navidromeUrl;
@@ -45,7 +45,7 @@ export class NavidromeClient {
     };
 
     // Only set Content-Type for non-GET requests
-    if (options.method && options.method !== 'GET') {
+    if (options.method !== null && options.method !== undefined && options.method !== 'GET') {
       defaultHeaders['Content-Type'] = 'application/json';
     }
 
@@ -64,7 +64,7 @@ export class NavidromeClient {
 
     // Handle different content types
     const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
+    if (contentType?.includes('application/json') === true) {
       return response.json() as Promise<T>;
     } else {
       return response.text() as Promise<T>;

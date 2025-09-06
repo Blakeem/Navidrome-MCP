@@ -120,7 +120,7 @@ function extractStreamingHeaders(headers: Headers): Record<string, string> {
  * Check if content type indicates audio
  */
 function isAudioContentType(contentType: string | null): boolean {
-  if (!contentType) return false;
+  if (contentType === null || contentType === undefined || contentType === '') return false;
   
   const normalized = contentType.toLowerCase();
   return VALID_AUDIO_MIMES.some(mime => normalized.includes(mime));
@@ -133,7 +133,7 @@ async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetectionResu
   try {
     const fileType = await fileTypeFromBuffer(buffer);
     
-    if (fileType && fileType.mime.startsWith('audio/')) {
+    if (fileType?.mime?.startsWith('audio/') === true) {
       return {
         detected: true,
         format: fileType.ext,
@@ -152,7 +152,7 @@ async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetectionResu
     for (const sig of signatures) {
       let matches = true;
       for (let i = 0; i < sig.bytes.length; i++) {
-        if (buffer[i] !== sig.bytes[i]) {
+        if (buffer[i] !== undefined && buffer[i] !== sig.bytes[i]) {
           matches = false;
           break;
         }
@@ -274,7 +274,7 @@ async function sampleAudioData(
         const { value, done } = await reader.read();
         
         if (done) break;
-        if (value) {
+        if (value !== null && value !== undefined) {
           chunks.push(value);
           totalLength += value.length;
           
@@ -334,15 +334,15 @@ function generateRecommendations(
   if (result.status === 'valid') {
     recommendations.push('✅ Stream validated successfully');
     
-    if (result.streamingHeaders?.['icy-name']) {
+    if (result.streamingHeaders?.['icy-name'] !== null && result.streamingHeaders?.['icy-name'] !== undefined && result.streamingHeaders?.['icy-name'] !== '') {
       recommendations.push(`🎵 Station: ${result.streamingHeaders['icy-name']}`);
     }
     
-    if (result.streamingHeaders?.['icy-br']) {
+    if (result.streamingHeaders?.['icy-br'] !== null && result.streamingHeaders?.['icy-br'] !== undefined && result.streamingHeaders?.['icy-br'] !== '') {
       recommendations.push(`📊 Bitrate: ${result.streamingHeaders['icy-br']}kbps`);
     }
     
-    if (result.audioFormat?.format) {
+    if (result.audioFormat?.format !== null && result.audioFormat?.format !== undefined && result.audioFormat?.format !== '') {
       recommendations.push(`🎧 Format: ${result.audioFormat.format.toUpperCase()}`);
     }
     
@@ -353,10 +353,10 @@ function generateRecommendations(
     if (result.httpStatus === 404) {
       recommendations.push('🔍 Stream URL appears to be offline or moved');
       recommendations.push('💡 Check the station\'s official website for updated URLs');
-    } else if (!result.validation?.hasAudioContentType) {
+    } else if (result.validation?.hasAudioContentType === false) {
       recommendations.push('⚠️ URL does not serve audio content');
       recommendations.push('💡 Ensure you\'re using the stream URL, not the website URL');
-    } else if (!result.validation?.audioDataDetected) {
+    } else if (result.validation?.audioDataDetected === false) {
       recommendations.push('⚠️ Could not detect valid audio data');
       recommendations.push('💡 The stream may be geo-restricted or require authentication');
     }
@@ -451,7 +451,7 @@ export async function validateRadioStream(
     headResponse = headResult.response;
     headError = headResult.error;
     
-    if (headError) {
+    if (headError !== null && headError !== undefined && headError !== '') {
       warnings.push(headError);
     }
     
@@ -462,10 +462,10 @@ export async function validateRadioStream(
       const streamHeaders = extractStreamingHeaders(headResponse.headers);
       
       // If we have clear audio content-type OR streaming headers, we can skip audio sampling
-      const hasAudioContentType = contentType && isAudioContentType(contentType);
+      const hasAudioContentType = contentType !== null && contentType !== undefined && contentType !== '' && isAudioContentType(contentType);
       const hasStreamingHeaders = Object.keys(streamHeaders).length > 0;
       
-      if (hasAudioContentType || hasStreamingHeaders) {
+      if (hasAudioContentType === true || hasStreamingHeaders === true) {
         skipAudioSampling = true;
         // Create a fake successful result for audio detection based on content-type
         buffer = new Uint8Array([0xFF, 0xFB]); // Minimal buffer to satisfy validation logic
@@ -482,7 +482,7 @@ export async function validateRadioStream(
       if (remainingTime > 1000 && !overallController.signal.aborted) {
         const sampleResult = await sampleAudioData(params.url, remainingTime);
         buffer = sampleResult.buffer;
-        headers = sampleResult.headers || headResponse?.headers || null;
+        headers = sampleResult.headers ?? headResponse?.headers ?? null;
         sampleError = sampleResult.error;
       } else if (remainingTime <= 1000) {
         sampleError = 'Insufficient time remaining for audio sampling';
@@ -498,13 +498,13 @@ export async function validateRadioStream(
     clearTimeout(overallTimeoutId);
   }
   
-  if (sampleError && !headResponse) {
+  if (sampleError !== null && sampleError !== undefined && sampleError !== '' && headResponse === null) {
     errors.push(sampleError);
     result.status = 'error';
   }
   
   // Use whichever response we got
-  const finalResponse = headResponse || (headers ? { headers, ok: true, status: 200, url: params.url } : null);
+  const finalResponse = headResponse ?? (headers !== null && headers !== undefined ? { headers, ok: true, status: 200, url: params.url } : null);
   
   if (finalResponse) {
     result.httpStatus = finalResponse.status || 200;
@@ -517,7 +517,7 @@ export async function validateRadioStream(
     
     // Extract content type
     const contentType = finalResponse.headers.get('content-type');
-    if (contentType) {
+    if (contentType !== null && contentType !== undefined && contentType !== '') {
       result.contentType = contentType;
       result.validation.hasAudioContentType = isAudioContentType(contentType);
       

@@ -68,11 +68,11 @@ export async function listRadioStations(
     const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
-      const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
+      const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
       throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
     }
 
-    const radioStations = data['subsonic-response'].internetRadioStations?.internetRadioStation || [];
+    const radioStations = data['subsonic-response'].internetRadioStations?.internetRadioStation ?? [];
     const stations: RadioStationDTO[] = radioStations.map(station => {
       const stationDto: RadioStationDTO = {
         id: station.id,
@@ -82,7 +82,7 @@ export async function listRadioStations(
         updatedAt: new Date().toISOString(),
       };
       
-      if (station.homePageUrl) {
+      if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl !== '') {
         stationDto.homePageUrl = station.homePageUrl;
       }
       
@@ -99,7 +99,7 @@ export async function listRadioStations(
     };
 
     // Add tip if this is the first time showing the list
-    if (tip) {
+    if (tip !== null && tip !== undefined && tip !== '') {
       apiResponse.tip = tip;
     }
     
@@ -120,14 +120,14 @@ export async function createRadioStation(
   try {
     const params = args as CreateRadioStationRequest & { validateBeforeAdd?: boolean };
     
-    if (!params.name || !params.streamUrl) {
+    if (params.name === null || params.name === undefined || params.name === '' || params.streamUrl === null || params.streamUrl === undefined || params.streamUrl === '') {
       throw new Error('Name and streamUrl are required');
     }
     
     logger.debug('Creating radio station:', params);
     
     // If validation is requested, validate the stream first
-    if (params.validateBeforeAdd) {
+    if (params.validateBeforeAdd === true) {
       const { validateRadioStream } = await import('./radio-validation.js');
       const { NavidromeClient } = await import('../client/navidrome-client.js');
       const client = new NavidromeClient(config);
@@ -149,7 +149,7 @@ export async function createRadioStation(
     const authParams = createSubsonicAuth(config);
     authParams.set('streamUrl', params.streamUrl);
     authParams.set('name', params.name);
-    if (params.homePageUrl) {
+    if (params.homePageUrl !== null && params.homePageUrl !== undefined && params.homePageUrl !== '') {
       authParams.set('homePageUrl', params.homePageUrl);
     }
     
@@ -164,7 +164,7 @@ export async function createRadioStation(
     const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
-      const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
+      const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
       throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
     }
     
@@ -176,7 +176,7 @@ export async function createRadioStation(
       updatedAt: new Date().toISOString(),
     };
     
-    if (params.homePageUrl) {
+    if (params.homePageUrl !== null && params.homePageUrl !== undefined && params.homePageUrl !== '') {
       createdStation.homePageUrl = params.homePageUrl;
     }
 
@@ -190,7 +190,7 @@ export async function createRadioStation(
     };
 
     // Add validation reminder if this is the first time creating a station
-    if (validationReminder) {
+    if (validationReminder !== null && validationReminder !== undefined && validationReminder !== '') {
       apiResponse.validation_reminder = validationReminder;
     }
     
@@ -234,7 +234,7 @@ export async function deleteRadioStation(
     const data = await httpResponse.json() as SubsonicResponse;
     
     if (data['subsonic-response'].status !== 'ok') {
-      const errorMsg = data['subsonic-response'].error?.message || 'Unknown error';
+      const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
       throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
     }
     
@@ -334,7 +334,7 @@ export async function batchCreateRadioStations(
     validateBeforeAdd?: boolean;
   };
   
-  if (!params.stations || !Array.isArray(params.stations)) {
+  if (params.stations === null || params.stations === undefined || !Array.isArray(params.stations)) {
     throw new Error('Stations array is required');
   }
   
@@ -362,7 +362,7 @@ export async function batchCreateRadioStations(
         successCount++;
       } else {
         failedCount++;
-        if (result.error?.includes('validation failed')) {
+        if (result.error?.includes('validation failed') === true) {
           validationFailedCount++;
         }
       }

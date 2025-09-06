@@ -168,18 +168,18 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
   const dto: ExternalRadioStationDTO = {
     stationUuid: station.stationuuid,
     name: station.name,
-    playUrl: station.url_resolved || station.url,
-    tags: station.tags ? station.tags.split(',').filter((t: string) => t.trim()) : [],
-    languageCodes: station.languagecodes ? station.languagecodes.split(',').filter((l: string) => l.trim()) : [],
+    playUrl: station.url_resolved ?? station.url,
+    tags: (station.tags !== null && station.tags !== undefined && station.tags !== '') ? station.tags.split(',').filter((t: string) => t.trim()) : [],
+    languageCodes: (station.languagecodes !== null && station.languagecodes !== undefined && station.languagecodes !== '') ? station.languagecodes.split(',').filter((l: string) => l.trim()) : [],
     hls: Boolean(station.hls),
-    votes: station.votes || 0,
-    clickCount: station.clickcount || 0
+    votes: station.votes ?? 0,
+    clickCount: station.clickcount ?? 0
   };
   
   // Only include essential fields for cleaner LLM context
-  if (station.homepage) dto.homepage = station.homepage;
-  if (station.countrycode) dto.countryCode = station.countrycode;
-  if (station.codec) dto.codec = station.codec;
+  if (station.homepage !== null && station.homepage !== undefined && station.homepage !== '') dto.homepage = station.homepage;
+  if (station.countrycode !== null && station.countrycode !== undefined && station.countrycode !== '') dto.countryCode = station.countrycode;
+  if (station.codec !== null && station.codec !== undefined && station.codec !== '') dto.codec = station.codec;
   if (station.bitrate !== undefined) dto.bitrate = station.bitrate;
   // Skip favicon and lastCheckTime to reduce context size
   
@@ -251,11 +251,11 @@ export async function discoverRadioStations(
     const url = new URL('/json/stations/search', config.radioBrowserBase);
     
     // Map parameters to Radio Browser API format
-    if (params.query) url.searchParams.set('name', params.query);
-    if (params.tag) url.searchParams.set('tag', params.tag);
-    if (params.countryCode) url.searchParams.set('countrycode', params.countryCode);
-    if (params.language) url.searchParams.set('language', params.language);
-    if (params.codec) url.searchParams.set('codec', params.codec);
+    if (params.query !== null && params.query !== undefined && params.query !== '') url.searchParams.set('name', params.query);
+    if (params.tag !== null && params.tag !== undefined && params.tag !== '') url.searchParams.set('tag', params.tag);
+    if (params.countryCode !== null && params.countryCode !== undefined && params.countryCode !== '') url.searchParams.set('countrycode', params.countryCode);
+    if (params.language !== null && params.language !== undefined && params.language !== '') url.searchParams.set('language', params.language);
+    if (params.codec !== null && params.codec !== undefined && params.codec !== '') url.searchParams.set('codec', params.codec);
     if (params.bitrateMin !== undefined) url.searchParams.set('bitrateMin', String(params.bitrateMin));
     if (params.isHttps !== undefined) url.searchParams.set('is_https', params.isHttps ? 'true' : 'false');
     if (params.order) url.searchParams.set('order', params.order);
@@ -266,7 +266,7 @@ export async function discoverRadioStations(
     
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
+        'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
@@ -282,8 +282,8 @@ export async function discoverRadioStations(
     const validatedStations = await validateDiscoveredStations(client, stations);
     
     // Create validation summary
-    const validatedCount = validatedStations.filter(s => s.validation?.validated).length;
-    const workingCount = validatedStations.filter(s => s.validation?.isValid).length;
+    const validatedCount = validatedStations.filter(s => s.validation?.validated === true).length;
+    const workingCount = validatedStations.filter(s => s.validation?.isValid === true).length;
     
     const result: DiscoverRadioStationsResponse = {
       stations: validatedStations,
@@ -319,7 +319,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('tags')) {
       fetchPromises.push(
         fetch(`${config.radioBrowserBase}/json/tags`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
+          headers: { 'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
@@ -333,7 +333,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('countries')) {
       fetchPromises.push(
         fetch(`${config.radioBrowserBase}/json/countries`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
+          headers: { 'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
@@ -351,14 +351,14 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('languages')) {
       fetchPromises.push(
         fetch(`${config.radioBrowserBase}/json/languages`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
+          headers: { 'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
           result.languages = (data as RadioBrowserLanguage[])
             .slice(0, 100)
             .map(l => ({ 
-              code: l.iso_639 || l.name, 
+              code: l.iso_639 ?? l.name, 
               name: l.name, 
               stationCount: l.stationcount 
             }));
@@ -369,7 +369,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('codecs')) {
       fetchPromises.push(
         fetch(`${config.radioBrowserBase}/json/codecs`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
+          headers: { 'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0', 'Accept': 'application/json' }
         })
         .then(res => res.json())
         .then((data) => {
@@ -401,7 +401,7 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
+        'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
@@ -412,7 +412,7 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
     
     const data = await response.json() as RadioBrowserStation[];
     
-    if (!data || data.length === 0) {
+    if (data === null || data === undefined || data.length === 0) {
       throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
     
@@ -438,7 +438,7 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
+        'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
@@ -451,8 +451,8 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
     
     return {
       ok: Boolean(data.ok),
-      playUrl: data.url || '',
-      message: data.message || 'Click registered successfully'
+      playUrl: data.url ?? '',
+      message: data.message ?? 'Click registered successfully'
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('clickStation', error));
@@ -470,7 +470,7 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
     
     const response = await fetch(url, {
       headers: {
-        'User-Agent': config.radioBrowserUserAgent || 'Navidrome-MCP/1.0',
+        'User-Agent': config.radioBrowserUserAgent ?? 'Navidrome-MCP/1.0',
         'Accept': 'application/json'
       }
     });
@@ -483,7 +483,7 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
     
     return {
       ok: Boolean(data.ok),
-      message: data.message || 'Vote registered successfully'
+      message: data.message ?? 'Vote registered successfully'
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('voteStation', error));

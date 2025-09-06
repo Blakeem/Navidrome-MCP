@@ -37,9 +37,9 @@ async function main(): Promise<void> {
     logger.debug('Node version:', process.version);
     logger.debug('Platform:', process.platform);
     logger.debug('Environment variables present:', {
-      NAVIDROME_URL: !!process.env['NAVIDROME_URL'],
-      NAVIDROME_USERNAME: !!process.env['NAVIDROME_USERNAME'],
-      NAVIDROME_PASSWORD: !!process.env['NAVIDROME_PASSWORD'],
+      NAVIDROME_URL: (process.env['NAVIDROME_URL'] !== null && process.env['NAVIDROME_URL'] !== undefined && process.env['NAVIDROME_URL'] !== ''),
+      NAVIDROME_USERNAME: (process.env['NAVIDROME_USERNAME'] !== null && process.env['NAVIDROME_USERNAME'] !== undefined && process.env['NAVIDROME_USERNAME'] !== ''),
+      NAVIDROME_PASSWORD: (process.env['NAVIDROME_PASSWORD'] !== null && process.env['NAVIDROME_PASSWORD'] !== undefined && process.env['NAVIDROME_PASSWORD'] !== ''),
     });
 
     const server = new Server(
