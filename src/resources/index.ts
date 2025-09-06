@@ -99,6 +99,6 @@ export function registerResources(server: Server, client: NavidromeClient): void
       }
     }
 
-    throw new Error(ErrorFormatter.unknownResource(baseUri || uri));
+    throw new Error(ErrorFormatter.unknownResource(baseUri !== null && baseUri !== undefined && baseUri !== '' ? baseUri : uri));
   });
 }

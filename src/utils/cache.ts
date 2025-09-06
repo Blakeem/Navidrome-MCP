@@ -22,10 +22,10 @@ interface CacheEntry<T> {
 }
 
 export class Cache<T> {
-  private store = new Map<string, CacheEntry<T>>();
-  private ttl: number;
+  private readonly store = new Map<string, CacheEntry<T>>();
+  private readonly ttl: number;
   private cleanupInterval: NodeJS.Timeout | undefined = undefined;
-  private cleanupIntervalMs: number;
+  private readonly cleanupIntervalMs: number;
 
   constructor(ttlSeconds = 300, enableAutoCleanup = true) {
     this.ttl = ttlSeconds * 1000;
@@ -49,7 +49,7 @@ export class Cache<T> {
     }, this.cleanupIntervalMs);
     
     // Ensure cleanup runs when process exits
-    if (this.cleanupInterval.unref) {
+    if (this.cleanupInterval?.unref !== null && this.cleanupInterval?.unref !== undefined) {
       this.cleanupInterval.unref(); // Don't keep process alive just for cleanup
     }
   }

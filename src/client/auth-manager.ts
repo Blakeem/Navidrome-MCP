@@ -23,7 +23,7 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 export class AuthManager {
   private token: string | null = null;
   private tokenExpiry: Date | null = null;
-  private config: Config;
+  private readonly config: Config;
 
   constructor(config: Config) {
     this.config = config;
@@ -50,11 +50,11 @@ export class AuthManager {
   }
 
   async getToken(): Promise<string> {
-    if (!this.token || !this.tokenExpiry || this.tokenExpiry <= new Date()) {
+    if (this.token === null || this.token === undefined || this.token === '' || this.tokenExpiry === null || this.tokenExpiry === undefined || this.tokenExpiry <= new Date()) {
       await this.authenticate();
     }
 
-    if (!this.token) {
+    if (this.token === null || this.token === undefined || this.token === '') {
       throw new Error(ErrorFormatter.authentication('token not available after authentication'));
     }
 

@@ -68,9 +68,9 @@ function transformTagToDTO(rawTag: unknown): TagDTO {
   const tag = rawTag as Record<string, unknown>;
 
   return {
-    id: String(tag['id'] || ''),
-    tagName: String(tag['tagName'] || ''),
-    tagValue: String(tag['tagValue'] || ''),
+    id: String(tag['id'] ?? ''),
+    tagName: String(tag['tagName'] ?? ''),
+    tagValue: String(tag['tagValue'] ?? ''),
     albumCount: Number(tag['albumCount']) || 0,
     songCount: Number(tag['songCount']) || 0,
   };
@@ -100,7 +100,7 @@ export async function listTags(client: NavidromeClient, args: unknown): Promise<
     let allTags = transformTagsToDTO(rawTags);
 
     // Client-side filtering
-    if (params.tagName) {
+    if (params.tagName !== null && params.tagName !== undefined && params.tagName !== '') {
       allTags = allTags.filter(tag => tag.tagName === params.tagName);
     }
 
@@ -189,7 +189,7 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
     allTags = allTags.filter(tag => tag.tagName === params.tagName);
 
     // Additional filtering by tag value if specified
-    if (params.tagValue) {
+    if (params.tagValue !== null && params.tagValue !== undefined && params.tagValue !== '') {
       allTags = allTags.filter(tag => tag.tagValue === params.tagValue);
     }
 
@@ -237,13 +237,13 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
     }, {} as Record<string, TagDTO[]>);
 
     // Filter to specific tag names if provided
-    const tagNamesToAnalyze = params.tagNames || Object.keys(groupedTags);
+    const tagNamesToAnalyze = params.tagNames ?? Object.keys(groupedTags);
 
     // Analyze each tag name
     const distributions: TagDistribution[] = tagNamesToAnalyze
       .slice(0, params.limit)
       .map((tagName) => {
-        const tags = groupedTags[tagName] || [];
+        const tags = groupedTags[tagName] ?? [];
         const sortedTags = tags.sort((a, b) => b.songCount - a.songCount);
 
         const mostCommon = sortedTags[0];

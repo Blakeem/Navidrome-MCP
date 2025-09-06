@@ -17,8 +17,8 @@ export interface ToolHandler {
 
 // Registry for all tool categories
 export class ToolRegistry {
-  private categories: Map<string, ToolCategory> = new Map();
-  private allTools: Tool[] = [];
+  private readonly categories: Map<string, ToolCategory> = new Map();
+  private readonly allTools: Tool[] = [];
 
   register(categoryName: string, category: ToolCategory): void {
     this.categories.set(categoryName, category);

@@ -101,7 +101,7 @@ export interface RawPlaylist {
  * @returns Formatted string like "3:45"
  */
 export function formatDuration(seconds?: number): string {
-  if (!seconds || seconds <= 0) {
+  if (seconds === null || seconds === undefined || seconds <= 0) {
     return '0:00';
   }
 
@@ -124,7 +124,7 @@ function extractGenre(rawSong: RawSong): string | undefined {
     }
   }
   // Fall back to genre string
-  if (rawSong.genre) {
+  if (rawSong.genre !== null && rawSong.genre !== undefined && rawSong.genre !== '') {
     return rawSong.genre;
   }
   return undefined;
@@ -141,7 +141,7 @@ function extractAllGenres(rawSong: RawSong): string[] | undefined {
     return rawSong.genres.map(g => g.name).filter(Boolean);
   }
   // Fall back to single genre string as array
-  if (rawSong.genre) {
+  if (rawSong.genre !== null && rawSong.genre !== undefined && rawSong.genre !== '') {
     return [rawSong.genre];
   }
   return undefined;
@@ -162,7 +162,7 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     album: rawSong.album || '',
     albumId: rawSong.albumId,
     durationFormatted: formatDuration(rawSong.duration),
-    addedDate: rawSong.createdAt || new Date().toISOString(),
+    addedDate: rawSong.createdAt ?? new Date().toISOString(),
   };
 
   // Add optional fields only if they have values
@@ -319,8 +319,8 @@ export function transformToGenreDTO(rawGenre: RawGenre): GenreDTO {
   return {
     id: rawGenre.id,
     name: rawGenre.name || '',
-    songCount: rawGenre.songCount || 0,
-    albumCount: rawGenre.albumCount || 0,
+    songCount: rawGenre.songCount ?? 0,
+    albumCount: rawGenre.albumCount ?? 0,
   };
 }
 

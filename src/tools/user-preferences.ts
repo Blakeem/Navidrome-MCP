@@ -31,8 +31,8 @@ import {
 function parseDuration(durationFormatted: string): number {
   const parts = durationFormatted.split(':');
   if (parts.length === 2) {
-    const minutes = parseInt(parts[0] || '0', 10);
-    const seconds = parseInt(parts[1] || '0', 10);
+    const minutes = parseInt(parts[0] ?? '0', 10);
+    const seconds = parseInt(parts[1] ?? '0', 10);
     return minutes * 60 + seconds;
   }
   return 0;
@@ -181,44 +181,44 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
   if (type === 'songs') {
     const songs = transformSongsToDTO(response);
     transformedItems = songs
-      .filter(song => song.starred) // Filter on client side to ensure we only get starred items
+      .filter(song => song.starred === true) // Filter on client side to ensure we only get starred items
       .map(song => {
         const item: StarredItem = { id: song.id };
-        if (song.title) item.title = song.title;
-        if (song.artist) item.artist = song.artist;
-        if (song.album) item.album = song.album;
-        if (song.durationFormatted) {
+        if (song.title !== null && song.title !== undefined && song.title !== '') item.title = song.title;
+        if (song.artist !== null && song.artist !== undefined && song.artist !== '') item.artist = song.artist;
+        if (song.album !== null && song.album !== undefined && song.album !== '') item.album = song.album;
+        if (song.durationFormatted !== null && song.durationFormatted !== undefined && song.durationFormatted !== '') {
           item.duration = parseDuration(song.durationFormatted);
         }
         const starredAt = extractStarredAt(song);
-        if (starredAt) item.starredAt = starredAt;
+        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
         return item;
       });
   } else if (type === 'albums') {
     const albums = transformAlbumsToDTO(response);
     transformedItems = albums
-      .filter(album => album.starred)
+      .filter(album => album.starred === true)
       .map(album => {
         const item: StarredItem = { id: album.id };
-        if (album.name) item.name = album.name;
-        if (album.artist) item.artist = album.artist;
-        if (album.releaseYear) item.year = album.releaseYear;
+        if (album.name !== null && album.name !== undefined && album.name !== '') item.name = album.name;
+        if (album.artist !== null && album.artist !== undefined && album.artist !== '') item.artist = album.artist;
+        if (album.releaseYear !== null && album.releaseYear !== undefined) item.year = album.releaseYear;
         item.songCount = album.songCount; // Always present in albums
         const starredAt = extractStarredAt(album);
-        if (starredAt) item.starredAt = starredAt;
+        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
         return item;
       });
   } else {
     const artists = transformArtistsToDTO(response);
     transformedItems = artists
-      .filter(artist => artist.starred)
+      .filter(artist => artist.starred === true)
       .map(artist => {
         const item: StarredItem = { id: artist.id };
-        if (artist.name) item.name = artist.name;
+        if (artist.name !== null && artist.name !== undefined && artist.name !== '') item.name = artist.name;
         item.albumCount = artist.albumCount; // Always present
         item.songCount = artist.songCount; // Always present
         const starredAt = extractStarredAt(artist);
-        if (starredAt) item.starredAt = starredAt;
+        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
         return item;
       });
   }
@@ -250,43 +250,43 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
   if (type === 'songs') {
     const songs = transformSongsToDTO(response);
     transformedItems = songs
-      .filter(song => (song.rating || 0) >= minRating) // Filter on client side
+      .filter(song => (song.rating ?? 0) >= minRating) // Filter on client side
       .map(song => {
         const item: RatedItem = { 
           id: song.id,
-          rating: song.rating || 0
+          rating: song.rating ?? 0
         };
         if (song.title) item.title = song.title;
         if (song.artist) item.artist = song.artist;
         if (song.album) item.album = song.album;
-        if (song.playCount) item.playCount = song.playCount;
+        if (song.playCount !== null && song.playCount !== undefined && song.playCount > 0) item.playCount = song.playCount;
         return item;
       })
       .slice(0, limit);
   } else if (type === 'albums') {
     const albums = transformAlbumsToDTO(response);
     transformedItems = albums
-      .filter(album => (album.rating || 0) >= minRating)
+      .filter(album => (album.rating ?? 0) >= minRating)
       .map(album => {
         const item: RatedItem = { 
           id: album.id,
-          rating: album.rating || 0
+          rating: album.rating ?? 0
         };
         if (album.name) item.name = album.name;
         if (album.artist) item.artist = album.artist;
-        if (album.releaseYear) item.year = album.releaseYear;
-        if (album.playCount) item.playCount = album.playCount;
+        if (album.releaseYear !== null && album.releaseYear !== undefined) item.year = album.releaseYear;
+        if (album.playCount !== null && album.playCount !== undefined && album.playCount > 0) item.playCount = album.playCount;
         return item;
       })
       .slice(0, limit);
   } else {
     const artists = transformArtistsToDTO(response);
     transformedItems = artists
-      .filter(artist => (artist.rating || 0) >= minRating)
+      .filter(artist => (artist.rating ?? 0) >= minRating)
       .map(artist => {
         const item: RatedItem = { 
           id: artist.id,
-          rating: artist.rating || 0
+          rating: artist.rating ?? 0
         };
         if (artist.name) item.name = artist.name;
         item.albumCount = artist.albumCount;

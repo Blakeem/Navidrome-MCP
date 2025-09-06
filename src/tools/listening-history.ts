@@ -26,8 +26,8 @@ import { DEFAULT_VALUES } from '../constants/defaults.js';
 function parseDuration(durationFormatted: string): number {
   const parts = durationFormatted.split(':');
   if (parts.length === 2) {
-    const minutes = parseInt(parts[0] || '0', 10);
-    const seconds = parseInt(parts[1] || '0', 10);
+    const minutes = parseInt(parts[0] ?? '0', 10);
+    const seconds = parseInt(parts[1] ?? '0', 10);
     return minutes * 60 + seconds;
   }
   return 0;
@@ -88,7 +88,7 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
   const songs = transformSongsToDTO(response);
   
   // Filter songs that have been played at least once, if available
-  const playedSongs = songs.filter(song => !song.playCount || song.playCount > 0);
+  const playedSongs = songs.filter(song => song.playCount === null || song.playCount === undefined || song.playCount > 0);
   
   const tracks = playedSongs.slice(0, limit).map((song) => {
     const track: RecentlyPlayedTrack = {
@@ -96,7 +96,7 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
       title: song.title,
       artist: song.artist,
       album: song.album,
-      playCount: song.playCount || 0,
+      playCount: song.playCount ?? 0,
       duration: parseDuration(song.durationFormatted),
       // Note: Real lastPlayed timestamps are not available from the API
       // Only including lastPlayed if we actually have play date data (which we don't currently)
@@ -147,7 +147,7 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
       title: song.title,
       artist: song.artist,
       album: song.album,
-      playCount: song.playCount || 0
+      playCount: song.playCount ?? 0
     }));
   } else if (type === 'albums') {
     const albums = transformAlbumsToDTO(response);
@@ -156,7 +156,7 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
       name: album.name,
       artist: album.artist,
       songCount: album.songCount,
-      playCount: album.playCount || 0
+      playCount: album.playCount ?? 0
     }));
   } else {
     const artists = transformArtistsToDTO(response);
@@ -165,7 +165,7 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
       name: artist.name,
       albumCount: artist.albumCount,
       songCount: artist.songCount,
-      playCount: artist.playCount || 0
+      playCount: artist.playCount ?? 0
     }));
   }
   
