@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/blakeem-navidrome-mcp-badge.png)](https://mseep.ai/app/blakeem-navidrome-mcp)
+
 # Navidrome MCP Server
 
 Transform your Navidrome music server with an AI-powered music assistant. This MCP (Model Context Protocol) server enables Claude, ChatGPT, and other AI assistants to interact with your personal music library through natural language, offering intelligent playlist creation, music discovery, and library management.
