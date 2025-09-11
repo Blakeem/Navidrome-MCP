@@ -52,6 +52,9 @@ const ConfigSchema = z.object({
   cacheTtl: z.number().positive().default(300),
   tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
   
+  // Library Configuration
+  defaultLibraryIds: z.array(z.number()).optional(),
+  
   // Feature Configuration
   features: z.object({
     lastfm: z.boolean().default(false),
@@ -107,6 +110,26 @@ export async function loadConfig(): Promise<Config> {
   const lyricsProvider = process.env['LYRICS_PROVIDER'] ?? undefined;
   const lrclibUserAgent = process.env['LRCLIB_USER_AGENT'] ?? undefined;
 
+  // Parse default library IDs from environment
+  let defaultLibraryIds: number[] | undefined;
+  const defaultLibrariesEnv = process.env['NAVIDROME_DEFAULT_LIBRARIES'];
+  if (defaultLibrariesEnv !== null && defaultLibrariesEnv !== undefined && defaultLibrariesEnv.trim() !== '') {
+    try {
+      defaultLibraryIds = defaultLibrariesEnv
+        .split(',')
+        .map(id => parseInt(id.trim(), 10))
+        .filter(id => !isNaN(id));
+      
+      if (defaultLibraryIds.length === 0) {
+        logger.warn('NAVIDROME_DEFAULT_LIBRARIES contains no valid library IDs');
+        defaultLibraryIds = undefined;
+      }
+    } catch (error) {
+      logger.warn('Failed to parse NAVIDROME_DEFAULT_LIBRARIES:', error);
+      defaultLibraryIds = undefined;
+    }
+  }
+
   const rawConfig = {
     navidromeUrl: process.env['NAVIDROME_URL'],
     navidromeUsername: process.env['NAVIDROME_USERNAME'],
@@ -114,6 +137,9 @@ export async function loadConfig(): Promise<Config> {
     debug: process.env['DEBUG'] === 'true',
     cacheTtl: (process.env['CACHE_TTL'] !== null && process.env['CACHE_TTL'] !== undefined && process.env['CACHE_TTL'] !== '') ? parseInt(process.env['CACHE_TTL'], 10) : 300,
     tokenExpiry: (process.env['TOKEN_EXPIRY'] !== null && process.env['TOKEN_EXPIRY'] !== undefined && process.env['TOKEN_EXPIRY'] !== '') ? parseInt(process.env['TOKEN_EXPIRY'], 10) : 86400,
+    
+    // Library Configuration
+    defaultLibraryIds,
     
     // Feature detection based on available configuration
     features: {

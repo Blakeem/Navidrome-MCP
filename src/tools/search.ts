@@ -16,10 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/index.js';
-import crypto from 'crypto';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import {
   SearchAllSchema,
@@ -28,39 +28,11 @@ import {
   SearchArtistsSchema,
 } from '../schemas/index.js';
 
-interface SubsonicSearchResult {
-  'subsonic-response': {
-    status: string;
-    version: string;
-    searchResult3?: {
-      artist?: unknown[];
-      album?: unknown[];
-      song?: unknown[];
-    };
-  };
-}
-
-/**
- * Create Subsonic API authentication parameters
- */
-function createSubsonicAuth(config: Config): URLSearchParams {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const token = crypto.createHash('md5').update(config.navidromePassword + salt).digest('hex');
-  
-  return new URLSearchParams({
-    u: config.navidromeUsername,
-    t: token,
-    s: salt,
-    v: '1.16.1',
-    c: 'NavidromeMCP',
-    f: 'json',
-  });
-}
-
 /**
  * Search across all content types (artists, albums, songs)
+ * Now uses REST API for proper library filtering support
  */
-export async function searchAll(config: Config, args: unknown): Promise<{
+export async function searchAll(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
@@ -70,46 +42,55 @@ export async function searchAll(config: Config, args: unknown): Promise<{
   const params = SearchAllSchema.parse(args);
 
   try {
-    const searchParams = createSubsonicAuth(config);
-    searchParams.set('query', params.query);
-    searchParams.set('artistCount', params.artistCount.toString());
-    searchParams.set('albumCount', params.albumCount.toString());
-    searchParams.set('songCount', params.songCount.toString());
+    // Build query parameters for each endpoint with direct parameter search
+    const buildParams = (limit: number, searchField: string): string => {
+      const searchParams = new URLSearchParams();
+      
+      // Add pagination
+      searchParams.set('_start', '0');
+      searchParams.set('_end', limit.toString());
+      
+      // Add search term as direct parameter (like web UI)
+      searchParams.set(searchField, params.query);
+      
+      return searchParams.toString();
+    };
 
-    const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
-    
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.apiRequest('search', response));
-    }
+    // Build parameters for each endpoint type
+    const songParams = buildParams(params.songCount, 'title');
+    const albumParams = buildParams(params.albumCount, 'name');
+    const artistParams = buildParams(params.artistCount, 'name');
 
-    const data = await response.json() as SubsonicSearchResult;
-    
-    if (data['subsonic-response'].status !== 'ok') {
-      throw new Error(ErrorFormatter.apiResponse('search'));
-    }
+    // Make parallel requests using the client's library filtering
+    const [songsResponse, albumsResponse, artistsResponse] = await Promise.all([
+      client.requestWithLibraryFilter<any[]>(`/song?${songParams}`),
+      client.requestWithLibraryFilter<any[]>(`/album?${albumParams}`),
+      client.requestWithLibraryFilter<any[]>(`/artist?${artistParams}`),
+    ]);
 
-    const searchResult = data['subsonic-response'].searchResult3 ?? {};
-    
-    const artists = transformArtistsToDTO(searchResult.artist ?? []);
-    const albums = transformAlbumsToDTO(searchResult.album ?? []);
-    const songs = transformSongsToDTO(searchResult.song ?? []);
+    // Transform responses to DTOs
+    const songs = transformSongsToDTO(songsResponse);
+    const albums = transformAlbumsToDTO(albumsResponse);
+    const artists = transformArtistsToDTO(artistsResponse);
+
+    const totalResults = songs.length + albums.length + artists.length;
 
     return {
       artists,
       albums,
       songs,
       query: params.query,
-      totalResults: artists.length + albums.length + songs.length,
+      totalResults,
     };
   } catch (error) {
-    throw new Error(ErrorFormatter.operationFailed('search', error));
+    throw new Error(ErrorFormatter.toolExecution('searchAll', error));
   }
 }
 
 /**
- * Search for songs only
+ * Search for songs by title
  */
-export async function searchSongs(config: Config, args: unknown): Promise<{
+export async function searchSongs(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   songs: SongDTO[];
   query: string;
   total: number;
@@ -117,26 +98,21 @@ export async function searchSongs(config: Config, args: unknown): Promise<{
   const params = SearchSongsSchema.parse(args);
 
   try {
-    const searchParams = createSubsonicAuth(config);
-    searchParams.set('query', params.query);
-    searchParams.set('artistCount', '0');
-    searchParams.set('albumCount', '0');
-    searchParams.set('songCount', params.limit.toString());
-
-    const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
+    // Build query parameters
+    const searchParams = new URLSearchParams();
     
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.apiRequest('search', response));
-    }
-
-    const data = await response.json() as SubsonicSearchResult;
+    // Add pagination
+    searchParams.set('_start', '0');
+    searchParams.set('_end', params.limit.toString());
     
-    if (data['subsonic-response'].status !== 'ok') {
-      throw new Error(ErrorFormatter.apiResponse('search'));
-    }
+    // Add search term as direct parameter (like web UI)
+    searchParams.set('title', params.query);
 
-    const searchResult = data['subsonic-response'].searchResult3 ?? {};
-    const songs = transformSongsToDTO(searchResult.song ?? []);
+    // Make request using the client with library filtering
+    const response = await client.requestWithLibraryFilter<any[]>(`/song?${searchParams.toString()}`);
+
+    // Transform response to DTOs
+    const songs = transformSongsToDTO(response);
 
     return {
       songs,
@@ -144,16 +120,14 @@ export async function searchSongs(config: Config, args: unknown): Promise<{
       total: songs.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to search songs: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('searchSongs', error));
   }
 }
 
 /**
- * Search for albums only
+ * Search for albums by name
  */
-export async function searchAlbums(config: Config, args: unknown): Promise<{
+export async function searchAlbums(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   albums: AlbumDTO[];
   query: string;
   total: number;
@@ -161,26 +135,21 @@ export async function searchAlbums(config: Config, args: unknown): Promise<{
   const params = SearchAlbumsSchema.parse(args);
 
   try {
-    const searchParams = createSubsonicAuth(config);
-    searchParams.set('query', params.query);
-    searchParams.set('artistCount', '0');
-    searchParams.set('albumCount', params.limit.toString());
-    searchParams.set('songCount', '0');
-
-    const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
+    // Build query parameters
+    const searchParams = new URLSearchParams();
     
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.apiRequest('search', response));
-    }
-
-    const data = await response.json() as SubsonicSearchResult;
+    // Add pagination
+    searchParams.set('_start', '0');
+    searchParams.set('_end', params.limit.toString());
     
-    if (data['subsonic-response'].status !== 'ok') {
-      throw new Error(ErrorFormatter.apiResponse('search'));
-    }
+    // Add search term as direct parameter (like web UI)
+    searchParams.set('name', params.query);
 
-    const searchResult = data['subsonic-response'].searchResult3 ?? {};
-    const albums = transformAlbumsToDTO(searchResult.album ?? []);
+    // Make request using the client with library filtering
+    const response = await client.requestWithLibraryFilter<any[]>(`/album?${searchParams.toString()}`);
+
+    // Transform response to DTOs
+    const albums = transformAlbumsToDTO(response);
 
     return {
       albums,
@@ -188,16 +157,14 @@ export async function searchAlbums(config: Config, args: unknown): Promise<{
       total: albums.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to search albums: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('searchAlbums', error));
   }
 }
 
 /**
- * Search for artists only
+ * Search for artists by name
  */
-export async function searchArtists(config: Config, args: unknown): Promise<{
+export async function searchArtists(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   artists: ArtistDTO[];
   query: string;
   total: number;
@@ -205,26 +172,21 @@ export async function searchArtists(config: Config, args: unknown): Promise<{
   const params = SearchArtistsSchema.parse(args);
 
   try {
-    const searchParams = createSubsonicAuth(config);
-    searchParams.set('query', params.query);
-    searchParams.set('artistCount', params.limit.toString());
-    searchParams.set('albumCount', '0');
-    searchParams.set('songCount', '0');
-
-    const response = await fetch(`${config.navidromeUrl}/rest/search3?${searchParams.toString()}`);
+    // Build query parameters
+    const searchParams = new URLSearchParams();
     
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.apiRequest('search', response));
-    }
-
-    const data = await response.json() as SubsonicSearchResult;
+    // Add pagination
+    searchParams.set('_start', '0');
+    searchParams.set('_end', params.limit.toString());
     
-    if (data['subsonic-response'].status !== 'ok') {
-      throw new Error(ErrorFormatter.apiResponse('search'));
-    }
+    // Add search term as direct parameter (like web UI)
+    searchParams.set('name', params.query);
 
-    const searchResult = data['subsonic-response'].searchResult3 ?? {};
-    const artists = transformArtistsToDTO(searchResult.artist ?? []);
+    // Make request using the client with library filtering
+    const response = await client.requestWithLibraryFilter<any[]>(`/artist?${searchParams.toString()}`);
+
+    // Transform response to DTOs
+    const artists = transformArtistsToDTO(response);
 
     return {
       artists,
@@ -232,8 +194,6 @@ export async function searchArtists(config: Config, args: unknown): Promise<{
       total: artists.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to search artists: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('searchArtists', error));
   }
 }

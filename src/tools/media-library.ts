@@ -57,7 +57,7 @@ export async function listAlbums(client: NavidromeClient, args: unknown): Promis
       _order: params.order,
     });
 
-    const rawAlbums = await client.request<unknown>(`/album?${queryParams.toString()}`);
+    const rawAlbums = await client.requestWithLibraryFilter<unknown>(`/album?${queryParams.toString()}`);
     const albums = transformAlbumsToDTO(rawAlbums);
 
     return {
@@ -90,7 +90,7 @@ export async function listArtists(client: NavidromeClient, args: unknown): Promi
       _order: params.order,
     });
 
-    const rawArtists = await client.request<unknown>(`/artist?${queryParams.toString()}`);
+    const rawArtists = await client.requestWithLibraryFilter<unknown>(`/artist?${queryParams.toString()}`);
     const artists = transformArtistsToDTO(rawArtists);
 
     return {

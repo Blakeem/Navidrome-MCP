@@ -198,6 +198,7 @@ Search for artists, albums, and songs.
 - `albumOffset` (number): Album result offset  
 - `songCount` (number): Max songs to return
 - `songOffset` (number): Song result offset
+- `musicFolderId` (number/array): Optional library IDs to search within (can be repeated for multiple libraries)
 
 **Response:**
 ```json
@@ -462,9 +463,82 @@ All errors return similar structure:
 - Implement proper caching based on response headers
 - Consider using HEAD requests to check modification times
 
+## Library Filtering
+
+### Overview
+Navidrome supports library filtering in the Subsonic API to restrict operations to specific music libraries. This allows users with access to multiple libraries to filter content based on their current selection.
+
+### Library Filtering Parameters
+
+#### `musicFolderId` Parameter
+**Supported Endpoints:**
+- `/rest/search3` - Search operations
+- `/rest/search2` - Legacy search (also supported)
+
+**Usage:**
+- **Type**: Integer or array of integers
+- **Required**: No
+- **Default**: All libraries accessible to the user
+- **Multiple Values**: Use repeated parameters: `musicFolderId=1&musicFolderId=2`
+
+**Examples:**
+```bash
+# Search in specific library
+/rest/search3?query=jazz&musicFolderId=1&u=user&p=pass&v=1.16.1&c=app&f=json
+
+# Search in multiple libraries  
+/rest/search3?query=jazz&musicFolderId=1&musicFolderId=2&u=user&p=pass&v=1.16.1&c=app&f=json
+
+# Search in all accessible libraries (default behavior)
+/rest/search3?query=jazz&u=user&p=pass&v=1.16.1&c=app&f=json
+```
+
+### Automatic Library Filtering
+
+The following operations are **automatically filtered** by user library access and do not require explicit `musicFolderId` parameters:
+
+#### User Preferences
+- `/rest/star` - Star content (automatically scoped to accessible content)
+- `/rest/unstar` - Unstar content (automatically scoped to accessible content)  
+- `/rest/setRating` - Set ratings (automatically scoped to accessible content)
+
+#### Library Browsing
+- `/rest/getGenres` - List genres (automatically filtered by accessible libraries)
+- `/rest/getIndexes` - Get artist index (respects user library access)
+- `/rest/getMusicDirectory` - Browse directories (access-controlled by library permissions)
+
+#### Global Operations (No Library Filtering)
+- `/rest/getInternetRadioStations` - Radio stations are global resources
+- `/rest/createInternetRadioStation` - Radio stations are global (admin-only)
+- `/rest/deleteInternetRadioStation` - Radio stations are global (admin-only)
+
+### Library Access Control
+
+**User Library Access:**
+- Users can only access libraries they have been granted access to
+- Admin users have access to all libraries by default
+- Library access is managed through the user management interface
+
+**Parameter Validation:**
+- Invalid library IDs return error code 70 (Data not found)
+- Users cannot specify library IDs they don't have access to
+- When omitted, defaults to all user-accessible libraries
+
+### Implementation Differences: Subsonic vs REST API
+
+| Aspect | Subsonic API | REST API |
+|--------|-------------|----------|
+| **Parameter Name** | `musicFolderId` | `library_id` |
+| **Search Filtering** | ✅ Explicit via `musicFolderId` | ✅ Explicit via `library_id` |
+| **User Preferences** | ✅ Automatic (no params needed) | ✅ Automatic (no params needed) |
+| **Genres/Browsing** | ✅ Automatic (no params needed) | ✅ Automatic (no params needed) |
+| **Radio Stations** | ❌ Global (no filtering) | ❌ Global (no filtering) |
+
 ### Best Practices
 1. Always specify API version (`v` parameter)
 2. Use token authentication instead of plain passwords
 3. Handle errors gracefully with fallbacks
 4. Implement proper offline caching
 5. Test with multiple Subsonic API versions
+6. **Use `musicFolderId` for search operations when library filtering is needed**
+7. **Don't add `musicFolderId` to operations that handle library filtering automatically**

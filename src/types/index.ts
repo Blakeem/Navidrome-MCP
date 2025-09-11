@@ -66,3 +66,11 @@ export type {
   LyricsLine,
   LyricsDTO
 } from './lyrics.js';
+
+// Export all library DTOs
+export type {
+  LibraryDTO,
+  UserDetailsDTO,
+  LibraryManagementResponse,
+  SetActiveLibrariesRequest
+} from './library.js';

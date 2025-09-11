@@ -115,19 +115,19 @@ const tools: Tool[] = [
 ];
 
 // Factory function for creating search tool category with dependencies  
-export function createSearchToolCategory(_client: NavidromeClient, config: Config): ToolCategory {
+export function createSearchToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
         case 'search_all':
-          return await searchAll(config, args);
+          return await searchAll(client, config, args);
         case 'search_songs':
-          return await searchSongs(config, args);
+          return await searchSongs(client, config, args);
         case 'search_albums':
-          return await searchAlbums(config, args);
+          return await searchAlbums(client, config, args);
         case 'search_artists':
-          return await searchArtists(config, args);
+          return await searchArtists(client, config, args);
         default:
           throw new Error(`Unknown search tool: ${name}`);
       }

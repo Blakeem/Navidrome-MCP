@@ -26,17 +26,17 @@ import { createLyricsToolCategory } from '../../../src/tools/handlers/lyrics-han
 import { createTagsToolCategory } from '../../../src/tools/handlers/tag-handlers.js';
 
 // EXPECTED TOOL COUNT - Update this when adding new tools
-// Current count: 57 tools (as of schema consolidation completion)
+// Current count: 59 tools (as of library management addition)
 // This includes all tools when all features are enabled:
-// - Core tools: test, library, playlist, search, user preferences, queue, radio, tags
+// - Core tools: test, library (including 2 new library management tools), playlist, search, user preferences, queue, radio, tags
 // - Conditional tools: lastfm (when LASTFM_API_KEY provided), lyrics (when LYRICS_PROVIDER provided)
-const EXPECTED_TOOL_COUNT_ALL_FEATURES = 57;
+const EXPECTED_TOOL_COUNT_ALL_FEATURES = 59;
 
 // Expected count with minimal features (no external APIs) - CI environment  
-const EXPECTED_TOOL_COUNT_MINIMAL = 46; // Core tools only (no Last.fm, lyrics, or radio browser discovery)
+const EXPECTED_TOOL_COUNT_MINIMAL = 48; // Core tools only (no Last.fm, lyrics, or radio browser discovery) + 2 new library management tools
 
 // Expected count with standard local environment (.env with some features)
-const EXPECTED_TOOL_COUNT_STANDARD = 51; // Some features enabled
+const EXPECTED_TOOL_COUNT_STANDARD = 53; // Some features enabled + 2 new library management tools
 
 describe('Tools Registry - Tool Count Verification', () => {
   let liveClient: NavidromeClient;
