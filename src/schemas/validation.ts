@@ -59,7 +59,7 @@ export const UpdatePlaylistSchema = z.object({
 
 export const AddTracksToPlaylistSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required'),
-  ids: OptionalStringArraySchema,
+  songIds: OptionalStringArraySchema,
   albumIds: OptionalStringArraySchema,
   artistIds: OptionalStringArraySchema,
   discs: z.array(z.object({

@@ -48,8 +48,8 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
 
     const requestBody: AddTracksToPlaylistRequest = {};
 
-    if (params.ids !== undefined) {
-      requestBody.ids = params.ids;
+    if (params.songIds !== undefined) {
+      requestBody.ids = params.songIds;
     }
 
     if (params.albumIds !== undefined) {
@@ -98,94 +98,6 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
   }
 }
 
-/**
- * Batch add multiple sets of tracks to a playlist
- */
-export async function batchAddTracksToPlaylist(
-  client: NavidromeClient,
-  args: unknown
-): Promise<{ results: AddTracksToPlaylistResponse[]; summary: string }> {
-  const params = args as {
-    playlistId: string;
-    songIds?: string[];
-    albumIds?: string[];
-    artistIds?: string[];
-    discs?: Array<{ albumId: string; discNumber: number }>;
-  };
-
-  if (!params.playlistId) {
-    throw new Error('Playlist ID is required');
-  }
-
-  // Validate that at least one content type is provided
-  const hasContent = (params.songIds?.length ?? 0) > 0 || (params.albumIds?.length ?? 0) > 0 ||
-                     (params.artistIds?.length ?? 0) > 0 || (params.discs?.length ?? 0) > 0;
-
-  if (!hasContent) {
-    throw new Error('At least one content type must be provided (songIds, albumIds, artistIds, or discs)');
-  }
-
-  const results: AddTracksToPlaylistResponse[] = [];
-  let totalAdded = 0;
-  let successCount = 0;
-  let failedCount = 0;
-
-  // Create operations for each content type provided
-  const operations: Array<{
-    type: string;
-    data: { ids?: string[]; albumIds?: string[]; artistIds?: string[]; discs?: Array<{ albumId: string; discNumber: number }> };
-  }> = [];
-
-  if ((params.songIds?.length ?? 0) > 0 && params.songIds) {
-    operations.push({ type: 'songs', data: { ids: params.songIds } });
-  }
-  if ((params.albumIds?.length ?? 0) > 0 && params.albumIds) {
-    operations.push({ type: 'albums', data: { albumIds: params.albumIds } });
-  }
-  if ((params.artistIds?.length ?? 0) > 0 && params.artistIds) {
-    operations.push({ type: 'artists', data: { artistIds: params.artistIds } });
-  }
-  if ((params.discs?.length ?? 0) > 0 && params.discs) {
-    operations.push({ type: 'discs', data: { discs: params.discs } });
-  }
-
-  for (const operation of operations) {
-    try {
-      const result = await addTracksToPlaylist(client, {
-        playlistId: params.playlistId,
-        ...operation.data
-      });
-
-      results.push(result);
-
-      if (result.success) {
-        successCount++;
-        totalAdded += result.added;
-      } else {
-        failedCount++;
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      results.push({
-        added: 0,
-        message: `Failed to add tracks: ${errorMessage}`,
-        success: false
-      });
-      failedCount++;
-    }
-  }
-
-  let summary = `Successfully processed ${successCount} of ${operations.length} content types. `;
-  summary += `Total tracks added: ${totalAdded}.`;
-  if (failedCount > 0) {
-    summary += ` ${failedCount} operations failed.`;
-  }
-
-  return {
-    results,
-    summary
-  };
-}
 
 /**
  * Remove tracks from a playlist

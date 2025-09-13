@@ -28,7 +28,6 @@ export {
 // Export track management operations
 export {
   addTracksToPlaylist,
-  batchAddTracksToPlaylist,
   removeTracksFromPlaylist,
   reorderPlaylistTrack,
 } from './track-management.js';

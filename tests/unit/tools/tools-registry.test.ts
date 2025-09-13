@@ -51,7 +51,6 @@ const EXPECTED_CORE_TOOLS = [
   'add_tracks_to_playlist',
   'remove_tracks_from_playlist',
   'reorder_playlist_track',
-  'batch_add_tracks_to_playlist',
 
   // Search category
   'search_all',
