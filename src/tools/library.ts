@@ -220,7 +220,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_user_details',
-    description: 'Get user information including available libraries with active status flags',
+    description: 'Get user information including available libraries with active status flags. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -228,7 +228,7 @@ const tools: Tool[] = [
   },
   {
     name: 'set_active_libraries',
-    description: 'Set which libraries are active for filtering music content',
+    description: 'Set which libraries are active for filtering music content. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music).',
     inputSchema: {
       type: 'object',
       properties: {

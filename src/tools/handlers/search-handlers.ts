@@ -16,7 +16,7 @@ import {
 const tools: Tool[] = [
   {
     name: 'search_all',
-    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.',
+    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -111,7 +111,7 @@ const tools: Tool[] = [
   },
   {
     name: 'search_songs',
-    description: 'Search for songs by title with advanced filtering and sorting options. Leave query empty to list all songs.',
+    description: 'Search for songs by title with advanced filtering and sorting options. Leave query empty to list all songs.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -198,7 +198,7 @@ const tools: Tool[] = [
   },
   {
     name: 'search_albums',
-    description: 'Search for albums by name with advanced filtering and sorting options. Leave query empty to list all albums.',
+    description: 'Search for albums by name with advanced filtering and sorting options. Leave query empty to list all albums.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -285,7 +285,7 @@ const tools: Tool[] = [
   },
   {
     name: 'search_artists',
-    description: 'Search for artists by name with advanced filtering and sorting options. Leave query empty to list all artists.',
+    description: 'Search for artists by name with advanced filtering and sorting options. Leave query empty to list all artists.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {

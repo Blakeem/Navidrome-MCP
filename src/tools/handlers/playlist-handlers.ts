@@ -132,7 +132,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_playlist_tracks',
-    description: 'Get all tracks in a playlist (supports JSON or M3U export)',
+    description: 'Get all tracks in a playlist (supports JSON or M3U export). Returns tracks with two IDs: \'id\' (playlist position ID for reordering/removing) and \'mediaFileId\' (actual song ID for playback/metadata operations).',
     inputSchema: {
       type: 'object',
       properties: {
