@@ -24,7 +24,7 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 /**
  * Schema for getting lyrics
  */
-export const GetLyricsArgsSchema = z.object({
+const GetLyricsArgsSchema = z.object({
   title: z.string(),
   artist: z.string(),
   album: z.string().optional(),

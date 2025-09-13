@@ -127,24 +127,3 @@ export interface GenreDTO {
   albumCount: number;
 }
 
-/**
- * Response format for recently added songs resource
- */
-export interface RecentlyAddedSongsResponse {
-  /** Resource identifier */
-  resource: string;
-  /** Human-readable description */
-  description: string;
-  /** ISO 8601 timestamp of response */
-  timestamp: string;
-  /** Count of songs returned */
-  count: number;
-  /** Total songs available */
-  total?: number;
-  /** Offset for pagination */
-  offset?: number;
-  /** Limit used for this response */
-  limit?: number;
-  /** Array of recently added songs */
-  songs: SongDTO[];
-}

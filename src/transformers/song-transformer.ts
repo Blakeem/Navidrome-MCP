@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/index.js';
+import type { SongDTO, AlbumDTO, ArtistDTO, PlaylistDTO } from '../types/index.js';
 
 
 /**
@@ -76,13 +76,6 @@ export interface RawArtist {
   [key: string]: unknown;
 }
 
-export interface RawGenre {
-  id: string;
-  name: string;
-  songCount?: number; // Optional since API doesn't provide this
-  albumCount?: number; // Optional since API doesn't provide this
-  [key: string]: unknown;
-}
 
 export interface RawPlaylist {
   id: string;
@@ -315,21 +308,7 @@ export function transformArtistsToDTO(rawArtists: unknown): ArtistDTO[] {
   return rawArtists.map((artist) => transformToArtistDTO(artist as RawArtist));
 }
 
-export function transformToGenreDTO(rawGenre: RawGenre): GenreDTO {
-  return {
-    name: rawGenre.name || '',
-    songCount: rawGenre.songCount ?? 0,
-    albumCount: rawGenre.albumCount ?? 0,
-  };
-}
 
-export function transformGenresToDTO(rawGenres: unknown): GenreDTO[] {
-  if (!Array.isArray(rawGenres)) {
-    return [];
-  }
-
-  return rawGenres.map((genre) => transformToGenreDTO(genre as RawGenre));
-}
 
 export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
   const dto: PlaylistDTO = {

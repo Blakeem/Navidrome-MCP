@@ -19,8 +19,6 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import {
-  transformAlbumsToDTO,
-  transformArtistsToDTO,
   transformPlaylistsToDTO,
   transformToSongDTO,
   transformToAlbumDTO,
@@ -31,78 +29,9 @@ import {
 } from '../transformers/song-transformer.js';
 import type { SongDTO, AlbumDTO, ArtistDTO, PlaylistDTO } from '../types/index.js';
 import {
-  AlbumPaginationSchema,
-  ArtistPaginationSchema,
   IdSchema,
   GetSongPlaylistsSchema,
 } from '../schemas/index.js';
-
-// List Albums
-export async function listAlbums(client: NavidromeClient, args: unknown): Promise<{
-  albums: AlbumDTO[];
-  total: number;
-  offset: number;
-  limit: number;
-}> {
-  const params = AlbumPaginationSchema.parse(args);
-
-  try {
-    const queryParams = new URLSearchParams({
-      _start: params.offset.toString(),
-      _end: (params.offset + params.limit).toString(),
-      _sort: params.sort,
-      _order: params.order,
-    });
-
-    const rawAlbums = await client.requestWithLibraryFilter<unknown>(`/album?${queryParams.toString()}`);
-    const albums = transformAlbumsToDTO(rawAlbums);
-
-    return {
-      albums,
-      total: albums.length,
-      offset: params.offset,
-      limit: params.limit,
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to fetch albums: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-  }
-}
-
-// List Artists
-export async function listArtists(client: NavidromeClient, args: unknown): Promise<{
-  artists: ArtistDTO[];
-  total: number;
-  offset: number;
-  limit: number;
-}> {
-  const params = ArtistPaginationSchema.parse(args);
-
-  try {
-    const queryParams = new URLSearchParams({
-      _start: params.offset.toString(),
-      _end: (params.offset + params.limit).toString(),
-      _sort: params.sort,
-      _order: params.order,
-    });
-
-    const rawArtists = await client.requestWithLibraryFilter<unknown>(`/artist?${queryParams.toString()}`);
-    const artists = transformArtistsToDTO(rawArtists);
-
-    return {
-      artists,
-      total: artists.length,
-      offset: params.offset,
-      limit: params.limit,
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to fetch artists: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-  }
-}
-
 
 // Get Song by ID
 export async function getSong(client: NavidromeClient, args: unknown): Promise<SongDTO> {

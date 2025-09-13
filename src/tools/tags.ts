@@ -30,14 +30,14 @@ import { filterCacheManager, type FilterType } from '../services/filter-cache-ma
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
-export interface SearchByTagsResult {
+interface SearchByTagsResult {
   tagName: string;
   tagValue: string | undefined;
   matches: TagDTO[];
   total: number;
 }
 
-export type GetTagDistributionResult = TagDistributionResponse;
+type GetTagDistributionResult = TagDistributionResponse;
 
 /**
  * Transform raw Navidrome tag data to clean DTO

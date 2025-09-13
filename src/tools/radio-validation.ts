@@ -49,7 +49,7 @@ interface ValidationContext {
 }
 
 // Stream validation result
-export interface StreamValidationResult {
+interface StreamValidationResult {
   success: boolean;
   url: string;
   finalUrl?: string;

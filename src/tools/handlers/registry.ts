@@ -11,9 +11,6 @@ export interface ToolCategory {
   handleToolCall(name: string, args: unknown): Promise<unknown>;
 }
 
-export interface ToolHandler {
-  (client: NavidromeClient, config: Config, name: string, args: unknown): Promise<unknown>;
-}
 
 // Registry for all tool categories
 export class ToolRegistry {

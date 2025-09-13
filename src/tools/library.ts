@@ -19,7 +19,7 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
-import type { SongDTO, UserDetailsDTO, LibraryDTO, LibraryManagementResponse, SetActiveLibrariesRequest } from '../types/index.js';
+import type { UserDetailsDTO, LibraryDTO, LibraryManagementResponse, SetActiveLibrariesRequest } from '../types/index.js';
 import type { ToolCategory } from './handlers/registry.js';
 import {
   getSong,
@@ -31,14 +31,10 @@ import { libraryManager } from '../services/library-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
-// Using the clean DTO for song data
-export type Song = SongDTO;
-
-
 /**
  * Get user details including library information with active status
  */
-export async function getUserDetails(): Promise<UserDetailsDTO> {
+async function getUserDetails(): Promise<UserDetailsDTO> {
   try {
     if (!libraryManager.isInitialized()) {
       throw new Error('LibraryManager not initialized');

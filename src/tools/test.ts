@@ -27,7 +27,7 @@ const TestConnectionSchema = z.object({
   includeServerInfo: z.boolean().optional().default(false),
 });
 
-export interface TestConnectionResult {
+interface TestConnectionResult {
   success: boolean;
   message: string;
   serverInfo?: {
@@ -145,15 +145,6 @@ const tools: Tool[] = [
     },
   },
 ];
-
-// Tool category export for registry
-export const testToolCategory: ToolCategory = {
-  tools,
-  async handleToolCall(name: string, _args: unknown): Promise<unknown> {
-    // This will be called with client and config from the registry
-    throw new Error(`Test tools need client and config access. Tool: ${name}`);
-  }
-};
 
 // Factory function for creating tool category with dependencies
 export function createTestToolCategory(client: NavidromeClient, config: Config): ToolCategory {

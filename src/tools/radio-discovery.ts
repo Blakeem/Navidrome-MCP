@@ -118,7 +118,7 @@ interface RadioBrowserActionResponse {
 /**
  * Schema for discovering radio stations
  */
-export const DiscoverRadioStationsArgsSchema = z.object({
+const DiscoverRadioStationsArgsSchema = z.object({
   query: z.string().optional(),
   tag: z.string().optional(),
   countryCode: z.string().optional(),
@@ -136,28 +136,28 @@ export const DiscoverRadioStationsArgsSchema = z.object({
 /**
  * Schema for getting radio filter options
  */
-export const GetRadioFiltersArgsSchema = z.object({
+const GetRadioFiltersArgsSchema = z.object({
   kinds: z.array(z.enum(['tags', 'countries', 'languages', 'codecs'])).default(['tags', 'countries', 'languages', 'codecs'])
 });
 
 /**
  * Schema for getting station by UUID
  */
-export const GetStationByUuidArgsSchema = z.object({
+const GetStationByUuidArgsSchema = z.object({
   stationUuid: z.string()
 });
 
 /**
  * Schema for clicking a station
  */
-export const ClickStationArgsSchema = z.object({
+const ClickStationArgsSchema = z.object({
   stationUuid: z.string()
 });
 
 /**
  * Schema for voting for a station
  */
-export const VoteStationArgsSchema = z.object({
+const VoteStationArgsSchema = z.object({
   stationUuid: z.string()
 });
 
