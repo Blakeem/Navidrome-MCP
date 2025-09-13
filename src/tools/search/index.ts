@@ -22,17 +22,4 @@ export { searchAll } from './search-orchestrator.js';
 // Export individual search functions for parallel operations
 export { searchSongs, searchAlbums, searchArtists } from './parallel-searcher.js';
 
-// Export utility functions for external use (if needed)
-export type {
-  FilterableSearchParams,
-  FilterResolutionResult,
-  SearchParameterInput,
-  EnhancedSearchResult
-} from './filter-resolver.js';
-
-export type {
-  ParallelSearchResponses,
-  AggregatedSearchResult,
-  SearchParamsConfig,
-  ContentTypeParams
-} from './result-aggregator.js';
+// Internal types are not exported - they are used only within the search module

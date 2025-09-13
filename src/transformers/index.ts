@@ -19,8 +19,8 @@
 // Re-export all transformer functions and types for backward compatibility
 
 // Shared utilities
-export { formatDuration, extractGenre, extractAllGenres } from './shared-transformers.js';
-export type { RawEntityWithGenres } from './shared-transformers.js';
+export { formatDuration } from './shared-transformers.js';
+// extractGenre, extractAllGenres, and RawEntityWithGenres are internal utilities
 
 // Song transformers
 export { transformToSongDTO, transformSongsToDTO } from './song-transformer.js';

@@ -13,7 +13,7 @@ import { loadConfig } from '../../../src/config.js';
 import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
 import { shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
-// Import category factory functions to count tools directly
+// Import category factory functions for comprehensive tool validation
 import { createTestToolCategory } from '../../../src/tools/test.js';
 import { createLibraryToolCategory } from '../../../src/tools/library.js';
 import { createPlaylistToolCategory } from '../../../src/tools/handlers/playlist-handlers.js';
@@ -116,10 +116,10 @@ describe('Tools Registry - Tool Count Verification', () => {
 
   beforeAll(async () => {
     // For deterministic testing, always use a consistent configuration
-    // This ensures we get the same tool count (57) regardless of environment
+    // This ensures we get consistent tool registration regardless of environment
     const originalEnv = { ...process.env };
     
-    // Set deterministic environment for tool counting
+    // Set deterministic environment for tool registry testing
     process.env.NAVIDROME_URL = 'http://deterministic-test:4533';
     process.env.NAVIDROME_USERNAME = 'test-user';
     process.env.NAVIDROME_PASSWORD = 'test-password';

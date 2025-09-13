@@ -42,11 +42,19 @@ class FilterCacheManager {
   private static instance: FilterCacheManager | null = null;
   
   private readonly genres = new Map<string, string>();           // "Rock" → "uuid-123"
-  private readonly mediaTypes = new Map<string, string>();      // "CD" → "uuid-456" 
+  private readonly mediaTypes = new Map<string, string>();      // "CD" → "uuid-456"
   private readonly countries = new Map<string, string>();       // "US" → "uuid-789"
   private readonly releaseTypes = new Map<string, string>();    // "Album" → "uuid-abc"
   private readonly recordLabels = new Map<string, string>();    // "Columbia" → "uuid-def"
   private readonly moods = new Map<string, string>();           // "Energetic" → "uuid-ghi"
+
+  // Store original case mappings for clean retrieval (lowercase → original)
+  private readonly genresOriginal = new Map<string, string>();
+  private readonly mediaTypesOriginal = new Map<string, string>();
+  private readonly countriesOriginal = new Map<string, string>();
+  private readonly releaseTypesOriginal = new Map<string, string>();
+  private readonly recordLabelsOriginal = new Map<string, string>();
+  private readonly moodsOriginal = new Map<string, string>();
   
   private initialized = false;
 
@@ -81,11 +89,11 @@ class FilterCacheManager {
       
       this.initialized = true;
       
-      const totalFilters = this.genres.size + this.mediaTypes.size + this.countries.size + 
-                          this.releaseTypes.size + this.recordLabels.size + this.moods.size;
-      
+      const totalFilters = this.genresOriginal.size + this.mediaTypesOriginal.size + this.countriesOriginal.size +
+                          this.releaseTypesOriginal.size + this.recordLabelsOriginal.size + this.moodsOriginal.size;
+
       logger.info(`FilterCacheManager initialized with ${totalFilters} filter options across 6 types`);
-      logger.debug(`Filter counts: genres=${this.genres.size}, media=${this.mediaTypes.size}, countries=${this.countries.size}, releaseTypes=${this.releaseTypes.size}, labels=${this.recordLabels.size}, moods=${this.moods.size}`);
+      logger.debug(`Filter counts: genres=${this.genresOriginal.size}, media=${this.mediaTypesOriginal.size}, countries=${this.countriesOriginal.size}, releaseTypes=${this.releaseTypesOriginal.size}, labels=${this.recordLabelsOriginal.size}, moods=${this.moodsOriginal.size}`);
     } catch (error) {
       throw new Error(ErrorFormatter.toolExecution('FilterCacheManager.initialize', error));
     }
@@ -104,15 +112,18 @@ class FilterCacheManager {
       }
 
       this.genres.clear();
+      this.genresOriginal.clear();
       for (const genre of genres) {
         if (genre.id && genre.name) {
           // Store both exact case and lowercase for case-insensitive lookup
           this.genres.set(genre.name, genre.id);
           this.genres.set(genre.name.toLowerCase(), genre.id);
+          // Store original case mapping for clean retrieval
+          this.genresOriginal.set(genre.name.toLowerCase(), genre.name);
         }
       }
       
-      logger.debug(`Loaded ${Math.floor(this.genres.size / 2)} genres for filtering`);
+      logger.debug(`Loaded ${this.genresOriginal.size} genres for filtering`);
     } catch (error) {
       logger.error('Failed to load genres:', ErrorFormatter.toolExecution('loadGenres', error));
       // Don't throw - continue with other filter types
@@ -139,17 +150,21 @@ class FilterCacheManager {
       }
 
       targetCache.clear();
+      const targetOriginalMap = this.getOriginalCaseMapForTagType(tagType);
+      targetOriginalMap?.clear();
       const filteredTags = allTags.filter(tag => tag.tagName === tagType);
-      
+
       for (const tag of filteredTags) {
         if (tag.id && tag.tagValue) {
           // Store both exact case and lowercase for case-insensitive lookup
           targetCache.set(tag.tagValue, tag.id);
           targetCache.set(tag.tagValue.toLowerCase(), tag.id);
+          // Store original case mapping for clean retrieval
+          targetOriginalMap?.set(tag.tagValue.toLowerCase(), tag.tagValue);
         }
       }
       
-      logger.debug(`Loaded ${Math.floor(targetCache.size / 2)} ${tagType} tags for filtering`);
+      logger.debug(`Loaded ${targetOriginalMap?.size ?? 0} ${tagType} tags for filtering`);
     } catch (error) {
       logger.error(`Failed to load ${tagType} tags:`, ErrorFormatter.toolExecution(`loadTagsByType(${tagType})`, error));
       // Don't throw - continue with other filter types
@@ -171,6 +186,20 @@ class FilterCacheManager {
   }
 
   /**
+   * Get the appropriate original case mapping for a tag type
+   */
+  private getOriginalCaseMapForTagType(tagType: string): Map<string, string> | null {
+    switch (tagType) {
+      case 'media': return this.mediaTypesOriginal;
+      case 'releasecountry': return this.countriesOriginal;
+      case 'releasetype': return this.releaseTypesOriginal;
+      case 'recordlabel': return this.recordLabelsOriginal;
+      case 'mood': return this.moodsOriginal;
+      default: return null;
+    }
+  }
+
+  /**
    * Get the appropriate cache Map for a filter type
    */
   private getCacheForType(type: FilterType): Map<string, string> {
@@ -181,6 +210,21 @@ class FilterCacheManager {
       case 'releaseTypes': return this.releaseTypes;
       case 'recordLabels': return this.recordLabels;
       case 'moods': return this.moods;
+      default: throw new Error(`Unknown filter type: ${type}`);
+    }
+  }
+
+  /**
+   * Get the appropriate original case mapping for a filter type
+   */
+  private getOriginalCaseMapForType(type: FilterType): Map<string, string> {
+    switch (type) {
+      case 'genres': return this.genresOriginal;
+      case 'mediaTypes': return this.mediaTypesOriginal;
+      case 'countries': return this.countriesOriginal;
+      case 'releaseTypes': return this.releaseTypesOriginal;
+      case 'recordLabels': return this.recordLabelsOriginal;
+      case 'moods': return this.moodsOriginal;
       default: throw new Error(`Unknown filter type: ${type}`);
     }
   }
@@ -207,28 +251,10 @@ class FilterCacheManager {
       throw new Error('FilterCacheManager not initialized');
     }
 
-    const cache = this.getCacheForType(type);
-    
-    // Return only the original case versions (skip lowercase duplicates)
-    const options: string[] = [];
-    for (const [name] of cache.entries()) {
-      // Only add if this is the original case (not lowercase version)
-      if (name === name.toLowerCase()) {
-        // This is the lowercase version, check if we have an original case version
-        const originalCaseExists = Array.from(cache.keys()).some(key => 
-          key !== name && key.toLowerCase() === name
-        );
-        if (!originalCaseExists) {
-          // No original case version exists, so this lowercase one is the original
-          options.push(name);
-        }
-      } else {
-        // This is not all lowercase, so it's an original case version
-        options.push(name);
-      }
-    }
-    
-    return options.sort();
+    const originalCaseMap = this.getOriginalCaseMapForType(type);
+
+    // Return the original case values, sorted
+    return Array.from(originalCaseMap.values()).sort();
   }
 
   /**
@@ -272,12 +298,12 @@ class FilterCacheManager {
    */
   getStats(): Record<FilterType, number> {
     return {
-      genres: Math.floor(this.genres.size / 2),
-      mediaTypes: Math.floor(this.mediaTypes.size / 2),
-      countries: Math.floor(this.countries.size / 2),
-      releaseTypes: Math.floor(this.releaseTypes.size / 2),
-      recordLabels: Math.floor(this.recordLabels.size / 2),
-      moods: Math.floor(this.moods.size / 2),
+      genres: this.genresOriginal.size,
+      mediaTypes: this.mediaTypesOriginal.size,
+      countries: this.countriesOriginal.size,
+      releaseTypes: this.releaseTypesOriginal.size,
+      recordLabels: this.recordLabelsOriginal.size,
+      moods: this.moodsOriginal.size,
     };
   }
 
@@ -346,6 +372,14 @@ class FilterCacheManager {
     this.releaseTypes.clear();
     this.recordLabels.clear();
     this.moods.clear();
+
+    this.genresOriginal.clear();
+    this.mediaTypesOriginal.clear();
+    this.countriesOriginal.clear();
+    this.releaseTypesOriginal.clear();
+    this.recordLabelsOriginal.clear();
+    this.moodsOriginal.clear();
+
     this.initialized = false;
     FilterCacheManager.instance = null;
   }

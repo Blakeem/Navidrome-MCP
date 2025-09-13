@@ -84,7 +84,7 @@ import { registerTools } from './handlers/registry.js';
 1. **Live Read Tests** - Test against real server, validate structure not content
 2. **Mocked Write Tests** - Mock all write operations for safety
 3. **Feature Detection** - Test configuration-based tool registration
-4. **Tool Count Verification** - Ensure no tools go missing (currently 57 tools)
+4. **Tool Registration Verification** - Ensure no tools go missing with comprehensive validation
 
 ### Test Examples
 ```typescript
@@ -161,9 +161,9 @@ pnpm typecheck
 - `NAVIDROME_PASSWORD`: Password
 
 **Optional (enable features):**
-- `LASTFM_API_KEY`: Last.fm integration (7 additional tools)
+- `LASTFM_API_KEY`: Last.fm integration (enables music discovery features)
 - `RADIO_BROWSER_USER_AGENT`: Radio discovery
-- `LYRICS_PROVIDER=lrclib`: Lyrics support (1 additional tool)
+- `LYRICS_PROVIDER=lrclib`: Lyrics support (enables song lyrics features)
 - `DEBUG=true`: Enable debug logging
 
 ### For Testing and Development
@@ -187,7 +187,7 @@ DEBUG=true
 # Build first
 pnpm build
 
-# List tools (should show 55 with all features)
+# List tools (count varies based on enabled features)
 npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
 
 # Test specific tool

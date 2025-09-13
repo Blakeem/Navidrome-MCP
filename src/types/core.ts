@@ -115,15 +115,4 @@ export interface ArtistDTO {
   starred?: boolean;
 }
 
-/**
- * Clean DTO for genres
- */
-export interface GenreDTO {
-  /** Genre name (serves as unique identifier) */
-  name: string;
-  /** Number of songs in this genre */
-  songCount: number;
-  /** Number of albums in this genre */
-  albumCount: number;
-}
 
