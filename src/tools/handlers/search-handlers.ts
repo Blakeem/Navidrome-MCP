@@ -16,13 +16,13 @@ import {
 const tools: Tool[] = [
   {
     name: 'search_all',
-    description: 'Search across all content types (artists, albums, songs) using a single query',
+    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Search terms to look for',
+          description: 'Search terms to look for in titles, names, and artists',
         },
         artistCount: {
           type: 'number',
@@ -45,13 +45,73 @@ const tools: Tool[] = [
           maximum: 100,
           default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
         },
+        // Text-based filters - resolved to IDs internally
+        genre: {
+          type: 'string',
+          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
+        },
+        country: {
+          type: 'string',
+          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+        },
+        releaseType: {
+          type: 'string',
+          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+        },
+        recordLabel: {
+          type: 'string',
+          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
+        },
+        mood: {
+          type: 'string',
+          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
+        },
+        // Advanced sorting options
+        sort: {
+          type: 'string',
+          enum: ['name', 'title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
+          description: 'Sort field for results',
+          default: 'name',
+        },
+        order: {
+          type: 'string',
+          enum: ['ASC', 'DESC'],
+          description: 'Sort order',
+          default: 'ASC',
+        },
+        randomSeed: {
+          type: 'number',
+          description: 'Seed for consistent random ordering (use with sort=random)',
+        },
+        // Year filtering
+        yearFrom: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results from this year onwards',
+        },
+        yearTo: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results up to this year',
+        },
+        // Boolean filters
+        starred: {
+          type: 'boolean',
+          description: 'Filter for starred/favorited items only',
+        },
       },
       required: ['query'],
     },
   },
   {
     name: 'search_songs',
-    description: 'Search for songs by title, artist, or album',
+    description: 'Search for songs by title with advanced filtering and sorting options',
     inputSchema: {
       type: 'object',
       properties: {
@@ -66,13 +126,73 @@ const tools: Tool[] = [
           maximum: 100,
           default: 100,
         },
+        // Enhanced filtering options
+        genre: {
+          type: 'string',
+          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
+        },
+        country: {
+          type: 'string',
+          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+        },
+        releaseType: {
+          type: 'string',
+          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+        },
+        recordLabel: {
+          type: 'string',
+          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
+        },
+        mood: {
+          type: 'string',
+          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
+        },
+        // Advanced sorting options
+        sort: {
+          type: 'string',
+          enum: ['title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
+          description: 'Sort field for results',
+          default: 'title',
+        },
+        order: {
+          type: 'string',
+          enum: ['ASC', 'DESC'],
+          description: 'Sort order',
+          default: 'ASC',
+        },
+        randomSeed: {
+          type: 'number',
+          description: 'Seed for consistent random ordering (use with sort=random)',
+        },
+        // Year filtering
+        yearFrom: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results from this year onwards',
+        },
+        yearTo: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results up to this year',
+        },
+        // Boolean filters
+        starred: {
+          type: 'boolean',
+          description: 'Filter for starred/favorited items only',
+        },
       },
       required: ['query'],
     },
   },
   {
     name: 'search_albums',
-    description: 'Search for albums by name or artist',
+    description: 'Search for albums by name with advanced filtering and sorting options',
     inputSchema: {
       type: 'object',
       properties: {
@@ -87,13 +207,73 @@ const tools: Tool[] = [
           maximum: 100,
           default: 100,
         },
+        // Enhanced filtering options
+        genre: {
+          type: 'string',
+          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
+        },
+        country: {
+          type: 'string',
+          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+        },
+        releaseType: {
+          type: 'string',
+          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+        },
+        recordLabel: {
+          type: 'string',
+          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
+        },
+        mood: {
+          type: 'string',
+          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
+        },
+        // Advanced sorting options
+        sort: {
+          type: 'string',
+          enum: ['name', 'artist', 'year', 'songCount', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
+          description: 'Sort field for results',
+          default: 'name',
+        },
+        order: {
+          type: 'string',
+          enum: ['ASC', 'DESC'],
+          description: 'Sort order',
+          default: 'ASC',
+        },
+        randomSeed: {
+          type: 'number',
+          description: 'Seed for consistent random ordering (use with sort=random)',
+        },
+        // Year filtering
+        yearFrom: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results from this year onwards',
+        },
+        yearTo: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results up to this year',
+        },
+        // Boolean filters
+        starred: {
+          type: 'boolean',
+          description: 'Filter for starred/favorited items only',
+        },
       },
       required: ['query'],
     },
   },
   {
     name: 'search_artists',
-    description: 'Search for artists by name',
+    description: 'Search for artists by name with advanced filtering and sorting options',
     inputSchema: {
       type: 'object',
       properties: {
@@ -107,6 +287,66 @@ const tools: Tool[] = [
           minimum: 1,
           maximum: 100,
           default: 100,
+        },
+        // Enhanced filtering options
+        genre: {
+          type: 'string',
+          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
+        },
+        country: {
+          type: 'string',
+          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+        },
+        releaseType: {
+          type: 'string',
+          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+        },
+        recordLabel: {
+          type: 'string',
+          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
+        },
+        mood: {
+          type: 'string',
+          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
+        },
+        // Advanced sorting options
+        sort: {
+          type: 'string',
+          enum: ['name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'],
+          description: 'Sort field for results',
+          default: 'name',
+        },
+        order: {
+          type: 'string',
+          enum: ['ASC', 'DESC'],
+          description: 'Sort order',
+          default: 'ASC',
+        },
+        randomSeed: {
+          type: 'number',
+          description: 'Seed for consistent random ordering (use with sort=random)',
+        },
+        // Year filtering
+        yearFrom: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results from this year onwards',
+        },
+        yearTo: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results up to this year',
+        },
+        // Boolean filters
+        starred: {
+          type: 'boolean',
+          description: 'Filter for starred/favorited items only',
         },
       },
       required: ['query'],

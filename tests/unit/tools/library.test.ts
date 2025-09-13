@@ -9,26 +9,30 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import type { Config } from '../../../src/config.js';
+import { loadConfig } from '../../../src/config.js';
 import { getSharedLiveClient } from '../../factories/mock-client.js';
-import { listSongs } from '../../../src/tools/library.js';
+import { listSongs } from '../../../src/tools/search.js';
 import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
 describeLive('Library Tools - Live Read Operations', () => {
   let liveClient: NavidromeClient;
+  let config: Config;
 
   beforeAll(async () => {
     if (shouldSkipLiveTests()) {
       console.log(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
-    // Use shared client connection for read testing (avoids rate limiting)
+    // Load configuration and create shared client for live testing
+    config = await loadConfig();
     liveClient = await getSharedLiveClient();
   });
 
   describe('listSongs', () => {
     it('should return valid song structure from live server', async () => {
       // Test with minimal parameters to avoid large responses
-      const result = await listSongs(liveClient, { limit: 1 });
+      const result = await listSongs(liveClient, config, { limit: 1 });
 
       // Validate response structure (not specific content)
       expect(result).toHaveProperty('songs');
@@ -77,7 +81,7 @@ describeLive('Library Tools - Live Read Operations', () => {
 
     it('should handle pagination parameters correctly', async () => {
       // Test with offset to ensure pagination works
-      const result = await listSongs(liveClient, { limit: 2, offset: 1 });
+      const result = await listSongs(liveClient, config, { limit: 2, offset: 1 });
 
       expect(result.limit).toBe(2);
       expect(result.offset).toBe(1);
@@ -86,7 +90,7 @@ describeLive('Library Tools - Live Read Operations', () => {
 
     it('should respect starred filter when provided', async () => {
       // Test starred filter (should not fail regardless of content)
-      const result = await listSongs(liveClient, { 
+      const result = await listSongs(liveClient, config, { 
         limit: 5, 
         starred: true 
       });
@@ -102,7 +106,7 @@ describeLive('Library Tools - Live Read Operations', () => {
     });
 
     it('should handle different sort options', async () => {
-      const result = await listSongs(liveClient, { 
+      const result = await listSongs(liveClient, config, { 
         limit: 3,
         sort: 'artist',
         order: 'ASC'
@@ -123,7 +127,7 @@ describeLive('Library Tools - Live Read Operations', () => {
     it('should return empty results gracefully when no matches', async () => {
       // This shouldn't throw even if there are no songs matching criteria
       // (though with a real server this is unlikely)
-      const result = await listSongs(liveClient, { 
+      const result = await listSongs(liveClient, config, { 
         limit: 1,
         starred: false  // This should still work
       });

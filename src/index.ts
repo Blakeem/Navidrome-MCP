@@ -24,6 +24,7 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { NavidromeClient } from './client/navidrome-client.js';
 import { libraryManager } from './services/library-manager.js';
+import { filterCacheManager } from './services/filter-cache-manager.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
@@ -58,6 +59,9 @@ async function main(): Promise<void> {
 
     // Initialize library manager with user data and configuration
     await libraryManager.initialize(client, config);
+
+    // Initialize filter cache manager for enhanced search functionality
+    await filterCacheManager.initialize(client, config);
 
     registerTools(server, client, config);
     registerResources(server, client);

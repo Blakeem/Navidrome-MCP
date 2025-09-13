@@ -19,20 +19,20 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
-import { transformSongsToDTO } from '../transformers/song-transformer.js';
 import type { SongDTO, UserDetailsDTO, LibraryDTO, LibraryManagementResponse, SetActiveLibrariesRequest } from '../types/index.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
 import type { ToolCategory } from './handlers/registry.js';
 import {
-  listAlbums,
-  listArtists,
+  listSongs as enhancedListSongs,
+  listAlbums as enhancedListAlbums,
+  listArtists as enhancedListArtists,
+} from './search.js';
+import {
   listGenres,
   getSong,
   getAlbum,
   getArtist,
   getSongPlaylists,
 } from './media-library.js';
-import { SongPaginationSchema } from '../schemas/index.js';
 import { libraryManager } from '../services/library-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
@@ -47,37 +47,6 @@ export interface ListSongsResult {
   limit: number;
 }
 
-export async function listSongs(client: NavidromeClient, args: unknown): Promise<ListSongsResult> {
-  const params = SongPaginationSchema.parse(args);
-
-  try {
-    // Build query parameters for Navidrome API
-    const queryParams = new URLSearchParams({
-      _start: params.offset.toString(),
-      _end: (params.offset + params.limit).toString(),
-      _sort: params.sort,
-      _order: params.order,
-    });
-
-    if (params.starred !== undefined) {
-      queryParams.set('starred', params.starred.toString());
-    }
-
-    const rawSongs = await client.requestWithLibraryFilter<unknown>(`/song?${queryParams.toString()}`);
-    const songs = transformSongsToDTO(rawSongs);
-
-    return {
-      songs,
-      total: songs.length, // Note: Navidrome doesn't return total count in this endpoint
-      offset: params.offset,
-      limit: params.limit,
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to fetch songs: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-  }
-}
 
 /**
  * Get user details including library information with active status
@@ -212,16 +181,16 @@ export async function setActiveLibraries(args: unknown): Promise<LibraryManageme
 const tools: Tool[] = [
   {
     name: 'list_songs',
-    description: 'List songs from the Navidrome music library with clean, LLM-friendly data (filtering and pagination supported)',
+    description: 'List songs with advanced filtering, sorting, and pagination (100 items per page for overview browsing)',
     inputSchema: {
       type: 'object',
       properties: {
         limit: {
           type: 'number',
-          description: 'Maximum number of songs to return (1-500)',
+          description: 'Maximum number of songs to return per page',
           minimum: 1,
           maximum: 500,
-          default: DEFAULT_VALUES.SONGS_LIMIT,
+          default: 100,
         },
         offset: {
           type: 'number',
@@ -229,37 +198,82 @@ const tools: Tool[] = [
           minimum: 0,
           default: 0,
         },
+        // Enhanced filtering options
+        genre: {
+          type: 'string',
+          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
+        },
+        country: {
+          type: 'string',
+          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+        },
+        releaseType: {
+          type: 'string',
+          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+        },
+        recordLabel: {
+          type: 'string',
+          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
+        },
+        mood: {
+          type: 'string',
+          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
+        },
+        // Advanced sorting options
         sort: {
           type: 'string',
-          description: 'Field to sort by',
-          enum: ['title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating'],
+          enum: ['title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
+          description: 'Sort field for results',
           default: 'title',
         },
         order: {
           type: 'string',
-          description: 'Sort order',
           enum: ['ASC', 'DESC'],
+          description: 'Sort order',
           default: 'ASC',
         },
+        randomSeed: {
+          type: 'number',
+          description: 'Seed for consistent random ordering (use with sort=random)',
+        },
+        // Year filtering
+        yearFrom: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results from this year onwards',
+        },
+        yearTo: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results up to this year',
+        },
+        // Boolean filters
         starred: {
           type: 'boolean',
-          description: 'Filter for starred songs only',
+          description: 'Filter for starred/favorited items only',
         },
       },
+      required: [],
     },
   },
   {
     name: 'list_albums',
-    description: 'List albums from the Navidrome music library with clean, LLM-friendly data',
+    description: 'List albums with advanced filtering, sorting, and pagination (100 items per page for overview browsing)',
     inputSchema: {
       type: 'object',
       properties: {
         limit: {
           type: 'number',
-          description: 'Maximum number of albums to return (1-500)',
+          description: 'Maximum number of albums to return per page',
           minimum: 1,
           maximum: 500,
-          default: DEFAULT_VALUES.ALBUMS_LIMIT,
+          default: 100,
         },
         offset: {
           type: 'number',
@@ -267,29 +281,79 @@ const tools: Tool[] = [
           minimum: 0,
           default: 0,
         },
+        // Enhanced filtering options
+        genre: {
+          type: 'string',
+          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
+        },
+        country: {
+          type: 'string',
+          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+        },
+        releaseType: {
+          type: 'string',
+          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+        },
+        recordLabel: {
+          type: 'string',
+          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
+        },
+        mood: {
+          type: 'string',
+          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
+        },
+        // Advanced sorting options
         sort: {
           type: 'string',
-          description: 'Field to sort by',
+          enum: ['name', 'artist', 'year', 'songCount', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
+          description: 'Sort field for results',
           default: 'name',
         },
         order: {
           type: 'string',
-          description: 'Sort order',
           enum: ['ASC', 'DESC'],
+          description: 'Sort order',
           default: 'ASC',
         },
+        randomSeed: {
+          type: 'number',
+          description: 'Seed for consistent random ordering (use with sort=random)',
+        },
+        // Year filtering
+        yearFrom: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results from this year onwards',
+        },
+        yearTo: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results up to this year',
+        },
+        // Boolean filters
+        starred: {
+          type: 'boolean',
+          description: 'Filter for starred/favorited items only',
+        },
       },
+      required: [],
     },
   },
   {
     name: 'list_artists',
-    description: 'List artists from the Navidrome music library with clean, LLM-friendly data',
+    description: 'List artists with advanced filtering, sorting, and pagination (100 items per page, uses role=maincredit for comprehensive artist listing)',
     inputSchema: {
       type: 'object',
       properties: {
         limit: {
           type: 'number',
-          description: 'Maximum number of artists to return (1-500)',
+          description: 'Maximum number of artists to return per page',
           minimum: 1,
           maximum: 500,
           default: 100,
@@ -300,18 +364,68 @@ const tools: Tool[] = [
           minimum: 0,
           default: 0,
         },
+        // Enhanced filtering options
+        genre: {
+          type: 'string',
+          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
+        },
+        mediaType: {
+          type: 'string',
+          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
+        },
+        country: {
+          type: 'string',
+          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+        },
+        releaseType: {
+          type: 'string',
+          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+        },
+        recordLabel: {
+          type: 'string',
+          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
+        },
+        mood: {
+          type: 'string',
+          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
+        },
+        // Advanced sorting options
         sort: {
           type: 'string',
-          description: 'Field to sort by',
+          enum: ['name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'],
+          description: 'Sort field for results',
           default: 'name',
         },
         order: {
           type: 'string',
-          description: 'Sort order',
           enum: ['ASC', 'DESC'],
+          description: 'Sort order',
           default: 'ASC',
         },
+        randomSeed: {
+          type: 'number',
+          description: 'Seed for consistent random ordering (use with sort=random)',
+        },
+        // Year filtering
+        yearFrom: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results from this year onwards',
+        },
+        yearTo: {
+          type: 'number',
+          minimum: 1900,
+          maximum: new Date().getFullYear(),
+          description: 'Filter results up to this year',
+        },
+        // Boolean filters
+        starred: {
+          type: 'boolean',
+          description: 'Filter for starred/favorited items only',
+        },
       },
+      required: [],
     },
   },
   {
@@ -438,11 +552,11 @@ export function createLibraryToolCategory(client: NavidromeClient, config: Confi
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
         case 'list_songs':
-          return await listSongs(client, args);
+          return await enhancedListSongs(client, config, args);
         case 'list_albums':
-          return await listAlbums(client, args);
+          return await enhancedListAlbums(client, config, args);
         case 'list_artists':
-          return await listArtists(client, args);
+          return await enhancedListArtists(client, config, args);
         case 'list_genres':
           return await listGenres(client, config, args);
         case 'get_song':
