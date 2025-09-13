@@ -383,7 +383,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
     });
 
     describe('batchAddTracksToPlaylist', () => {
-      it('should handle multiple track sets in single operation', async () => {
+      it('should handle multiple content types in single operation', async () => {
         // batchAddTracksToPlaylist calls addTracksToPlaylist multiple times
         const mockAddResponse = { 
           added: 10,
@@ -393,12 +393,10 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         
         mockClient.request.mockResolvedValue(mockAddResponse);
         
-        const result = await batchAddTracksToPlaylist(mockClient, { 
+        const result = await batchAddTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
-          trackSets: [
-            { ids: ['song-1', 'song-2', 'song-3'] },
-            { albumIds: ['album-1', 'album-2'] }
-          ]
+          songIds: ['song-1', 'song-2', 'song-3'],
+          albumIds: ['album-1', 'album-2']
         });
 
         // batchAddTracksToPlaylist makes multiple API calls internally

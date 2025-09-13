@@ -249,7 +249,7 @@ const tools: Tool[] = [
   },
   {
     name: 'batch_add_tracks_to_playlist',
-    description: 'Batch add multiple sets of tracks to a playlist',
+    description: 'Add multiple types of content to a playlist in a single operation. Provide any combination of individual songs, complete albums, artist discographies, or specific disc tracks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -257,44 +257,41 @@ const tools: Tool[] = [
           type: 'string',
           description: 'The unique ID of the playlist',
         },
-        trackSets: {
+        songIds: {
           type: 'array',
-          description: 'Array of track sets to add to the playlist',
+          items: { type: 'string' },
+          description: 'Array of individual song IDs to add',
+        },
+        albumIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of album IDs to add (all tracks from each album)',
+        },
+        artistIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of artist IDs to add (complete discographies)',
+        },
+        discs: {
+          type: 'array',
+          description: 'Array of specific disc tracks to add from multi-disc albums',
           items: {
             type: 'object',
             properties: {
-              ids: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Array of song IDs to add',
+              albumId: {
+                type: 'string',
+                description: 'Album ID containing the disc'
               },
-              albumIds: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Array of album IDs to add (all tracks)',
-              },
-              artistIds: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Array of artist IDs to add (all tracks)',
-              },
-              discs: {
-                type: 'array',
-                description: 'Array of specific discs to add',
-                items: {
-                  type: 'object',
-                  properties: {
-                    albumId: { type: 'string' },
-                    discNumber: { type: 'number' },
-                  },
-                  required: ['albumId', 'discNumber'],
-                },
+              discNumber: {
+                type: 'number',
+                description: 'Disc number to add (1-based)'
               },
             },
+            required: ['albumId', 'discNumber'],
           },
         },
       },
-      required: ['playlistId', 'trackSets'],
+      required: ['playlistId'],
     },
   },
 ];

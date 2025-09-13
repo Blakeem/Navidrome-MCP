@@ -107,24 +107,22 @@ export async function batchAddTracksToPlaylist(
 ): Promise<{ results: AddTracksToPlaylistResponse[]; summary: string }> {
   const params = args as {
     playlistId: string;
-    trackSets: Array<{
-      ids?: string[];
-      albumIds?: string[];
-      artistIds?: string[];
-      discs?: Array<{ albumId: string; discNumber: number }>;
-    }>;
+    songIds?: string[];
+    albumIds?: string[];
+    artistIds?: string[];
+    discs?: Array<{ albumId: string; discNumber: number }>;
   };
 
   if (!params.playlistId) {
     throw new Error('Playlist ID is required');
   }
 
-  if (params.trackSets === null || params.trackSets === undefined || !Array.isArray(params.trackSets)) {
-    throw new Error('Track sets array is required');
-  }
+  // Validate that at least one content type is provided
+  const hasContent = (params.songIds?.length ?? 0) > 0 || (params.albumIds?.length ?? 0) > 0 ||
+                     (params.artistIds?.length ?? 0) > 0 || (params.discs?.length ?? 0) > 0;
 
-  if (params.trackSets.length === 0) {
-    throw new Error('At least one track set must be provided');
+  if (!hasContent) {
+    throw new Error('At least one content type must be provided (songIds, albumIds, artistIds, or discs)');
   }
 
   const results: AddTracksToPlaylistResponse[] = [];
@@ -132,11 +130,30 @@ export async function batchAddTracksToPlaylist(
   let successCount = 0;
   let failedCount = 0;
 
-  for (const trackSet of params.trackSets) {
+  // Create operations for each content type provided
+  const operations: Array<{
+    type: string;
+    data: { ids?: string[]; albumIds?: string[]; artistIds?: string[]; discs?: Array<{ albumId: string; discNumber: number }> };
+  }> = [];
+
+  if ((params.songIds?.length ?? 0) > 0 && params.songIds) {
+    operations.push({ type: 'songs', data: { ids: params.songIds } });
+  }
+  if ((params.albumIds?.length ?? 0) > 0 && params.albumIds) {
+    operations.push({ type: 'albums', data: { albumIds: params.albumIds } });
+  }
+  if ((params.artistIds?.length ?? 0) > 0 && params.artistIds) {
+    operations.push({ type: 'artists', data: { artistIds: params.artistIds } });
+  }
+  if ((params.discs?.length ?? 0) > 0 && params.discs) {
+    operations.push({ type: 'discs', data: { discs: params.discs } });
+  }
+
+  for (const operation of operations) {
     try {
       const result = await addTracksToPlaylist(client, {
         playlistId: params.playlistId,
-        ...trackSet
+        ...operation.data
       });
 
       results.push(result);
@@ -158,10 +175,10 @@ export async function batchAddTracksToPlaylist(
     }
   }
 
-  let summary = `Successfully processed ${successCount} of ${params.trackSets.length} track sets. `;
+  let summary = `Successfully processed ${successCount} of ${operations.length} content types. `;
   summary += `Total tracks added: ${totalAdded}.`;
   if (failedCount > 0) {
-    summary += ` ${failedCount} sets failed.`;
+    summary += ` ${failedCount} operations failed.`;
   }
 
   return {
