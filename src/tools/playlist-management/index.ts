@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Playlist Management Tools (Re-export from modular structure)
+ * Navidrome MCP Server - Playlist Management Tools
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,16 +16,24 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Re-export all playlist management functions from the new modular structure
+// Export CRUD operations
 export {
   listPlaylists,
   getPlaylist,
   createPlaylist,
   updatePlaylist,
   deletePlaylist,
+} from './playlist-crud.js';
+
+// Export track management operations
+export {
   addTracksToPlaylist,
   batchAddTracksToPlaylist,
   removeTracksFromPlaylist,
   reorderPlaylistTrack,
+} from './track-management.js';
+
+// Export playlist export functionality
+export {
   getPlaylistTracks,
-} from './playlist-management/index.js';
+} from './playlist-export.js';

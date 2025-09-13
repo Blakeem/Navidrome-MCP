@@ -282,6 +282,61 @@ class FilterCacheManager {
   }
 
   /**
+   * Get available filter options for enhanced search functionality
+   * Uses FilterCacheManager to provide text-based filter discovery
+   */
+  getFilterOptions(args: unknown): {
+    filterType: FilterType;
+    available: string[];
+    total: number;
+    cacheStats: Record<FilterType, number>;
+  } {
+    // Basic validation for required filterType
+    if (typeof args !== 'object' || args === null) {
+      throw new Error('Invalid arguments: expected object');
+    }
+
+    const params = args as Record<string, unknown>;
+
+    if (typeof params['filterType'] !== 'string') {
+      throw new Error('filterType is required and must be a string');
+    }
+
+    const filterType = params['filterType'] as FilterType;
+    const limit = typeof params['limit'] === 'number' ? params['limit'] : 50;
+
+    // Validate filterType
+    const validTypes: FilterType[] = ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'];
+    if (!validTypes.includes(filterType)) {
+      throw new Error(`Invalid filterType '${filterType}'. Must be one of: ${validTypes.join(', ')}`);
+    }
+
+    try {
+      if (!this.isInitialized()) {
+        throw new Error('Filter cache manager not initialized. Please wait for server startup to complete.');
+      }
+
+      // Get available options for the requested filter type
+      const allOptions = this.getAvailableOptions(filterType);
+      const limitedOptions = allOptions.slice(0, limit);
+
+      // Get cache statistics for debugging
+      const cacheStats = this.getStats();
+
+      logger.debug(`Retrieved ${limitedOptions.length} ${filterType} options (of ${allOptions.length} total)`);
+
+      return {
+        filterType,
+        available: limitedOptions,
+        total: allOptions.length,
+        cacheStats
+      };
+    } catch (error) {
+      throw new Error(ErrorFormatter.toolExecution('getFilterOptions', error));
+    }
+  }
+
+  /**
    * Reset the filter cache manager (for testing)
    */
   reset(): void {

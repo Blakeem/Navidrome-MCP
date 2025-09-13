@@ -26,7 +26,7 @@ import {
   type RawSong,
   type RawAlbum,
   type RawArtist,
-} from '../transformers/song-transformer.js';
+} from '../transformers/index.js';
 import type { SongDTO, AlbumDTO, ArtistDTO, PlaylistDTO } from '../types/index.js';
 import {
   IdSchema,

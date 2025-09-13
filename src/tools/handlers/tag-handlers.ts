@@ -7,8 +7,8 @@ import type { ToolCategory } from './registry.js';
 import {
   searchByTags,
   getTagDistribution,
-  getFilterOptions,
 } from '../tags.js';
+import { filterCacheManager } from '../../services/filter-cache-manager.js';
 
 // Tool definitions for tags category
 const tools: Tool[] = [
@@ -100,7 +100,7 @@ export function createTagsToolCategory(client: NavidromeClient, _config: Config)
         case 'get_tag_distribution':
           return await getTagDistribution(client, args);
         case 'get_filter_options':
-          return await getFilterOptions(client, args);
+          return filterCacheManager.getFilterOptions(args);
         default:
           throw new Error(`Unknown tags tool: ${name}`);
       }

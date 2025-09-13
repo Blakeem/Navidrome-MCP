@@ -19,7 +19,7 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import type { Config } from '../config.js';
-import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
+import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/index.js';
 import {
   StarItemSchema,
   SetRatingSchema,

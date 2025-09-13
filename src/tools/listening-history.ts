@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
+import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/index.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Helper function to parse duration from MM:SS format to seconds

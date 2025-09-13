@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Playlist Management Tools (Re-export from modular structure)
+ * Navidrome MCP Server - Search Module Public API
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,16 +16,23 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Re-export all playlist management functions from the new modular structure
-export {
-  listPlaylists,
-  getPlaylist,
-  createPlaylist,
-  updatePlaylist,
-  deletePlaylist,
-  addTracksToPlaylist,
-  batchAddTracksToPlaylist,
-  removeTracksFromPlaylist,
-  reorderPlaylistTrack,
-  getPlaylistTracks,
-} from './playlist-management/index.js';
+// Export main search orchestration function
+export { searchAll } from './search-orchestrator.js';
+
+// Export individual search functions for parallel operations
+export { searchSongs, searchAlbums, searchArtists } from './parallel-searcher.js';
+
+// Export utility functions for external use (if needed)
+export type {
+  FilterableSearchParams,
+  FilterResolutionResult,
+  SearchParameterInput,
+  EnhancedSearchResult
+} from './filter-resolver.js';
+
+export type {
+  ParallelSearchResponses,
+  AggregatedSearchResult,
+  SearchParamsConfig,
+  ContentTypeParams
+} from './result-aggregator.js';
