@@ -187,7 +187,7 @@ DEBUG=true
 # Build first
 pnpm build
 
-# List tools (should show 57 with all features)
+# List tools (should show 55 with all features)
 npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
 
 # Test specific tool
@@ -198,6 +198,29 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
 
 # Web UI
 npx @modelcontextprotocol/inspector node dist/index.js
+```
+
+## Testing Navidrome API with curl
+
+**IMPORTANT: Use `/auth/login` endpoint (NOT `/auth` or `/api/login`)**
+
+```bash
+# 1. Get authentication token
+TOKEN=$(curl -s -X POST http://nas.pixelmuse.ai:4533/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"claude","password":"anthropicuser"}' | jq -r '.token')
+
+# 2. Use token with X-ND-Authorization header
+curl -s "http://nas.pixelmuse.ai:4533/api/album?_start=0&_end=5&library_id=1" \
+  -H "X-ND-Authorization: Bearer $TOKEN" | jq '.'
+
+# 3. Test filters (use {type}_id parameters)
+curl -s "http://nas.pixelmuse.ai:4533/api/album?genre_id=UUID&library_id=1" \
+  -H "X-ND-Authorization: Bearer $TOKEN" | jq '.'
+
+# 4. Test tag endpoint (for discovering filter values)
+curl -s "http://nas.pixelmuse.ai:4533/api/tag?tag_name=genre&library_id=1" \
+  -H "X-ND-Authorization: Bearer $TOKEN" | jq '.[] | {id, tagValue}'
 ```
 
 ## Key Principles

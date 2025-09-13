@@ -16,7 +16,7 @@ import {
 const tools: Tool[] = [
   {
     name: 'search_all',
-    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options',
+    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -106,12 +106,12 @@ const tools: Tool[] = [
           description: 'Filter for starred/favorited items only',
         },
       },
-      required: ['query'],
+      required: [],
     },
   },
   {
     name: 'search_songs',
-    description: 'Search for songs by title with advanced filtering and sorting options',
+    description: 'Search for songs by title with advanced filtering and sorting options. Leave query empty to list all songs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -123,8 +123,14 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Maximum number of songs to return',
           minimum: 1,
-          maximum: 100,
+          maximum: 500,
           default: 100,
+        },
+        offset: {
+          type: 'number',
+          description: 'Number of songs to skip for pagination',
+          minimum: 0,
+          default: 0,
         },
         // Enhanced filtering options
         genre: {
@@ -187,12 +193,12 @@ const tools: Tool[] = [
           description: 'Filter for starred/favorited items only',
         },
       },
-      required: ['query'],
+      required: [],
     },
   },
   {
     name: 'search_albums',
-    description: 'Search for albums by name with advanced filtering and sorting options',
+    description: 'Search for albums by name with advanced filtering and sorting options. Leave query empty to list all albums.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -204,8 +210,14 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Maximum number of albums to return',
           minimum: 1,
-          maximum: 100,
+          maximum: 500,
           default: 100,
+        },
+        offset: {
+          type: 'number',
+          description: 'Number of albums to skip for pagination',
+          minimum: 0,
+          default: 0,
         },
         // Enhanced filtering options
         genre: {
@@ -268,12 +280,12 @@ const tools: Tool[] = [
           description: 'Filter for starred/favorited items only',
         },
       },
-      required: ['query'],
+      required: [],
     },
   },
   {
     name: 'search_artists',
-    description: 'Search for artists by name with advanced filtering and sorting options',
+    description: 'Search for artists by name with advanced filtering and sorting options. Leave query empty to list all artists.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -285,8 +297,14 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Maximum number of artists to return',
           minimum: 1,
-          maximum: 100,
+          maximum: 500,
           default: 100,
+        },
+        offset: {
+          type: 'number',
+          description: 'Number of artists to skip for pagination',
+          minimum: 0,
+          default: 0,
         },
         // Enhanced filtering options
         genre: {
@@ -349,7 +367,7 @@ const tools: Tool[] = [
           description: 'Filter for starred/favorited items only',
         },
       },
-      required: ['query'],
+      required: [],
     },
   },
 ];

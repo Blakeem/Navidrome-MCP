@@ -290,10 +290,19 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
   });
 
   describe('Edge Cases and Error Handling', () => {
-    it('should handle empty query strings gracefully', async () => {
-      await expect(
-        searchAll(liveClient, config, { query: '', artistCount: 1, albumCount: 1, songCount: 1 })
-      ).rejects.toThrow();
+    it.skipIf(shouldSkipLiveTests())('should handle empty query strings gracefully', async () => {
+      const result = await searchAll(liveClient, config, {
+        query: '',
+        artistCount: 1,
+        albumCount: 1,
+        songCount: 1
+      });
+
+      // Should not crash and return valid structure with empty query
+      expect(result).toHaveProperty('totalResults');
+      expect(result).toHaveProperty('query');
+      expect(result.query).toBe('');
+      expect(typeof result.totalResults).toBe('number');
     });
 
     it.skipIf(shouldSkipLiveTests())('should handle special characters in query', async () => {
@@ -349,28 +358,48 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
   describe('Input Validation', () => {
     const testQuery = 'the';
 
-    it('should validate required query parameter for searchAll', async () => {
-      await expect(
-        searchAll(liveClient, config, { artistCount: 1, albumCount: 1, songCount: 1 })
-      ).rejects.toThrow();
+    it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchAll', async () => {
+      const result = await searchAll(liveClient, config, {
+        artistCount: 1,
+        albumCount: 1,
+        songCount: 1
+      });
+
+      // searchAll should work without query (returns all results)
+      expect(result).toHaveProperty('totalResults');
+      expect(result).toHaveProperty('query');
+      expect(result.query).toBe(''); // Default empty query
+      expect(typeof result.totalResults).toBe('number');
     });
 
-    it('should validate required query parameter for searchSongs', async () => {
-      await expect(
-        searchSongs(liveClient, config, { limit: 1 })
-      ).rejects.toThrow();
+    it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchSongs', async () => {
+      const result = await searchSongs(liveClient, config, { limit: 1 });
+
+      // searchSongs should work without query (returns all songs)
+      expect(result).toHaveProperty('songs');
+      expect(result).toHaveProperty('query');
+      expect(result.query).toBe(''); // Default empty query
+      expect(typeof result.total).toBe('number');
     });
 
-    it('should validate required query parameter for searchAlbums', async () => {
-      await expect(
-        searchAlbums(liveClient, config, { limit: 1 })
-      ).rejects.toThrow();
+    it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchAlbums', async () => {
+      const result = await searchAlbums(liveClient, config, { limit: 1 });
+
+      // searchAlbums should work without query (returns all albums)
+      expect(result).toHaveProperty('albums');
+      expect(result).toHaveProperty('query');
+      expect(result.query).toBe(''); // Default empty query
+      expect(typeof result.total).toBe('number');
     });
 
-    it('should validate required query parameter for searchArtists', async () => {
-      await expect(
-        searchArtists(liveClient, config, { limit: 1 })
-      ).rejects.toThrow();
+    it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchArtists', async () => {
+      const result = await searchArtists(liveClient, config, { limit: 1 });
+
+      // searchArtists should work without query (returns all artists)
+      expect(result).toHaveProperty('artists');
+      expect(result).toHaveProperty('query');
+      expect(result.query).toBe(''); // Default empty query
+      expect(typeof result.total).toBe('number');
     });
 
     it('should validate count parameters are within bounds', async () => {
@@ -388,9 +417,9 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     it('should validate limit parameters are within bounds', async () => {
       // Should throw validation error for values beyond allowed range
       await expect(
-        searchSongs(liveClient, config, { 
+        searchSongs(liveClient, config, {
           query: testQuery,
-          limit: 150 // Over maximum of 100
+          limit: 600 // Over maximum of 500
         })
       ).rejects.toThrow();
     });

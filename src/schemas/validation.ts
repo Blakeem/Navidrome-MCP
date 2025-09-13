@@ -87,7 +87,9 @@ export const SetQueueSchema = z.object({
 });
 
 // Search validation schemas - import enhanced schemas from common.js
+// SearchAll has optional query to allow listing all content with filters
 export const SearchAllSchema = EnhancedSearchSchema.extend({
+  query: z.string().optional().default(''), // Override required query to be optional
   artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),

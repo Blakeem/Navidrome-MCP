@@ -22,11 +22,6 @@ import type { Config } from '../config.js';
 import type { SongDTO, UserDetailsDTO, LibraryDTO, LibraryManagementResponse, SetActiveLibrariesRequest } from '../types/index.js';
 import type { ToolCategory } from './handlers/registry.js';
 import {
-  listSongs as enhancedListSongs,
-  listAlbums as enhancedListAlbums,
-  listArtists as enhancedListArtists,
-} from './search.js';
-import {
   getSong,
   getAlbum,
   getArtist,
@@ -38,13 +33,6 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 
 // Using the clean DTO for song data
 export type Song = SongDTO;
-
-export interface ListSongsResult {
-  songs: SongDTO[];
-  total: number;
-  offset: number;
-  limit: number;
-}
 
 
 /**
@@ -179,255 +167,6 @@ export async function setActiveLibraries(args: unknown): Promise<LibraryManageme
 // Tool definitions for library category
 const tools: Tool[] = [
   {
-    name: 'list_songs',
-    description: 'List songs with advanced filtering, sorting, and pagination (100 items per page for overview browsing)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: {
-          type: 'number',
-          description: 'Maximum number of songs to return per page',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of songs to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        // Enhanced filtering options
-        genre: {
-          type: 'string',
-          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
-        },
-        mediaType: {
-          type: 'string',
-          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
-        },
-        country: {
-          type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
-        },
-        releaseType: {
-          type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
-        },
-        recordLabel: {
-          type: 'string',
-          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
-        },
-        mood: {
-          type: 'string',
-          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
-        },
-        // Advanced sorting options
-        sort: {
-          type: 'string',
-          enum: ['title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
-          description: 'Sort field for results',
-          default: 'title',
-        },
-        order: {
-          type: 'string',
-          enum: ['ASC', 'DESC'],
-          description: 'Sort order',
-          default: 'ASC',
-        },
-        randomSeed: {
-          type: 'number',
-          description: 'Seed for consistent random ordering (use with sort=random)',
-        },
-        // Year filtering
-        yearFrom: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results up to this year',
-        },
-        // Boolean filters
-        starred: {
-          type: 'boolean',
-          description: 'Filter for starred/favorited items only',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'list_albums',
-    description: 'List albums with advanced filtering, sorting, and pagination (100 items per page for overview browsing)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: {
-          type: 'number',
-          description: 'Maximum number of albums to return per page',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of albums to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        // Enhanced filtering options
-        genre: {
-          type: 'string',
-          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
-        },
-        mediaType: {
-          type: 'string',
-          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
-        },
-        country: {
-          type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
-        },
-        releaseType: {
-          type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
-        },
-        recordLabel: {
-          type: 'string',
-          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
-        },
-        mood: {
-          type: 'string',
-          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
-        },
-        // Advanced sorting options
-        sort: {
-          type: 'string',
-          enum: ['name', 'artist', 'year', 'songCount', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
-          description: 'Sort field for results',
-          default: 'name',
-        },
-        order: {
-          type: 'string',
-          enum: ['ASC', 'DESC'],
-          description: 'Sort order',
-          default: 'ASC',
-        },
-        randomSeed: {
-          type: 'number',
-          description: 'Seed for consistent random ordering (use with sort=random)',
-        },
-        // Year filtering
-        yearFrom: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results up to this year',
-        },
-        // Boolean filters
-        starred: {
-          type: 'boolean',
-          description: 'Filter for starred/favorited items only',
-        },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'list_artists',
-    description: 'List artists with advanced filtering, sorting, and pagination (100 items per page, uses role=maincredit for comprehensive artist listing)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: {
-          type: 'number',
-          description: 'Maximum number of artists to return per page',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of artists to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        // Enhanced filtering options
-        genre: {
-          type: 'string',
-          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
-        },
-        mediaType: {
-          type: 'string',
-          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
-        },
-        country: {
-          type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
-        },
-        releaseType: {
-          type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
-        },
-        recordLabel: {
-          type: 'string',
-          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
-        },
-        mood: {
-          type: 'string',
-          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
-        },
-        // Advanced sorting options
-        sort: {
-          type: 'string',
-          enum: ['name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'],
-          description: 'Sort field for results',
-          default: 'name',
-        },
-        order: {
-          type: 'string',
-          enum: ['ASC', 'DESC'],
-          description: 'Sort order',
-          default: 'ASC',
-        },
-        randomSeed: {
-          type: 'number',
-          description: 'Seed for consistent random ordering (use with sort=random)',
-        },
-        // Year filtering
-        yearFrom: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results up to this year',
-        },
-        // Boolean filters
-        starred: {
-          type: 'boolean',
-          description: 'Filter for starred/favorited items only',
-        },
-      },
-      required: [],
-    },
-  },
-  {
     name: 'get_song',
     description: 'Get detailed information about a specific song by ID',
     inputSchema: {
@@ -512,17 +251,11 @@ const tools: Tool[] = [
 ];
 
 // Factory function for creating library tool category with dependencies  
-export function createLibraryToolCategory(client: NavidromeClient, config: Config): ToolCategory {
+export function createLibraryToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
-        case 'list_songs':
-          return await enhancedListSongs(client, config, args);
-        case 'list_albums':
-          return await enhancedListAlbums(client, config, args);
-        case 'list_artists':
-          return await enhancedListArtists(client, config, args);
         case 'get_song':
           return await getSong(client, args);
         case 'get_album':

@@ -26,6 +26,9 @@ import {
   SearchByTagsSchema,
   TagDistributionSchema,
 } from '../schemas/index.js';
+import { filterCacheManager, type FilterType } from '../services/filter-cache-manager.js';
+import { logger } from '../utils/logger.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 export interface SearchByTagsResult {
   tagName: string;
@@ -169,6 +172,61 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
     throw new Error(
       `Failed to analyze tag distribution: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
+  }
+}
+
+/**
+ * Get available filter options for enhanced search functionality
+ * Uses FilterCacheManager to provide text-based filter discovery
+ */
+export async function getFilterOptions(_client: NavidromeClient, args: unknown): Promise<{
+  filterType: FilterType;
+  available: string[];
+  total: number;
+  cacheStats: Record<FilterType, number>;
+}> {
+  // Basic validation for required filterType
+  if (typeof args !== 'object' || args === null) {
+    throw new Error('Invalid arguments: expected object');
+  }
+
+  const params = args as Record<string, unknown>;
+
+  if (typeof params['filterType'] !== 'string') {
+    throw new Error('filterType is required and must be a string');
+  }
+
+  const filterType = params['filterType'] as FilterType;
+  const limit = typeof params['limit'] === 'number' ? params['limit'] : 50;
+
+  // Validate filterType
+  const validTypes: FilterType[] = ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'];
+  if (!validTypes.includes(filterType)) {
+    throw new Error(`Invalid filterType '${filterType}'. Must be one of: ${validTypes.join(', ')}`);
+  }
+
+  try {
+    if (!filterCacheManager.isInitialized()) {
+      throw new Error('Filter cache manager not initialized. Please wait for server startup to complete.');
+    }
+
+    // Get available options for the requested filter type
+    const allOptions = filterCacheManager.getAvailableOptions(filterType);
+    const limitedOptions = allOptions.slice(0, limit);
+
+    // Get cache statistics for debugging
+    const cacheStats = filterCacheManager.getStats();
+
+    logger.debug(`Retrieved ${limitedOptions.length} ${filterType} options (of ${allOptions.length} total)`);
+
+    return {
+      filterType,
+      available: limitedOptions,
+      total: allOptions.length,
+      cacheStats
+    };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('getFilterOptions', error));
   }
 }
 

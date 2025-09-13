@@ -102,17 +102,21 @@ export const StringArraySchema = z.array(z.string());
 export const OptionalStringArraySchema = z.array(z.string()).optional();
 export const NonEmptyStringArraySchema = z.array(z.string()).min(1, 'At least one item is required');
 
-// Individual search tool schemas
+// Individual search tool schemas (query optional for listing functionality)
 export const SearchSongsSchema = EnhancedSearchSchema.extend({
-  limit: createLimitSchema(1, 100, 100),
+  query: z.string().optional().default(''), // Override required query to be optional
+  limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
+  offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
-    'title', 'artist', 'album', 'year', 'duration', 
+    'title', 'artist', 'album', 'year', 'duration',
     'playCount', 'rating', 'recently_added', 'starred_at', 'random'
   ]).optional().default('title'),
 });
 
 export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
-  limit: createLimitSchema(1, 100, 100),
+  query: z.string().optional().default(''), // Override required query to be optional
+  limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
+  offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
     'name', 'artist', 'year', 'songCount', 'duration',
     'playCount', 'rating', 'recently_added', 'starred_at', 'random'
@@ -120,7 +124,9 @@ export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
 });
 
 export const SearchArtistsSchema = EnhancedSearchSchema.extend({
-  limit: createLimitSchema(1, 100, 100),
+  query: z.string().optional().default(''), // Override required query to be optional
+  limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
+  offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
     'name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'
   ]).optional().default('name'),

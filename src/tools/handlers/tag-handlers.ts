@@ -7,6 +7,7 @@ import type { ToolCategory } from './registry.js';
 import {
   searchByTags,
   getTagDistribution,
+  getFilterOptions,
 } from '../tags.js';
 
 // Tool definitions for tags category
@@ -64,6 +65,28 @@ const tools: Tool[] = [
       },
     },
   },
+  {
+    name: 'get_filter_options',
+    description: 'Get available values for metadata filters used in enhanced search/list tools. Exposes filter options like available genres, release types, countries, etc. that can be used with search_all, search_songs, search_albums, and list tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filterType: {
+          type: 'string',
+          enum: ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'],
+          description: 'Type of metadata filter to discover options for. Valid values: "genres" (Rock, Jazz, etc.), "mediaTypes" (CD, Vinyl, etc.), "countries" (US, UK, etc.), "releaseTypes" (Album, EP, etc.), "recordLabels" (Sony Music, etc.), "moods" (Energetic, etc.)'
+        },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of options to return',
+          minimum: 1,
+          maximum: 200,
+          default: 50,
+        },
+      },
+      required: ['filterType'],
+    },
+  },
 ];
 
 // Factory function for creating tags tool category with dependencies  
@@ -76,6 +99,8 @@ export function createTagsToolCategory(client: NavidromeClient, _config: Config)
           return await searchByTags(client, args);
         case 'get_tag_distribution':
           return await getTagDistribution(client, args);
+        case 'get_filter_options':
+          return await getFilterOptions(client, args);
         default:
           throw new Error(`Unknown tags tool: ${name}`);
       }

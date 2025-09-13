@@ -28,9 +28,6 @@ import {
   SearchSongsSchema,
   SearchAlbumsSchema,
   SearchArtistsSchema,
-  ListSongsSchema,
-  ListAlbumsSchema,
-  ListArtistsSchema,
 } from '../schemas/index.js';
 
 /**
@@ -136,8 +133,10 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
       searchParams.set('_start', '0');
       searchParams.set('_end', limit.toString());
       
-      // Add search term as direct parameter
-      searchParams.set(searchField, params.query);
+      // Add search term as direct parameter (only if not empty)
+      if (params.query && params.query.trim() !== '') {
+        searchParams.set(searchField, params.query);
+      }
       
       // Add sorting
       searchParams.set('_sort', sortField);
@@ -238,6 +237,7 @@ function buildEnhancedSearchParams(
   params: {
     query: string;
     limit: number;
+    offset?: number;
     sort?: string | undefined;
     order?: 'ASC' | 'DESC' | undefined;
     randomSeed?: number | undefined;
@@ -332,13 +332,16 @@ function buildEnhancedSearchParams(
 
   // Build URLSearchParams
   const searchParams = new URLSearchParams();
+
+  // Add pagination with offset support
+  const offset = params.offset ?? 0;
+  searchParams.set('_start', offset.toString());
+  searchParams.set('_end', (offset + params.limit).toString());
   
-  // Add pagination
-  searchParams.set('_start', '0');
-  searchParams.set('_end', params.limit.toString());
-  
-  // Add search term as direct parameter
-  searchParams.set(searchField, params.query);
+  // Add search term as direct parameter (only if not empty)
+  if (params.query && params.query.trim() !== '') {
+    searchParams.set(searchField, params.query);
+  }
   
   // Add sorting
   const sortField = params.sort ?? defaultSort;
@@ -381,6 +384,8 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
   songs: SongDTO[];
   query: string;
   total: number;
+  offset: number;
+  limit: number;
   appliedFilters?: Record<string, string>;
 }> {
   const params = SearchSongsSchema.parse(args);
@@ -402,6 +407,8 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
       songs,
       query: params.query,
       total: songs.length,
+      offset: params.offset ?? 0,
+      limit: params.limit,
     };
 
     // Only include appliedFilters if any filters were applied
@@ -444,6 +451,8 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
       albums,
       query: params.query,
       total: albums.length,
+      offset: params.offset ?? 0,
+      limit: params.limit,
     };
 
     // Only include appliedFilters if any filters were applied
@@ -470,7 +479,9 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
   const params = SearchArtistsSchema.parse(args);
 
   try {
-    const { searchParams, appliedFilters } = buildEnhancedSearchParams(params, 'name', 'name');
+    // Build enhanced search params with role=maincredit for comprehensive artist listing
+    const { searchParams: baseParams, appliedFilters } = buildEnhancedSearchParams(params, 'name', 'name');
+    const searchParams = `${baseParams}&role=maincredit`;
 
     logger.debug('Enhanced artist search parameters:', { searchParams, appliedFilters });
 
@@ -486,6 +497,8 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
       artists,
       query: params.query,
       total: artists.length,
+      offset: params.offset ?? 0,
+      limit: params.limit,
     };
 
     // Only include appliedFilters if any filters were applied
@@ -500,286 +513,4 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
   }
 }
 
-/**
- * Helper function to build enhanced list parameters (no query required)
- */
-function buildEnhancedListParams(
-  params: {
-    limit: number;
-    offset: number;
-    sort?: string | undefined;
-    order?: 'ASC' | 'DESC' | undefined;
-    randomSeed?: number | undefined;
-    genre?: string | undefined;
-    mediaType?: string | undefined;
-    country?: string | undefined;
-    releaseType?: string | undefined;
-    recordLabel?: string | undefined;
-    mood?: string | undefined;
-    yearFrom?: number | undefined;
-    yearTo?: number | undefined;
-    starred?: boolean | undefined;
-  },
-  defaultSort: string,
-  additionalParams?: Record<string, string>
-): { searchParams: string; appliedFilters: Record<string, string> } {
-  // Resolve text-based filters to IDs (same logic as search)
-  const resolvedFilters: Record<string, string> = {};
-  const appliedFilters: Record<string, string> = {};
 
-  if (params.genre !== undefined && params.genre !== '') {
-    const genreId = filterCacheManager.resolve('genres', params.genre);
-    if (genreId !== null && genreId !== '') {
-      resolvedFilters['genre_id'] = genreId;
-      appliedFilters['genre'] = params.genre;
-    } else {
-      const similar = filterCacheManager.findSimilar('genres', params.genre);
-      const suggestion = similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
-      throw new Error(`Genre '${params.genre}' not found.${suggestion}`);
-    }
-  }
-
-  if (params.mediaType !== undefined && params.mediaType !== '') {
-    const mediaId = filterCacheManager.resolve('mediaTypes', params.mediaType);
-    if (mediaId !== null && mediaId !== '') {
-      resolvedFilters['media_id'] = mediaId;
-      appliedFilters['mediaType'] = params.mediaType;
-    } else {
-      const similar = filterCacheManager.findSimilar('mediaTypes', params.mediaType);
-      const suggestion = similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
-      throw new Error(`Media type '${params.mediaType}' not found.${suggestion}`);
-    }
-  }
-
-  if (params.country !== undefined && params.country !== '') {
-    const countryId = filterCacheManager.resolve('countries', params.country);
-    if (countryId !== null && countryId !== '') {
-      resolvedFilters['releasecountry_id'] = countryId;
-      appliedFilters['country'] = params.country;
-    } else {
-      const similar = filterCacheManager.findSimilar('countries', params.country);
-      const suggestion = similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
-      throw new Error(`Country '${params.country}' not found.${suggestion}`);
-    }
-  }
-
-  if (params.releaseType !== undefined && params.releaseType !== '') {
-    const releaseTypeId = filterCacheManager.resolve('releaseTypes', params.releaseType);
-    if (releaseTypeId !== null && releaseTypeId !== '') {
-      resolvedFilters['releasetype_id'] = releaseTypeId;
-      appliedFilters['releaseType'] = params.releaseType;
-    } else {
-      const similar = filterCacheManager.findSimilar('releaseTypes', params.releaseType);
-      const suggestion = similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
-      throw new Error(`Release type '${params.releaseType}' not found.${suggestion}`);
-    }
-  }
-
-  if (params.recordLabel !== undefined && params.recordLabel !== '') {
-    const labelId = filterCacheManager.resolve('recordLabels', params.recordLabel);
-    if (labelId !== null && labelId !== '') {
-      resolvedFilters['recordlabel_id'] = labelId;
-      appliedFilters['recordLabel'] = params.recordLabel;
-    } else {
-      const similar = filterCacheManager.findSimilar('recordLabels', params.recordLabel);
-      const suggestion = similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
-      throw new Error(`Record label '${params.recordLabel}' not found.${suggestion}`);
-    }
-  }
-
-  if (params.mood !== undefined && params.mood !== '') {
-    const moodId = filterCacheManager.resolve('moods', params.mood);
-    if (moodId !== null && moodId !== '') {
-      resolvedFilters['mood_id'] = moodId;
-      appliedFilters['mood'] = params.mood;
-    } else {
-      const similar = filterCacheManager.findSimilar('moods', params.mood);
-      const suggestion = similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
-      throw new Error(`Mood '${params.mood}' not found.${suggestion}`);
-    }
-  }
-
-  // Build URLSearchParams
-  const searchParams = new URLSearchParams();
-  
-  // Add pagination
-  searchParams.set('_start', params.offset.toString());
-  searchParams.set('_end', (params.offset + params.limit).toString());
-  
-  // Add sorting
-  const sortField = params.sort ?? defaultSort;
-  searchParams.set('_sort', sortField);
-  searchParams.set('_order', params.order ?? 'ASC');
-  
-  // Add random seed if using random sort
-  if (sortField === 'random' && params.randomSeed !== undefined) {
-    searchParams.set('seed', params.randomSeed.toString());
-  }
-  
-  // Add resolved filters
-  Object.entries(resolvedFilters).forEach(([key, value]) => {
-    searchParams.set(key, value);
-  });
-  
-  // Add boolean filters
-  if (params.starred !== undefined) {
-    searchParams.set('starred', params.starred.toString());
-  }
-  
-  // Add year filtering
-  if (params.yearFrom !== undefined) {
-    searchParams.set('year_from', params.yearFrom.toString());
-  }
-  if (params.yearTo !== undefined) {
-    searchParams.set('year_to', params.yearTo.toString());
-  }
-  
-  // Add additional params (e.g., role=maincredit for artists)
-  if (additionalParams) {
-    Object.entries(additionalParams).forEach(([key, value]) => {
-      searchParams.set(key, value);
-    });
-  }
-
-  return {
-    searchParams: searchParams.toString(),
-    appliedFilters
-  };
-}
-
-/**
- * List songs with enhanced filtering and pagination
- */
-export async function listSongs(client: NavidromeClient, _config: Config, args: unknown): Promise<{
-  songs: SongDTO[];
-  total: number;
-  offset: number;
-  limit: number;
-  appliedFilters?: Record<string, string>;
-}> {
-  const params = ListSongsSchema.parse(args);
-
-  try {
-    const { searchParams, appliedFilters } = buildEnhancedListParams(params, 'title');
-
-    logger.debug('Enhanced song list parameters:', { searchParams, appliedFilters });
-
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/song?${searchParams}`);
-
-    // Transform response to DTOs
-    const songs = transformSongsToDTO(response);
-
-    logger.debug(`Song list completed: ${songs.length} results (offset: ${params.offset}, limit: ${params.limit})`);
-
-    const result = {
-      songs,
-      total: songs.length + params.offset, // Approximation since we don't have total count from API
-      offset: params.offset,
-      limit: params.limit,
-    };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
-
-    return result;
-  } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('listSongs', error));
-  }
-}
-
-/**
- * List albums with enhanced filtering and pagination
- */
-export async function listAlbums(client: NavidromeClient, _config: Config, args: unknown): Promise<{
-  albums: AlbumDTO[];
-  total: number;
-  offset: number;
-  limit: number;
-  appliedFilters?: Record<string, string>;
-}> {
-  const params = ListAlbumsSchema.parse(args);
-
-  try {
-    const { searchParams, appliedFilters } = buildEnhancedListParams(params, 'name');
-
-    logger.debug('Enhanced album list parameters:', { searchParams, appliedFilters });
-
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/album?${searchParams}`);
-
-    // Transform response to DTOs
-    const albums = transformAlbumsToDTO(response);
-
-    logger.debug(`Album list completed: ${albums.length} results (offset: ${params.offset}, limit: ${params.limit})`);
-
-    const result = {
-      albums,
-      total: albums.length + params.offset, // Approximation since we don't have total count from API
-      offset: params.offset,
-      limit: params.limit,
-    };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
-
-    return result;
-  } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('listAlbums', error));
-  }
-}
-
-/**
- * List artists with enhanced filtering, pagination, and role=maincredit
- */
-export async function listArtists(client: NavidromeClient, _config: Config, args: unknown): Promise<{
-  artists: ArtistDTO[];
-  total: number;
-  offset: number;
-  limit: number;
-  appliedFilters?: Record<string, string>;
-}> {
-  const params = ListArtistsSchema.parse(args);
-
-  try {
-    // Add role=maincredit for proper artist listing
-    const { searchParams, appliedFilters } = buildEnhancedListParams(
-      params, 
-      'name',
-      { role: 'maincredit' }
-    );
-
-    logger.debug('Enhanced artist list parameters:', { searchParams, appliedFilters });
-
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/artist?${searchParams}`);
-
-    // Transform response to DTOs
-    const artists = transformArtistsToDTO(response);
-
-    logger.debug(`Artist list completed: ${artists.length} results (offset: ${params.offset}, limit: ${params.limit})`);
-
-    const result = {
-      artists,
-      total: artists.length + params.offset, // Approximation since we don't have total count from API
-      offset: params.offset,
-      limit: params.limit,
-    };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
-
-    return result;
-  } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('listArtists', error));
-  }
-}

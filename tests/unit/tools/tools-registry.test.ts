@@ -25,18 +25,90 @@ import { createLastFmToolCategory } from '../../../src/tools/handlers/lastfm-han
 import { createLyricsToolCategory } from '../../../src/tools/handlers/lyrics-handlers.js';
 import { createTagsToolCategory } from '../../../src/tools/handlers/tag-handlers.js';
 
-// EXPECTED TOOL COUNT - Update this when adding new tools
-// Current count: 55 tools (after removing 4 redundant tag tools: list_genres, list_tags, get_tag, list_unique_tags)
-// This includes all tools when all features are enabled:
-// - Core tools: test, library, playlist, search, user preferences, queue, radio, tags (2 tools: search_by_tags, get_tag_distribution)
-// - Conditional tools: lastfm (when LASTFM_API_KEY provided), lyrics (when LYRICS_PROVIDER provided)
-const EXPECTED_TOOL_COUNT_ALL_FEATURES = 55;
+// COMPREHENSIVE EXPECTED TOOL LIST - Update this when adding/removing tools
+// This replaces count-based testing with explicit validation
 
-// Expected count with minimal features (no external APIs) - CI environment
-const EXPECTED_TOOL_COUNT_MINIMAL = 44; // Core tools only (no Last.fm, lyrics, or radio browser discovery), removed 4 tag tools
+// Core tools that should ALWAYS be present (regardless of feature flags)
+const EXPECTED_CORE_TOOLS = [
+  // Test category
+  'test_connection',
 
-// Expected count with standard local environment (.env with some features)
-const EXPECTED_TOOL_COUNT_STANDARD = 49; // Some features enabled, removed 4 tag tools
+  // Library category
+  'get_song',
+  'get_album',
+  'get_artist',
+  'get_song_playlists',
+  'get_user_details',
+  'set_active_libraries',
+
+  // Playlist category
+  'list_playlists',
+  'get_playlist',
+  'create_playlist',
+  'update_playlist',
+  'delete_playlist',
+  'get_playlist_tracks',
+  'add_tracks_to_playlist',
+  'remove_tracks_from_playlist',
+  'reorder_playlist_track',
+  'batch_add_tracks_to_playlist',
+
+  // Search category
+  'search_all',
+  'search_songs',
+  'search_albums',
+  'search_artists',
+
+  // User preferences category
+  'star_item',
+  'unstar_item',
+  'set_rating',
+  'list_starred_items',
+  'list_top_rated',
+
+  // Queue category
+  'get_queue',
+  'set_queue',
+  'clear_queue',
+  'list_recently_played',
+  'list_most_played',
+
+  // Radio category (core radio management)
+  'list_radio_stations',
+  'create_radio_station',
+  'delete_radio_station',
+  'get_radio_station',
+  'play_radio_station',
+  'get_current_radio_info',
+  'batch_create_radio_stations',
+  'validate_radio_stream',
+
+  // Tags category
+  'search_by_tags',
+  'get_tag_distribution',
+  'get_filter_options',
+];
+
+// Conditional tools based on feature flags
+const EXPECTED_LASTFM_TOOLS = [
+  'get_similar_artists',
+  'get_similar_tracks',
+  'get_artist_info',
+  'get_top_tracks_by_artist',
+  'get_trending_music',
+];
+
+const EXPECTED_LYRICS_TOOLS = [
+  'get_lyrics',
+];
+
+const EXPECTED_RADIO_BROWSER_TOOLS = [
+  'discover_radio_stations',
+  'get_radio_filters',
+  'get_station_by_uuid',
+  'click_station',
+  'vote_station',
+];
 
 describe('Tools Registry - Tool Count Verification', () => {
   let liveClient: NavidromeClient;
@@ -75,11 +147,30 @@ describe('Tools Registry - Tool Count Verification', () => {
     }
   });
 
+  // Helper function to build expected tool list based on feature configuration
+  function getExpectedToolList(config: Config): string[] {
+    const expectedTools = [...EXPECTED_CORE_TOOLS];
+
+    if (config.features.lastfm) {
+      expectedTools.push(...EXPECTED_LASTFM_TOOLS);
+    }
+
+    if (config.features.lyrics) {
+      expectedTools.push(...EXPECTED_LYRICS_TOOLS);
+    }
+
+    if (config.features.radioBrowser) {
+      expectedTools.push(...EXPECTED_RADIO_BROWSER_TOOLS);
+    }
+
+    return expectedTools.sort();
+  }
+
   describe('Tool Registration', () => {
-    it('should register expected number of tools with current configuration', async () => {
+    it('should register exactly the expected tools for current configuration', async () => {
       // Create registry and register all categories
       const registry = new ToolRegistry();
-      
+
       // Register core categories (always present)
       registry.register('test', createTestToolCategory(liveClient, config));
       registry.register('library', createLibraryToolCategory(liveClient, config));
@@ -100,30 +191,31 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
 
       const allTools = registry.getAllTools();
+      const actualToolNames = allTools.map(t => t.name).sort();
+      const expectedToolNames = getExpectedToolList(config);
 
-      // Calculate expected count dynamically based on actual feature configuration
-      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (44)
-      
-      if (config.features.lastfm) {
-        expectedCount += 7; // Last.fm tools: get_similar_artists, get_similar_tracks, get_artist_info, get_top_tracks_by_artist, get_trending_music
-      }
-      
-      if (config.features.lyrics) {
-        expectedCount += 1; // Lyrics tool: get_lyrics
-      }
+      // Find missing and unexpected tools for detailed error reporting
+      const missingTools = expectedToolNames.filter(name => !actualToolNames.includes(name));
+      const unexpectedTools = actualToolNames.filter(name => !expectedToolNames.includes(name));
 
-      if (config.features.radioBrowser) {
-        expectedCount += 3; // Radio Browser discovery tools (discover, validate, get_filters)
-      }
-
-      // Log actual vs expected for debugging
-      if (allTools.length !== expectedCount) {
-        console.log(`Tool count mismatch: expected ${expectedCount}, got ${allTools.length}`);
+      // Log detailed comparison for debugging
+      if (missingTools.length > 0 || unexpectedTools.length > 0) {
+        console.log(`\nTool registration mismatch:`);
         console.log(`Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
-        console.log('Available tools:', allTools.map(t => t.name).sort());
+        console.log(`Expected ${expectedToolNames.length} tools, got ${actualToolNames.length}`);
+
+        if (missingTools.length > 0) {
+          console.log(`Missing tools (${missingTools.length}):`, missingTools);
+        }
+        if (unexpectedTools.length > 0) {
+          console.log(`Unexpected tools (${unexpectedTools.length}):`, unexpectedTools);
+        }
       }
 
-      expect(allTools.length).toBe(expectedCount);
+      // Assert exact match - no missing tools, no unexpected tools
+      expect(missingTools).toEqual([]);
+      expect(unexpectedTools).toEqual([]);
+      expect(actualToolNames).toEqual(expectedToolNames);
 
       // Verify all tools have required properties
       allTools.forEach(tool => {
@@ -136,10 +228,10 @@ describe('Tools Registry - Tool Count Verification', () => {
       });
     });
 
-    it('should register core tools regardless of feature flags', async () => {
+    it('should register all core tools regardless of feature flags', async () => {
       // Create registry with only core categories (no conditional features)
       const registry = new ToolRegistry();
-      
+
       registry.register('test', createTestToolCategory(liveClient, config));
       registry.register('library', createLibraryToolCategory(liveClient, config));
       registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
@@ -150,31 +242,25 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('tags', createTagsToolCategory(liveClient, config));
 
       const allTools = registry.getAllTools();
-      const toolNames = allTools.map(tool => tool.name);
+      const actualToolNames = allTools.map(tool => tool.name);
 
-      // Core tools that should always be present
-      const coreToolPatterns = [
-        'test_connection',        // Test category
-        'list_songs',             // Library category
-        'list_playlists',         // Playlist category
-        'search_all',             // Search category
-        'star_item',              // User preferences category
-        'get_queue',              // Queue category
-        'list_radio_stations',    // Radio category
-        'search_by_tags',         // Tags category
-      ];
+      // Every core tool should be present
+      const missingCoreTools = EXPECTED_CORE_TOOLS.filter(toolName => !actualToolNames.includes(toolName));
 
-      coreToolPatterns.forEach(toolPattern => {
-        expect(toolNames).toContain(toolPattern);
-      });
+      if (missingCoreTools.length > 0) {
+        console.log('Missing core tools:', missingCoreTools);
+        console.log('Actual tools:', actualToolNames.sort());
+      }
 
-      // Should have at least the minimum number of tools
-      expect(allTools.length).toBeGreaterThanOrEqual(EXPECTED_TOOL_COUNT_MINIMAL);
+      expect(missingCoreTools).toEqual([]);
+
+      // Should have at least all core tools (may have conditional tools if feature flags are enabled)
+      expect(actualToolNames.length).toBeGreaterThanOrEqual(EXPECTED_CORE_TOOLS.length);
     });
 
     it('should conditionally include Last.fm tools based on feature flag', async () => {
       const registry = new ToolRegistry();
-      
+
       // Register core categories
       registry.register('test', createTestToolCategory(liveClient, config));
       registry.register('library', createLibraryToolCategory(liveClient, config));
@@ -191,31 +277,26 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
 
       const allTools = registry.getAllTools();
-      const toolNames = allTools.map(tool => tool.name);
+      const actualToolNames = allTools.map(tool => tool.name);
 
-      // Last.fm tools that should be present only when enabled
-      const lastfmTools = [
-        'get_similar_artists',
-        'get_similar_tracks',
-        'get_artist_info',
-        'get_top_tracks_by_artist',
-        'get_trending_music'
-      ];
+      // Validate Last.fm tools presence based on feature flag
+      const actualLastFmTools = actualToolNames.filter(name => EXPECTED_LASTFM_TOOLS.includes(name));
+      const missingLastFmTools = EXPECTED_LASTFM_TOOLS.filter(name => !actualToolNames.includes(name));
+      const unexpectedLastFmTools = actualLastFmTools.filter(name => !EXPECTED_LASTFM_TOOLS.includes(name));
 
       if (config.features.lastfm) {
-        lastfmTools.forEach(tool => {
-          expect(toolNames).toContain(tool);
-        });
+        // When enabled, all Last.fm tools should be present
+        expect(missingLastFmTools).toEqual([]);
+        expect(actualLastFmTools).toEqual(EXPECTED_LASTFM_TOOLS);
       } else {
-        lastfmTools.forEach(tool => {
-          expect(toolNames).not.toContain(tool);
-        });
+        // When disabled, no Last.fm tools should be present
+        expect(actualLastFmTools).toEqual([]);
       }
     });
 
     it('should conditionally include lyrics tools based on feature flag', async () => {
       const registry = new ToolRegistry();
-      
+
       // Register core categories
       registry.register('test', createTestToolCategory(liveClient, config));
       registry.register('library', createLibraryToolCategory(liveClient, config));
@@ -232,26 +313,24 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
 
       const allTools = registry.getAllTools();
-      const toolNames = allTools.map(tool => tool.name);
+      const actualToolNames = allTools.map(tool => tool.name);
 
-      // Lyrics tools
-      const lyricsTools = ['get_lyrics'];
+      // Validate lyrics tools presence based on feature flag
+      const actualLyricsTools = actualToolNames.filter(name => EXPECTED_LYRICS_TOOLS.includes(name));
 
       if (config.features.lyrics) {
-        lyricsTools.forEach(tool => {
-          expect(toolNames).toContain(tool);
-        });
+        // When enabled, all lyrics tools should be present
+        expect(actualLyricsTools).toEqual(EXPECTED_LYRICS_TOOLS);
       } else {
-        lyricsTools.forEach(tool => {
-          expect(toolNames).not.toContain(tool);
-        });
+        // When disabled, no lyrics tools should be present
+        expect(actualLyricsTools).toEqual([]);
       }
     });
 
-    it('should have unique tool names', async () => {
+    it('should have unique tool names and match expected configuration', async () => {
       // Create registry with all possible tools
       const registry = new ToolRegistry();
-      
+
       registry.register('test', createTestToolCategory(liveClient, config));
       registry.register('library', createLibraryToolCategory(liveClient, config));
       registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
@@ -260,40 +339,36 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
-      
+
       if (config.features.lastfm) {
         registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
       }
-      
+
       if (config.features.lyrics) {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
       }
 
       const allTools = registry.getAllTools();
-      const toolNames = allTools.map(tool => tool.name);
-      const uniqueNames = new Set(toolNames);
+      const actualToolNames = allTools.map(tool => tool.name);
+      const uniqueNames = new Set(actualToolNames);
+      const expectedToolNames = getExpectedToolList(config);
 
-      // All tool names should be unique
-      expect(uniqueNames.size).toBe(toolNames.length);
-      
-      // Should have expected count for current configuration
-      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (44)
-      if (config.features.lastfm) expectedCount += 7;
-      if (config.features.lyrics) expectedCount += 1;
-      if (config.features.radioBrowser) expectedCount += 3;
-      
-      expect(toolNames.length).toBe(expectedCount);
+      // All tool names should be unique (no duplicates)
+      expect(uniqueNames.size).toBe(actualToolNames.length);
+
+      // Should exactly match expected tools for current configuration
+      expect(actualToolNames.sort()).toEqual(expectedToolNames);
     });
 
     it('should report configuration state for debugging', async () => {
-      // This test helps with debugging when tool counts don't match expectations
+      // This test helps with debugging when tool registration doesn't match expectations
       console.log('Current feature configuration:');
       console.log(`- Last.fm enabled: ${config.features.lastfm}`);
       console.log(`- Radio Browser enabled: ${config.features.radioBrowser}`);
       console.log(`- Lyrics enabled: ${config.features.lyrics}`);
-      
+
       const registry = new ToolRegistry();
-      
+
       // Register all categories
       registry.register('test', createTestToolCategory(liveClient, config));
       registry.register('library', createLibraryToolCategory(liveClient, config));
@@ -303,20 +378,28 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
-      
+
       if (config.features.lastfm) {
         registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
       }
-      
+
       if (config.features.lyrics) {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
       }
 
       const allTools = registry.getAllTools();
+      const expectedTools = getExpectedToolList(config);
+
       console.log(`Total tools registered: ${allTools.length}`);
-      
+      console.log(`Expected tools: ${expectedTools.length}`);
+      console.log(`Core tools: ${EXPECTED_CORE_TOOLS.length}`);
+      console.log(`Last.fm tools: ${config.features.lastfm ? EXPECTED_LASTFM_TOOLS.length : 0}`);
+      console.log(`Lyrics tools: ${config.features.lyrics ? EXPECTED_LYRICS_TOOLS.length : 0}`);
+      console.log(`Radio Browser tools: ${config.features.radioBrowser ? EXPECTED_RADIO_BROWSER_TOOLS.length : 0}`);
+
       // This test always passes - it's for informational purposes
       expect(allTools.length).toBeGreaterThan(0);
+      expect(expectedTools.length).toBeGreaterThan(0);
     });
   });
 });
