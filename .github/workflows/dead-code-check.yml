@@ -1,0 +1,81 @@
+name: Dead Code Detection
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  dead-code-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: '10.15.0'
+
+    - name: Install dependencies
+      run: pnpm install --frozen-lockfile
+
+    - name: Run TypeScript type checking
+      run: pnpm typecheck
+
+    - name: Run ESLint (includes dead code detection rules)
+      run: pnpm lint
+
+    - name: Run dead code detection
+      run: |
+        echo "🔍 Running ts-unused-exports..."
+        if pnpm run check:dead-code; then
+          echo "✅ No unused exports detected"
+        else
+          echo "⚠️ Unused exports detected (informational - see logs above)"
+          echo "This is currently informational only, but new unused exports should be avoided."
+        fi
+
+    - name: Run dead code detection tests
+      run: |
+        echo "🧪 Running deterministic dead code detection tests..."
+        pnpm test:run -- tests/meta/dead-code-detection.test.ts
+
+    - name: Comment on PR (if unused exports detected)
+      if: github.event_name == 'pull_request' && failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const issue_number = context.issue.number;
+          const body = `
+          ## ⚠️ Dead Code Detection Alert
+
+          This PR introduces new unused exports or dead code patterns.
+
+          **Action Required:**
+          - Check the logs above for details
+          - Remove unused exports or add them to the known list in tests
+          - Ensure no method calls to non-existent methods
+
+          **Tools Used:**
+          - \`ts-unused-exports\` for unused export detection
+          - Deterministic tests for method call validation
+          - ESLint rules for basic dead code patterns
+
+          See \`DEAD-CODE-ANALYSIS.md\` for details on our dead code prevention strategy.
+          `;
+
+          github.rest.issues.createComment({
+            issue_number: issue_number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });

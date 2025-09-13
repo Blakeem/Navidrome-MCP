@@ -42,7 +42,7 @@ class SharedTestClient {
    */
   public async getClient(): Promise<NavidromeClient> {
     // If we have a working client, return it
-    if (this.client && this.client.isInitialized()) {
+    if (this.client) {
       return this.client;
     }
 
@@ -119,7 +119,7 @@ class SharedTestClient {
    * Check if client is currently initialized
    */
   public isInitialized(): boolean {
-    return this.client !== null && this.client.isInitialized();
+    return this.client !== null;
   }
 }
 

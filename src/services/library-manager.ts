@@ -21,7 +21,7 @@ import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
-export interface LibraryInfo {
+interface LibraryInfo {
   id: number;
   name: string;
   path: string;
@@ -42,7 +42,7 @@ export interface LibraryInfo {
   defaultNewUsers: boolean;
 }
 
-export interface UserInfo {
+interface UserInfo {
   id: string;
   userName: string;
   name: string;
@@ -58,7 +58,7 @@ export interface UserInfo {
 /**
  * Singleton service for managing library state and filtering across the application
  */
-export class LibraryManager {
+class LibraryManager {
   private static instance: LibraryManager | null = null;
   
   private userInfo: UserInfo | null = null;

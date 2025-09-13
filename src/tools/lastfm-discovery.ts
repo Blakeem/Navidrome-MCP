@@ -22,20 +22,20 @@ import { logger } from '../utils/logger.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
-export interface LastFmArtist {
+interface LastFmArtist {
   name: string;
   match: number;
   url: string;
   mbid: string | null;
 }
 
-export interface SimilarArtistsResult {
+interface SimilarArtistsResult {
   artist: string;
   count: number;
   similarArtists: LastFmArtist[];
 }
 
-export interface LastFmTrack {
+interface LastFmTrack {
   name: string;
   artist: string;
   match: number;
@@ -43,18 +43,18 @@ export interface LastFmTrack {
   mbid: string | null;
 }
 
-export interface SimilarTracksResult {
+interface SimilarTracksResult {
   originalTrack: { artist: string; track: string };
   count: number;
   similarTracks: LastFmTrack[];
 }
 
-export interface LastFmTag {
+interface LastFmTag {
   name: string;
   url: string;
 }
 
-export interface ArtistInfoResult {
+interface ArtistInfoResult {
   name: string;
   mbid: string | null;
   url: string;
@@ -65,7 +65,7 @@ export interface ArtistInfoResult {
   similar: string[];
 }
 
-export interface TopTrackResult {
+interface TopTrackResult {
   rank: number;
   name: string;
   playcount: number;
@@ -74,13 +74,13 @@ export interface TopTrackResult {
   mbid: string | null;
 }
 
-export interface TopTracksByArtistResult {
+interface TopTracksByArtistResult {
   artist: string;
   count: number;
   tracks: TopTrackResult[];
 }
 
-export interface TrendingArtistItem {
+interface TrendingArtistItem {
   rank: number;
   name: string;
   playcount: number;
@@ -89,7 +89,7 @@ export interface TrendingArtistItem {
   mbid: string | null;
 }
 
-export interface TrendingTrackItem {
+interface TrendingTrackItem {
   rank: number;
   name: string;
   artist: string;
@@ -99,14 +99,14 @@ export interface TrendingTrackItem {
   mbid: string | null;
 }
 
-export interface TrendingTagItem {
+interface TrendingTagItem {
   rank: number;
   name: string;
   count: number;
   url: string;
 }
 
-export interface TrendingMusicResult {
+interface TrendingMusicResult {
   type: string;
   page: number;
   perPage: number;

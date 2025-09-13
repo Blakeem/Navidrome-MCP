@@ -33,7 +33,7 @@ function parseDuration(durationFormatted: string): number {
   return 0;
 }
 
-export interface RecentlyPlayedTrack {
+interface RecentlyPlayedTrack {
   id: string;
   title: string;
   artist: string;
@@ -43,13 +43,13 @@ export interface RecentlyPlayedTrack {
   duration: number;
 }
 
-export interface RecentlyPlayedResult {
+interface RecentlyPlayedResult {
   timeRange: string;
   count: number;
   tracks: RecentlyPlayedTrack[];
 }
 
-export interface MostPlayedItem {
+interface MostPlayedItem {
   id: string;
   title?: string;
   name?: string;
@@ -60,7 +60,7 @@ export interface MostPlayedItem {
   albumCount?: number;
 }
 
-export interface MostPlayedResult {
+interface MostPlayedResult {
   type: string;
   minPlayCount: number;
   count: number;

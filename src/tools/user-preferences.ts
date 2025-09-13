@@ -49,14 +49,14 @@ function extractStarredAt(item: unknown): string | undefined {
   return undefined;
 }
 
-export interface StarItemResult {
+interface StarItemResult {
   success: boolean;
   message: string;
   id: string;
   type: string;
 }
 
-export interface StarredItem {
+interface StarredItem {
   id: string;
   title?: string;
   name?: string;
@@ -69,13 +69,13 @@ export interface StarredItem {
   starredAt?: string;
 }
 
-export interface ListStarredResult {
+interface ListStarredResult {
   type: string;
   count: number;
   items: StarredItem[];
 }
 
-export interface RatedItem {
+interface RatedItem {
   id: string;
   title?: string;
   name?: string;
@@ -88,14 +88,14 @@ export interface RatedItem {
   songCount?: number;
 }
 
-export interface ListTopRatedResult {
+interface ListTopRatedResult {
   type: string;
   minRating: number;
   count: number;
   items: RatedItem[];
 }
 
-export interface SetRatingResult {
+interface SetRatingResult {
   success: boolean;
   message: string;
   id: string;

@@ -38,7 +38,7 @@ interface TagResponse {
  * Singleton service for managing filter option caches for enhanced search functionality.
  * Caches small, well-defined filter sets for text-based filtering.
  */
-export class FilterCacheManager {
+class FilterCacheManager {
   private static instance: FilterCacheManager | null = null;
   
   private readonly genres = new Map<string, string>();           // "Rock" → "uuid-123"

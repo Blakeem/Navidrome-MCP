@@ -223,11 +223,26 @@ curl -s "http://nas.pixelmuse.ai:4533/api/tag?tag_name=genre&library_id=1" \
   -H "X-ND-Authorization: Bearer $TOKEN" | jq '.[] | {id, tagValue}'
 ```
 
+## Dead Code Prevention
+
+**Integrated Detection Tools:**
+- `pnpm check:dead-code` - ts-unused-exports for systematic unused export detection
+- `pnpm check:all` - Combined lint, typecheck, and dead code validation
+- `tests/meta/dead-code-detection.test.ts` - Deterministic validation of critical patterns
+- GitHub Actions CI - Automated dead code detection on pull requests
+
+**Prevention Guidelines:**
+- Verify all method calls exist before using (use TypeScript strict mode)
+- Import services as singleton instances, not classes directly
+- Remove unused exports immediately after refactoring
+- Test all singleton initialization patterns for null safety
+
 ## Key Principles
 
 1. **Follow Established Patterns** - The codebase has mature patterns, use them
-2. **Schema Reuse** - Import from `src/schemas/` instead of duplicating  
+2. **Schema Reuse** - Import from `src/schemas/` instead of duplicating
 3. **Unit Test Everything** - Required for all new features
 4. **Quality Gates** - Zero tolerance for lint/type/test failures
 5. **MCP Compliance** - Use logger, proper JSON-RPC, stderr output
 6. **Production Ready** - Every commit must be production-quality
+7. **Dead Code Prevention** - Use automated detection tools and validate critical patterns
