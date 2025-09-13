@@ -317,7 +317,6 @@ export function transformArtistsToDTO(rawArtists: unknown): ArtistDTO[] {
 
 export function transformToGenreDTO(rawGenre: RawGenre): GenreDTO {
   return {
-    id: rawGenre.id,
     name: rawGenre.name || '',
     songCount: rawGenre.songCount ?? 0,
     albumCount: rawGenre.albumCount ?? 0,

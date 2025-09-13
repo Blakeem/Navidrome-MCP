@@ -26,17 +26,17 @@ import { createLyricsToolCategory } from '../../../src/tools/handlers/lyrics-han
 import { createTagsToolCategory } from '../../../src/tools/handlers/tag-handlers.js';
 
 // EXPECTED TOOL COUNT - Update this when adding new tools
-// Current count: 59 tools (as of library management addition)
+// Current count: 55 tools (after removing 4 redundant tag tools: list_genres, list_tags, get_tag, list_unique_tags)
 // This includes all tools when all features are enabled:
-// - Core tools: test, library (including 2 new library management tools), playlist, search, user preferences, queue, radio, tags
+// - Core tools: test, library, playlist, search, user preferences, queue, radio, tags (2 tools: search_by_tags, get_tag_distribution)
 // - Conditional tools: lastfm (when LASTFM_API_KEY provided), lyrics (when LYRICS_PROVIDER provided)
-const EXPECTED_TOOL_COUNT_ALL_FEATURES = 59;
+const EXPECTED_TOOL_COUNT_ALL_FEATURES = 55;
 
-// Expected count with minimal features (no external APIs) - CI environment  
-const EXPECTED_TOOL_COUNT_MINIMAL = 48; // Core tools only (no Last.fm, lyrics, or radio browser discovery) + 2 new library management tools
+// Expected count with minimal features (no external APIs) - CI environment
+const EXPECTED_TOOL_COUNT_MINIMAL = 44; // Core tools only (no Last.fm, lyrics, or radio browser discovery), removed 4 tag tools
 
 // Expected count with standard local environment (.env with some features)
-const EXPECTED_TOOL_COUNT_STANDARD = 53; // Some features enabled + 2 new library management tools
+const EXPECTED_TOOL_COUNT_STANDARD = 49; // Some features enabled, removed 4 tag tools
 
 describe('Tools Registry - Tool Count Verification', () => {
   let liveClient: NavidromeClient;
@@ -102,7 +102,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       const allTools = registry.getAllTools();
 
       // Calculate expected count dynamically based on actual feature configuration
-      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (46)
+      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (44)
       
       if (config.features.lastfm) {
         expectedCount += 7; // Last.fm tools: get_similar_artists, get_similar_tracks, get_artist_info, get_top_tracks_by_artist, get_trending_music
@@ -161,7 +161,7 @@ describe('Tools Registry - Tool Count Verification', () => {
         'star_item',              // User preferences category
         'get_queue',              // Queue category
         'list_radio_stations',    // Radio category
-        'list_tags',              // Tags category
+        'search_by_tags',         // Tags category
       ];
 
       coreToolPatterns.forEach(toolPattern => {
@@ -276,8 +276,8 @@ describe('Tools Registry - Tool Count Verification', () => {
       // All tool names should be unique
       expect(uniqueNames.size).toBe(toolNames.length);
       
-      // Should have expected count for current configuration  
-      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (46)
+      // Should have expected count for current configuration
+      let expectedCount = EXPECTED_TOOL_COUNT_MINIMAL; // Base core tools (44)
       if (config.features.lastfm) expectedCount += 7;
       if (config.features.lyrics) expectedCount += 1;
       if (config.features.radioBrowser) expectedCount += 3;

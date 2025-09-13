@@ -100,7 +100,7 @@ export const SearchAllSchema = EnhancedSearchSchema.extend({
 
 // Tag validation schemas
 export const SearchByTagsSchema = z.object({
-  tagName: z.string().min(1),
+  tagName: z.string().min(1).optional().default('genre'),
   tagValue: z.string().optional(),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.TAG_SEARCH_LIMIT),
 });

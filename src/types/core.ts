@@ -119,9 +119,7 @@ export interface ArtistDTO {
  * Clean DTO for genres
  */
 export interface GenreDTO {
-  /** Unique genre ID */
-  id: string;
-  /** Genre name */
+  /** Genre name (serves as unique identifier) */
   name: string;
   /** Number of songs in this genre */
   songCount: number;

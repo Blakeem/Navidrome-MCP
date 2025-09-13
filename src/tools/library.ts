@@ -27,7 +27,6 @@ import {
   listArtists as enhancedListArtists,
 } from './search.js';
 import {
-  listGenres,
   getSong,
   getAlbum,
   getArtist,
@@ -429,39 +428,6 @@ const tools: Tool[] = [
     },
   },
   {
-    name: 'list_genres',
-    description: 'List all genres from the Navidrome music library',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: {
-          type: 'number',
-          description: 'Maximum number of genres to return (1-500)',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of genres to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        sort: {
-          type: 'string',
-          description: 'Field to sort by',
-          default: 'name',
-        },
-        order: {
-          type: 'string',
-          description: 'Sort order',
-          enum: ['ASC', 'DESC'],
-          default: 'ASC',
-        },
-      },
-    },
-  },
-  {
     name: 'get_song',
     description: 'Get detailed information about a specific song by ID',
     inputSchema: {
@@ -557,8 +523,6 @@ export function createLibraryToolCategory(client: NavidromeClient, config: Confi
           return await enhancedListAlbums(client, config, args);
         case 'list_artists':
           return await enhancedListArtists(client, config, args);
-        case 'list_genres':
-          return await listGenres(client, config, args);
         case 'get_song':
           return await getSong(client, args);
         case 'get_album':

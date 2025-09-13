@@ -16,9 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import crypto from 'crypto';
 import type { NavidromeClient } from '../client/navidrome-client.js';
-import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import {
   transformAlbumsToDTO,
@@ -31,11 +29,10 @@ import {
   type RawAlbum,
   type RawArtist,
 } from '../transformers/song-transformer.js';
-import type { SongDTO, AlbumDTO, ArtistDTO, GenreDTO, PlaylistDTO } from '../types/index.js';
+import type { SongDTO, AlbumDTO, ArtistDTO, PlaylistDTO } from '../types/index.js';
 import {
   AlbumPaginationSchema,
   ArtistPaginationSchema,
-  GenrePaginationSchema,
   IdSchema,
   GetSongPlaylistsSchema,
 } from '../schemas/index.js';
@@ -106,82 +103,6 @@ export async function listArtists(client: NavidromeClient, args: unknown): Promi
   }
 }
 
-/**
- * Create Subsonic API authentication parameters for genres
- */
-function createSubsonicAuthForGenres(config: Config): URLSearchParams {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const token = crypto.createHash('md5').update(config.navidromePassword + salt).digest('hex');
-  
-  return new URLSearchParams({
-    u: config.navidromeUsername,
-    t: token,
-    s: salt,
-    v: '1.16.1',
-    c: 'NavidromeMCP',
-    f: 'json',
-  });
-}
-
-// List Genres
-export async function listGenres(_client: NavidromeClient, config: Config, args: unknown): Promise<{
-  genres: GenreDTO[];
-  total: number;
-  offset: number;
-  limit: number;
-}> {
-  const params = GenrePaginationSchema.parse(args);
-
-  try {
-    // Use direct fetch to Subsonic API (not through our client since it adds /api prefix)
-    const authParams = createSubsonicAuthForGenres(config);
-    const subsonicUrl = `${config.navidromeUrl}/rest/getGenres?${authParams.toString()}`;
-    
-    const subsonicResponse = await fetch(subsonicUrl);
-    if (!subsonicResponse.ok) {
-      throw new Error(`Subsonic API request failed: ${subsonicResponse.status} ${subsonicResponse.statusText}`);
-    }
-    
-    const response = await subsonicResponse.json() as {
-      'subsonic-response'?: {
-        genres?: {
-          genre?: Array<{
-            value?: string;
-            songCount?: number;
-            albumCount?: number;
-          }>;
-        };
-      };
-    };
-    
-    // Extract genres from Subsonic response structure
-    const subsonicGenres = response?.['subsonic-response']?.genres?.genre ?? [];
-    
-    // Transform Subsonic genre format to our DTO
-    const allGenres: GenreDTO[] = subsonicGenres.map((genre) => ({
-      id: genre.value ?? '', // Subsonic uses 'value' for genre name as ID
-      name: genre.value ?? '',
-      songCount: genre.songCount ?? 0,
-      albumCount: genre.albumCount ?? 0,
-    }));
-
-    // Apply pagination manually since Subsonic getGenres doesn't support it
-    const startIndex = params.offset;
-    const endIndex = Math.min(startIndex + params.limit, allGenres.length);
-    const paginatedGenres = allGenres.slice(startIndex, endIndex);
-
-    return {
-      genres: paginatedGenres,
-      total: allGenres.length,
-      offset: params.offset,
-      limit: params.limit,
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to fetch genres: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-  }
-}
 
 // Get Song by ID
 export async function getSong(client: NavidromeClient, args: unknown): Promise<SongDTO> {
