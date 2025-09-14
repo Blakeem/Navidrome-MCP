@@ -167,7 +167,7 @@ pnpm typecheck
 **Example .env setup:**
 ```bash
 NAVIDROME_URL=http://your-server:4533
-NAVIDROME_USERNAME=your-username  
+NAVIDROME_USERNAME=your-username
 NAVIDROME_PASSWORD=your-password
 DEBUG=true
 ```
@@ -199,7 +199,7 @@ npx @modelcontextprotocol/inspector node dist/index.js
 # 1. Get authentication token
 TOKEN=$(curl -s -X POST http://192.168.86.100:4533/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"claude","password":"anthropicuser"}' | jq -r '.token')
+  -d '{"username":"claude","password":"AnthropicClaudius"}' | jq -r '.token')
 
 # 2. Use token with X-ND-Authorization header
 curl -s "http://192.168.86.100:4533/api/album?_start=0&_end=5&library_id=1" \
