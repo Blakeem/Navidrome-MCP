@@ -20,8 +20,6 @@ jobs:
 
     - name: Install pnpm
       uses: pnpm/action-setup@v2
-      with:
-        version: latest
 
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v4
@@ -65,8 +63,6 @@ jobs:
 
     - name: Install pnpm
       uses: pnpm/action-setup@v2
-      with:
-        version: latest
 
     - name: Use Node.js 20.x
       uses: actions/setup-node@v4
