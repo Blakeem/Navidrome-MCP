@@ -1,8 +1,11 @@
-# CLAUDE.md - Assistant Instructions for Navidrome MCP Server
+# CLAUDE.md - Development Guidelines for Navidrome MCP Server
+
+> **Note**: This file covers general development patterns and quality requirements.
+> For testing strategy and requirements, see `tests/CLAUDE.md`.
 
 ## Project Overview
 
-This is an MCP (Model Context Protocol) server that provides AI assistants with tools to interact with a Navidrome music server, and various other APIs.
+This is an MCP (Model Context Protocol) server that provides AI assistants with tools to interact with a Navidrome music server and various other APIs.
 
 **Package Manager**: pnpm (NOT npm or yarn)
 **Language**: TypeScript with strict mode enabled
@@ -12,15 +15,26 @@ This is an MCP (Model Context Protocol) server that provides AI assistants with 
 
 ### Quality Gates (ALL must pass)
 **AFTER EVERY CODE CHANGE:**
-1. Run `pnpm test:run` - ALL tests must pass (runs once, exits)
-2. Run `pnpm lint` - ZERO errors and warnings allowed  
+1. Run `pnpm test:run` - ALL tests must pass (160+ tests)
+2. Run `pnpm lint` - ZERO errors and warnings allowed
 3. Run `pnpm typecheck` - ZERO type errors allowed
-4. **Unit Testing**: ALL new features must include unit tests following `docs/UNIT-TEST-STRATEGY.md`
+4. Run `pnpm check:dead-code` - ZERO unused exports allowed
+5. Run `pnpm check:all` - Combined quality validation (recommended)
+
+### Dead Code Detection (MANDATORY)
+```bash
+# Individual checks
+pnpm check:dead-code     # Must show "0 modules with unused exports"
+
+# Comprehensive check (runs all quality gates)
+pnpm check:all           # Lint + TypeCheck + Dead Code
+```
 
 ### Test Commands
 - `pnpm test:run` - Run tests once and exit (for CI/validation)
 - `pnpm test` - Watch mode for development (stays running)
 - `pnpm test:coverage` - Run with coverage report
+- **Unit Testing**: See `tests/CLAUDE.md` for comprehensive testing strategy
 
 ## Established Architecture - USE THESE
 
@@ -76,28 +90,6 @@ logger.error('Operation failed:', error);
 import { registerTools } from './handlers/registry.js';
 ```
 
-## Unit Testing Requirements
-
-**ALL new features must include unit tests** following `docs/UNIT-TEST-STRATEGY.md`:
-
-### Test Categories
-1. **Live Read Tests** - Test against real server, validate structure not content
-2. **Mocked Write Tests** - Mock all write operations for safety
-3. **Feature Detection** - Test configuration-based tool registration
-4. **Tool Registration Verification** - Ensure no tools go missing with comprehensive validation
-
-### Test Examples
-```typescript
-// Live read test (validates API structure)
-const result = await listSongs(liveClient, { limit: 1 });
-expect(result).toHaveProperty('songs');
-expect(result.songs[0]).toHaveProperty('id');
-
-// Mock write test (safe, no server changes)
-mockClient.request.mockResolvedValue(mockPlaylistResponse);
-await createPlaylist(mockClient, { name: 'Test' });
-expect(mockClient.request).toHaveBeenCalledWith('/playlist', expectedArgs);
-```
 
 ## Development Workflow
 
@@ -105,8 +97,8 @@ expect(mockClient.request).toHaveBeenCalledWith('/playlist', expectedArgs);
 1. **Study existing patterns** - Look at similar tools in `src/tools/handlers/`
 2. **Use shared schemas** - Import from `src/schemas/` instead of duplicating
 3. **Follow naming patterns** - Use existing DTO types from `src/types/`
-4. **Add unit tests** - Required for all new functionality
-5. **Quality gates** - All tests, lint, typecheck must pass
+4. **Add unit tests** - Required (see `tests/CLAUDE.md` for testing strategy)
+5. **Run quality gates** - `pnpm check:all` must pass with zero issues
 
 ### Tool Registration Pattern
 ```typescript
@@ -223,26 +215,32 @@ curl -s "http://nas.pixelmuse.ai:4533/api/tag?tag_name=genre&library_id=1" \
   -H "X-ND-Authorization: Bearer $TOKEN" | jq '.[] | {id, tagValue}'
 ```
 
-## Dead Code Prevention
+## Dead Code Prevention (MANDATORY)
 
-**Integrated Detection Tools:**
-- `pnpm check:dead-code` - ts-unused-exports for systematic unused export detection
-- `pnpm check:all` - Combined lint, typecheck, and dead code validation
-- `tests/meta/dead-code-detection.test.ts` - Deterministic validation of critical patterns
-- GitHub Actions CI - Automated dead code detection on pull requests
+**Quality Gate Requirements:**
+```bash
+# MUST pass before completion
+pnpm check:dead-code     # Expected: "0 modules with unused exports"
+pnpm check:all          # Runs all checks: lint + typecheck + dead-code
+```
+
+**Automated Detection:**
+- `tests/meta/dead-code-detection.test.ts` - Validates critical patterns in test suite
+- GitHub Actions CI - Blocks PRs with dead code
+- Always run `pnpm check:all` before considering work complete
 
 **Prevention Guidelines:**
-- Verify all method calls exist before using (use TypeScript strict mode)
-- Import services as singleton instances, not classes directly
-- Remove unused exports immediately after refactoring
-- Test all singleton initialization patterns for null safety
+- Remove unused exports IMMEDIATELY after refactoring
+- Delete helper functions when no longer needed
+- Clean up old implementations after consolidation
+- Verify all imports are actually used in the file
 
 ## Key Principles
 
 1. **Follow Established Patterns** - The codebase has mature patterns, use them
 2. **Schema Reuse** - Import from `src/schemas/` instead of duplicating
-3. **Unit Test Everything** - Required for all new features
-4. **Quality Gates** - Zero tolerance for lint/type/test failures
-5. **MCP Compliance** - Use logger, proper JSON-RPC, stderr output
-6. **Production Ready** - Every commit must be production-quality
-7. **Dead Code Prevention** - Use automated detection tools and validate critical patterns
+3. **Test Everything** - See `tests/CLAUDE.md` for testing requirements
+4. **Quality Gates** - `pnpm check:all` MUST show zero issues
+5. **No Dead Code** - Zero unused exports allowed (enforced by CI)
+6. **MCP Compliance** - Use logger utility, never console.log
+7. **Production Ready** - Every change must pass ALL quality gates

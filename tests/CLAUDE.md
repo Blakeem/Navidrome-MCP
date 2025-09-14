@@ -60,7 +60,7 @@ tests/
 └── CLAUDE.md             # This file
 ```
 
-### Current Test Coverage (135 tests)
+### Current Test Coverage (160+ tests)
 1. **Playlist** - 22 tests (data modification safety)
 2. **Search** - 22 tests (high user impact)
 3. **User Preferences** - 31 tests (data integrity)
@@ -114,9 +114,13 @@ import { mockSong, mockPlaylist } from '../../factories/mock-data.js';
 
 **MUST pass before completion:**
 ```bash
-pnpm test:run     # 135 tests pass
-pnpm lint         # 0 errors/warnings
-pnpm typecheck    # 0 type errors
+pnpm test:run         # 160+ tests pass
+pnpm lint            # 0 errors/warnings
+pnpm typecheck       # 0 type errors
+pnpm check:dead-code # 0 unused exports
+
+# Or run all at once:
+pnpm check:all       # Comprehensive validation
 ```
 
 ---
