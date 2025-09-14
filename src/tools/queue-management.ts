@@ -20,7 +20,7 @@ import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 
-export interface QueueTrack {
+interface QueueTrack {
   id: string;
   title: string;
   artist: string;
@@ -28,7 +28,7 @@ export interface QueueTrack {
   duration: number;
 }
 
-export interface QueueResult {
+interface QueueResult {
   current: number;
   position: number;
   trackCount: number;
@@ -38,14 +38,14 @@ export interface QueueResult {
   queue?: null;
 }
 
-export interface SetQueueResult {
+interface SetQueueResult {
   success: boolean;
   message: string;
   trackCount: number;
   current: number;
 }
 
-export interface ClearQueueResult {
+interface ClearQueueResult {
   success: boolean;
   message: string;
 }

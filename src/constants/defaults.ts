@@ -13,7 +13,7 @@ export const DEFAULT_VALUES = {
   
   // Search endpoints - increased from 20 to 100 for better search coverage
   SEARCH_LIMIT: 100,
-  SEARCH_ALL_LIMIT: 100, // for artistCount, albumCount, songCount in search_all
+  SEARCH_ALL_LIMIT: 15, // for artistCount, albumCount, songCount in search_all - optimized for LLM context
   
   // Playlist endpoints
   PLAYLIST_TRACKS_LIMIT: 100,

@@ -15,7 +15,6 @@ import {
   addTracksToPlaylist,
   removeTracksFromPlaylist,
   reorderPlaylistTrack,
-  batchAddTracksToPlaylist,
 } from '../playlist-management.js';
 
 // Tool definitions for playlist management category
@@ -132,7 +131,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_playlist_tracks',
-    description: 'Get all tracks in a playlist (supports JSON or M3U export)',
+    description: 'Get all tracks in a playlist (supports JSON or M3U export). Returns tracks with two IDs: \'id\' (playlist position ID for reordering/removing) and \'mediaFileId\' (actual song ID for playback/metadata operations).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -165,7 +164,7 @@ const tools: Tool[] = [
   },
   {
     name: 'add_tracks_to_playlist',
-    description: 'Add tracks to a playlist (supports song IDs, album IDs, artist IDs, or specific discs)',
+    description: 'Add multiple types of content to a playlist in a single efficient operation. Supports any combination of individual songs, complete albums, artist discographies, or specific disc tracks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -173,20 +172,20 @@ const tools: Tool[] = [
           type: 'string',
           description: 'The unique ID of the playlist',
         },
-        ids: {
+        songIds: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of song IDs to add',
+          description: 'Array of individual song IDs to add',
         },
         albumIds: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of album IDs to add (all tracks from albums)',
+          description: 'Array of album IDs to add (all tracks from each album)',
         },
         artistIds: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of artist IDs to add (all tracks from artists)',
+          description: 'Array of artist IDs to add (complete discographies)',
         },
         discs: {
           type: 'array',
@@ -247,56 +246,6 @@ const tools: Tool[] = [
       required: ['playlistId', 'trackId', 'insert_before'],
     },
   },
-  {
-    name: 'batch_add_tracks_to_playlist',
-    description: 'Batch add multiple sets of tracks to a playlist',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The unique ID of the playlist',
-        },
-        trackSets: {
-          type: 'array',
-          description: 'Array of track sets to add to the playlist',
-          items: {
-            type: 'object',
-            properties: {
-              ids: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Array of song IDs to add',
-              },
-              albumIds: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Array of album IDs to add (all tracks)',
-              },
-              artistIds: {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'Array of artist IDs to add (all tracks)',
-              },
-              discs: {
-                type: 'array',
-                description: 'Array of specific discs to add',
-                items: {
-                  type: 'object',
-                  properties: {
-                    albumId: { type: 'string' },
-                    discNumber: { type: 'number' },
-                  },
-                  required: ['albumId', 'discNumber'],
-                },
-              },
-            },
-          },
-        },
-      },
-      required: ['playlistId', 'trackSets'],
-    },
-  },
 ];
 
 // Factory function for creating playlist tool category with dependencies  
@@ -323,8 +272,6 @@ export function createPlaylistToolCategory(client: NavidromeClient, _config: Con
           return await removeTracksFromPlaylist(client, args);
         case 'reorder_playlist_track':
           return await reorderPlaylistTrack(client, args);
-        case 'batch_add_tracks_to_playlist':
-          return await batchAddTracksToPlaylist(client, args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(`playlist ${name}`));
       }

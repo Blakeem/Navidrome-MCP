@@ -20,9 +20,7 @@
 export type {
   SongDTO,
   AlbumDTO,
-  ArtistDTO,
-  GenreDTO,
-  RecentlyAddedSongsResponse
+  ArtistDTO
 } from './core.js';
 
 // Export all playlist DTOs
@@ -56,7 +54,6 @@ export type {
 // Export all tag DTOs
 export type {
   TagDTO,
-  ListTagsResponse,
   TagDistribution,
   TagDistributionResponse
 } from './tags.js';
@@ -66,3 +63,11 @@ export type {
   LyricsLine,
   LyricsDTO
 } from './lyrics.js';
+
+// Export all library DTOs
+export type {
+  LibraryDTO,
+  UserDetailsDTO,
+  LibraryManagementResponse,
+  SetActiveLibrariesRequest
+} from './library.js';

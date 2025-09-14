@@ -24,7 +24,6 @@ import {
   addTracksToPlaylist,
   removeTracksFromPlaylist,
   reorderPlaylistTrack,
-  batchAddTracksToPlaylist,
 } from '../../../src/tools/playlist-management.js';
 
 describe('Playlist Operations - Tier 1 Critical Tests', () => {
@@ -284,9 +283,9 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         
         mockClient.request.mockResolvedValue(mockResponse);
         
-        const result = await addTracksToPlaylist(mockClient, { 
+        const result = await addTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
-          ids: ['song-1', 'song-2']
+          songIds: ['song-1', 'song-2']
         });
 
         expect(mockClient.request).toHaveBeenCalledWith(
@@ -382,32 +381,42 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       });
     });
 
-    describe('batchAddTracksToPlaylist', () => {
-      it('should handle multiple track sets in single operation', async () => {
-        // batchAddTracksToPlaylist calls addTracksToPlaylist multiple times
-        const mockAddResponse = { 
-          added: 10,
-          message: 'Tracks added successfully',
+    describe('addTracksToPlaylist with multiple content types', () => {
+      it('should handle multiple content types in single efficient operation', async () => {
+        const mockAddResponse = {
+          added: 15,
+          message: 'Successfully added 15 tracks to playlist',
           success: true
         };
-        
+
         mockClient.request.mockResolvedValue(mockAddResponse);
-        
-        const result = await batchAddTracksToPlaylist(mockClient, { 
+
+        const result = await addTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
-          trackSets: [
-            { ids: ['song-1', 'song-2', 'song-3'] },
-            { albumIds: ['album-1', 'album-2'] }
-          ]
+          songIds: ['song-1', 'song-2', 'song-3'],
+          albumIds: ['album-1', 'album-2'],
+          artistIds: ['artist-1']
         });
 
-        // batchAddTracksToPlaylist makes multiple API calls internally
-        expect(mockClient.request).toHaveBeenCalled();
+        // Should make efficient API calls
+        expect(mockClient.request).toHaveBeenCalledTimes(3); // Before count, adding tracks, after count
+        expect(mockClient.request).toHaveBeenCalledWith(
+          '/playlist/playlist-123/tracks',
+          expect.objectContaining({
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: expect.stringContaining('album-1')
+          })
+        );
 
-        // Verify return structure
-        expect(result).toHaveProperty('results');
-        expect(result).toHaveProperty('summary');
-        expect(Array.isArray(result.results)).toBe(true);
+        // Verify return structure matches enhanced capability
+        expect(result).toHaveProperty('added');
+        expect(result).toHaveProperty('message');
+        expect(result).toHaveProperty('success');
+        expect(result.added).toBe(15);
+        expect(result.success).toBe(true);
       });
     });
 

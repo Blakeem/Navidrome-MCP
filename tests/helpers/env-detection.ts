@@ -11,7 +11,7 @@ import { logger } from '../../src/utils/logger.js';
 /**
  * Check if we're running in a CI environment
  */
-export function isCI(): boolean {
+function isCI(): boolean {
   return !!(
     process.env.CI ||
     process.env.GITHUB_ACTIONS ||
@@ -25,7 +25,7 @@ export function isCI(): boolean {
 /**
  * Check if Navidrome test configuration is available
  */
-export function hasNavidromeConfig(): boolean {
+function hasNavidromeConfig(): boolean {
   return !!(
     process.env.NAVIDROME_URL &&
     process.env.NAVIDROME_USERNAME &&
@@ -77,7 +77,7 @@ export function getSkipReason(): string {
 /**
  * Log test environment information
  */
-export function logTestEnvironment(): void {
+function logTestEnvironment(): void {
   const skipLive = shouldSkipLiveTests();
   
   logger.info('Test Environment Configuration:');
@@ -104,7 +104,7 @@ export function describeLive(name: string, fn: () => void): void {
 /**
  * Create a conditional test that skips when live tests should be skipped
  */
-export function itLive(name: string, fn: () => void | Promise<void>): void {
+function itLive(name: string, fn: () => void | Promise<void>): void {
   if (shouldSkipLiveTests()) {
     it.skip(`${name} (skipped: ${getSkipReason()})`, fn);
   } else {
@@ -115,7 +115,7 @@ export function itLive(name: string, fn: () => void | Promise<void>): void {
 /**
  * Enhanced client getter that provides clear error messaging
  */
-export async function getSharedLiveClientSafe(): Promise<any> {
+async function getSharedLiveClientSafe(): Promise<any> {
   if (shouldSkipLiveTests()) {
     throw new Error(`Live client not available: ${getSkipReason()}`);
   }

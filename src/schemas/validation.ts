@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import {
-  SearchQuerySchema,
+  EnhancedSearchSchema,
   ItemTypeSchema,
   RatingSchema,
   UrlSchema,
@@ -59,7 +59,7 @@ export const UpdatePlaylistSchema = z.object({
 
 export const AddTracksToPlaylistSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required'),
-  ids: OptionalStringArraySchema,
+  songIds: OptionalStringArraySchema,
   albumIds: OptionalStringArraySchema,
   artistIds: OptionalStringArraySchema,
   discs: z.array(z.object({
@@ -86,28 +86,23 @@ export const SetQueueSchema = z.object({
   position: z.number().min(0).optional().default(0),
 });
 
-// Search validation schemas
-export const SearchAllSchema = SearchQuerySchema.extend({
+// Search validation schemas - import enhanced schemas from common.js
+// SearchAll has optional query to allow listing all content with filters
+export const SearchAllSchema = EnhancedSearchSchema.extend({
+  query: z.string().optional().default(''), // Override required query to be optional
   artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
 });
 
-export const SearchSongsSchema = SearchQuerySchema.extend({
-  limit: createLimitSchema(1, 100, DEFAULT_VALUES.SEARCH_LIMIT),
-});
-
-export const SearchAlbumsSchema = SearchQuerySchema.extend({
-  limit: createLimitSchema(1, 100, DEFAULT_VALUES.SEARCH_LIMIT),
-});
-
-export const SearchArtistsSchema = SearchQuerySchema.extend({
-  limit: createLimitSchema(1, 100, DEFAULT_VALUES.SEARCH_LIMIT),
-});
+// These are now imported from common.js to avoid duplication
+// export const SearchSongsSchema - defined in common.js
+// export const SearchAlbumsSchema - defined in common.js  
+// export const SearchArtistsSchema - defined in common.js
 
 // Tag validation schemas
 export const SearchByTagsSchema = z.object({
-  tagName: z.string().min(1),
+  tagName: z.string().min(1).optional().default('genre'),
   tagValue: z.string().optional(),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.TAG_SEARCH_LIMIT),
 });

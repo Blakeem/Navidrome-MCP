@@ -36,7 +36,7 @@ export const mockSong: SongDTO = {
 /**
  * Mock album data following the AlbumDTO interface structure
  */
-export const mockAlbum: AlbumDTO = {
+const mockAlbum: AlbumDTO = {
   id: 'mock-album-id-001',
   name: 'Mock Album Name',
   artist: 'Mock Artist Name',
@@ -54,7 +54,7 @@ export const mockAlbum: AlbumDTO = {
 /**
  * Mock artist data following the ArtistDTO interface structure  
  */
-export const mockArtist: ArtistDTO = {
+const mockArtist: ArtistDTO = {
   id: 'mock-artist-id-001',
   name: 'Mock Artist Name',
   albumCount: 3,

@@ -32,19 +32,6 @@ export interface TagDTO {
   songCount: number;
 }
 
-/**
- * Response format for listing tags with pagination
- */
-export interface ListTagsResponse {
-  /** Array of tags */
-  tags: TagDTO[];
-  /** Total number of tags available */
-  total: number;
-  /** Pagination offset used */
-  offset: number;
-  /** Pagination limit used */
-  limit: number;
-}
 
 /**
  * Tag distribution analysis for a specific tag name

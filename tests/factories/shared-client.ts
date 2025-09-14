@@ -42,7 +42,7 @@ class SharedTestClient {
    */
   public async getClient(): Promise<NavidromeClient> {
     // If we have a working client, return it
-    if (this.client && this.client.isInitialized()) {
+    if (this.client) {
       return this.client;
     }
 
@@ -119,7 +119,7 @@ class SharedTestClient {
    * Check if client is currently initialized
    */
   public isInitialized(): boolean {
-    return this.client !== null && this.client.isInitialized();
+    return this.client !== null;
   }
 }
 
@@ -132,18 +132,3 @@ export async function getSharedLiveClient(): Promise<NavidromeClient> {
   return sharedClient.getClient();
 }
 
-/**
- * Reset the shared client (for test cleanup if needed)
- */
-export function resetSharedClient(): void {
-  const sharedClient = SharedTestClient.getInstance();
-  sharedClient.reset();
-}
-
-/**
- * Check if shared client is initialized
- */
-export function isSharedClientInitialized(): boolean {
-  const sharedClient = SharedTestClient.getInstance();
-  return sharedClient.isInitialized();
-}

@@ -17,45 +17,24 @@
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
-import type { 
-  TagDTO, 
-  ListTagsResponse, 
-  TagDistributionResponse, 
-  TagDistribution 
+import type {
+  TagDTO,
+  TagDistributionResponse,
+  TagDistribution
 } from '../types/index.js';
 import {
-  TagsPaginationSchema,
-  IdSchema,
   SearchByTagsSchema,
   TagDistributionSchema,
-  UniqueTagsSchema,
 } from '../schemas/index.js';
 
-export type ListTagsResult = ListTagsResponse;
-
-export interface GetTagResult {
-  tag: TagDTO;
-}
-
-export interface SearchByTagsResult {
+interface SearchByTagsResult {
   tagName: string;
   tagValue: string | undefined;
   matches: TagDTO[];
   total: number;
 }
 
-export type GetTagDistributionResult = TagDistributionResponse;
-
-export interface ListUniqueTagsResult {
-  tagNames: Array<{
-    name: string;
-    totalValues: number;
-    totalSongs: number;
-    totalAlbums: number;
-    topValues: TagDTO[];
-  }>;
-  total: number;
-}
+type GetTagDistributionResult = TagDistributionResponse;
 
 /**
  * Transform raw Navidrome tag data to clean DTO
@@ -87,122 +66,40 @@ function transformTagsToDTO(rawTags: unknown): TagDTO[] {
   return rawTags.map(transformTagToDTO);
 }
 
-/**
- * List all tags with optional filtering and pagination
- * Note: API filtering is broken, so we use client-side filtering
- */
-export async function listTags(client: NavidromeClient, args: unknown): Promise<ListTagsResult> {
-  const params = TagsPaginationSchema.parse(args);
-
-  try {
-    // Fetch all tags since API filtering is broken
-    const rawTags = await client.request<unknown>('/tag?_start=0&_end=50000');
-    let allTags = transformTagsToDTO(rawTags);
-
-    // Client-side filtering
-    if (params.tagName !== null && params.tagName !== undefined && params.tagName !== '') {
-      allTags = allTags.filter(tag => tag.tagName === params.tagName);
-    }
-
-    // Client-side sorting
-    allTags.sort((a, b) => {
-      let aValue: string | number;
-      let bValue: string | number;
-
-      switch (params.sort) {
-        case 'tagName':
-          aValue = a.tagName;
-          bValue = b.tagName;
-          break;
-        case 'tagValue':
-          aValue = a.tagValue;
-          bValue = b.tagValue;
-          break;
-        case 'albumCount':
-          aValue = a.albumCount;
-          bValue = b.albumCount;
-          break;
-        case 'songCount':
-          aValue = a.songCount;
-          bValue = b.songCount;
-          break;
-        default:
-          aValue = a.tagName;
-          bValue = b.tagName;
-      }
-
-      if (params.order === 'DESC') {
-        return aValue < bValue ? 1 : aValue > bValue ? -1 : 0;
-      } else {
-        return aValue > bValue ? 1 : aValue < bValue ? -1 : 0;
-      }
-    });
-
-    // Client-side pagination
-    const total = allTags.length;
-    const paginatedTags = allTags.slice(params.offset, params.offset + params.limit);
-
-    return {
-      tags: paginatedTags,
-      total,
-      offset: params.offset,
-      limit: params.limit,
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to fetch tags: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-  }
-}
-
-/**
- * Get a specific tag by ID
- */
-export async function getTag(client: NavidromeClient, args: unknown): Promise<GetTagResult> {
-  const params = IdSchema.parse(args);
-
-  try {
-    const rawTag = await client.request<unknown>(`/tag/${params.id}`);
-    const tag = transformTagToDTO(rawTag);
-
-    return { tag };
-  } catch (error) {
-    throw new Error(
-      `Failed to fetch tag: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-  }
-}
 
 /**
  * Search for tags by tag name and optionally tag value
- * Note: API filtering is broken, so we use client-side filtering
+ * Uses server-side filtering with tag_name parameter for optimal performance
  */
 export async function searchByTags(client: NavidromeClient, args: unknown): Promise<SearchByTagsResult> {
   const params = SearchByTagsSchema.parse(args);
 
   try {
-    // Fetch all tags since API filtering is broken
-    const rawTags = await client.request<unknown>('/tag?_start=0&_end=50000');
-    let allTags = transformTagsToDTO(rawTags);
+    // Build query parameters for server-side filtering
+    const queryParams = new URLSearchParams({
+      _start: '0',
+      _end: params.limit.toString(),
+      _sort: 'tagValue', // Sort by tag value for consistent ordering
+      _order: 'ASC',
+      tag_name: params.tagName, // Server-side filter by tag name
+    });
 
-    // Client-side filtering by tag name
-    allTags = allTags.filter(tag => tag.tagName === params.tagName);
-
-    // Additional filtering by tag value if specified
+    // Add tag_value filter if specified
     if (params.tagValue !== null && params.tagValue !== undefined && params.tagValue !== '') {
-      allTags = allTags.filter(tag => tag.tagValue === params.tagValue);
+      queryParams.append('tag_value', params.tagValue);
     }
 
-    // Sort by song count descending for most relevant results
-    allTags.sort((a, b) => b.songCount - a.songCount);
+    // Use server-side filtering for optimal performance
+    const rawTags = await client.requestWithLibraryFilter<unknown>(`/tag?${queryParams.toString()}`);
+    const allTags = transformTagsToDTO(rawTags);
 
-    // Limit results
-    const matches = allTags.slice(0, params.limit);
+    // Sort by song count descending for most relevant results (after getting from server)
+    allTags.sort((a, b) => b.songCount - a.songCount);
 
     return {
       tagName: params.tagName,
       tagValue: params.tagValue,
-      matches,
+      matches: allTags,
       total: allTags.length,
     };
   } catch (error) {
@@ -213,134 +110,64 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
 }
 
 /**
- * Get distribution analysis of tags, optionally filtered by tag names
+ * Get distribution analysis of tags, using server-side filtering for efficiency
  */
 export async function getTagDistribution(client: NavidromeClient, args: unknown): Promise<GetTagDistributionResult> {
   const params = TagDistributionSchema.parse(args);
 
   try {
-    // Get all tags first
-    const rawTags = await client.request<unknown>('/tag?_start=0&_end=10000');
-    const allTags = transformTagsToDTO(rawTags);
+    const distributions: TagDistribution[] = [];
 
-    // Group by tag name
-    const groupedTags = allTags.reduce((acc, tag) => {
-      const existing = acc[tag.tagName];
-      if (!existing) {
-        acc[tag.tagName] = [];
-      }
-      const current = acc[tag.tagName];
-      if (current) {
-        current.push(tag);
-      }
-      return acc;
-    }, {} as Record<string, TagDTO[]>);
+    // If specific tag names provided, analyze those; otherwise analyze common tag types
+    const tagNamesToAnalyze = params.tagNames ?? [
+      'genre', 'releasetype', 'media', 'releasecountry', 'recordlabel',
+      'mood'
+    ];
 
-    // Filter to specific tag names if provided
-    const tagNamesToAnalyze = params.tagNames ?? Object.keys(groupedTags);
+    // Analyze each tag name using server-side filtering
+    for (const tagName of tagNamesToAnalyze.slice(0, params.limit)) {
+      const queryParams = new URLSearchParams({
+        _start: '0',
+        _end: '1000', // Get enough to analyze distribution
+        _sort: 'tagValue',
+        _order: 'ASC',
+        tag_name: tagName,
+      });
 
-    // Analyze each tag name
-    const distributions: TagDistribution[] = tagNamesToAnalyze
-      .slice(0, params.limit)
-      .map((tagName) => {
-        const tags = groupedTags[tagName] ?? [];
-        const sortedTags = tags.sort((a, b) => b.songCount - a.songCount);
+      try {
+        const rawTags = await client.requestWithLibraryFilter<unknown>(`/tag?${queryParams.toString()}`);
+        const tags = transformTagsToDTO(rawTags);
 
-        const mostCommon = sortedTags[0];
-        if (!mostCommon) {
-          return {
-            tagName,
-            uniqueValues: 0,
-            totalSongs: 0,
-            totalAlbums: 0,
-            mostCommon: { id: '', tagName, tagValue: '', albumCount: 0, songCount: 0 },
-            distribution: [],
-          };
+        if (tags.length > 0) {
+          // Sort by usage for most relevant results
+          const sortedTags = tags.sort((a, b) => b.songCount - a.songCount);
+          const mostCommon = sortedTags[0];
+
+          if (mostCommon) {
+            distributions.push({
+              tagName,
+              uniqueValues: tags.length,
+              totalSongs: tags.reduce((sum, tag) => sum + tag.songCount, 0),
+              totalAlbums: tags.reduce((sum, tag) => sum + tag.albumCount, 0),
+              mostCommon,
+              // Limit distribution to prevent massive output
+              distribution: sortedTags.slice(0, params.distributionLimit),
+            });
+          }
         }
-
-        return {
-          tagName,
-          uniqueValues: tags.length,
-          totalSongs: tags.reduce((sum, tag) => sum + tag.songCount, 0),
-          totalAlbums: tags.reduce((sum, tag) => sum + tag.albumCount, 0),
-          mostCommon,
-          // Limit distribution to prevent massive output
-          distribution: sortedTags.slice(0, params.distributionLimit),
-        };
-      })
-      .filter((dist) => dist.uniqueValues > 0);
+      } catch {
+        // Skip tag types that don't exist in this library
+        continue;
+      }
+    }
 
     return {
-      distributions,
-      totalTagNames: Object.keys(groupedTags).length,
+      distributions: distributions.filter((dist) => dist.uniqueValues > 0),
+      totalTagNames: distributions.length,
     };
   } catch (error) {
     throw new Error(
       `Failed to analyze tag distribution: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
-  }
-}
-
-/**
- * List all unique tag names with statistics
- */
-export async function listUniqueTags(client: NavidromeClient, args: unknown): Promise<ListUniqueTagsResult> {
-  const params = UniqueTagsSchema.parse(args);
-
-  try {
-    // Get all tags
-    const rawTags = await client.request<unknown>('/tag?_start=0&_end=10000');
-    const allTags = transformTagsToDTO(rawTags);
-
-    // Group by tag name and calculate statistics
-    const tagStats = allTags.reduce((acc, tag) => {
-      const existing = acc[tag.tagName];
-      if (!existing) {
-        acc[tag.tagName] = {
-          name: tag.tagName,
-          tags: [],
-          totalSongs: 0,
-          totalAlbums: 0,
-        };
-      }
-
-      const current = acc[tag.tagName];
-      if (current) {
-        current.tags.push(tag);
-        current.totalSongs += tag.songCount;
-        current.totalAlbums += tag.albumCount;
-      }
-
-      return acc;
-    }, {} as Record<string, {
-      name: string;
-      tags: TagDTO[];
-      totalSongs: number;
-      totalAlbums: number;
-    }>);
-
-    // Filter by minimum usage and prepare results
-    const tagNames = Object.values(tagStats)
-      .filter((stat) => stat.totalSongs >= params.minUsage)
-      .sort((a, b) => b.totalSongs - a.totalSongs)
-      .slice(0, params.limit)
-      .map((stat) => ({
-        name: stat.name,
-        totalValues: stat.tags.length,
-        totalSongs: stat.totalSongs,
-        totalAlbums: stat.totalAlbums,
-        topValues: stat.tags
-          .sort((a, b) => b.songCount - a.songCount)
-          .slice(0, 5), // Top 5 values for each tag name
-      }));
-
-    return {
-      tagNames,
-      total: Object.keys(tagStats).length,
-    };
-  } catch (error) {
-    throw new Error(
-      `Failed to fetch unique tags: ${error instanceof Error ? error.message : 'Unknown error'}`
     );
   }
 }

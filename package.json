@@ -1,6 +1,6 @@
 {
   "name": "navidrome-mcp",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "MCP server for interacting with Navidrome music server",
   "type": "module",
   "main": "dist/index.js",
@@ -11,6 +11,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:ci": "SKIP_INTEGRATION_TESTS=true MOCK_ONLY_TESTS=true NAVIDROME_URL=http://ci-dummy:4533 NAVIDROME_USERNAME=ci-user NAVIDROME_PASSWORD=ci-pass vitest run",
+    "test:all": "pnpm test:run && pnpm check:all",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
@@ -18,6 +19,8 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
+    "check:dead-code": "ts-unused-exports tsconfig.analysis.json --excludePathsFromReport=dist/",
+    "check:all": "pnpm lint && pnpm typecheck && pnpm check:dead-code",
     "prepare": "pnpm build",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
     "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts"
@@ -73,6 +76,7 @@
     "eslint-config-prettier": "^9.1.0",
     "nodemon": "^3.1.10",
     "prettier": "^3.6.2",
+    "ts-unused-exports": "^11.0.1",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"

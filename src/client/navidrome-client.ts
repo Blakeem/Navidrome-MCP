@@ -20,6 +20,7 @@ import type { Config } from '../config.js';
 import { AuthManager } from './auth-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { libraryManager } from '../services/library-manager.js';
 
 export class NavidromeClient {
   private readonly authManager: AuthManager;
@@ -69,6 +70,35 @@ export class NavidromeClient {
     } else {
       return response.text() as Promise<T>;
     }
+  }
+
+  /**
+   * Make a request with automatic library filtering applied.
+   * This method automatically adds library_id parameters for active libraries.
+   */
+  async requestWithLibraryFilter<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    // Parse the endpoint to extract path and existing query parameters
+    const url = new URL(endpoint, 'http://localhost'); // Base doesn't matter, we just need to parse
+    const path = url.pathname;
+    const existingParams = url.searchParams;
+
+    // Add library filtering if LibraryManager is initialized and has active libraries
+    if (libraryManager.isInitialized()) {
+      const libraryParams = libraryManager.getLibraryQueryParams();
+      
+      // Add library_id parameters (duplicate parameters as discovered from frontend)
+      for (const [key, value] of libraryParams.entries()) {
+        existingParams.append(key, value);
+      }
+    }
+
+    // Reconstruct the endpoint with library filters
+    const filteredEndpoint = existingParams.toString() 
+      ? `${path}?${existingParams.toString()}`
+      : path;
+
+    logger.debug(`Request with library filter: ${filteredEndpoint}`);
+    return this.request<T>(filteredEndpoint, options);
   }
 
   async subsonicRequest(endpoint: string, params: Record<string, string> = {}): Promise<unknown> {

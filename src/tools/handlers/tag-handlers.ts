@@ -5,80 +5,27 @@ import type { ToolCategory } from './registry.js';
 
 // Import tool functions
 import {
-  listTags,
-  getTag,
   searchByTags,
   getTagDistribution,
-  listUniqueTags,
 } from '../tags.js';
+import { filterCacheManager } from '../../services/filter-cache-manager.js';
 
 // Tool definitions for tags category
 const tools: Tool[] = [
   {
-    name: 'list_tags',
-    description: 'List all metadata tags with optional filtering by tag name and pagination',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: {
-          type: 'number',
-          description: 'Maximum number of tags to return (1-500)',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of tags to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        sort: {
-          type: 'string',
-          description: 'Field to sort by',
-          enum: ['tagName', 'tagValue', 'albumCount', 'songCount'],
-          default: 'tagName',
-        },
-        order: {
-          type: 'string',
-          description: 'Sort order',
-          enum: ['ASC', 'DESC'],
-          default: 'ASC',
-        },
-        tagName: {
-          type: 'string',
-          description: 'Filter by specific tag name (e.g., "genre", "composer", "label")',
-        },
-      },
-    },
-  },
-  {
-    name: 'get_tag',
-    description: 'Get detailed information about a specific tag by ID',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        id: {
-          type: 'string',
-          description: 'The unique ID of the tag',
-        },
-      },
-      required: ['id'],
-    },
-  },
-  {
     name: 'search_by_tags',
-    description: 'Search for songs/albums by specific tag criteria (e.g., find all songs with genre "Jazz" or composer "Bach")',
+    description: 'Search for tags by type (e.g., list all genres, find release types, etc.). Defaults to genre if no tagName specified. Use this to explore metadata categories like genres, release types, media formats, and more.',
     inputSchema: {
       type: 'object',
       properties: {
         tagName: {
           type: 'string',
-          description: 'Tag name to search by (e.g., "genre", "composer", "label")',
+          description: 'Tag name to search by. Common working examples: "genre" (Rock, Jazz, Classical), "releasetype" (Album, EP, Single), "media" (CD, Vinyl, Digital), "releasecountry" (US, UK, Germany), "recordlabel" (Columbia Records, Sony Music), "mood" (Energetic, Melancholy), "composer", "producer", "year"',
+          default: 'genre',
         },
         tagValue: {
           type: 'string',
-          description: 'Optional tag value to match exactly',
+          description: 'Optional tag value to match exactly (e.g., "Rock" for genre, "Album" for releasetype)',
         },
         limit: {
           type: 'number',
@@ -88,19 +35,18 @@ const tools: Tool[] = [
           default: 100,
         },
       },
-      required: ['tagName'],
     },
   },
   {
     name: 'get_tag_distribution',
-    description: 'Analyze tag usage patterns and distribution across the music library',
+    description: 'Analyze tag usage patterns and distribution across the music library. Shows statistics for metadata categories with their usage counts. Supports: "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood".',
     inputSchema: {
       type: 'object',
       properties: {
         tagNames: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Specific tag names to analyze (if omitted, analyzes all)',
+          description: 'Specific tag names to analyze. If omitted, analyzes common types: "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood"',
         },
         limit: {
           type: 'number',
@@ -120,25 +66,25 @@ const tools: Tool[] = [
     },
   },
   {
-    name: 'list_unique_tags',
-    description: 'List all unique tag names with statistics (how many unique values, total usage)',
+    name: 'get_filter_options',
+    description: 'Discover available filter values for search operations. Use this FIRST to see what genres, media types, countries, etc. are available in your library before using filters in search functions. Returns dynamic values from your actual music collection.\n\n💡 Example workflow:\n1. Call get_filter_options(filterType=\'genres\') to see available genres\n2. Use discovered genres like \'Rock\' or \'R&B\' in search_all, search_songs, etc.\n3. Repeat for other filter types (mediaTypes, countries, releaseTypes, recordLabels, moods)',
     inputSchema: {
       type: 'object',
       properties: {
+        filterType: {
+          type: 'string',
+          enum: ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'],
+          description: 'Type of metadata filter to discover options for. Valid values: "genres" (Rock, Jazz, etc.), "mediaTypes" (CD, Vinyl, etc.), "countries" (US, UK, etc.), "releaseTypes" (Album, EP, etc.), "recordLabels" (Sony Music, etc.), "moods" (Energetic, etc.)'
+        },
         limit: {
           type: 'number',
-          description: 'Maximum number of tag names to return',
+          description: 'Maximum number of options to return',
           minimum: 1,
-          maximum: 100,
-          default: 100,
-        },
-        minUsage: {
-          type: 'number',
-          description: 'Minimum song count to include a tag name',
-          minimum: 1,
-          default: 1,
+          maximum: 200,
+          default: 50,
         },
       },
+      required: ['filterType'],
     },
   },
 ];
@@ -149,16 +95,12 @@ export function createTagsToolCategory(client: NavidromeClient, _config: Config)
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
-        case 'list_tags':
-          return await listTags(client, args);
-        case 'get_tag':
-          return await getTag(client, args);
         case 'search_by_tags':
           return await searchByTags(client, args);
         case 'get_tag_distribution':
           return await getTagDistribution(client, args);
-        case 'list_unique_tags':
-          return await listUniqueTags(client, args);
+        case 'get_filter_options':
+          return filterCacheManager.getFilterOptions(args);
         default:
           throw new Error(`Unknown tags tool: ${name}`);
       }

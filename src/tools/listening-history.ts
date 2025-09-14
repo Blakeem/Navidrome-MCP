@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/song-transformer.js';
+import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/index.js';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 
 // Helper function to parse duration from MM:SS format to seconds
@@ -33,7 +33,7 @@ function parseDuration(durationFormatted: string): number {
   return 0;
 }
 
-export interface RecentlyPlayedTrack {
+interface RecentlyPlayedTrack {
   id: string;
   title: string;
   artist: string;
@@ -43,13 +43,13 @@ export interface RecentlyPlayedTrack {
   duration: number;
 }
 
-export interface RecentlyPlayedResult {
+interface RecentlyPlayedResult {
   timeRange: string;
   count: number;
   tracks: RecentlyPlayedTrack[];
 }
 
-export interface MostPlayedItem {
+interface MostPlayedItem {
   id: string;
   title?: string;
   name?: string;
@@ -60,7 +60,7 @@ export interface MostPlayedItem {
   albumCount?: number;
 }
 
-export interface MostPlayedResult {
+interface MostPlayedResult {
   type: string;
   minPlayCount: number;
   count: number;

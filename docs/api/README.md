@@ -30,7 +30,7 @@ const songs = await fetch('/api/song?_start=0&_end=10', {
 ### Core APIs
 1. **[Authentication](01-authentication.md)** - Login, tokens, session management
 2. **[Users](02-users.md)** - User management and permissions
-3. **[Media Library](03-media-library.md)** - Songs, albums, artists, genres
+3. **[Media Library](03-media-library.md)** - Songs, albums, artists, genres with comprehensive filtering
 4. **[Playlists](04-playlists.md)** - Playlist CRUD, track management, M3U import/export
 5. **[Playback Queue](05-playback-queue.md)** - Cross-device queue synchronization
 6. **[Players](06-players.md)** - Player/client registration and settings
@@ -45,6 +45,7 @@ const songs = await fetch('/api/song?_start=0&_end=10', {
 ### Administration
 12. **[Library Management](12-library-management.md)** - Library admin, user access, cleanup
 13. **[Subsonic API](13-subsonic-api.md)** - Full Subsonic API compatibility
+14. **[List & Tag Endpoints](14-list-endpoints.md)** - Comprehensive tag system and filter options
 
 ## API Overview
 
@@ -79,9 +80,21 @@ List endpoints support pagination:
 - `_end` (number): Ending index (exclusive)
 - `_sort` (string): Sort field name
 - `_order` (string): "ASC" or "DESC"
+- `seed` (number): Random seed for consistent random ordering
 
 ### Filtering
-Use `filter` parameter with JSON criteria:
+Navidrome supports multiple filtering approaches:
+
+**Direct Parameter Filtering (Recommended):**
+```javascript
+// Filter by genre and library
+const url = `/api/album?genre_id=abc123&library_id=1&_sort=recently_added&_order=DESC`
+
+// Multiple filters with role-based filtering
+const url = `/api/album?role_producer_id=xyz789&media_id=vinyl456&starred=true`
+```
+
+**Legacy JSON Filtering:**
 ```javascript
 const filter = {
   "genre": "Rock",
@@ -90,6 +103,16 @@ const filter = {
 }
 const url = `/api/song?filter=${encodeURIComponent(JSON.stringify(filter))}`
 ```
+
+**Available Filter Types:**
+- `library_id` - Filter by music library
+- `genre_id` - Filter by genre
+- `mood_id` - Filter by mood
+- `{tag_name}_id` - Filter by any tag type
+- `role_{role}_id` - Filter by participant roles
+- `starred` - Boolean filters
+- `has_rating` - Content with ratings
+- Standard field filters (name, title, etc.)
 
 ### Error Handling
 All APIs return consistent error formats:
@@ -196,10 +219,28 @@ async getSongs(start = 0, end = 50, sort = 'title', order = 'ASC') {
   return this.apiRequest(`/song?_start=${start}&_end=${end}&_sort=${sort}&_order=${order}`)
 }
 
-// Search
-async search(query, type = 'song') {
-  const filter = JSON.stringify({ title: { contains: query } })
-  return this.apiRequest(`/${type}?filter=${encodeURIComponent(filter)}`)
+// Search using full-text search
+async search(query, type = 'song', libraryId = null) {
+  const params = new URLSearchParams()
+  if (type === 'song') params.set('title', query)
+  else if (type === 'album') params.set('name', query)
+  else if (type === 'artist') params.set('name', query)
+  
+  if (libraryId) params.set('library_id', libraryId)
+  
+  return this.apiRequest(`/${type}?${params}`)
+}
+
+// Advanced filtering
+async getAlbumsByGenreAndMood(genreId, moodId, libraryId) {
+  const params = new URLSearchParams({
+    genre_id: genreId,
+    mood_id: moodId,
+    library_id: libraryId,
+    _sort: 'recently_added',
+    _order: 'DESC'
+  })
+  return this.apiRequest(`/album?${params}`)
 }
 
 // Stream URL
@@ -229,6 +270,14 @@ TOKEN=$(curl -s -X POST http://localhost:4533/auth/login \
 # Get songs
 curl -H "X-ND-Authorization: Bearer $TOKEN" \
   "http://localhost:4533/api/song?_start=0&_end=5"
+
+# Get albums by genre with library filtering
+curl -H "X-ND-Authorization: Bearer $TOKEN" \
+  "http://localhost:4533/api/album?genre_id=abc123&library_id=1&_sort=recently_added&_order=DESC"
+
+# Get available genres for filtering
+curl -H "X-ND-Authorization: Bearer $TOKEN" \
+  "http://localhost:4533/api/genre?library_id=1"
 
 # Subsonic ping
 curl "http://localhost:4533/rest/ping?u=admin&p=admin&v=1.16.1&c=test&f=json"

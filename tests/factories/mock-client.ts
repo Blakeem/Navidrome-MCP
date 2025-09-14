@@ -30,24 +30,5 @@ export function createMockClient(): MockNavidromeClient {
   };
 }
 
-/**
- * Creates a real client instance for live read operations
- * Uses actual server connection for API compatibility testing
- * 
- * @deprecated Use getSharedLiveClient() from './shared-client.js' instead to avoid rate limiting
- */
-export async function createLiveClient(): Promise<NavidromeClient> {
-  const { NavidromeClient } = await import('../../src/client/navidrome-client.js');
-  const { loadConfig } = await import('../../src/config.js');
-  
-  // Load test configuration
-  const config = await loadConfig();
-  
-  const client = new NavidromeClient(config);
-  await client.initialize();
-  
-  return client;
-}
-
 // Re-export shared client utilities for convenience
-export { getSharedLiveClient, resetSharedClient, isSharedClientInitialized } from './shared-client.js';
+export { getSharedLiveClient } from './shared-client.js';

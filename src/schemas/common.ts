@@ -60,6 +60,32 @@ export const SortSchema = z.string().optional().default('name');
 export const OptionalBooleanSchema = z.boolean().optional();
 export const RequiredBooleanSchema = z.boolean();
 
+// Enhanced search schema with filtering and sorting options
+export const EnhancedSearchSchema = SearchQuerySchema.extend({
+  // Text-based filters (resolved to IDs internally)
+  genre: z.string().optional(),
+  mediaType: z.string().optional(),
+  country: z.string().optional(), 
+  releaseType: z.string().optional(),
+  recordLabel: z.string().optional(),
+  mood: z.string().optional(),
+  
+  // Advanced sorting options
+  sort: z.enum([
+    'name', 'title', 'artist', 'album', 'year', 'duration', 
+    'playCount', 'rating', 'recently_added', 'starred_at', 'random'
+  ]).optional().default('name'),
+  order: OrderSchema,
+  randomSeed: z.number().optional(),
+  
+  // Year filtering
+  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  
+  // Boolean filters
+  starred: OptionalBooleanSchema,
+});
+
 // Rating validation
 export const RatingSchema = z.number().min(0).max(5);
 
@@ -75,6 +101,102 @@ export const UrlSchema = z.string().url('URL must be a valid URL');
 export const StringArraySchema = z.array(z.string());
 export const OptionalStringArraySchema = z.array(z.string()).optional();
 export const NonEmptyStringArraySchema = z.array(z.string()).min(1, 'At least one item is required');
+
+// Individual search tool schemas (query optional for listing functionality)
+export const SearchSongsSchema = EnhancedSearchSchema.extend({
+  query: z.string().optional().default(''), // Override required query to be optional
+  limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
+  offset: OffsetSchema, // Add offset support for pagination
+  sort: z.enum([
+    'title', 'artist', 'album', 'year', 'duration',
+    'playCount', 'rating', 'recently_added', 'starred_at', 'random'
+  ]).optional().default('title'),
+});
+
+export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
+  query: z.string().optional().default(''), // Override required query to be optional
+  limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
+  offset: OffsetSchema, // Add offset support for pagination
+  sort: z.enum([
+    'name', 'artist', 'year', 'songCount', 'duration',
+    'playCount', 'rating', 'recently_added', 'starred_at', 'random'
+  ]).optional().default('name'),
+});
+
+export const SearchArtistsSchema = EnhancedSearchSchema.extend({
+  query: z.string().optional().default(''), // Override required query to be optional
+  limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
+  offset: OffsetSchema, // Add offset support for pagination
+  sort: z.enum([
+    'name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'
+  ]).optional().default('name'),
+});
+
+// List tool schemas (no query required, pagination-focused)
+export const ListSongsSchema = z.object({
+  limit: createLimitSchema(1, 500, 100),
+  offset: OffsetSchema,
+  sort: z.enum([
+    'title', 'artist', 'album', 'year', 'duration', 
+    'playCount', 'rating', 'recently_added', 'starred_at', 'random'
+  ]).optional().default('title'),
+  order: OrderSchema,
+  randomSeed: z.number().optional(),
+  
+  // Same filtering options as search tools
+  genre: z.string().optional(),
+  mediaType: z.string().optional(),
+  country: z.string().optional(),
+  releaseType: z.string().optional(),
+  recordLabel: z.string().optional(),
+  mood: z.string().optional(),
+  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  starred: OptionalBooleanSchema,
+});
+
+export const ListAlbumsSchema = z.object({
+  limit: createLimitSchema(1, 500, 100),
+  offset: OffsetSchema,
+  sort: z.enum([
+    'name', 'artist', 'year', 'songCount', 'duration',
+    'playCount', 'rating', 'recently_added', 'starred_at', 'random'
+  ]).optional().default('name'),
+  order: OrderSchema,
+  randomSeed: z.number().optional(),
+  
+  // Same filtering options as search tools
+  genre: z.string().optional(),
+  mediaType: z.string().optional(),
+  country: z.string().optional(),
+  releaseType: z.string().optional(),
+  recordLabel: z.string().optional(),
+  mood: z.string().optional(),
+  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  starred: OptionalBooleanSchema,
+});
+
+export const ListArtistsSchema = z.object({
+  limit: createLimitSchema(1, 500, 100),
+  offset: OffsetSchema,
+  sort: z.enum([
+    'name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'
+  ]).optional().default('name'),
+  order: OrderSchema,
+  randomSeed: z.number().optional(),
+  
+  // Same filtering options as search tools
+  genre: z.string().optional(),
+  mediaType: z.string().optional(),
+  country: z.string().optional(),
+  releaseType: z.string().optional(),
+  recordLabel: z.string().optional(),
+  mood: z.string().optional(),
+  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  starred: OptionalBooleanSchema,
+});
 
 // Common validation schemas for different resource types
 export const PlaylistIdSchema = createIdSchema('Playlist');

@@ -17,4 +17,4 @@
  */
 
 // Re-export the coordinated registry system
-export { registerTools, createToolResponse } from './handlers/registry.js';
+export { registerTools } from './handlers/registry.js';

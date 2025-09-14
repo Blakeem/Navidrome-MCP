@@ -84,7 +84,7 @@ import { registerTools } from './handlers/registry.js';
 1. **Live Read Tests** - Test against real server, validate structure not content
 2. **Mocked Write Tests** - Mock all write operations for safety
 3. **Feature Detection** - Test configuration-based tool registration
-4. **Tool Count Verification** - Ensure no tools go missing (currently 57 tools)
+4. **Tool Registration Verification** - Ensure no tools go missing with comprehensive validation
 
 ### Test Examples
 ```typescript
@@ -161,9 +161,9 @@ pnpm typecheck
 - `NAVIDROME_PASSWORD`: Password
 
 **Optional (enable features):**
-- `LASTFM_API_KEY`: Last.fm integration (7 additional tools)
+- `LASTFM_API_KEY`: Last.fm integration (enables music discovery features)
 - `RADIO_BROWSER_USER_AGENT`: Radio discovery
-- `LYRICS_PROVIDER=lrclib`: Lyrics support (1 additional tool)
+- `LYRICS_PROVIDER=lrclib`: Lyrics support (enables song lyrics features)
 - `DEBUG=true`: Enable debug logging
 
 ### For Testing and Development
@@ -187,7 +187,7 @@ DEBUG=true
 # Build first
 pnpm build
 
-# List tools (should show 57 with all features)
+# List tools (count varies based on enabled features)
 npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
 
 # Test specific tool
@@ -200,11 +200,49 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js \
 npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
+## Testing Navidrome API with curl
+
+**IMPORTANT: Use `/auth/login` endpoint (NOT `/auth` or `/api/login`)**
+
+```bash
+# 1. Get authentication token
+TOKEN=$(curl -s -X POST http://nas.pixelmuse.ai:4533/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"claude","password":"anthropicuser"}' | jq -r '.token')
+
+# 2. Use token with X-ND-Authorization header
+curl -s "http://nas.pixelmuse.ai:4533/api/album?_start=0&_end=5&library_id=1" \
+  -H "X-ND-Authorization: Bearer $TOKEN" | jq '.'
+
+# 3. Test filters (use {type}_id parameters)
+curl -s "http://nas.pixelmuse.ai:4533/api/album?genre_id=UUID&library_id=1" \
+  -H "X-ND-Authorization: Bearer $TOKEN" | jq '.'
+
+# 4. Test tag endpoint (for discovering filter values)
+curl -s "http://nas.pixelmuse.ai:4533/api/tag?tag_name=genre&library_id=1" \
+  -H "X-ND-Authorization: Bearer $TOKEN" | jq '.[] | {id, tagValue}'
+```
+
+## Dead Code Prevention
+
+**Integrated Detection Tools:**
+- `pnpm check:dead-code` - ts-unused-exports for systematic unused export detection
+- `pnpm check:all` - Combined lint, typecheck, and dead code validation
+- `tests/meta/dead-code-detection.test.ts` - Deterministic validation of critical patterns
+- GitHub Actions CI - Automated dead code detection on pull requests
+
+**Prevention Guidelines:**
+- Verify all method calls exist before using (use TypeScript strict mode)
+- Import services as singleton instances, not classes directly
+- Remove unused exports immediately after refactoring
+- Test all singleton initialization patterns for null safety
+
 ## Key Principles
 
 1. **Follow Established Patterns** - The codebase has mature patterns, use them
-2. **Schema Reuse** - Import from `src/schemas/` instead of duplicating  
+2. **Schema Reuse** - Import from `src/schemas/` instead of duplicating
 3. **Unit Test Everything** - Required for all new features
 4. **Quality Gates** - Zero tolerance for lint/type/test failures
 5. **MCP Compliance** - Use logger, proper JSON-RPC, stderr output
 6. **Production Ready** - Every commit must be production-quality
+7. **Dead Code Prevention** - Use automated detection tools and validate critical patterns

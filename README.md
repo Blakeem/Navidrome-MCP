@@ -271,14 +271,12 @@ Add the Navidrome MCP server:
 
 | Tool | Description |
 |------|-------------|
-| `list_songs` | Browse songs with filtering and sorting |
-| `list_albums` | Browse albums with metadata |
-| `list_artists` | Browse artists with statistics |
-| `list_genres` | View all music genres in library |
 | `get_song` | Detailed song information |
 | `get_album` | Detailed album information |
 | `get_artist` | Detailed artist information |
 | `get_song_playlists` | Get all playlists that contain a specific song |
+| `get_user_details` | Get user information and available libraries |
+| `set_active_libraries` | Set which libraries are active for filtering content |
 
 ### 🔍 Search & Discovery
 
@@ -304,8 +302,7 @@ Add the Navidrome MCP server:
 | `update_playlist` | Update playlist metadata |
 | `delete_playlist` | Remove playlist |
 | `get_playlist_tracks` | Get playlist contents |
-| `add_tracks_to_playlist` | Add songs/albums/artists |
-| `batch_add_tracks_to_playlist` | Batch add multiple sets of tracks |
+| `add_tracks_to_playlist` | Add multiple types of content (songs/albums/artists) in a single operation |
 | `remove_tracks_from_playlist` | Remove specific tracks |
 | `reorder_playlist_track` | Rearrange track order |
 
@@ -359,11 +356,9 @@ Add the Navidrome MCP server:
 
 | Tool | Description |
 |------|-------------|
-| `list_tags` | Browse all metadata tags |
-| `get_tag` | Get detailed information about a specific tag by ID |
 | `search_by_tags` | Search by specific tags |
-| `get_tag_distribution` | Analyze tag usage |
-| `list_unique_tags` | List all unique tag names with statistics (how many unique values, total usage) |
+| `get_tag_distribution` | Analyze tag usage patterns and distribution |
+| `get_filter_options` | Get available filter values for search operations |
 
 ## Troubleshooting
 
