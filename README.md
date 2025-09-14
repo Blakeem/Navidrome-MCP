@@ -345,25 +345,6 @@ Add the Navidrome MCP server:
 
 *Note: `create_radio_station` supports an optional `validateBeforeAdd` parameter that will test stream URLs before adding them to Navidrome.
 
-**Usage Examples:**
-```json
-// Single station
-{
-  "stations": [
-    {"name": "Jazz FM", "streamUrl": "http://stream.url", "homePageUrl": "http://homepage.url"}
-  ]
-}
-
-// Multiple stations
-{
-  "stations": [
-    {"name": "Jazz FM", "streamUrl": "http://jazz.stream.url"},
-    {"name": "Classical Radio", "streamUrl": "http://classical.stream.url"}
-  ],
-  "validateBeforeAdd": true
-}
-```
-
 ### 🎤 Lyrics & Timestamps
 
 | Tool | Description |
