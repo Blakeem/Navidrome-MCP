@@ -333,9 +333,8 @@ Add the Navidrome MCP server:
 | `validate_radio_stream` | Test stream URL validity |
 | `list_radio_stations` | View all stations |
 | `get_radio_station` | Get detailed information about a specific radio station by ID |
-| `create_radio_station` | Add new station (with optional validation*) |
+| `create_radio_station` | Create radio stations using JSON array format (single or multiple stations, with optional validation*) |
 | `delete_radio_station` | Delete an internet radio station by ID |
-| `batch_create_radio_stations` | Batch add multiple stations (with optional validation*) |
 | `play_radio_station` | Start radio playback |
 | `get_current_radio_info` | Get information about currently playing radio station and stream metadata |
 | `discover_radio_stations` | Find internet radio stations globally |
@@ -344,7 +343,26 @@ Add the Navidrome MCP server:
 | `click_station` | Register play click for popularity metrics |
 | `vote_station` | Vote for a radio station |
 
-*Note: Both `create_radio_station` and `batch_create_radio_stations` support an optional `validateBeforeAdd` parameter that will test stream URLs before adding them to Navidrome.
+*Note: `create_radio_station` supports an optional `validateBeforeAdd` parameter that will test stream URLs before adding them to Navidrome.
+
+**Usage Examples:**
+```json
+// Single station
+{
+  "stations": [
+    {"name": "Jazz FM", "streamUrl": "http://stream.url", "homePageUrl": "http://homepage.url"}
+  ]
+}
+
+// Multiple stations
+{
+  "stations": [
+    {"name": "Jazz FM", "streamUrl": "http://jazz.stream.url"},
+    {"name": "Classical Radio", "streamUrl": "http://classical.stream.url"}
+  ],
+  "validateBeforeAdd": true
+}
+```
 
 ### 🎤 Lyrics & Timestamps
 

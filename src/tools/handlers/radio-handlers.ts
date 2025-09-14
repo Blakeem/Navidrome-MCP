@@ -13,7 +13,6 @@ import {
   getRadioStation,
   playRadioStation,
   getCurrentRadioInfo,
-  batchCreateRadioStations,
 } from '../radio.js';
 import { validateRadioStream } from '../radio-validation.js';
 import {
@@ -37,28 +36,45 @@ function getRadioTools(config: Config): Tool[] {
     },
     {
       name: 'create_radio_station',
-      description: 'Create a new internet radio station in Navidrome',
+      description: 'Create one or more radio stations. Always provide stations as a JSON array - use a single-item array for one station. Each station requires name and streamUrl, with optional homePageUrl.',
       inputSchema: {
         type: 'object',
         properties: {
-          name: {
-            type: 'string',
-            description: 'Station name (required)',
-          },
-          streamUrl: {
-            type: 'string',
-            description: 'Stream URL (required) - must be valid HTTP/HTTPS URL',
-          },
-          homePageUrl: {
-            type: 'string',
-            description: 'Optional homepage URL for the station',
+          stations: {
+            type: 'array',
+            description: 'Array of radio stations to create. For a single station, use: [{"name": "Station Name", "streamUrl": "http://stream.url"}]. For multiple stations, add more objects to the array.',
+            minItems: 1,
+            items: {
+              type: 'object',
+              properties: {
+                name: {
+                  type: 'string',
+                  description: 'Station name (required)',
+                  minLength: 1,
+                },
+                streamUrl: {
+                  type: 'string',
+                  description: 'Stream URL (required) - must be valid HTTP/HTTPS URL',
+                  pattern: '^https?://.+',
+                },
+                homePageUrl: {
+                  type: 'string',
+                  description: 'Optional homepage URL for the station',
+                  pattern: '^https?://.+',
+                },
+              },
+              required: ['name', 'streamUrl'],
+              additionalProperties: false,
+            },
           },
           validateBeforeAdd: {
             type: 'boolean',
-            description: 'Validate stream URL before adding (default: false)',
+            description: 'Test stream URLs before adding to ensure they work (default: false). Recommended for unknown streams.',
+            default: false,
           },
         },
-        required: ['name', 'streamUrl'],
+        required: ['stations'],
+        additionalProperties: false,
       },
     },
     {
@@ -109,42 +125,6 @@ function getRadioTools(config: Config): Tool[] {
       inputSchema: {
         type: 'object',
         properties: {},
-      },
-    },
-    {
-      name: 'batch_create_radio_stations',
-      description: 'Batch create multiple internet radio stations in Navidrome',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stations: {
-            type: 'array',
-            description: 'Array of radio stations to create',
-            items: {
-              type: 'object',
-              properties: {
-                name: {
-                  type: 'string',
-                  description: 'Station name (required)',
-                },
-                streamUrl: {
-                  type: 'string',
-                  description: 'Stream URL (required)',
-                },
-                homePageUrl: {
-                  type: 'string',
-                  description: 'Optional homepage URL',
-                },
-              },
-              required: ['name', 'streamUrl'],
-            },
-          },
-          validateBeforeAdd: {
-            type: 'boolean',
-            description: 'Validate all stream URLs before adding (default: false)',
-          },
-        },
-        required: ['stations'],
       },
     },
     {
@@ -329,8 +309,6 @@ export function createRadioToolCategory(client: NavidromeClient, config: Config)
           return await playRadioStation(config, args);
         case 'get_current_radio_info':
           return await getCurrentRadioInfo(config, args);
-        case 'batch_create_radio_stations':
-          return await batchCreateRadioStations(config, args);
         case 'validate_radio_stream':
           return await validateRadioStream(client, args);
         case 'discover_radio_stations':

@@ -72,14 +72,13 @@ const EXPECTED_CORE_TOOLS = [
   'list_recently_played',
   'list_most_played',
 
-  // Radio category (core radio management)
+  // Radio category (core radio management) - UPDATED: removed batch_create_radio_stations after consolidation
   'list_radio_stations',
   'create_radio_station',
   'delete_radio_station',
   'get_radio_station',
   'play_radio_station',
   'get_current_radio_info',
-  'batch_create_radio_stations',
   'validate_radio_stream',
 
   // Tags category

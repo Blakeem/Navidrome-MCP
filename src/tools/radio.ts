@@ -111,97 +111,156 @@ export async function listRadioStations(
 }
 
 /**
- * Create a new radio station
+ * Create radio stations - always processes as batch (single station = batch of 1)
  */
 export async function createRadioStation(
-  config: Config, 
+  config: Config,
   args: unknown
-): Promise<CreateRadioStationResponse> {
-  try {
-    const params = args as CreateRadioStationRequest & { validateBeforeAdd?: boolean };
-    
-    if (params.name === null || params.name === undefined || params.name === '' || params.streamUrl === null || params.streamUrl === undefined || params.streamUrl === '') {
-      throw new Error('Name and streamUrl are required');
-    }
-    
-    logger.debug('Creating radio station:', params);
-    
-    // If validation is requested, validate the stream first
-    if (params.validateBeforeAdd === true) {
-      const { validateRadioStream } = await import('./radio-validation.js');
-      const { NavidromeClient } = await import('../client/navidrome-client.js');
-      const client = new NavidromeClient(config);
-      await client.initialize();
-      
-      const validationResult = await validateRadioStream(client, {
-        url: params.streamUrl,
-        timeout: BATCH_VALIDATION_TIMEOUT
-      });
-      
-      if (!validationResult.success) {
-        return {
+): Promise<{ results: CreateRadioStationResponse[]; summary: string }> {
+  const params = args as {
+    stations: CreateRadioStationRequest[];
+    validateBeforeAdd?: boolean;
+  };
+
+  // Validate input
+  if (!params.stations || !Array.isArray(params.stations)) {
+    throw new Error('Provide stations array. Example: {"stations": [{"name": "Station Name", "streamUrl": "http://stream.url"}]}');
+  }
+
+  if (params.stations.length === 0) {
+    throw new Error('At least one station must be provided in the stations array');
+  }
+
+  logger.debug(`Creating ${params.stations.length} radio station(s)`);
+
+  const results: CreateRadioStationResponse[] = [];
+  let successCount = 0;
+  let failedCount = 0;
+  let validationFailedCount = 0;
+
+  // Process each station
+  for (const station of params.stations) {
+    try {
+      // Validate required fields
+      if (!station.name || station.name.trim() === '') {
+        results.push({
           success: false,
-          error: `Stream validation failed: ${validationResult.status}. Station was not added.`,
-        };
+          error: 'Station name is required and cannot be empty'
+        });
+        failedCount++;
+        continue;
       }
-    }
-    
-    const authParams = createSubsonicAuth(config);
-    authParams.set('streamUrl', params.streamUrl);
-    authParams.set('name', params.name);
-    if (params.homePageUrl !== null && params.homePageUrl !== undefined && params.homePageUrl !== '') {
-      authParams.set('homePageUrl', params.homePageUrl);
-    }
-    
-    const httpResponse = await fetch(`${config.navidromeUrl}/rest/createInternetRadioStation?${authParams.toString()}`, {
-      method: 'POST',
-    });
-    
-    if (!httpResponse.ok) {
-      throw new Error(ErrorFormatter.subsonicApi(httpResponse));
-    }
 
-    const data = await httpResponse.json() as SubsonicResponse;
-    
-    if (data['subsonic-response'].status !== 'ok') {
-      const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
-      throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
-    }
-    
-    const createdStation: RadioStationDTO = {
-      id: 'created', // Subsonic API doesn't return the created station details
-      name: params.name,
-      streamUrl: params.streamUrl,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    
-    if (params.homePageUrl !== null && params.homePageUrl !== undefined && params.homePageUrl !== '') {
-      createdStation.homePageUrl = params.homePageUrl;
-    }
+      if (!station.streamUrl || station.streamUrl.trim() === '') {
+        results.push({
+          success: false,
+          error: `Stream URL is required for station "${station.name}"`
+        });
+        failedCount++;
+        continue;
+      }
 
-    // Get one-time validation reminder message
+      logger.debug('Creating radio station:', station);
+
+      // Optional stream validation
+      if (params.validateBeforeAdd === true) {
+        const { validateRadioStream } = await import('./radio-validation.js');
+        const { NavidromeClient } = await import('../client/navidrome-client.js');
+        const client = new NavidromeClient(config);
+        await client.initialize();
+
+        const validationResult = await validateRadioStream(client, {
+          url: station.streamUrl,
+          timeout: BATCH_VALIDATION_TIMEOUT
+        });
+
+        if (!validationResult.success) {
+          results.push({
+            success: false,
+            error: `Stream validation failed for "${station.name}": ${validationResult.errors.join(', ')}`
+          });
+          failedCount++;
+          validationFailedCount++;
+          continue;
+        }
+      }
+
+      // Create the station via Subsonic API
+      const authParams = createSubsonicAuth(config);
+      authParams.set('streamUrl', station.streamUrl);
+      authParams.set('name', station.name);
+
+      if (station.homePageUrl && station.homePageUrl.trim() !== '') {
+        authParams.set('homePageUrl', station.homePageUrl);
+      }
+
+      const httpResponse = await fetch(`${config.navidromeUrl}/rest/createInternetRadioStation?${authParams.toString()}`, {
+        method: 'POST',
+      });
+
+      if (!httpResponse.ok) {
+        throw new Error(ErrorFormatter.subsonicApi(httpResponse));
+      }
+
+      const data = await httpResponse.json() as SubsonicResponse;
+
+      if (data['subsonic-response'].status !== 'ok') {
+        const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
+        throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
+      }
+
+      // Successfully created
+      const createdStation: RadioStationDTO = {
+        id: 'created', // Subsonic API doesn't return the created station details
+        name: station.name,
+        streamUrl: station.streamUrl,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (station.homePageUrl && station.homePageUrl.trim() !== '') {
+        createdStation.homePageUrl = station.homePageUrl;
+      }
+
+      results.push({
+        success: true,
+        station: createdStation,
+      });
+      successCount++;
+
+    } catch (error) {
+      logger.error(`Error creating radio station "${station.name}":`, error);
+      results.push({
+        success: false,
+        error: `Failed to add "${station.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
+      failedCount++;
+    }
+  }
+
+  // Generate summary
+  let summary = `Added ${successCount} of ${params.stations.length} station(s).`;
+  if (failedCount > 0) {
+    summary += ` ${failedCount} failed`;
+    if (validationFailedCount > 0) {
+      summary += ` (${validationFailedCount} due to validation)`;
+    }
+    summary += '.';
+  }
+
+  // Add validation reminder for first-time users (single station only)
+  if (successCount > 0 && params.stations.length === 1) {
     const messageManager = getMessageManager();
     const validationReminder = messageManager.getMessage('radio.validation_reminder');
-    
-    const apiResponse: CreateRadioStationResponse = {
-      success: true,
-      station: createdStation,
-    };
-
-    // Add validation reminder if this is the first time creating a station
-    if (validationReminder !== null && validationReminder !== undefined && validationReminder !== '') {
-      apiResponse.validation_reminder = validationReminder;
+    if (validationReminder) {
+      summary += ` ${validationReminder}`;
     }
-    
-    return apiResponse;
-  } catch (error) {
-    logger.error('Error creating radio station:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
   }
+
+  return {
+    results,
+    summary
+  };
 }
 
 /**
@@ -322,73 +381,6 @@ export async function playRadioStation(
   }
 }
 
-/**
- * Batch create multiple radio stations
- */
-export async function batchCreateRadioStations(
-  config: Config,
-  args: unknown
-): Promise<{ results: CreateRadioStationResponse[]; summary: string }> {
-  const params = args as {
-    stations: CreateRadioStationRequest[];
-    validateBeforeAdd?: boolean;
-  };
-  
-  if (params.stations === null || params.stations === undefined || !Array.isArray(params.stations)) {
-    throw new Error('Stations array is required');
-  }
-  
-  if (params.stations.length === 0) {
-    throw new Error('At least one station must be provided');
-  }
-  
-  logger.debug(`Batch creating ${params.stations.length} radio stations`);
-  
-  const results: CreateRadioStationResponse[] = [];
-  let successCount = 0;
-  let failedCount = 0;
-  let validationFailedCount = 0;
-  
-  for (const station of params.stations) {
-    try {
-      const result = await createRadioStation(config, {
-        ...station,
-        validateBeforeAdd: params.validateBeforeAdd
-      });
-      
-      results.push(result);
-      
-      if (result.success) {
-        successCount++;
-      } else {
-        failedCount++;
-        if (result.error?.includes('validation failed') === true) {
-          validationFailedCount++;
-        }
-      }
-    } catch (error) {
-      results.push({
-        success: false,
-        error: `Failed to add ${station.name}: ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
-      failedCount++;
-    }
-  }
-  
-  let summary = `Added ${successCount} of ${params.stations.length} stations.`;
-  if (failedCount > 0) {
-    summary += ` ${failedCount} failed`;
-    if (validationFailedCount > 0) {
-      summary += ` (${validationFailedCount} due to validation)`;
-    }
-    summary += '.';
-  }
-  
-  return {
-    results,
-    summary
-  };
-}
 
 /**
  * Get current radio playback information
