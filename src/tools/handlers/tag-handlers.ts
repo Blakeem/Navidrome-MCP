@@ -39,14 +39,14 @@ const tools: Tool[] = [
   },
   {
     name: 'get_tag_distribution',
-    description: 'Analyze tag usage patterns and distribution across the music library. Shows statistics for metadata categories like how many genres, release types, etc. are in the library with their usage counts.',
+    description: 'Analyze tag usage patterns and distribution across the music library. Shows statistics for metadata categories with their usage counts. Supports: "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood".',
     inputSchema: {
       type: 'object',
       properties: {
         tagNames: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Specific tag names to analyze. If omitted, analyzes common types: "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood", "composer", "producer", "year"',
+          description: 'Specific tag names to analyze. If omitted, analyzes common types: "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood"',
         },
         limit: {
           type: 'number',

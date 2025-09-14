@@ -121,7 +121,7 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
     // If specific tag names provided, analyze those; otherwise analyze common tag types
     const tagNamesToAnalyze = params.tagNames ?? [
       'genre', 'releasetype', 'media', 'releasecountry', 'recordlabel',
-      'mood', 'composer', 'producer', 'year'
+      'mood'
     ];
 
     // Analyze each tag name using server-side filtering
