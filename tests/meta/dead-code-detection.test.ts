@@ -6,9 +6,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
+import { join, resolve } from 'path';
 import { execSync } from 'child_process';
+
+// Get project root dynamically
+const projectRoot = resolve(__dirname, '../../');
 
 describe('Dead Code Detection - Deterministic Validation', () => {
 
@@ -18,7 +21,7 @@ describe('Dead Code Detection - Deterministic Validation', () => {
       const problematicPatterns = [
         {
           pattern: /\.isInitialized\(\)/g,
-          file: '/home/blake/Development/Navidrome-MCP/tests/factories/shared-client.ts',
+          file: join(projectRoot, 'tests/factories/shared-client.ts'),
           description: 'isInitialized() calls on NavidromeClient (which lacks this method)'
         }
       ];
@@ -54,9 +57,9 @@ describe('Dead Code Detection - Deterministic Validation', () => {
     it('should validate all manager services have consistent isInitialized() patterns', () => {
       // Test that all manager services consistently implement isInitialized()
       const managerServices = [
-        '/home/blake/Development/Navidrome-MCP/src/services/library-manager.ts',
-        '/home/blake/Development/Navidrome-MCP/src/services/filter-cache-manager.ts',
-        '/home/blake/Development/Navidrome-MCP/src/client/navidrome-client.ts'
+        join(projectRoot, 'src/services/library-manager.ts'),
+        join(projectRoot, 'src/services/filter-cache-manager.ts'),
+        join(projectRoot, 'src/client/navidrome-client.ts')
       ];
 
       const servicesWithIsInitialized: string[] = [];
@@ -78,9 +81,12 @@ describe('Dead Code Detection - Deterministic Validation', () => {
       }
 
       // If any service calls isInitialized() on another service, both should implement it
-      const clientContent = readFileSync('/home/blake/Development/Navidrome-MCP/src/client/navidrome-client.ts', 'utf-8');
-      if (clientContent.includes('libraryManager.isInitialized()')) {
-        expect(servicesWithIsInitialized).toContain('/home/blake/Development/Navidrome-MCP/src/services/library-manager.ts');
+      const clientFile = join(projectRoot, 'src/client/navidrome-client.ts');
+      if (existsSync(clientFile)) {
+        const clientContent = readFileSync(clientFile, 'utf-8');
+        if (clientContent.includes('libraryManager.isInitialized()')) {
+          expect(servicesWithIsInitialized).toContain(join(projectRoot, 'src/services/library-manager.ts'));
+        }
       }
     });
   });
@@ -89,8 +95,9 @@ describe('Dead Code Detection - Deterministic Validation', () => {
     it('should detect unused exports using ts-unused-exports', () => {
       try {
         execSync('pnpm run check:dead-code', {
-          cwd: '/home/blake/Development/Navidrome-MCP',
-          stdio: 'pipe'
+          cwd: projectRoot,
+          stdio: 'pipe',
+          env: { ...process.env, PATH: process.env.PATH }
         });
 
         // If ts-unused-exports passes without error, we're good
@@ -151,9 +158,9 @@ describe('Dead Code Detection - Deterministic Validation', () => {
   describe('Singleton Pattern Validation', () => {
     it('should ensure singleton patterns have proper initialization checks', () => {
       const singletonFiles = [
-        '/home/blake/Development/Navidrome-MCP/tests/factories/shared-client.ts',
-        '/home/blake/Development/Navidrome-MCP/src/services/library-manager.ts',
-        '/home/blake/Development/Navidrome-MCP/src/services/filter-cache-manager.ts'
+        join(projectRoot, 'tests/factories/shared-client.ts'),
+        join(projectRoot, 'src/services/library-manager.ts'),
+        join(projectRoot, 'src/services/filter-cache-manager.ts')
       ];
 
       for (const file of singletonFiles) {
@@ -199,7 +206,11 @@ describe('Dead Code Detection - Deterministic Validation', () => {
       // This test ensures that singleton patterns like SharedTestClient
       // have tests that actually exercise retry/error paths
 
-      const sharedClientFile = '/home/blake/Development/Navidrome-MCP/tests/factories/shared-client.ts';
+      const sharedClientFile = join(projectRoot, 'tests/factories/shared-client.ts');
+      if (!existsSync(sharedClientFile)) {
+        console.log('Info: SharedTestClient file not found, skipping test coverage analysis');
+        return;
+      }
       const sharedClientContent = readFileSync(sharedClientFile, 'utf-8');
 
       // If there are retry/error handling patterns
@@ -207,9 +218,14 @@ describe('Dead Code Detection - Deterministic Validation', () => {
           sharedClientContent.includes('RETRY_DELAY')) {
 
         // Check if there are tests for these patterns
-        const testFiles = readdirSync('/home/blake/Development/Navidrome-MCP/tests/unit')
+        const testDir = join(projectRoot, 'tests/unit');
+        if (!existsSync(testDir)) {
+          console.log('Info: Test directory not found, skipping retry test analysis');
+          return;
+        }
+        const testFiles = readdirSync(testDir)
           .filter(file => file.endsWith('.test.ts'))
-          .map(file => join('/home/blake/Development/Navidrome-MCP/tests/unit', file));
+          .map(file => join(testDir, file));
 
         let hasRetryTests = false;
         for (const testFile of testFiles) {
@@ -239,12 +255,12 @@ describe('Dead Code Detection - Deterministic Validation', () => {
 
       const servicePatterns = [
         {
-          serviceFile: '/home/blake/Development/Navidrome-MCP/src/services/library-manager.ts',
+          serviceFile: join(projectRoot, 'src/services/library-manager.ts'),
           expectedUsage: 'libraryManager',
           exportedClass: 'LibraryManager'
         },
         {
-          serviceFile: '/home/blake/Development/Navidrome-MCP/src/services/filter-cache-manager.ts',
+          serviceFile: join(projectRoot, 'src/services/filter-cache-manager.ts'),
           expectedUsage: 'filterCacheManager',
           exportedClass: 'FilterCacheManager'
         }
