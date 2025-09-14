@@ -32,7 +32,7 @@ export interface ParallelSearchResponses {
 /**
  * Aggregated search results with metadata
  */
-export interface AggregatedSearchResult {
+interface AggregatedSearchResult {
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
@@ -88,7 +88,7 @@ export function aggregateSearchResults(
 /**
  * Parameters for building URL search parameters for different content types
  */
-export interface SearchParamsConfig {
+interface SearchParamsConfig {
   artistCount: number;
   albumCount: number;
   songCount: number;
@@ -105,7 +105,7 @@ export interface SearchParamsConfig {
 /**
  * Result of building search parameters for different content types
  */
-export interface ContentTypeParams {
+interface ContentTypeParams {
   songParams: string;
   albumParams: string;
   artistParams: string;

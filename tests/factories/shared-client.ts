@@ -132,18 +132,3 @@ export async function getSharedLiveClient(): Promise<NavidromeClient> {
   return sharedClient.getClient();
 }
 
-/**
- * Reset the shared client (for test cleanup if needed)
- */
-export function resetSharedClient(): void {
-  const sharedClient = SharedTestClient.getInstance();
-  sharedClient.reset();
-}
-
-/**
- * Check if shared client is initialized
- */
-export function isSharedClientInitialized(): boolean {
-  const sharedClient = SharedTestClient.getInstance();
-  return sharedClient.isInitialized();
-}

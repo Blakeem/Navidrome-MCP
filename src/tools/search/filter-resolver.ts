@@ -21,7 +21,7 @@ import { filterCacheManager } from '../../services/filter-cache-manager.js';
 /**
  * Interface for search parameters that include filterable fields
  */
-export interface FilterableSearchParams {
+interface FilterableSearchParams {
   genre?: string | undefined;
   mediaType?: string | undefined;
   country?: string | undefined;
@@ -36,7 +36,7 @@ export interface FilterableSearchParams {
 /**
  * Result of filter resolution including both resolved IDs and applied filters for display
  */
-export interface FilterResolutionResult {
+interface FilterResolutionResult {
   resolvedFilters: Record<string, string>;
   appliedFilters: Record<string, string>;
 }
@@ -142,7 +142,7 @@ export function resolveTextFilters(params: FilterableSearchParams): FilterResolu
 /**
  * Interface for search parameters that can be converted to URL parameters
  */
-export interface SearchParameterInput extends FilterableSearchParams {
+interface SearchParameterInput extends FilterableSearchParams {
   query: string;
   limit: number;
   offset?: number;
@@ -154,7 +154,7 @@ export interface SearchParameterInput extends FilterableSearchParams {
 /**
  * Result of building enhanced search parameters
  */
-export interface EnhancedSearchResult {
+interface EnhancedSearchResult {
   searchParams: string;
   appliedFilters: Record<string, string>;
 }

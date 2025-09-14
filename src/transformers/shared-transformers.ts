@@ -23,7 +23,7 @@
 /**
  * Base interface for entities with genre information
  */
-export interface RawEntityWithGenres {
+interface RawEntityWithGenres {
   genre?: string;
   genres?: Array<{ id: string; name: string }>;
   [key: string]: unknown;

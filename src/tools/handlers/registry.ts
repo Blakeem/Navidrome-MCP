@@ -38,7 +38,7 @@ export class ToolRegistry {
 }
 
 // Utility function to create consistent tool responses
-export function createToolResponse(result: unknown): { content: { type: 'text'; text: string }[] } {
+function createToolResponse(result: unknown): { content: { type: 'text'; text: string }[] } {
   return {
     content: [
       {

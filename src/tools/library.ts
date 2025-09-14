@@ -109,7 +109,7 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
 /**
  * Set active libraries for the user session
  */
-export async function setActiveLibraries(args: unknown): Promise<LibraryManagementResponse> {
+async function setActiveLibraries(args: unknown): Promise<LibraryManagementResponse> {
   try {
     const params = args as SetActiveLibrariesRequest;
     

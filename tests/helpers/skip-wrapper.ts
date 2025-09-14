@@ -10,14 +10,14 @@ import { shouldSkipLiveTests } from './env-detection.js';
 /**
  * Conditionally skip entire test suites that require live integration
  */
-export const describeLiveOnly = shouldSkipLiveTests() 
+const describeLiveOnly = shouldSkipLiveTests() 
   ? describe.skip 
   : describe;
 
 /**
  * Conditionally skip individual tests that require live integration
  */
-export const itLiveOnly = shouldSkipLiveTests() 
+const itLiveOnly = shouldSkipLiveTests() 
   ? it.skip 
   : it;
 
@@ -25,7 +25,7 @@ export const itLiveOnly = shouldSkipLiveTests()
  * Wrapper for beforeAll hooks in live-dependent test suites
  * Returns early if live tests should be skipped
  */
-export function beforeAllLive(fn: () => Promise<void> | void) {
+function beforeAllLive(fn: () => Promise<void> | void) {
   return beforeAll(async () => {
     if (shouldSkipLiveTests()) {
       return; // Skip setup if live tests are disabled
@@ -37,13 +37,13 @@ export function beforeAllLive(fn: () => Promise<void> | void) {
 /**
  * Mock-only describe - only runs when live tests are skipped
  */
-export const describeMockOnly = shouldSkipLiveTests() 
+const describeMockOnly = shouldSkipLiveTests() 
   ? describe 
   : describe.skip;
 
 /**
  * Mock-only it - only runs when live tests are skipped  
  */
-export const itMockOnly = shouldSkipLiveTests() 
+const itMockOnly = shouldSkipLiveTests() 
   ? it 
   : it.skip;
