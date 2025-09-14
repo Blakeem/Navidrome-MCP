@@ -123,7 +123,7 @@ export async function createRadioStation(
   };
 
   // Validate input
-  if (!params.stations || !Array.isArray(params.stations)) {
+  if (params.stations === null || params.stations === undefined || !Array.isArray(params.stations)) {
     throw new Error('Provide stations array. Example: {"stations": [{"name": "Station Name", "streamUrl": "http://stream.url"}]}');
   }
 
@@ -190,7 +190,7 @@ export async function createRadioStation(
       authParams.set('streamUrl', station.streamUrl);
       authParams.set('name', station.name);
 
-      if (station.homePageUrl && station.homePageUrl.trim() !== '') {
+      if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
         authParams.set('homePageUrl', station.homePageUrl);
       }
 
@@ -218,7 +218,7 @@ export async function createRadioStation(
         updatedAt: new Date().toISOString(),
       };
 
-      if (station.homePageUrl && station.homePageUrl.trim() !== '') {
+      if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
         createdStation.homePageUrl = station.homePageUrl;
       }
 
@@ -252,7 +252,7 @@ export async function createRadioStation(
   if (successCount > 0 && params.stations.length === 1) {
     const messageManager = getMessageManager();
     const validationReminder = messageManager.getMessage('radio.validation_reminder');
-    if (validationReminder) {
+    if (validationReminder !== null && validationReminder !== undefined && validationReminder !== '') {
       summary += ` ${validationReminder}`;
     }
   }
