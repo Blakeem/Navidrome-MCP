@@ -1,6 +1,6 @@
 {
   "name": "navidrome-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MCP server for interacting with Navidrome music server",
   "type": "module",
   "main": "dist/index.js",
