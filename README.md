@@ -159,6 +159,7 @@ Add the Navidrome MCP server:
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
+        "NAVIDROME_DEFAULT_LIBRARIES": "1,2", // Optional: Set default active libraries (comma-separated IDs)
         "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
         "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
@@ -181,6 +182,7 @@ Add the Navidrome MCP server:
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
+        "NAVIDROME_DEFAULT_LIBRARIES": "1,2", // Optional: Set default active libraries (comma-separated IDs)
         "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
         "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
@@ -191,9 +193,13 @@ Add the Navidrome MCP server:
 }
 ```
 
-**Important**: 
+**Important**:
 - **NPM method**: Uses `npx navidrome-mcp` which auto-updates on each launch
 - **Manual method**: Requires absolute paths (full path from root) and manual updates
+- **Library filtering**: Use `NAVIDROME_DEFAULT_LIBRARIES` to set default active libraries (e.g., "1" for one library, "1,2,3" for multiple)
+  - If not set, all libraries are active by default
+  - You can change active libraries at runtime using the `set_active_libraries` tool
+  - Invalid library IDs are ignored with a warning
 - Get a free Last.fm API key at [Last.fm](https://www.last.fm/api) (optional - enables music discovery)
 - Radio Browser integration requires a User-Agent string (enables station discovery)
 - Lyrics integration works without API keys (LRCLIB is free)
