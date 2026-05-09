@@ -140,31 +140,42 @@ mpv's IPC is newline-delimited JSON, bidirectional. Every command gets a respons
 
 The IPC client maintains a property cache so `now_playing` is a synchronous local read.
 
-## Tool Surface (v1)
+## Tool Surface
 
-### Playback control
+### Stage 2 (shipped — 10 tools)
+
+#### Playback control
+| Tool | Args | Effect | Status |
+|---|---|---|---|
+| `play_song` | `{ songId }` | Replace queue with single song; verifies song via Navidrome API | ✓ implemented |
+| `play_album` | `{ albumId, shuffle? }` | Replace queue with album tracks (in order, or shuffled once if `shuffle: true`) | ✓ implemented |
+| `pause` / `resume` | — | Toggle playback | ✓ implemented |
+| `next` / `previous` | — | Skip (uses mpv `force` flag so it advances even at playlist end) | ✓ implemented |
+| `seek` | `{ seconds, mode: 'absolute' \| 'relative' }` (default `'relative'`) | Move within the current track | ✓ implemented |
+| `set_volume` | `{ level }` (0–100) | mpv internal volume | ✓ implemented |
+
+#### Read state
+| Tool | Returns | Status |
+|---|---|---|
+| `now_playing` | `{ engineRunning, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength? }` (synchronous from cache; does NOT spawn mpv) | ✓ implemented |
+| `playback_status` | `{ engineRunning, mpvPath, mpvVersion, volume, idle }` (does NOT spawn mpv) | ✓ implemented |
+
+### Stage 3 (deferred — queue manipulation)
+
+The original v1 spec listed these tools as part of v1; they are **deferred to Stage 3** so basic playback can be hands-on tested before queue manipulation is designed.
+
 | Tool | Args | Effect |
 |---|---|---|
-| `play_album` | `{ albumId, shuffle? }` | Replace queue with album in track order |
-| `play_song` | `{ songId }` | Replace queue with single song |
+| `get_queue` | — | Full ordered queue with track metadata |
 | `enqueue_album` | `{ albumId, position? }` | Append (or insert at position) |
 | `enqueue_songs` | `{ songIds[], position? }` | Append/insert multiple |
 | `enqueue_random_albums` | `{ count, source: 'starred' \| 'top-rated' \| 'all', replace? }` | The headline tool |
 | `clear_queue` | — | `playlist-clear`, stop |
-| `pause` / `resume` | — | Toggle |
-| `next` / `previous` | — | Skip |
-| `seek` | `{ seconds, mode: 'absolute' \| 'relative' }` | Position |
-| `set_volume` | `{ level }` (0–100) | mpv volume |
 | `shuffle_queue` | — | `playlist-shuffle` |
 | `move_in_queue` | `{ from, to }` | Reorder |
 | `remove_from_queue` | `{ index }` | Drop one |
 
-### Read state
-| Tool | Returns |
-|---|---|
-| `now_playing` | `{ song, album, artist, position, duration, paused, queueIndex, queueLength }` (synchronous from cache) |
-| `get_play_queue` | Full ordered queue with track metadata |
-| `playback_status` | `{ engineRunning, mpvVersion, volume, idle }` |
+Note: `clear_saved_queue` / `save_queue` / `get_saved_queue` (renamed in Stage 1) operate on Navidrome's *server-side* advisory queue, not the live mpv playlist. The Stage 3 `clear_queue` will operate on the live mpv playlist.
 
 ### Naming collision (resolved in Stage 1)
 The original `get_queue` / `set_queue` / `clear_queue` tools were renamed to `get_saved_queue` / `save_queue` / `clear_saved_queue` so the live playback tools own the simpler names. The "saved" tools manipulate Navidrome's server-side advisory queue (cross-device sync, what the web UI shows); the playback tools control actual audio output via mpv.

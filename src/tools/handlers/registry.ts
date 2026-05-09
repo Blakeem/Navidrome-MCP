@@ -60,6 +60,8 @@ import { createRadioToolCategory } from './radio-handlers.js';
 import { createLastFmToolCategory } from './lastfm-handlers.js';
 import { createLyricsToolCategory } from './lyrics-handlers.js';
 import { createTagsToolCategory } from './tag-handlers.js';
+import { createPlaybackToolCategory } from './playback-handlers.js';
+import { playbackEngine } from '../../services/playback/playback-engine.js';
 
 // Main registration function
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
@@ -68,6 +70,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
   // Use feature flags from config for conditional tools
   const hasLastFm = config.features.lastfm;
   const hasLyrics = config.features.lyrics;
+  const hasPlayback = config.features.playback;
 
   // Register all tool categories
   registry.register('test', createTestToolCategory(client, config));
@@ -86,6 +89,13 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
   if (hasLyrics) {
     registry.register('lyrics', createLyricsToolCategory(client, config));
+  }
+
+  if (hasPlayback) {
+    // Configure the singleton engine with the loaded config so tools can
+    // lazy-spawn mpv on first invocation.
+    playbackEngine.configure(config);
+    registry.register('playback', createPlaybackToolCategory(client, config));
   }
 
   // Register MCP handlers

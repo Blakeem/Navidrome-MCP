@@ -332,6 +332,23 @@ Add the Navidrome MCP server:
 | `save_queue` | Save a queue to the Navidrome server (shown in the web interface) |
 | `clear_saved_queue` | Clear the saved queue used by the Navidrome web interface |
 
+### 🎵 Local Playback
+
+> Available when [`mpv`](https://mpv.io/) is installed on the host running the MCP server. Audio plays through the server's speakers; mpv is lazy-spawned on the first playback tool call.
+
+| Tool | Description |
+|------|-------------|
+| `play_song` | Play a single song through the local speakers |
+| `play_album` | Play a full album in track order (or shuffled with `shuffle: true`) |
+| `pause` | Pause local audio playback (position preserved) |
+| `resume` | Resume local audio playback |
+| `next` | Skip to the next track in the local playlist |
+| `previous` | Skip to the previous track in the local playlist |
+| `seek` | Move within the current track (absolute or relative) |
+| `set_volume` | Set mpv's internal volume (0-100) |
+| `now_playing` | Report current title/artist/album/position/duration and queue index/length |
+| `playback_status` | Probe engine health (running, mpv version, volume, idle) |
+
 ### 📻 Radio Management
 
 | Tool | Description |

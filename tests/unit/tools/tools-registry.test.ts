@@ -24,6 +24,7 @@ import { createRadioToolCategory } from '../../../src/tools/handlers/radio-handl
 import { createLastFmToolCategory } from '../../../src/tools/handlers/lastfm-handlers.js';
 import { createLyricsToolCategory } from '../../../src/tools/handlers/lyrics-handlers.js';
 import { createTagsToolCategory } from '../../../src/tools/handlers/tag-handlers.js';
+import { createPlaybackToolCategory } from '../../../src/tools/handlers/playback-handlers.js';
 
 // COMPREHENSIVE EXPECTED TOOL LIST - Update this when adding/removing tools
 // This replaces count-based testing with explicit validation
@@ -108,6 +109,19 @@ const EXPECTED_RADIO_BROWSER_TOOLS = [
   'vote_station',
 ];
 
+const EXPECTED_PLAYBACK_TOOLS = [
+  'pause',
+  'resume',
+  'set_volume',
+  'playback_status',
+  'play_song',
+  'play_album',
+  'next',
+  'previous',
+  'seek',
+  'now_playing',
+];
+
 describe('Tools Registry - Tool Count Verification', () => {
   let liveClient: NavidromeClient;
   let config: Config;
@@ -124,6 +138,9 @@ describe('Tools Registry - Tool Count Verification', () => {
     process.env.LASTFM_API_KEY = 'test-lastfm-key';
     process.env.RADIO_BROWSER_USER_AGENT = 'Test-Agent/1.0';
     process.env.LYRICS_PROVIDER = 'lrclib';
+    // Force mpv detection to fail so the playback feature is deterministically
+    // disabled regardless of whether mpv is installed on the host machine.
+    process.env.MPV_PATH = '/nonexistent/path/to/mpv';
     
     try {
       // Load config with deterministic environment
@@ -134,11 +151,11 @@ describe('Tools Registry - Tool Count Verification', () => {
       const { createMockClient } = await import('../../factories/mock-client.js');
       liveClient = createMockClient() as any; // Tool registry only needs client interface for creation
       
-      console.log(`Using deterministic configuration - Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
+      console.log(`Using deterministic configuration - Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}, playback=${config.features.playback}`);
     } finally {
       // Restore original environment (except for variables we want to keep for consistency)
       Object.keys(originalEnv).forEach(key => {
-        if (!['NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD', 'LASTFM_API_KEY', 'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER'].includes(key)) {
+        if (!['NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD', 'LASTFM_API_KEY', 'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER', 'MPV_PATH'].includes(key)) {
           process.env[key] = originalEnv[key];
         }
       });
@@ -159,6 +176,10 @@ describe('Tools Registry - Tool Count Verification', () => {
 
     if (config.features.radioBrowser) {
       expectedTools.push(...EXPECTED_RADIO_BROWSER_TOOLS);
+    }
+
+    if (config.features.playback) {
+      expectedTools.push(...EXPECTED_PLAYBACK_TOOLS);
     }
 
     return expectedTools.sort();
@@ -186,6 +207,10 @@ describe('Tools Registry - Tool Count Verification', () => {
 
       if (config.features.lyrics) {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
+      }
+
+      if (config.features.playback) {
+        registry.register('playback', createPlaybackToolCategory(liveClient, config));
       }
 
       const allTools = registry.getAllTools();
@@ -310,6 +335,10 @@ describe('Tools Registry - Tool Count Verification', () => {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
       }
 
+      if (config.features.playback) {
+        registry.register('playback', createPlaybackToolCategory(liveClient, config));
+      }
+
       const allTools = registry.getAllTools();
       const actualToolNames = allTools.map(tool => tool.name);
 
@@ -344,6 +373,10 @@ describe('Tools Registry - Tool Count Verification', () => {
 
       if (config.features.lyrics) {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
+      }
+
+      if (config.features.playback) {
+        registry.register('playback', createPlaybackToolCategory(liveClient, config));
       }
 
       const allTools = registry.getAllTools();
@@ -383,6 +416,10 @@ describe('Tools Registry - Tool Count Verification', () => {
 
       if (config.features.lyrics) {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
+      }
+
+      if (config.features.playback) {
+        registry.register('playback', createPlaybackToolCategory(liveClient, config));
       }
 
       const allTools = registry.getAllTools();

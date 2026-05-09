@@ -22,6 +22,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { ErrorFormatter } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
+import { detectMpvBinary } from './services/playback/mpv-process.js';
 
 // Safely load dotenv - it's optional since environment variables
 // can be provided directly (e.g., by Claude MCP configuration)
@@ -60,17 +61,23 @@ const ConfigSchema = z.object({
     lastfm: z.boolean().default(false),
     radioBrowser: z.boolean().default(false),
     lyrics: z.boolean().default(false),
+    playback: z.boolean().default(false),
   }),
 
   // API Keys and External Service Configuration
   lastFmApiKey: z.string().optional(),
   radioBrowserUserAgent: z.string().optional(),
   radioBrowserBase: z.string().url().default('https://de1.api.radio-browser.info'),
-  
+
   // Lyrics Configuration
   lyricsProvider: z.string().optional(),
   lrclibUserAgent: z.string().optional(),
   lrclibBase: z.string().url().default('https://lrclib.net'),
+
+  // Playback (mpv) Configuration
+  mpvPath: z.string().optional(),
+  playbackTranscodeFormat: z.string().default('mp3'),
+  playbackTranscodeBitrate: z.string().default('192'),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -110,6 +117,18 @@ export async function loadConfig(): Promise<Config> {
   const lyricsProvider = process.env['LYRICS_PROVIDER'] ?? undefined;
   const lrclibUserAgent = process.env['LRCLIB_USER_AGENT'] ?? undefined;
 
+  // mpv binary detection — runtime presence check enables/disables playback feature.
+  // MPV_PATH env var takes precedence; falls back to PATH lookup.
+  const detectedMpvPath = detectMpvBinary();
+  const playbackEnabled = detectedMpvPath !== null;
+  if (playbackEnabled) {
+    logger.info(`Playback feature enabled (mpv detected at ${detectedMpvPath})`);
+  } else {
+    logger.info('Playback feature disabled (mpv not found on PATH; set MPV_PATH or install mpv to enable)');
+  }
+  const playbackTranscodeFormat = process.env['PLAYBACK_TRANSCODE_FORMAT'] ?? 'mp3';
+  const playbackTranscodeBitrate = process.env['PLAYBACK_TRANSCODE_BITRATE'] ?? '192';
+
   // Parse default library IDs from environment
   let defaultLibraryIds: number[] | undefined;
   const defaultLibrariesEnv = process.env['NAVIDROME_DEFAULT_LIBRARIES'];
@@ -146,17 +165,23 @@ export async function loadConfig(): Promise<Config> {
       lastfm: (lastFmApiKey !== null && lastFmApiKey !== undefined && lastFmApiKey.trim() !== ''),
       radioBrowser: (radioBrowserUserAgent !== null && radioBrowserUserAgent !== undefined && radioBrowserUserAgent.trim() !== ''),
       lyrics: (lyricsProvider !== null && lyricsProvider !== undefined && lyricsProvider.trim() !== '') && (lrclibUserAgent !== null && lrclibUserAgent !== undefined && lrclibUserAgent.trim() !== ''),
+      playback: playbackEnabled,
     },
 
     // API Keys and External Service Configuration
     lastFmApiKey,
     radioBrowserUserAgent,
     radioBrowserBase: process.env['RADIO_BROWSER_BASE'] ?? 'https://de1.api.radio-browser.info',
-    
+
     // Lyrics Configuration
     lyricsProvider,
     lrclibUserAgent,
     lrclibBase: process.env['LRCLIB_BASE'] ?? 'https://lrclib.net',
+
+    // Playback Configuration
+    ...(detectedMpvPath !== null ? { mpvPath: detectedMpvPath } : {}),
+    playbackTranscodeFormat,
+    playbackTranscodeBitrate,
   };
 
   try {

@@ -176,7 +176,10 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
     `${endpoint}?_start=${offset}&_end=${offset + fetchLimit}&_sort=starredAt&_order=DESC`
   );
   
-  // Transform using the appropriate transformer
+  // Transform using the appropriate transformer. Each branch slices the
+  // result to `limit` because we deliberately over-fetched (5x) to compensate
+  // for the client-side starred filter — without the slice we'd return up to
+  // limit*5 items, ignoring the user's pagination request.
   let transformedItems: StarredItem[];
   if (type === 'songs') {
     const songs = transformSongsToDTO(response);
@@ -193,7 +196,8 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
         const starredAt = extractStarredAt(song);
         if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
         return item;
-      });
+      })
+      .slice(0, limit);
   } else if (type === 'albums') {
     const albums = transformAlbumsToDTO(response);
     transformedItems = albums
@@ -207,7 +211,8 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
         const starredAt = extractStarredAt(album);
         if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
         return item;
-      });
+      })
+      .slice(0, limit);
   } else {
     const artists = transformArtistsToDTO(response);
     transformedItems = artists
@@ -220,9 +225,10 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
         const starredAt = extractStarredAt(artist);
         if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
         return item;
-      });
+      })
+      .slice(0, limit);
   }
-  
+
   return {
     type,
     count: transformedItems.length,

@@ -1,0 +1,183 @@
+/**
+ * Navidrome MCP Server - mpv Process Management
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
+import { logger } from '../../utils/logger.js';
+
+/**
+ * Default IPC socket / named pipe path for the engine.
+ *
+ * Path is scoped to the user (uid on POSIX, username on Windows) rather than
+ * the process PID, so that:
+ *   - A fresh MCP server started after a restart can attach to the existing
+ *     mpv instance and resume control without interrupting playback.
+ *   - Multiple users on the same host don't collide on a shared path.
+ *
+ * Multiple MCP servers for the same user will share the same mpv — which is
+ * the right behavior, since otherwise the AIs would fight over audio output.
+ */
+export function getDefaultIpcPath(): string {
+  if (process.platform === 'win32') {
+    const user = (process.env['USERNAME'] ?? 'default').replace(/[^A-Za-z0-9_-]/g, '_');
+    return `\\\\.\\pipe\\navidrome-mcp-mpv-${user}`;
+  }
+  // POSIX: prefer numeric uid for stability; fall back to USER env if unavailable
+  const uidFn = (process as unknown as { getuid?: () => number }).getuid;
+  const uid = typeof uidFn === 'function' ? uidFn() : (process.env['USER'] ?? 'default');
+  return `/tmp/navidrome-mcp-mpv-${uid}.sock`;
+}
+
+/**
+ * Detect an mpv binary on the host.
+ *
+ * Resolution order:
+ *   1. `MPV_PATH` environment variable (verified executable)
+ *   2. `which mpv` (POSIX) / `where mpv` (Windows) — first line of output
+ *
+ * Returns `null` if no usable binary is found.
+ */
+export function detectMpvBinary(): string | null {
+  // 1. Explicit env override
+  const override = process.env['MPV_PATH'];
+  if (override !== undefined && override !== null && override.trim() !== '') {
+    const trimmed = override.trim();
+    if (isExecutable(trimmed)) {
+      return trimmed;
+    }
+    logger.warn(`MPV_PATH is set but not executable: ${trimmed}`);
+    return null;
+  }
+
+  // 2. PATH lookup
+  try {
+    const cmd = process.platform === 'win32' ? 'where mpv' : 'command -v mpv';
+    const stdout = execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const firstLine = stdout.split(/\r?\n/).map(s => s.trim()).find(s => s !== '');
+    if (firstLine !== undefined && firstLine !== '' && isExecutable(firstLine)) {
+      return firstLine;
+    }
+  } catch {
+    // command not found — fall through
+  }
+
+  return null;
+}
+
+/**
+ * Check whether a path exists and is executable. On Windows the `X_OK`
+ * permission bit is not enforced, but `accessSync(F_OK)` is sufficient.
+ */
+function isExecutable(path: string): boolean {
+  try {
+    const mode = process.platform === 'win32' ? constants.F_OK : constants.X_OK;
+    accessSync(path, mode);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build the mpv launch arguments. Centralized so both spawn and tests can
+ * inspect the exact flag list.
+ */
+function buildMpvArgs(ipcPath: string): string[] {
+  return [
+    '--idle=yes',
+    '--no-video',
+    '--no-terminal',
+    '--no-config',
+    '--load-scripts=no',
+    '--gapless-audio=weak',
+    '--prefetch-playlist=yes',
+    `--input-ipc-server=${ipcPath}`,
+    '--volume=80',
+    '--audio-display=no',
+    '--ytdl=no',
+    '--vo=null',
+    '--msg-level=all=info',
+  ];
+}
+
+/**
+ * Spawn an mpv child process using the standardized launch flags.
+ *
+ * stdout and stderr are piped and forwarded to `logger.debug()` line-by-line
+ * so they never pollute the MCP stdio channel.
+ *
+ * Returns the {@link ChildProcess} handle. The caller owns the lifecycle.
+ */
+export function spawnMpv(binaryPath: string, ipcPath: string): ChildProcess {
+  const args = buildMpvArgs(ipcPath);
+
+  logger.debug(`Spawning mpv: ${binaryPath} ${args.join(' ')}`);
+
+  // detached: true puts mpv in its own process group / detached session, so a
+  // SIGINT to the MCP server does not propagate to mpv; combined with
+  // child.unref() this lets mpv outlive the parent and keep playing across
+  // MCP restarts. windowsHide: true prevents a stray console window flashing
+  // on Windows — mpv runs headless via --no-terminal regardless.
+  const child = spawn(binaryPath, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+    windowsHide: true,
+  });
+  child.unref();
+
+  attachLineLogger(child.stdout, 'mpv:stdout');
+  attachLineLogger(child.stderr, 'mpv:stderr');
+
+  child.on('exit', (code, signal) => {
+    logger.debug(`mpv process exited code=${code ?? 'null'} signal=${signal ?? 'null'}`);
+  });
+
+  child.on('error', (err) => {
+    logger.error('mpv process error:', err.message);
+  });
+
+  return child;
+}
+
+/**
+ * Forward each line emitted on a mpv stream to logger.debug under the given
+ * prefix. Buffers partial lines across chunks.
+ */
+function attachLineLogger(stream: NodeJS.ReadableStream | null, prefix: string): void {
+  if (stream === null) return;
+
+  let buffer = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk: string) => {
+    buffer += chunk;
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) !== -1) {
+      const line = buffer.slice(0, nl).replace(/\r$/, '');
+      buffer = buffer.slice(nl + 1);
+      if (line !== '') {
+        logger.debug(`[${prefix}] ${line}`);
+      }
+    }
+  });
+  stream.on('end', () => {
+    if (buffer !== '') {
+      logger.debug(`[${prefix}] ${buffer}`);
+      buffer = '';
+    }
+  });
+}
