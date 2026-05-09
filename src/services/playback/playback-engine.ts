@@ -53,6 +53,23 @@ export interface PlaybackStatus {
 }
 
 /**
+ * One entry in the live mpv playlist, normalized for tool consumers.
+ *
+ * `songId` is parsed out of the stream URL's `id` query parameter when the
+ * filename is one of our Subsonic stream URLs (see `buildStreamUrl`). It is
+ * `null` if the URL doesn't parse or doesn't carry an `id` — e.g. when
+ * something else has loaded a track into mpv via the shared IPC socket.
+ */
+export interface PlaylistEntry {
+  index: number;
+  songId: string | null;
+  filename: string;
+  title?: string;
+  isCurrent: boolean;
+  isPlaying: boolean;
+}
+
+/**
  * Singleton playback engine wrapping mpv.
  *
  * Lifecycle:
@@ -185,45 +202,164 @@ class PlaybackEngine {
   }
 
   /**
-   * Replace the playlist with a single song's stream URL and start playback.
-   * Lazy-spawns mpv on first call.
+   * Load the given ordered list of song stream URLs into mpv's playlist.
+   *
+   * - `mode='replace'`: clear the existing playlist, replace with the new
+   *   tracks (first via `loadfile <url> replace`, remaining via `append`),
+   *   and unpause so playback starts immediately.
+   * - `mode='append'`: append each new track to the existing playlist via
+   *   `loadfile <url> append`. Does NOT clear the queue and does NOT unpause —
+   *   existing playback state (including pause) is preserved.
+   *
+   * Caller is responsible for ordering / shuffle of `songIds`. Lazy-spawns
+   * mpv on first call.
    */
-  async playSong(songId: string): Promise<void> {
+  async enqueue(songIds: readonly string[], mode: 'replace' | 'append'): Promise<void> {
+    if (songIds.length === 0) {
+      throw new Error('enqueue requires at least one song ID');
+    }
     await this.ensureRunning();
     const ipc = this.requireIpc();
-    const url = this.buildStreamUrl(songId);
 
-    // playlist-clear is implicit because `loadfile <url> replace` clears the
-    // playlist, but we issue it explicitly so the prior queue is wiped even
-    // if the loadfile fails for any reason.
-    await ipc.command('playlist-clear');
-    await ipc.command('loadfile', url, 'replace');
-    await ipc.command('set_property', 'pause', false);
+    if (mode === 'replace') {
+      // Issue an explicit playlist-clear before loading. `loadfile ... replace`
+      // would clear implicitly, but doing it up-front guarantees the prior
+      // queue is wiped even if the first loadfile fails.
+      await ipc.command('playlist-clear');
+      const [first, ...rest] = songIds;
+      if (first === undefined) {
+        throw new Error('enqueue requires at least one song ID');
+      }
+      await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
+      for (const id of rest) {
+        await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+      }
+      await ipc.command('set_property', 'pause', false);
+    } else {
+      // Append-only: do NOT clear the playlist; do NOT unpause. Respect the
+      // existing pause state so an append while paused keeps the queue paused.
+      for (const id of songIds) {
+        await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+      }
+    }
   }
 
   /**
-   * Replace the playlist with the given ordered list of song stream URLs and
-   * start playback. The first song is loaded with `replace`; remaining songs
-   * are appended with `append`. Caller is responsible for ordering / shuffle.
-   * Lazy-spawns mpv on first call.
+   * Read the live mpv playlist as a normalized array of `PlaylistEntry`.
+   *
+   * Read-method semantics: uses `ensureAttached()` (does NOT spawn mpv).
+   * If no mpv is running/attachable, returns `[]` so callers see an empty
+   * queue rather than spawning a fresh, empty mpv. SongId extraction
+   * tolerates URLs we didn't build ourselves (parse failures yield
+   * `songId: null` rather than throwing — someone could have loaded a
+   * file path or non-stream URL via the shared IPC socket).
    */
-  async playAlbum(songIds: readonly string[]): Promise<void> {
-    if (songIds.length === 0) {
-      throw new Error('playAlbum requires at least one song ID');
+  async getPlaylist(): Promise<PlaylistEntry[]> {
+    await this.ensureAttached();
+    if (!this.isRunning()) return [];
+
+    const raw = await this.requireIpc().command('get_property', 'playlist');
+    if (!Array.isArray(raw)) return [];
+
+    const entries: PlaylistEntry[] = [];
+    for (let index = 0; index < raw.length; index++) {
+      const item = raw[index];
+      if (typeof item !== 'object' || item === null) continue;
+      const record = item as Record<string, unknown>;
+
+      const filename = typeof record['filename'] === 'string' ? record['filename'] : '';
+      const isCurrent = record['current'] === true;
+      const isPlaying = record['playing'] === true;
+      const titleRaw = record['title'];
+      const title = typeof titleRaw === 'string' && titleRaw !== '' ? titleRaw : undefined;
+
+      let songId: string | null = null;
+      if (filename !== '') {
+        try {
+          songId = new URL(filename).searchParams.get('id');
+        } catch {
+          // Filename isn't a parseable URL (e.g. a local path); leave songId null.
+          songId = null;
+        }
+      }
+
+      const entry: PlaylistEntry = {
+        index,
+        songId,
+        filename,
+        isCurrent,
+        isPlaying,
+      };
+      if (title !== undefined) entry.title = title;
+      entries.push(entry);
     }
+    return entries;
+  }
+
+  /**
+   * Clear the live playlist AND halt playback. Uses mpv `stop`, not
+   * `playlist-clear`: `playlist-clear` removes everything *except* the
+   * currently-playing track, so audio keeps coming out of the speakers.
+   * `stop` empties the queue and silences output, which is what users
+   * expect from a "clear" verb. Idempotent — safe when idle.
+   */
+  async clearPlaylist(): Promise<void> {
+    await this.ensureRunning();
+    await this.requireIpc().command('stop');
+  }
+
+  /**
+   * Randomize the order of items in the live playlist via mpv's native
+   * `playlist-shuffle` command. Atomic on mpv's side. Lazy-spawns mpv.
+   *
+   * Active-queue behavior: after the shuffle, the play head is reset to
+   * index 0 so the new top of queue starts playing. Without this, mpv's
+   * default keeps the previously-current track playing wherever it landed
+   * in the new order, which contradicts the "active queue" model where the
+   * queue's top reflects what's audibly playing. Setting `playlist-pos`
+   * preserves any existing pause state — paused stays paused.
+   */
+  async shufflePlaylist(): Promise<void> {
     await this.ensureRunning();
     const ipc = this.requireIpc();
+    await ipc.command('playlist-shuffle');
+    const count = this.getCachedProperty('playlist-count');
+    if (typeof count === 'number' && count > 0) {
+      await ipc.command('set_property', 'playlist-pos', 0);
+    }
+  }
 
-    // First track replaces the playlist; subsequent tracks append.
-    const [first, ...rest] = songIds;
-    if (first === undefined) {
-      throw new Error('playAlbum requires at least one song ID');
+  /**
+   * Move the playlist entry at `from` so it takes the place of `to`.
+   * Index bounds are NOT validated client-side — mpv errors on out-of-range
+   * indices and the message surfaces via `ErrorFormatter.toolExecution`.
+   * Avoids races with concurrent queue mutations.
+   *
+   * Active-queue behavior: when the move involves index 0 (either source
+   * or destination), the play head is reset to index 0 afterwards so the
+   * new top-of-queue starts playing. This covers two user expectations:
+   * moving a track TO the front should start playing it, and moving the
+   * currently-playing track FROM the front should make the new front
+   * track play. Other moves leave playback alone (lazy is fine when the
+   * top of queue isn't affected). Pause state is preserved.
+   */
+  async movePlaylistEntry(from: number, to: number): Promise<void> {
+    await this.ensureRunning();
+    const ipc = this.requireIpc();
+    await ipc.command('playlist-move', from, to);
+    if (from === 0 || to === 0) {
+      await ipc.command('set_property', 'playlist-pos', 0);
     }
-    await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
-    for (const id of rest) {
-      await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
-    }
-    await ipc.command('set_property', 'pause', false);
+  }
+
+  /**
+   * Remove the playlist entry at the given index. mpv natively handles the
+   * "currently-playing" case by auto-advancing to the next track — no
+   * special tool-side logic needed.
+   */
+  async removePlaylistEntry(index: number): Promise<void> {
+    await this.ensureRunning();
+    await this.requireIpc().command('playlist-remove', index);
   }
 
   /**

@@ -114,12 +114,19 @@ const EXPECTED_PLAYBACK_TOOLS = [
   'resume',
   'set_volume',
   'playback_status',
-  'play_song',
-  'play_album',
+  'play_songs',
+  'play_albums',
+  'play_albums_search',
+  'play_songs_search',
   'next',
   'previous',
   'seek',
   'now_playing',
+  'get_play_queue',
+  'clear_play_queue',
+  'shuffle_play_queue',
+  'move_in_play_queue',
+  'remove_from_play_queue',
 ];
 
 describe('Tools Registry - Tool Count Verification', () => {

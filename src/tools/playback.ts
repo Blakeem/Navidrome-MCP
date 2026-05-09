@@ -18,7 +18,18 @@
 
 import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
-import { playbackEngine, type PlaybackStatus } from '../services/playback/playback-engine.js';
+import type { Config } from '../config.js';
+import {
+  NonEmptyStringArraySchema,
+  SearchAlbumsSchema,
+  SearchSongsSchema,
+} from '../schemas/common.js';
+import {
+  playbackEngine,
+  type PlaybackStatus,
+  type PlaylistEntry,
+} from '../services/playback/playback-engine.js';
+import { searchAlbums, searchSongs } from './search/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 
@@ -37,19 +48,37 @@ interface SetVolumeResult {
   volume: number;
 }
 
-interface PlaySongResult {
+interface PlaySongsResult {
   success: true;
-  songId: string;
-  title?: string;
-  artist?: string;
-  album?: string;
+  count: number;
+  mode: 'replace' | 'append';
+  shuffled: boolean;
 }
 
-interface PlayAlbumResult {
+interface PlayAlbumsResult {
   success: true;
-  albumId: string;
+  albumCount: number;
   trackCount: number;
+  mode: 'replace' | 'append';
+  shuffle: 'none' | 'albums' | 'songs';
+}
+
+interface PlayAlbumsSearchResult {
+  success: true;
+  matchCount: number;
+  albumCount: number;
+  trackCount: number;
+  mode: 'replace' | 'append';
+  shuffle: 'none' | 'albums' | 'songs';
+  appliedFilters?: Record<string, string>;
+}
+
+interface PlaySongsSearchResult {
+  success: true;
+  count: number;
+  mode: 'replace' | 'append';
   shuffled: boolean;
+  appliedFilters?: Record<string, string>;
 }
 
 interface NextResult {
@@ -78,22 +107,72 @@ interface NowPlayingResult {
   queueLength?: number;
 }
 
+interface GetPlayQueueResult {
+  items: PlaylistEntry[];
+  length: number;
+  currentIndex?: number;
+}
+
+interface ClearPlayQueueResult {
+  success: true;
+}
+
+interface ShufflePlayQueueResult {
+  success: true;
+}
+
+interface MoveInPlayQueueResult {
+  success: true;
+  from?: number;
+  to?: number;
+  noop?: true;
+}
+
+interface RemoveFromPlayQueueResult {
+  success: true;
+  index: number;
+}
+
 const SetVolumeSchema = z.object({
   level: z.number().min(0).max(100),
 });
 
-const PlaySongSchema = z.object({
-  songId: z.string().min(1, 'songId is required'),
+const QueueModeSchema = z.enum(['replace', 'append']).default('replace');
+
+const PlaySongsSchema = z.object({
+  songIds: NonEmptyStringArraySchema,
+  mode: QueueModeSchema,
+  shuffle: z.boolean().default(false),
 });
 
-const PlayAlbumSchema = z.object({
-  albumId: z.string().min(1, 'albumId is required'),
+const PlayAlbumsSchema = z.object({
+  albumIds: NonEmptyStringArraySchema,
+  mode: QueueModeSchema,
+  shuffle: z.enum(['none', 'albums', 'songs']).default('none'),
+});
+
+const PlayAlbumsSearchSchema = SearchAlbumsSchema.extend({
+  mode: QueueModeSchema,
+  shuffle: z.enum(['none', 'albums', 'songs']).default('none'),
+});
+
+const PlaySongsSearchSchema = SearchSongsSchema.extend({
+  mode: QueueModeSchema,
   shuffle: z.boolean().default(false),
 });
 
 const SeekSchema = z.object({
   seconds: z.number(),
   mode: z.enum(['absolute', 'relative']).default('relative'),
+});
+
+const MoveInPlayQueueSchema = z.object({
+  from: z.number().int().min(0),
+  to: z.number().int().min(0),
+});
+
+const RemoveFromPlayQueueSchema = z.object({
+  index: z.number().int().min(0),
 });
 
 /**
@@ -158,105 +237,285 @@ export async function playbackStatus(_args: unknown): Promise<PlaybackStatus> {
 }
 
 /**
- * Play a single song through the local speakers. Verifies the song exists
- * via the Navidrome API, builds a stream URL, and replaces the mpv playlist.
+ * Play one or many songs through the local speakers. Trusts the provided
+ * IDs without per-track Navidrome verification (verifying N tracks would
+ * cost N round-trips; mpv's `end-file` event surfaces invalid IDs at
+ * playback time). Optionally shuffles the new batch with Fisher-Yates
+ * before queueing — `mode='append'` with `shuffle=true` shuffles ONLY the
+ * new batch, leaving the existing queue order untouched.
  */
-export async function playSong(client: NavidromeClient, args: unknown): Promise<PlaySongResult> {
-  let parsed: z.infer<typeof PlaySongSchema>;
+export async function playSongs(_client: NavidromeClient, args: unknown): Promise<PlaySongsResult> {
+  let parsed: z.infer<typeof PlaySongsSchema>;
   try {
-    parsed = PlaySongSchema.parse(args);
+    parsed = PlaySongsSchema.parse(args);
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_song', error));
+    throw new Error(ErrorFormatter.toolExecution('play_songs', error));
   }
 
   try {
-    logger.debug(`playback: play_song id=${parsed.songId}`);
+    logger.debug(`playback: play_songs count=${parsed.songIds.length} mode=${parsed.mode} shuffle=${parsed.shuffle}`);
 
-    // Verify song exists and grab metadata for nicer feedback. Mirrors the
-    // `getSong` pattern in src/tools/media-library.ts.
-    const rawSong = await client.request<unknown>(`/song/${parsed.songId}`);
-    const song = (typeof rawSong === 'object' && rawSong !== null)
-      ? (rawSong as Record<string, unknown>)
-      : {};
+    const ordered = parsed.shuffle ? fisherYatesShuffle(parsed.songIds) : [...parsed.songIds];
 
-    await playbackEngine.playSong(parsed.songId);
+    if (parsed.shuffle) {
+      logger.debug(`playback: shuffled song order: ${ordered.join(',')}`);
+    }
 
-    const result: PlaySongResult = {
+    await playbackEngine.enqueue(ordered, parsed.mode);
+
+    return {
       success: true,
-      songId: parsed.songId,
+      count: ordered.length,
+      mode: parsed.mode,
+      shuffled: parsed.shuffle,
     };
-    if (typeof song['title'] === 'string') result.title = song['title'];
-    if (typeof song['artist'] === 'string') result.artist = song['artist'];
-    if (typeof song['album'] === 'string') result.album = song['album'];
-    return result;
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_song', error));
+    throw new Error(ErrorFormatter.toolExecution('play_songs', error));
   }
 }
 
 /**
- * Resolve an album to its ordered track list, optionally shuffle, and
- * replace the mpv playlist with the resulting stream URLs.
+ * Play one or many albums through the local speakers. Resolves each album
+ * to its ordered track list, applies the requested shuffle mode, then loads
+ * the result into the mpv playlist via `enqueue`.
+ *
+ * Shuffle modes:
+ *   - `'none'`: input album order, natural track order within each album
+ *   - `'albums'`: shuffle the album order; tracks within each album stay in
+ *     natural order
+ *   - `'songs'`: flatten all tracks then shuffle the flat list
+ *
+ * Albums that resolve to zero tracks are silently skipped. If every album
+ * resolves to zero tracks, throws `'No tracks found across all albums'`.
  */
-export async function playAlbum(client: NavidromeClient, args: unknown): Promise<PlayAlbumResult> {
-  let parsed: z.infer<typeof PlayAlbumSchema>;
+export async function playAlbums(client: NavidromeClient, args: unknown): Promise<PlayAlbumsResult> {
+  let parsed: z.infer<typeof PlayAlbumsSchema>;
   try {
-    parsed = PlayAlbumSchema.parse(args);
+    parsed = PlayAlbumsSchema.parse(args);
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_album', error));
+    throw new Error(ErrorFormatter.toolExecution('play_albums', error));
   }
 
   try {
-    logger.debug(`playback: play_album albumId=${parsed.albumId} shuffle=${parsed.shuffle}`);
+    logger.debug(`playback: play_albums count=${parsed.albumIds.length} mode=${parsed.mode} shuffle=${parsed.shuffle}`);
 
-    // Fetch tracks for the album. Navidrome's REST API uses `album_id`
-    // (snake_case) for filter params; the default sort is unstable, so we
-    // explicitly sort by `album` which produces natural disc/track order
-    // (handling multi-disc releases correctly).
-    const params = new URLSearchParams({
-      album_id: parsed.albumId,
-      _start: '0',
-      _end: '500',
-      _sort: 'album',
-      _order: 'ASC',
-    });
-    const endpoint = `/song?${params.toString()}`;
-    const rawTracks = await client.request<unknown>(endpoint);
-
-    if (!Array.isArray(rawTracks)) {
-      throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
-    }
-    const ids: string[] = [];
-    for (const track of rawTracks) {
-      if (typeof track === 'object' && track !== null) {
-        const id = (track as Record<string, unknown>)['id'];
-        if (typeof id === 'string' && id !== '') {
-          ids.push(id);
-        }
+    // Resolve each album to its track IDs. Skip albums that come back empty;
+    // surface a clear error only if every album is empty.
+    const albumTracks: string[][] = [];
+    for (const albumId of parsed.albumIds) {
+      const ids = await fetchAlbumTrackIds(client, albumId);
+      if (ids.length > 0) {
+        albumTracks.push(ids);
+      } else {
+        logger.debug(`playback: play_albums skipping empty album ${albumId}`);
       }
     }
 
-    if (ids.length === 0) {
-      throw new Error(`No tracks found for album ${parsed.albumId}`);
+    if (albumTracks.length === 0) {
+      throw new Error('No tracks found across all albums');
     }
 
-    const ordered = parsed.shuffle ? fisherYatesShuffle(ids) : ids;
-
-    if (parsed.shuffle) {
-      logger.debug(`playback: shuffled album track order: ${ordered.join(',')}`);
+    let flat: string[];
+    switch (parsed.shuffle) {
+      case 'albums':
+        flat = fisherYatesShuffle(albumTracks).flat();
+        break;
+      case 'songs':
+        flat = fisherYatesShuffle(albumTracks.flat());
+        break;
+      default:
+        flat = albumTracks.flat();
+        break;
     }
 
-    await playbackEngine.playAlbum(ordered);
+    if (parsed.shuffle !== 'none') {
+      logger.debug(`playback: play_albums shuffled (${parsed.shuffle}) → ${flat.length} tracks`);
+    }
+
+    await playbackEngine.enqueue(flat, parsed.mode);
 
     return {
       success: true,
-      albumId: parsed.albumId,
-      trackCount: ordered.length,
-      shuffled: parsed.shuffle,
+      albumCount: albumTracks.length,
+      trackCount: flat.length,
+      mode: parsed.mode,
+      shuffle: parsed.shuffle,
     };
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_album', error));
+    throw new Error(ErrorFormatter.toolExecution('play_albums', error));
   }
+}
+
+/**
+ * Run an album search and pipe the results into the live play queue.
+ *
+ * Identical shuffle / per-album track-resolution semantics to `playAlbums`,
+ * but the album set is selected by passing through every filter accepted by
+ * `search_albums` (query, genre, artist, year range, starred, etc.) instead
+ * of an explicit ID list. This is the one-shot path for filter-driven
+ * playback intents like "play 5 random starred albums" — composable with
+ * `play_albums` for cases where the AI has already listed the albums and
+ * wants to play those exact ones.
+ */
+export async function playAlbumsSearch(
+  client: NavidromeClient,
+  config: Config,
+  args: unknown
+): Promise<PlayAlbumsSearchResult> {
+  let parsed: z.infer<typeof PlayAlbumsSearchSchema>;
+  try {
+    parsed = PlayAlbumsSearchSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_albums_search', error));
+  }
+
+  try {
+    const { mode, shuffle, ...searchArgs } = parsed;
+    logger.debug(`playback: play_albums_search mode=${mode} shuffle=${shuffle}`);
+
+    const result = await searchAlbums(client, config, searchArgs);
+    if (result.albums.length === 0) {
+      throw new Error('No albums matched the search filters');
+    }
+
+    // Resolve each album's track list. Skip albums that come back empty;
+    // surface a clear error only if every album is empty.
+    const albumTracks: string[][] = [];
+    for (const album of result.albums) {
+      const ids = await fetchAlbumTrackIds(client, album.id);
+      if (ids.length > 0) {
+        albumTracks.push(ids);
+      } else {
+        logger.debug(`playback: play_albums_search skipping empty album ${album.id}`);
+      }
+    }
+
+    if (albumTracks.length === 0) {
+      throw new Error('Found albums but none had any tracks');
+    }
+
+    let flat: string[];
+    switch (shuffle) {
+      case 'albums':
+        flat = fisherYatesShuffle(albumTracks).flat();
+        break;
+      case 'songs':
+        flat = fisherYatesShuffle(albumTracks.flat());
+        break;
+      default:
+        flat = albumTracks.flat();
+        break;
+    }
+
+    if (shuffle !== 'none') {
+      logger.debug(`playback: play_albums_search shuffled (${shuffle}) → ${flat.length} tracks`);
+    }
+
+    await playbackEngine.enqueue(flat, mode);
+
+    const out: PlayAlbumsSearchResult = {
+      success: true,
+      matchCount: result.albums.length,
+      albumCount: albumTracks.length,
+      trackCount: flat.length,
+      mode,
+      shuffle,
+    };
+    if (result.appliedFilters !== undefined) {
+      out.appliedFilters = result.appliedFilters;
+    }
+    return out;
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_albums_search', error));
+  }
+}
+
+/**
+ * Run a song search and pipe the results into the live play queue.
+ *
+ * Songs are 1:1 with queue items so no per-album track resolution step is
+ * needed. `shuffle: true` Fisher-Yates the new batch only — existing queue
+ * items in `mode: 'append'` keep their order.
+ */
+export async function playSongsSearch(
+  client: NavidromeClient,
+  config: Config,
+  args: unknown
+): Promise<PlaySongsSearchResult> {
+  let parsed: z.infer<typeof PlaySongsSearchSchema>;
+  try {
+    parsed = PlaySongsSearchSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_songs_search', error));
+  }
+
+  try {
+    const { mode, shuffle, ...searchArgs } = parsed;
+    logger.debug(`playback: play_songs_search mode=${mode} shuffle=${shuffle}`);
+
+    const result = await searchSongs(client, config, searchArgs);
+    if (result.songs.length === 0) {
+      throw new Error('No songs matched the search filters');
+    }
+
+    let songIds = result.songs.map((s) => s.id);
+    if (shuffle) {
+      songIds = fisherYatesShuffle(songIds);
+      logger.debug(`playback: play_songs_search shuffled ${songIds.length} songs`);
+    }
+
+    await playbackEngine.enqueue(songIds, mode);
+
+    const out: PlaySongsSearchResult = {
+      success: true,
+      count: songIds.length,
+      mode,
+      shuffled: shuffle,
+    };
+    if (result.appliedFilters !== undefined) {
+      out.appliedFilters = result.appliedFilters;
+    }
+    return out;
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_songs_search', error));
+  }
+}
+
+/**
+ * Fetch the ordered track ID list for a single album from Navidrome.
+ *
+ * Uses `album_id` (snake_case) for the filter — Navidrome's REST API
+ * convention. Sorts by `album` ascending which produces natural disc/track
+ * order (handles multi-disc releases correctly; the default sort is
+ * unstable).
+ *
+ * Returns `[]` for albums with no tracks; callers decide whether that is
+ * a hard error or a skip case.
+ */
+async function fetchAlbumTrackIds(client: NavidromeClient, albumId: string): Promise<string[]> {
+  const params = new URLSearchParams({
+    album_id: albumId,
+    _start: '0',
+    _end: '500',
+    _sort: 'album',
+    _order: 'ASC',
+  });
+  const endpoint = `/song?${params.toString()}`;
+  const rawTracks = await client.request<unknown>(endpoint);
+
+  if (!Array.isArray(rawTracks)) {
+    throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
+  }
+  const ids: string[] = [];
+  for (const track of rawTracks) {
+    if (typeof track === 'object' && track !== null) {
+      const id = (track as Record<string, unknown>)['id'];
+      if (typeof id === 'string' && id !== '') {
+        ids.push(id);
+      }
+    }
+  }
+  return ids;
 }
 
 /**
@@ -351,6 +610,114 @@ export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
     return result;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('now_playing', error));
+  }
+}
+
+/**
+ * Read-only snapshot of the live mpv play queue. Does NOT spawn mpv if it
+ * isn't already running — returns `{ items: [], length: 0 }` instead. When
+ * mpv is alive, returns the full normalized playlist plus the index of the
+ * currently-playing entry (omitted if no entry is marked current).
+ */
+export async function getPlayQueue(_args: unknown): Promise<GetPlayQueueResult> {
+  try {
+    logger.debug('playback: get_play_queue');
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { items: [], length: 0 };
+    }
+
+    const entries = await playbackEngine.getPlaylist();
+    const result: GetPlayQueueResult = {
+      items: entries,
+      length: entries.length,
+    };
+    const current = entries.find((e) => e.isCurrent);
+    if (current !== undefined) {
+      result.currentIndex = current.index;
+    }
+    return result;
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('get_play_queue', error));
+  }
+}
+
+/**
+ * Clear the live play queue and stop playback. Idempotent — mpv `stop`
+ * tolerates an idle engine. Lazy-spawns mpv on first call (the spawn is
+ * effectively a no-op since `stop` immediately follows).
+ */
+export async function clearPlayQueue(_args: unknown): Promise<ClearPlayQueueResult> {
+  try {
+    logger.debug('playback: clear_play_queue');
+    await playbackEngine.clearPlaylist();
+    return { success: true };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('clear_play_queue', error));
+  }
+}
+
+/**
+ * Randomize the order of items in the live play queue via mpv's native
+ * `playlist-shuffle` (atomic). Does not change membership; only order.
+ */
+export async function shufflePlayQueue(_args: unknown): Promise<ShufflePlayQueueResult> {
+  try {
+    logger.debug('playback: shuffle_play_queue');
+    await playbackEngine.shufflePlaylist();
+    return { success: true };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('shuffle_play_queue', error));
+  }
+}
+
+/**
+ * Move a play-queue entry from one index to another. Short-circuits with
+ * `{ noop: true }` when `from === to`. Out-of-range indices are NOT
+ * pre-validated — mpv errors and the message surfaces via ErrorFormatter
+ * (avoids a race with concurrent queue mutations).
+ */
+export async function moveInPlayQueue(args: unknown): Promise<MoveInPlayQueueResult> {
+  let parsed: z.infer<typeof MoveInPlayQueueSchema>;
+  try {
+    parsed = MoveInPlayQueueSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('move_in_play_queue', error));
+  }
+
+  if (parsed.from === parsed.to) {
+    logger.debug(`playback: move_in_play_queue noop (from===to===${parsed.from})`);
+    return { success: true, noop: true };
+  }
+
+  try {
+    logger.debug(`playback: move_in_play_queue from=${parsed.from} to=${parsed.to}`);
+    await playbackEngine.movePlaylistEntry(parsed.from, parsed.to);
+    return { success: true, from: parsed.from, to: parsed.to };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('move_in_play_queue', error));
+  }
+}
+
+/**
+ * Remove the play-queue entry at the given index. mpv auto-advances when
+ * the removed entry is the currently-playing track — no tool-side logic
+ * needed. Out-of-range indices surface as mpv errors via ErrorFormatter.
+ */
+export async function removeFromPlayQueue(args: unknown): Promise<RemoveFromPlayQueueResult> {
+  let parsed: z.infer<typeof RemoveFromPlayQueueSchema>;
+  try {
+    parsed = RemoveFromPlayQueueSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('remove_from_play_queue', error));
+  }
+
+  try {
+    logger.debug(`playback: remove_from_play_queue index=${parsed.index}`);
+    await playbackEngine.removePlaylistEntry(parsed.index);
+    return { success: true, index: parsed.index };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('remove_from_play_queue', error));
   }
 }
 

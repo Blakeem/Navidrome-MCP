@@ -338,8 +338,10 @@ Add the Navidrome MCP server:
 
 | Tool | Description |
 |------|-------------|
-| `play_song` | Play a single song through the local speakers |
-| `play_album` | Play a full album in track order (or shuffled with `shuffle: true`) |
+| `play_songs` | Play one or many songs through the local speakers. Accepts `songIds: string[]`, `mode: 'replace' \| 'append'` (default `'replace'`), and `shuffle: boolean` (shuffles only the new batch) |
+| `play_albums` | Play one or many albums. Accepts `albumIds: string[]`, `mode: 'replace' \| 'append'`, and `shuffle: 'none' \| 'albums' \| 'songs'` (album-order, song-within-album, or fully randomized) |
+| `play_albums_search` | Play albums matching `search_albums` filters (query, genre, artist, year range, starred, etc.) plus `mode` and `shuffle: 'none' \| 'albums' \| 'songs'`. One-shot path for filter-driven album playback (e.g. `{ starred: true, sort: 'random', limit: 5 }` for 5 random starred albums) |
+| `play_songs_search` | Play songs matching `search_songs` filters plus `mode` and `shuffle: boolean`. One-shot path for filter-driven song playback (e.g. `{ starred: true, limit: 500 }` for every starred song) |
 | `pause` | Pause local audio playback (position preserved) |
 | `resume` | Resume local audio playback |
 | `next` | Skip to the next track in the local playlist |
@@ -348,6 +350,11 @@ Add the Navidrome MCP server:
 | `set_volume` | Set mpv's internal volume (0-100) |
 | `now_playing` | Report current title/artist/album/position/duration and queue index/length |
 | `playback_status` | Probe engine health (running, mpv version, volume, idle) |
+| `get_play_queue` | Read-only snapshot of the live play queue with track metadata and the current-track index |
+| `clear_play_queue` | Clear the live play queue and stop playback |
+| `shuffle_play_queue` | Randomize the order of items in the live play queue (membership unchanged) |
+| `move_in_play_queue` | Move a play-queue entry from one index to another |
+| `remove_from_play_queue` | Remove the play-queue entry at the given index (mpv auto-advances when the current track is removed) |
 
 ### 📻 Radio Management
 
