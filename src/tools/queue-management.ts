@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Queue Management Tools
+ * Navidrome MCP Server - Saved Queue Tools (Navidrome cross-device sync)
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,9 +16,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
+import { SaveQueueSchema } from '../schemas/validation.js';
 
 interface QueueTrack {
   id: string;
@@ -28,7 +28,7 @@ interface QueueTrack {
   duration: number;
 }
 
-interface QueueResult {
+interface SavedQueueResult {
   current: number;
   position: number;
   trackCount: number;
@@ -38,35 +38,35 @@ interface QueueResult {
   queue?: null;
 }
 
-interface SetQueueResult {
+interface SaveQueueResult {
   success: boolean;
   message: string;
   trackCount: number;
   current: number;
 }
 
-interface ClearQueueResult {
+interface ClearSavedQueueResult {
   success: boolean;
   message: string;
 }
 
-export async function getQueue(client: NavidromeClient, _args: unknown): Promise<QueueResult> {
-  logger.info('Getting playback queue');
-  
+export async function getSavedQueue(client: NavidromeClient, _args: unknown): Promise<SavedQueueResult> {
+  logger.info('Getting saved queue from Navidrome server');
+
   const response = await client.request<{ current?: number; position?: number; items?: QueueTrack[]; updatedAt?: string }>('/queue');
-  
+
   if (response === null || response === undefined || Object.keys(response).length === 0) {
     return {
       current: 0,
       position: 0,
       trackCount: 0,
       tracks: [],
-      message: 'Queue is empty',
+      message: 'Saved queue is empty',
       queue: null,
     };
   }
-  
-  const result: QueueResult = {
+
+  const result: SavedQueueResult = {
     current: response.current ?? 0,
     position: response.position ?? 0,
     trackCount: response.items?.length ?? 0,
@@ -84,17 +84,11 @@ export async function getQueue(client: NavidromeClient, _args: unknown): Promise
   return result;
 }
 
-const SetQueueSchema = z.object({
-  songIds: z.array(z.string()),
-  current: z.number().min(0).optional().default(0),
-  position: z.number().min(0).optional().default(0),
-});
+export async function saveQueue(client: NavidromeClient, args: unknown): Promise<SaveQueueResult> {
+  const { songIds, current = 0, position = 0 } = SaveQueueSchema.parse(args);
 
-export async function setQueue(client: NavidromeClient, args: unknown): Promise<SetQueueResult> {
-  const { songIds, current = 0, position = 0 } = SetQueueSchema.parse(args);
-  
-  logger.info(`Setting queue with ${songIds.length} tracks`);
-  
+  logger.info(`Saving queue with ${songIds.length} tracks to Navidrome server`);
+
   await client.request('/queue', {
     method: 'POST',
     body: JSON.stringify({
@@ -103,24 +97,24 @@ export async function setQueue(client: NavidromeClient, args: unknown): Promise<
       position,
     }),
   });
-  
+
   return {
     success: true,
-    message: `Queue set with ${songIds.length} tracks`,
+    message: `Saved queue updated with ${songIds.length} tracks`,
     trackCount: songIds.length,
     current,
   };
 }
 
-export async function clearQueue(client: NavidromeClient, _args: unknown): Promise<ClearQueueResult> {
-  logger.info('Clearing playback queue');
-  
+export async function clearSavedQueue(client: NavidromeClient, _args: unknown): Promise<ClearSavedQueueResult> {
+  logger.info('Clearing saved queue on Navidrome server');
+
   await client.request('/queue', {
     method: 'DELETE',
   });
-  
+
   return {
     success: true,
-    message: 'Queue cleared',
+    message: 'Saved queue cleared',
   };
 }

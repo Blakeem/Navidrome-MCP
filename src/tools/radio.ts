@@ -364,7 +364,7 @@ export async function playRadioStation(
     // Note: The actual playback implementation would require additional Subsonic API calls
     // to set up playback. For now, we'll return success with the station info.
     // In a full implementation, this might involve:
-    // 1. Calling setQueue to set up radio playback
+    // 1. Calling saveQueue to set up radio playback
     // 2. Using stream endpoint to start playing
     
     return {

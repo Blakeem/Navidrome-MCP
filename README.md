@@ -328,9 +328,9 @@ Add the Navidrome MCP server:
 |------|-------------|
 | `list_recently_played` | View recent listening activity |
 | `list_most_played` | Find most played content |
-| `get_queue` | View playback queue |
-| `set_queue` | Set playback queue |
-| `clear_queue` | Clear the playback queue |
+| `get_saved_queue` | View the saved queue used by the Navidrome web interface |
+| `save_queue` | Save a queue to the Navidrome server (shown in the web interface) |
+| `clear_saved_queue` | Clear the saved queue used by the Navidrome web interface |
 
 ### 📻 Radio Management
 

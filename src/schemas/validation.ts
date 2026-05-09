@@ -79,8 +79,8 @@ export const ReorderPlaylistTrackSchema = z.object({
   insert_before: z.number().min(0, 'Insert position must be non-negative'),
 });
 
-// Queue management validation
-export const SetQueueSchema = z.object({
+// Saved queue (Navidrome cross-device sync) validation
+export const SaveQueueSchema = z.object({
   songIds: StringArraySchema,
   current: z.number().min(0).optional().default(0),
   position: z.number().min(0).optional().default(0),

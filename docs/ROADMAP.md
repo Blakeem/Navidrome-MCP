@@ -13,7 +13,7 @@
 
 #### ✅ Playback Queue Management (COMPLETED)
 
-* [x] **Queue Operations**: `get_queue`, `set_queue`, `clear_queue`
+* [x] **Saved Queue Operations**: `get_saved_queue`, `save_queue`, `clear_saved_queue` (Navidrome cross-device sync, not live playback)
 * [x] **Queue Control**: Add specific songs to queue with position control
 * [x] **Queue Status**: Real-time queue state with track information
 

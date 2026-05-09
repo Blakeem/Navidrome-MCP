@@ -65,10 +65,10 @@ const EXPECTED_CORE_TOOLS = [
   'list_starred_items',
   'list_top_rated',
 
-  // Queue category
-  'get_queue',
-  'set_queue',
-  'clear_queue',
+  // Queue category (saved queue = Navidrome cross-device sync)
+  'get_saved_queue',
+  'save_queue',
+  'clear_saved_queue',
   'list_recently_played',
   'list_most_played',
 
