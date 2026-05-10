@@ -43,9 +43,29 @@ export const SearchQuerySchema = z.object({
   query: z.string().min(1, 'Search query is required'),
 });
 
-// Item type enums for user preferences
-export const ItemTypeSchema = z.enum(['song', 'album', 'artist']);
-export const ItemListTypeSchema = z.enum(['songs', 'albums', 'artists']);
+// Item type enums for user preferences. Both schemas accept BOTH the singular
+// form ('song'/'album'/'artist') and the plural form ('songs'/'albums'/'artists')
+// because LLM call-sites mix them up — `star_item` uses singular, `list_starred_items`
+// uses plural, and that distinction is one of the most common LLM bugs in
+// Subsonic-style APIs. The runtime transform normalizes to the form each
+// downstream caller expects: ItemTypeSchema → singular (Subsonic /star, /unstar,
+// /setRating use singular), ItemListTypeSchema → plural (we use plural to
+// switch on the /song vs /album vs /artist endpoint).
+const ITEM_TYPE_VARIANTS = ['song', 'album', 'artist', 'songs', 'albums', 'artists'] as const;
+
+export const ItemTypeSchema = z.enum(ITEM_TYPE_VARIANTS).transform((v): 'song' | 'album' | 'artist' => {
+  if (v === 'songs') return 'song';
+  if (v === 'albums') return 'album';
+  if (v === 'artists') return 'artist';
+  return v;
+});
+
+export const ItemListTypeSchema = z.enum(ITEM_TYPE_VARIANTS).transform((v): 'songs' | 'albums' | 'artists' => {
+  if (v === 'song') return 'songs';
+  if (v === 'album') return 'albums';
+  if (v === 'artist') return 'artists';
+  return v;
+});
 
 // Common limit validation patterns
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types
@@ -87,13 +107,15 @@ export const EnhancedSearchSchema = SearchQuerySchema.extend({
   order: OrderSchema,
   randomSeed: z.number().optional(),
   
-  // Year filtering — use refine so the upper bound is re-evaluated at validate time,
-  // not once at module load. (+1 allows valid advance/pre-release year entries.)
-  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearFrom must not be more than one year in the future',
-  }).optional(),
-  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearTo must not be more than one year in the future',
+  // Single-year filter. Navidrome's REST API does NOT support year ranges —
+  // /api/album?year=N matches albums whose [minYear, maxYear] contains N
+  // (or whose maxYear == N when minYear is 0); /api/song?year=N matches the
+  // exact `year` column. /api/artist has no year column at all and ignores
+  // this param. The previous yearFrom/yearTo schema sent year_from/year_to
+  // to Navidrome, which was silently ignored. Use refine so the upper bound
+  // re-evaluates at validate time rather than once at module load.
+  year: z.number().int().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'year must not be more than one year in the future',
   }).optional(),
 
   // Boolean filters
@@ -137,91 +159,17 @@ export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
   ]).optional().default('name'),
 });
 
-export const SearchArtistsSchema = EnhancedSearchSchema.extend({
+// Artists have no year column in Navidrome, so the EnhancedSearchSchema's
+// `year` field is omitted here — accepting it would be a silent no-op
+// (the filter chain wouldn't send it for /api/artist anyway, but stripping
+// it at the schema layer keeps the type honest for any non-LLM caller).
+export const SearchArtistsSchema = EnhancedSearchSchema.omit({ year: true }).extend({
   query: z.string().optional().default(''), // Override required query to be optional
   limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
   offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
     'name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'
   ]).optional().default('name'),
-});
-
-// List tool schemas (no query required, pagination-focused)
-export const ListSongsSchema = z.object({
-  limit: createLimitSchema(1, 500, 100),
-  offset: OffsetSchema,
-  sort: z.enum([
-    'title', 'artist', 'album', 'year', 'duration', 
-    'playCount', 'rating', 'recently_added', 'starred_at', 'random'
-  ]).optional().default('title'),
-  order: OrderSchema,
-  randomSeed: z.number().optional(),
-  
-  // Same filtering options as search tools
-  genre: z.string().optional(),
-  mediaType: z.string().optional(),
-  country: z.string().optional(),
-  releaseType: z.string().optional(),
-  recordLabel: z.string().optional(),
-  mood: z.string().optional(),
-  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearFrom must not be more than one year in the future',
-  }).optional(),
-  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearTo must not be more than one year in the future',
-  }).optional(),
-  starred: OptionalBooleanSchema,
-});
-
-export const ListAlbumsSchema = z.object({
-  limit: createLimitSchema(1, 500, 100),
-  offset: OffsetSchema,
-  sort: z.enum([
-    'name', 'artist', 'year', 'songCount', 'duration',
-    'playCount', 'rating', 'recently_added', 'starred_at', 'random'
-  ]).optional().default('name'),
-  order: OrderSchema,
-  randomSeed: z.number().optional(),
-  
-  // Same filtering options as search tools
-  genre: z.string().optional(),
-  mediaType: z.string().optional(),
-  country: z.string().optional(),
-  releaseType: z.string().optional(),
-  recordLabel: z.string().optional(),
-  mood: z.string().optional(),
-  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearFrom must not be more than one year in the future',
-  }).optional(),
-  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearTo must not be more than one year in the future',
-  }).optional(),
-  starred: OptionalBooleanSchema,
-});
-
-export const ListArtistsSchema = z.object({
-  limit: createLimitSchema(1, 500, 100),
-  offset: OffsetSchema,
-  sort: z.enum([
-    'name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'
-  ]).optional().default('name'),
-  order: OrderSchema,
-  randomSeed: z.number().optional(),
-  
-  // Same filtering options as search tools
-  genre: z.string().optional(),
-  mediaType: z.string().optional(),
-  country: z.string().optional(),
-  releaseType: z.string().optional(),
-  recordLabel: z.string().optional(),
-  mood: z.string().optional(),
-  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearFrom must not be more than one year in the future',
-  }).optional(),
-  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
-    message: 'yearTo must not be more than one year in the future',
-  }).optional(),
-  starred: OptionalBooleanSchema,
 });
 
 // Common validation schemas for different resource types

@@ -18,7 +18,7 @@
 
 import { z } from 'zod';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
-import { createLimitSchema, OffsetSchema, OrderSchema } from './common.js';
+import { createLimitSchema, ItemListTypeSchema, OffsetSchema, OrderSchema } from './common.js';
 
 // Base pagination schema factory
 export const createPaginationSchema = (
@@ -75,15 +75,15 @@ export const PlaylistTracksPaginationSchema = z.object({
   format: z.enum(['json', 'm3u']).optional().default('json'),
 });
 
-// User preferences pagination
+// User preferences pagination — type accepts singular or plural (see ItemListTypeSchema in common.ts)
 export const StarredItemsPaginationSchema = z.object({
-  type: z.enum(['songs', 'albums', 'artists']),
+  type: ItemListTypeSchema,
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.STARRED_ITEMS_LIMIT),
   offset: OffsetSchema,
 });
 
 export const TopRatedItemsPaginationSchema = z.object({
-  type: z.enum(['songs', 'albums', 'artists']),
+  type: ItemListTypeSchema,
   minRating: z.number().min(1).max(5).optional().default(4),
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.TOP_RATED_LIMIT),
   offset: OffsetSchema,
@@ -97,7 +97,7 @@ export const RecentlyPlayedPaginationSchema = z.object({
 });
 
 export const MostPlayedPaginationSchema = z.object({
-  type: z.enum(['songs', 'albums', 'artists']).optional().default('songs'),
+  type: ItemListTypeSchema.optional().default('songs'),
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.MOST_PLAYED_LIMIT),
   offset: OffsetSchema,
   minPlayCount: z.number().min(1).optional().default(1),

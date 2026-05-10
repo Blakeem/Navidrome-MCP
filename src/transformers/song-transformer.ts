@@ -40,6 +40,7 @@ export interface RawSong {
   rating?: number;
   starred?: boolean;
   starredAt?: string;
+  playDate?: string;
   createdAt?: string;
   path?: string;
   [key: string]: unknown; // Allow other fields we don't use
@@ -100,6 +101,10 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
 
   if (rawSong.starredAt !== undefined) {
     dto.starredAt = rawSong.starredAt;
+  }
+
+  if (rawSong.playDate !== undefined) {
+    dto.playDate = rawSong.playDate;
   }
 
   return dto;

@@ -106,18 +106,12 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
+        // Single-year filter. Navidrome's REST API has no range filter — for
+        // multi-year queries, call the tool once per year and merge client-side.
+        year: {
           type: 'number',
           minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results up to this year',
+          description: 'Filter to a single year. For albums, matches anything whose [minYear, maxYear] contains this year. For songs, matches the exact year. (No effect on artists — Navidrome does not store year on artists.)',
         },
         // Boolean filters
         starred: {
@@ -193,18 +187,12 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
+        // Single-year filter. Navidrome's REST API has no range filter — for
+        // multi-year queries, call the tool once per year and merge client-side.
+        year: {
           type: 'number',
           minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results up to this year',
+          description: 'Filter to a single year. For albums, matches anything whose [minYear, maxYear] contains this year. For songs, matches the exact year. (No effect on artists — Navidrome does not store year on artists.)',
         },
         // Boolean filters
         starred: {
@@ -280,18 +268,12 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
+        // Single-year filter. Navidrome's REST API has no range filter — for
+        // multi-year queries, call the tool once per year and merge client-side.
+        year: {
           type: 'number',
           minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results up to this year',
+          description: 'Filter to a single year. For albums, matches anything whose [minYear, maxYear] contains this year. For songs, matches the exact year. (No effect on artists — Navidrome does not store year on artists.)',
         },
         // Boolean filters
         starred: {
@@ -367,19 +349,8 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
-          type: 'number',
-          minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
-          description: 'Filter results up to this year',
-        },
+        // No `year` field on search_artists — Navidrome stores no year column
+        // on artists, so the filter would be silently ignored.
         // Boolean filters
         starred: {
           type: 'boolean',
@@ -391,7 +362,7 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating search tool category with dependencies  
+// Factory function for creating search tool category with dependencies
 export function createSearchToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,

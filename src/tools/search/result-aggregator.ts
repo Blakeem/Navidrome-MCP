@@ -97,8 +97,9 @@ interface SearchParamsConfig {
   order?: 'ASC' | 'DESC' | undefined;
   randomSeed?: number | undefined;
   resolvedFilters: Record<string, string>;
-  yearFrom?: number | undefined;
-  yearTo?: number | undefined;
+  // Single-year filter only. Navidrome has no year-range filter — see
+  // filter-resolver.ts for the per-endpoint semantics.
+  year?: number | undefined;
   starred?: boolean | undefined;
 }
 
@@ -120,7 +121,7 @@ interface ContentTypeParams {
  */
 export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeParams {
   // Data collection - extract configuration values
-  const { artistCount, albumCount, songCount, query, sort, order, randomSeed, resolvedFilters, yearFrom, yearTo, starred } = config;
+  const { artistCount, albumCount, songCount, query, sort, order, randomSeed, resolvedFilters, year, starred } = config;
 
   // Processing - create parameter building function
   const buildParams = (
@@ -158,12 +159,10 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
       searchParams.set('starred', starred.toString());
     }
 
-    // Add year filtering (for albums and songs)
-    if (yearFrom !== undefined) {
-      searchParams.set('year_from', yearFrom.toString());
-    }
-    if (yearTo !== undefined) {
-      searchParams.set('year_to', yearTo.toString());
+    // Single-year filter — albums match by [minYear, maxYear] containing N,
+    // songs match the year column exactly, artists ignore it (no column).
+    if (year !== undefined) {
+      searchParams.set('year', year.toString());
     }
 
     return searchParams.toString();

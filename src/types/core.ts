@@ -54,6 +54,8 @@ export interface SongDTO {
   starred?: boolean;
   /** ISO 8601 timestamp when the user starred this song, if any */
   starredAt?: string;
+  /** ISO 8601 timestamp when the user last played this song, if any */
+  playDate?: string;
 }
 
 

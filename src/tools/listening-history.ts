@@ -35,7 +35,9 @@ interface RecentlyPlayedTrack {
   artist: string;
   album: string;
   playCount: number;
-  lastPlayed?: string; // Optional since real play date data may not be available
+  /** ISO 8601 timestamp of the user's most recent play. Omitted only if the
+      raw row had no playDate. */
+  lastPlayed?: string;
   duration: number;
 }
 
@@ -65,40 +67,62 @@ interface MostPlayedResult {
 
 export async function listRecentlyPlayed(client: NavidromeClient, args: unknown): Promise<RecentlyPlayedResult> {
   const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedPaginationSchema.parse(args);
-  
+
   logger.info(`Getting recently played songs (${timeRange})`);
-  
-  // For now, we'll get songs sorted by addedDate (when added to library) as a proxy for recently played
-  // The API doesn't appear to support playDate filtering reliably
+
+  // Compute the cutoff timestamp for client-side filtering. Navidrome's REST
+  // API has no playDate-range filter, so we sort playDate DESC server-side
+  // and apply the cutoff after transforming. `today` rounds down to local
+  // midnight so the user's morning sessions are included; week and month
+  // are 7 / 30 days back from now.
+  const now = new Date();
+  let cutoff: Date | null = null;
+  if (timeRange === 'today') {
+    cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  } else if (timeRange === 'week') {
+    cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  } else if (timeRange === 'month') {
+    cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
+
+  // When filtering by timeRange, over-fetch so the post-filter slice still
+  // has a meaningful page. Cap at 500 (Navidrome's per-page max). Caveat:
+  // for `limit > 100` with a tight timeRange and a sparse listening history,
+  // we may under-deliver because the cap kicks in before 5x. The DESC sort
+  // by playDate makes this rare in practice (recent plays cluster), but if
+  // it bites we'd need cursor-based deepening rather than a single fetch.
+  const fetchLimit = cutoff !== null ? Math.min(limit * 5, 500) : limit;
+
   const response = await client.requestWithLibraryFilter<unknown>(
-    `/song?_sort=addedDate&_order=DESC&_start=${offset}&_end=${offset + limit}`
+    `/song?_sort=playDate&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
-  
-  // Transform using proper transformer
+
   const songs = transformSongsToDTO(response);
-  
-  // Filter songs that have been played at least once, if available
-  const playedSongs = songs.filter(song => song.playCount === null || song.playCount === undefined || song.playCount > 0);
-  
-  const tracks = playedSongs.slice(0, limit).map((song) => {
-    const track: RecentlyPlayedTrack = {
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      album: song.album,
-      playCount: song.playCount ?? 0,
-      duration: parseDuration(song.durationFormatted),
-      // Note: Real lastPlayed timestamps are not available from the API
-      // Only including lastPlayed if we actually have play date data (which we don't currently)
-    };
-    
-    // Only add lastPlayed if we have actual play date data
-    // Currently, the API doesn't provide reliable play date information
-    // so we omit this field rather than provide misleading data
-    
-    return track;
-  });
-  
+
+  const tracks = songs
+    .filter((song) => {
+      // Drop never-played songs (null/empty playDate sort to the end).
+      if (song.playDate === undefined || song.playDate === '') return false;
+      if (cutoff === null) return true;
+      const played = new Date(song.playDate);
+      return Number.isFinite(played.getTime()) && played >= cutoff;
+    })
+    .slice(0, limit)
+    .map((song) => {
+      const track: RecentlyPlayedTrack = {
+        id: song.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        playCount: song.playCount ?? 0,
+        duration: parseDuration(song.durationFormatted),
+      };
+      if (song.playDate !== undefined && song.playDate !== '') {
+        track.lastPlayed = song.playDate;
+      }
+      return track;
+    });
+
   return {
     timeRange,
     count: tracks.length,

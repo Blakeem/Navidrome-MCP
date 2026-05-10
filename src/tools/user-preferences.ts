@@ -32,11 +32,14 @@ import {
   TopRatedItemsPaginationSchema,
 } from '../schemas/index.js';
 
+// `type` is intentionally NOT echoed in the response — the schema accepts both
+// singular ('song') and plural ('songs') forms via runtime normalization, and
+// echoing the canonical form would mismatch what the LLM passed in. The id +
+// message already convey what was acted on.
 interface StarItemResult {
   success: boolean;
   message: string;
   id: string;
-  type: string;
 }
 
 interface StarredItem {
@@ -78,11 +81,11 @@ interface ListTopRatedResult {
   items: RatedItem[];
 }
 
+// See StarItemResult for why `type` is omitted.
 interface SetRatingResult {
   success: boolean;
   message: string;
   id: string;
-  type: string;
   rating: number;
 }
 
@@ -101,25 +104,23 @@ export async function starItem(client: NavidromeClient, _config: Config, args: u
     success: true,
     message: `Successfully starred ${type}`,
     id,
-    type,
   };
 }
 
 export async function unstarItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
-  
+
   logger.info(`Unstarring ${type}: ${id}`);
-  
-  // Use Subsonic REST API for unstarring  
+
+  // Use Subsonic REST API for unstarring
   const response = await client.subsonicRequest('/unstar', { id });
-  
+
   logger.debug('Unstar response:', response);
-  
+
   return {
     success: true,
     message: `Successfully unstarred ${type}`,
     id,
-    type,
   };
 }
 
@@ -140,7 +141,6 @@ export async function setRating(client: NavidromeClient, _config: Config, args: 
     success: true,
     message: rating > 0 ? `Successfully set rating to ${rating} stars` : 'Successfully removed rating',
     id,
-    type,
     rating,
   };
 }

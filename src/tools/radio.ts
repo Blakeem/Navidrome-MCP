@@ -161,9 +161,13 @@ export async function createRadioStation(
       }
       await client.subsonicRequest('/createInternetRadioStation', subsonicParams);
 
-      // Successfully created
+      // Successfully created. Subsonic's createInternetRadioStation does not
+      // echo back the new id; we resolve the real id below by listing all
+      // stations once after the batch and matching on (name, streamUrl).
+      // The empty id here is a sentinel — the post-loop lookup either fills
+      // it in or logs a warning if the station can't be matched.
       const createdStation: RadioStationDTO = {
-        id: 'created', // Subsonic API doesn't return the created station details
+        id: '',
         name: station.name,
         streamUrl: station.streamUrl,
         createdAt: new Date().toISOString(),
@@ -190,6 +194,54 @@ export async function createRadioStation(
         error: `Failed to add "${station.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
       });
       failedCount++;
+    }
+  }
+
+  // Resolve the real station IDs for everything we just created. Subsonic's
+  // createInternetRadioStation doesn't echo the new id, so without this
+  // lookup the response carries empty ids and a follow-up
+  // delete_radio_station/get_radio_station call would fail. Single batch
+  // call (one extra listRadioStations request regardless of batch size).
+  // Match on (name, streamUrl); track assignedIds so that two creates with
+  // identical (name, streamUrl) in the same batch each get a distinct id
+  // (Navidrome doesn't enforce uniqueness — both would otherwise collide on
+  // the lex-max match). Lex-max == newest because Navidrome IDs are monotonic.
+  const pendingLookups = results.filter((r): r is CreateRadioStationResponse & { station: RadioStationDTO } =>
+    r.success === true && r.station !== undefined && r.station.id === ''
+  );
+  if (pendingLookups.length > 0) {
+    try {
+      const allStations = await listRadioStations(client, {});
+      const assignedIds = new Set<string>();
+      for (const result of pendingLookups) {
+        const matches = allStations.stations
+          .filter(s => s.name === result.station.name && s.streamUrl === result.station.streamUrl)
+          .filter(s => !assignedIds.has(s.id))
+          .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+        const newest = matches[0];
+        if (newest !== undefined) {
+          result.station.id = newest.id;
+          result.station.createdAt = newest.createdAt;
+          result.station.updatedAt = newest.updatedAt;
+          assignedIds.add(newest.id);
+        } else {
+          // No fresh match — either Navidrome dropped the create silently,
+          // or another batch entry already claimed every duplicate. Surface
+          // this to the LLM via `note` so it knows to re-list rather than
+          // call delete_radio_station('') with the empty id.
+          result.note = `Created "${result.station.name}" but could not resolve its id. Call list_radio_stations to find it.`;
+          logger.warn(
+            `Created station "${result.station.name}" but could not find a fresh match in the post-create listing — leaving id empty.`
+          );
+        }
+      }
+    } catch (lookupError) {
+      // Lookup itself failed — annotate every pending result so the LLM
+      // doesn't silently round-trip an empty id into delete/get.
+      for (const result of pendingLookups) {
+        result.note = `Created "${result.station.name}" but failed to look up its id. Call list_radio_stations to find it.`;
+      }
+      logger.warn('Failed to resolve created radio station IDs:', lookupError);
     }
   }
 

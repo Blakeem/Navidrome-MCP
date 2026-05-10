@@ -62,8 +62,7 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
       order: params.order,
       randomSeed: params.randomSeed,
       resolvedFilters,
-      yearFrom: params.yearFrom,
-      yearTo: params.yearTo,
+      year: params.year,
       starred: params.starred
     });
 

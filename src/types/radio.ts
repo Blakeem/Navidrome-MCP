@@ -50,6 +50,10 @@ export interface CreateRadioStationResponse {
   station?: RadioStationDTO;
   /** Error message if failed */
   error?: string;
+  /** Non-fatal warning attached to a successful create — e.g. "station was
+      created but its id couldn't be resolved; call list_radio_stations to
+      find it". Present only on partial-failure success paths. */
+  note?: string;
   /** One-time validation reminder message */
   validation_reminder?: string;
 }

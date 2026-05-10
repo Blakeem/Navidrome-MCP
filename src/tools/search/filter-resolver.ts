@@ -28,8 +28,8 @@ interface FilterableSearchParams {
   releaseType?: string | undefined;
   recordLabel?: string | undefined;
   mood?: string | undefined;
-  yearFrom?: number | undefined;
-  yearTo?: number | undefined;
+  // Single-year filter — Navidrome's REST API has no range filter.
+  year?: number | undefined;
   starred?: boolean | undefined;
 }
 
@@ -209,12 +209,11 @@ export function buildEnhancedSearchParams(
     searchParams.set('starred', params.starred.toString());
   }
 
-  // Add year filtering for time-based searches
-  if (params.yearFrom !== undefined) {
-    searchParams.set('year_from', params.yearFrom.toString());
-  }
-  if (params.yearTo !== undefined) {
-    searchParams.set('year_to', params.yearTo.toString());
+  // Single-year filter. Navidrome's /api/album?year=N matches albums whose
+  // [minYear, maxYear] contains N; /api/song?year=N matches the exact year
+  // column; /api/artist silently ignores it.
+  if (params.year !== undefined) {
+    searchParams.set('year', params.year.toString());
   }
 
   return {

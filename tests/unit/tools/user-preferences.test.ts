@@ -205,14 +205,16 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        // Verify response structure
+        // Verify response structure. `type` is intentionally NOT echoed in
+        // the response (see StarItemResult comment) — schema accepts both
+        // singular and plural and echoing the canonical form would mismatch
+        // the LLM's input. id + message are the round-trip-safe fields.
         expect(result).toHaveProperty('success');
         expect(result).toHaveProperty('message');
         expect(result).toHaveProperty('id');
-        expect(result).toHaveProperty('type');
+        expect(result).not.toHaveProperty('type');
         expect(result.success).toBe(true);
         expect(result.id).toBe('song-123');
-        expect(result.type).toBe('song');
       });
 
       it('should star an album with correct parameters', async () => {
@@ -238,7 +240,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         );
 
         expect(result.id).toBe('album-456');
-        expect(result.type).toBe('album');
       });
 
       it('should star an artist with correct parameters', async () => {
@@ -264,7 +265,24 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         );
 
         expect(result.id).toBe('artist-789');
-        expect(result.type).toBe('artist');
+      });
+
+      it('accepts the plural form (`type: "songs"`) without throwing', async () => {
+        // Schema-layer normalization should silently coerce the plural to
+        // singular so the LLM doesn't get a Zod error for a common confusion
+        // bug. The response carries no `type` field either way.
+        mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
+
+        const result = await starItem(mockClient, config, {
+          id: 'song-xyz',
+          type: 'songs',
+        });
+
+        expect(result.success).toBe(true);
+        expect(result.id).toBe('song-xyz');
+        expect(result).not.toHaveProperty('type');
+        // The internal singular form drives the message text.
+        expect(result.message).toBe('Successfully starred song');
       });
     });
 
@@ -294,7 +312,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         expect(result.success).toBe(true);
         expect(result.id).toBe('song-123');
-        expect(result.type).toBe('song');
       });
 
       it('should unstar an album correctly', async () => {
