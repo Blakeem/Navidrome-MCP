@@ -19,7 +19,8 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
-import type { UserDetailsDTO, LibraryDTO, LibraryManagementResponse, SetActiveLibrariesRequest } from '../types/index.js';
+import type { UserDetailsDTO, LibraryDTO, LibraryManagementResponse } from '../types/index.js';
+import { SetActiveLibrariesSchema } from '../schemas/index.js';
 import type { ToolCategory } from './handlers/registry.js';
 import {
   getSong,
@@ -114,22 +115,7 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
  */
 async function setActiveLibraries(args: unknown): Promise<LibraryManagementResponse> {
   try {
-    const params = args as SetActiveLibrariesRequest;
-    
-    if (!Array.isArray(params.libraryIds)) {
-      throw new Error('libraryIds must be an array of numbers');
-    }
-
-    if (params.libraryIds.length === 0) {
-      throw new Error('At least one library ID must be provided');
-    }
-
-    // Validate all IDs are numbers
-    for (const id of params.libraryIds) {
-      if (typeof id !== 'number' || isNaN(id)) {
-        throw new Error(`Invalid library ID: ${id}. Must be a number.`);
-      }
-    }
+    const params = SetActiveLibrariesSchema.parse(args);
 
     // Set active libraries via LibraryManager
     libraryManager.setActiveLibraries(params.libraryIds);

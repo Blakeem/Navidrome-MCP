@@ -38,6 +38,7 @@ export interface RawAlbum {
   playCount?: number;
   rating?: number;
   starred?: boolean;
+  starredAt?: string;
   [key: string]: unknown;
 }
 
@@ -92,6 +93,10 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
 
   if (rawAlbum.starred !== undefined) {
     dto.starred = rawAlbum.starred;
+  }
+
+  if (rawAlbum.starredAt !== undefined) {
+    dto.starredAt = rawAlbum.starredAt;
   }
 
   return dto;

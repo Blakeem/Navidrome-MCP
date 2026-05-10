@@ -124,14 +124,14 @@ function getRadioTools(config: Config): Tool[] {
     },
     {
       name: 'validate_radio_stream',
-      description: 'Tests if a radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and attempts to verify audio data.',
+      description: 'Tests if an HTTP/HTTPS radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and samples a small audio chunk. Note: this tool can only probe http:// and https:// URLs — other valid radio protocols (mms://, rtsp://, rtmp://) play fine through play_radio_station but cannot be validated here. Redirects to private/loopback addresses are refused.',
       inputSchema: {
         type: 'object',
         properties: {
           url: {
             type: 'string',
             format: 'uri',
-            description: 'The radio stream URL to validate (required)',
+            description: 'The radio stream URL to validate (http:// or https:// only)',
           },
           timeout: {
             type: 'number',

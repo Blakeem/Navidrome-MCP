@@ -79,9 +79,3 @@ export interface LibraryManagementResponse {
   totalCount: number;
 }
 
-/**
- * Request for setting active libraries
- */
-export interface SetActiveLibrariesRequest {
-  libraryIds: number[];
-}

@@ -68,5 +68,4 @@ export type {
   LibraryDTO,
   UserDetailsDTO,
   LibraryManagementResponse,
-  SetActiveLibrariesRequest
 } from './library.js';

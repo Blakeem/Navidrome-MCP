@@ -31,6 +31,7 @@ export interface RawArtist {
   playCount?: number;
   rating?: number;
   starred?: boolean;
+  starredAt?: string;
   [key: string]: unknown;
 }
 
@@ -65,6 +66,10 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
 
   if (rawArtist.starred !== undefined) {
     dto.starred = rawArtist.starred;
+  }
+
+  if (rawArtist.starredAt !== undefined) {
+    dto.starredAt = rawArtist.starredAt;
   }
 
   return dto;

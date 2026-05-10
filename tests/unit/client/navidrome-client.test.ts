@@ -93,6 +93,52 @@ describe('NavidromeClient', () => {
     });
   });
 
+  describe('parseResponse content-type sniffing', () => {
+    // Navidrome returns JSON bodies with Content-Type: text/plain on several
+    // endpoints (POST /playlist/{id}/tracks, GET /song/{id}/playlists, etc.).
+    // The client must fall back to JSON-parsing when the body looks like JSON,
+    // otherwise callers like addTracksToPlaylist see `response.added` as
+    // undefined and silently report 0 added.
+    it('parses JSON body even when Content-Type is text/plain', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(new Response('{"added":3}', {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.request<{ added: number }>('/playlist/abc/tracks', { method: 'POST' });
+      expect(result.added).toBe(3);
+    });
+
+    it('returns text verbatim when body is not JSON-shaped', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(new Response('#EXTM3U\n#EXTINF:120,Track\nfile.mp3', {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.request<string>('/playlist/abc/tracks?_format=m3u');
+      expect(result).toContain('#EXTM3U');
+    });
+
+    it('returns text verbatim when body looks JSON-ish but does not parse', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(new Response('{this is not really json', {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.request<string>('/weird');
+      expect(result).toBe('{this is not really json');
+    });
+  });
+
   describe('assertSafeEndpoint', () => {
     let client: NavidromeClient;
 

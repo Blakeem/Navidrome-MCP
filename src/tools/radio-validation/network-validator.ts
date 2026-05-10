@@ -17,6 +17,7 @@
  */
 
 import { RADIO_VALIDATION } from '../../constants/timeouts.js';
+import { hostResolvesToPrivateIp, isHttpUrlScheme } from '../../utils/network-safety.js';
 
 // Validation context for internal use
 export interface ValidationContext {
@@ -26,39 +27,121 @@ export interface ValidationContext {
   readonly followRedirects: boolean;
 }
 
+/** Maximum redirect hops we'll follow before giving up. Matches the spirit
+ *  of fetch's default (20) but is tighter — radio stream redirects are
+ *  almost always 1-2 hops; anything past 5 is suspicious. */
+const MAX_REDIRECTS = 5;
+
+interface FetchWithRedirectsResult {
+  readonly response: Response | null;
+  readonly finalUrl: string;
+  readonly error: string | null;
+}
+
+/**
+ * Fetch with manual redirect following + private-IP gating on each hop.
+ *
+ * Why manual: native `redirect: 'follow'` chases redirects opaquely, so a
+ * public-looking URL that 302s to http://localhost:4533/api/admin would
+ * silently land on a localhost endpoint and surface its status / final URL
+ * back through the validator's response. Following manually lets us check
+ * each Location's resolved IP before requesting it.
+ *
+ * The initial URL itself is NOT IP-checked — it was supplied by the caller
+ * and the validator's response surface is narrow enough that probing a
+ * known localhost URL is no worse than the LLM running curl directly. The
+ * surprise-bypass case is only reachable through redirects.
+ */
+async function fetchWithManualRedirects(
+  initialUrl: string,
+  init: RequestInit,
+  followRedirects: boolean,
+): Promise<FetchWithRedirectsResult> {
+  let currentUrl = initialUrl;
+
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const response = await fetch(currentUrl, { ...init, redirect: 'manual' });
+
+    const isRedirect = response.status >= 300 && response.status < 400;
+    if (!isRedirect || !followRedirects) {
+      return { response, finalUrl: currentUrl, error: null };
+    }
+
+    const location = response.headers.get('location');
+    if (location === null || location === '') {
+      // 3xx with no Location — return as-is, treat like the terminal response.
+      return { response, finalUrl: currentUrl, error: null };
+    }
+
+    let nextUrl: URL;
+    try {
+      nextUrl = new URL(location, currentUrl);
+    } catch {
+      return { response: null, finalUrl: currentUrl, error: `Malformed redirect Location: ${location}` };
+    }
+
+    if (!isHttpUrlScheme(nextUrl.toString())) {
+      return { response: null, finalUrl: currentUrl, error: `Refusing to follow redirect to non-HTTP scheme: ${nextUrl.protocol}` };
+    }
+
+    try {
+      if (await hostResolvesToPrivateIp(nextUrl.hostname)) {
+        return { response: null, finalUrl: currentUrl, error: `Refusing to follow redirect to private/local address: ${nextUrl.hostname}` };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      return { response: null, finalUrl: currentUrl, error: `Failed to resolve redirect target ${nextUrl.hostname}: ${msg}` };
+    }
+
+    currentUrl = nextUrl.toString();
+  }
+
+  return { response: null, finalUrl: currentUrl, error: `Exceeded maximum redirects (${MAX_REDIRECTS})` };
+}
+
 /**
  * Perform HEAD request validation
  */
 export async function validateWithHead(
   context: ValidationContext
-): Promise<{ response: Response | null; error: string | null }> {
+): Promise<{ response: Response | null; finalUrl: string; error: string | null }> {
+  const headTimeout = Math.min(
+    RADIO_VALIDATION.FALLBACK_HEAD_TIMEOUT,
+    Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO),
+  ); // Use 60% of total timeout
+
   try {
     const controller = new AbortController();
-    const headTimeout = Math.min(RADIO_VALIDATION.FALLBACK_HEAD_TIMEOUT, Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO)); // Use 60% of total timeout
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, headTimeout);
 
-    const response = await fetch(context.url, {
-      method: 'HEAD',
-      redirect: context.followRedirects ? 'follow' : 'manual',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
-        'Accept': 'audio/*',
-      },
-    });
+    try {
+      const result = await fetchWithManualRedirects(
+        context.url,
+        {
+          method: 'HEAD',
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
+            'Accept': 'audio/*',
+          },
+        },
+        context.followRedirects,
+      );
 
-    clearTimeout(timeoutId);
-    return { response, error: null };
+      return result;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { response: null, error: `HEAD request timeout after ${Math.min(RADIO_VALIDATION.FALLBACK_HEAD_TIMEOUT, Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO))}ms` };
+        return { response: null, finalUrl: context.url, error: `HEAD request timeout after ${headTimeout}ms` };
       }
-      return { response: null, error: `HEAD request failed: ${err.message}` };
+      return { response: null, finalUrl: context.url, error: `HEAD request failed: ${err.message}` };
     }
-    return { response: null, error: 'Unknown HEAD request error' };
+    return { response: null, finalUrl: context.url, error: 'Unknown HEAD request error' };
   }
 }
 
@@ -67,8 +150,9 @@ export async function validateWithHead(
  */
 export async function sampleAudioData(
   url: string,
-  remainingTimeout: number
-): Promise<{ buffer: Uint8Array | null; headers: Headers | null; error: string | null }> {
+  remainingTimeout: number,
+  followRedirects: boolean,
+): Promise<{ buffer: Uint8Array | null; headers: Headers | null; finalUrl: string; error: string | null }> {
   try {
     const controller = new AbortController();
     const sampleTimeout = Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout); // Ensure at least 2 seconds
@@ -76,23 +160,36 @@ export async function sampleAudioData(
       controller.abort();
     }, sampleTimeout);
 
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Range': `bytes=0-${RADIO_VALIDATION.SAMPLE_BUFFER_SIZE - 1}`, // Get first 8KB
-        'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
-        'Accept': 'audio/*',
-      },
-      signal: controller.signal,
-    });
+    let result: FetchWithRedirectsResult;
+    try {
+      result = await fetchWithManualRedirects(
+        url,
+        {
+          method: 'GET',
+          headers: {
+            'Range': `bytes=0-${RADIO_VALIDATION.SAMPLE_BUFFER_SIZE - 1}`, // Get first 8KB
+            'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
+            'Accept': 'audio/*',
+          },
+          signal: controller.signal,
+        },
+        followRedirects,
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
-    clearTimeout(timeoutId);
+    if (result.error !== null || result.response === null) {
+      return { buffer: null, headers: null, finalUrl: result.finalUrl, error: result.error ?? 'No response' };
+    }
 
+    const response = result.response;
     if (!response.ok && response.status !== 206) {
       return {
         buffer: null,
         headers: response.headers,
-        error: `HTTP ${response.status}: ${response.statusText}`
+        finalUrl: result.finalUrl,
+        error: `HTTP ${response.status}: ${response.statusText}`,
       };
     }
 
@@ -104,7 +201,8 @@ export async function sampleAudioData(
         return {
           buffer: null,
           headers: response.headers,
-          error: 'No response body reader available'
+          finalUrl: result.finalUrl,
+          error: 'No response body reader available',
         };
       }
 
@@ -119,9 +217,10 @@ export async function sampleAudioData(
         if (Date.now() - startTime > readTimeout) {
           await reader.cancel();
           return {
-            buffer: totalLength > 0 ? new Uint8Array(totalLength) : null,
+            buffer: totalLength > 0 ? concatChunks(chunks, totalLength) : null,
             headers: response.headers,
-            error: 'Read timeout - got partial data'
+            finalUrl: result.finalUrl,
+            error: 'Read timeout - got partial data',
           };
         }
 
@@ -129,8 +228,13 @@ export async function sampleAudioData(
 
         if (done) break;
         if (value !== null && value !== undefined) {
-          chunks.push(value);
-          totalLength += value.length;
+          // Slice oversized chunks BEFORE pushing — a server that ignores the
+          // Range header can hand us one multi-MB chunk; the post-push limit
+          // check would already have allocated the entire blob in heap.
+          const remaining = maxBytes - totalLength;
+          const slice = value.length > remaining ? value.subarray(0, remaining) : value;
+          chunks.push(slice);
+          totalLength += slice.length;
 
           // Stop if we have enough data
           if (totalLength >= maxBytes) {
@@ -142,37 +246,43 @@ export async function sampleAudioData(
 
       // Combine chunks
       if (totalLength > 0) {
-        const buffer = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of chunks) {
-          buffer.set(chunk, offset);
-          offset += chunk.length;
-        }
         return {
-          buffer,
+          buffer: concatChunks(chunks, totalLength),
           headers: response.headers,
-          error: null
+          finalUrl: result.finalUrl,
+          error: null,
         };
       } else {
         return {
           buffer: null,
           headers: response.headers,
-          error: 'No data received from stream'
+          finalUrl: result.finalUrl,
+          error: 'No data received from stream',
         };
       }
     } catch (streamErr) {
       if (streamErr instanceof Error && streamErr.name === 'AbortError') {
-        return { buffer: null, headers: response.headers, error: 'Stream reading aborted' };
+        return { buffer: null, headers: response.headers, finalUrl: result.finalUrl, error: 'Stream reading aborted' };
       }
       throw streamErr;
     }
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { buffer: null, headers: null, error: `Audio sampling timeout after ${Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout)}ms` };
+        return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling timeout after ${Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout)}ms` };
       }
-      return { buffer: null, headers: null, error: `Audio sampling failed: ${err.message}` };
+      return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling failed: ${err.message}` };
     }
-    return { buffer: null, headers: null, error: 'Unknown audio sampling error' };
+    return { buffer: null, headers: null, finalUrl: url, error: 'Unknown audio sampling error' };
   }
+}
+
+function concatChunks(chunks: readonly Uint8Array[], totalLength: number): Uint8Array {
+  const buffer = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return buffer;
 }

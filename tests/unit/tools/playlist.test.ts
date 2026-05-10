@@ -398,8 +398,8 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           artistIds: ['artist-1']
         });
 
-        // Should make efficient API calls
-        expect(mockClient.request).toHaveBeenCalledTimes(3); // Before count, adding tracks, after count
+        // Single POST to /tracks; no before/after pagination
+        expect(mockClient.request).toHaveBeenCalledTimes(1);
         expect(mockClient.request).toHaveBeenCalledWith(
           '/playlist/playlist-123/tracks',
           expect.objectContaining({

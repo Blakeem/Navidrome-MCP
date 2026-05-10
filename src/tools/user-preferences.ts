@@ -32,17 +32,6 @@ import {
   TopRatedItemsPaginationSchema,
 } from '../schemas/index.js';
 
-// Helper function to extract starredAt timestamp from raw data
-function extractStarredAt(item: unknown): string | undefined {
-  // The transformers don't currently include starredAt, so we need to check the raw data
-  // This is a limitation that should be addressed in the transformers later
-  if (typeof item === 'object' && item !== null && 'starredAt' in item) {
-    const starredAt = (item as { starredAt?: unknown }).starredAt;
-    return typeof starredAt === 'string' ? starredAt : undefined;
-  }
-  return undefined;
-}
-
 interface StarItemResult {
   success: boolean;
   message: string;
@@ -187,8 +176,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
         if (song.durationFormatted !== null && song.durationFormatted !== undefined && song.durationFormatted !== '') {
           item.duration = parseDuration(song.durationFormatted);
         }
-        const starredAt = extractStarredAt(song);
-        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
+        if (song.starredAt !== undefined && song.starredAt !== '') item.starredAt = song.starredAt;
         return item;
       })
       .slice(0, limit);
@@ -202,8 +190,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
         if (album.artist !== null && album.artist !== undefined && album.artist !== '') item.artist = album.artist;
         if (album.releaseYear !== null && album.releaseYear !== undefined) item.year = album.releaseYear;
         item.songCount = album.songCount; // Always present in albums
-        const starredAt = extractStarredAt(album);
-        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
+        if (album.starredAt !== undefined && album.starredAt !== '') item.starredAt = album.starredAt;
         return item;
       })
       .slice(0, limit);
@@ -216,8 +203,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
         if (artist.name !== null && artist.name !== undefined && artist.name !== '') item.name = artist.name;
         item.albumCount = artist.albumCount; // Always present
         item.songCount = artist.songCount; // Always present
-        const starredAt = extractStarredAt(artist);
-        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
+        if (artist.starredAt !== undefined && artist.starredAt !== '') item.starredAt = artist.starredAt;
         return item;
       })
       .slice(0, limit);

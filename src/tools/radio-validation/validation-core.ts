@@ -37,10 +37,19 @@ import {
   generateRecommendations,
   type StreamValidationResult,
 } from './recommendation-engine.js';
+import { isHttpUrlScheme } from '../../utils/network-safety.js';
 
-// Validation parameter schema
+// Validation parameter schema. The validator probes URLs over Node's fetch,
+// which only supports http:// and https://. Other valid radio protocols
+// (mms://, rtsp://, rtmp://) are playable by mpv but cannot be probed here;
+// reject them at the schema layer with a message that points users at
+// play_radio_station instead of letting fetch throw an opaque error.
 const ValidateStreamSchema = z.object({
-  url: z.string().url('URL must be a valid URL'),
+  url: z.string()
+    .url('URL must be a valid URL')
+    .refine(isHttpUrlScheme, {
+      message: 'URL must use http:// or https://. For other protocols (mms://, rtsp://, rtmp://), pass the URL directly to play_radio_station — mpv plays those streams natively but this validator can only probe HTTP/HTTPS.',
+    }),
   timeout: z.number().min(MIN_VALIDATION_TIMEOUT).max(MAX_VALIDATION_TIMEOUT).optional().default(SINGLE_VALIDATION_TIMEOUT),
   followRedirects: z.boolean().optional().default(true),
 });
@@ -119,12 +128,16 @@ export async function validateRadioStream(
   let buffer: Uint8Array | null = null;
   let headers: Headers | null = null;
   let sampleError: string | null = null;
+  let resolvedFinalUrl: string | null = null;
 
   try {
     // Step 1: Try HEAD request first
     const headResult = await validateWithHead(context);
     headResponse = headResult.response;
     headError = headResult.error;
+    if (headResult.finalUrl !== params.url) {
+      resolvedFinalUrl = headResult.finalUrl;
+    }
 
     if (headError !== null && headError !== undefined && headError !== '') {
       warnings.push(headError);
@@ -155,10 +168,13 @@ export async function validateRadioStream(
       const remainingTime = params.timeout - elapsed;
 
       if (remainingTime > 1000 && !overallController.signal.aborted) {
-        const sampleResult = await sampleAudioData(params.url, remainingTime);
+        const sampleResult = await sampleAudioData(params.url, remainingTime, params.followRedirects);
         buffer = sampleResult.buffer;
         headers = sampleResult.headers ?? headResponse?.headers ?? null;
         sampleError = sampleResult.error;
+        if (resolvedFinalUrl === null && sampleResult.finalUrl !== params.url) {
+          resolvedFinalUrl = sampleResult.finalUrl;
+        }
       } else if (remainingTime <= 1000) {
         sampleError = 'Insufficient time remaining for audio sampling';
       }
@@ -179,15 +195,14 @@ export async function validateRadioStream(
   }
 
   // Use whichever response we got
-  const finalResponse = headResponse ?? (headers !== null && headers !== undefined ? { headers, ok: true, status: 200, url: params.url } : null);
+  const finalResponse = headResponse ?? (headers !== null && headers !== undefined ? { headers, ok: true, status: 200 } : null);
 
   if (finalResponse) {
     result.httpStatus = finalResponse.status || 200;
     result.validation.httpAccessible = true;
 
-    // Check for redirects
-    if (finalResponse.url && finalResponse.url !== params.url) {
-      result.finalUrl = finalResponse.url;
+    if (resolvedFinalUrl !== null) {
+      result.finalUrl = resolvedFinalUrl;
     }
 
     // Extract content type

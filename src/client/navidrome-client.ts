@@ -166,12 +166,24 @@ export class NavidromeClient {
       throw new Error(ErrorFormatter.httpRequest('navidrome API', response, errorText));
     }
 
-    // Handle different content types
     const contentType = response.headers.get('content-type');
     if (contentType?.includes('application/json') === true) {
       return response.json() as Promise<T>;
-    } else {
-      return response.text() as Promise<T>;
     }
+
+    // Navidrome's POST /playlist/{id}/tracks (and /song/{id}/playlists) return
+    // JSON bodies with `Content-Type: text/plain`. Sniff the body and parse as
+    // JSON if it looks like one — otherwise fall back to text (legitimately
+    // used by M3U export, etc.).
+    const text = await response.text();
+    const trimmed = text.trimStart();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        // Body looked like JSON but didn't parse — fall through to text.
+      }
+    }
+    return text as T;
   }
 }

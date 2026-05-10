@@ -30,7 +30,6 @@ import {
   ReorderPlaylistTrackSchema,
 } from '../../schemas/index.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
-import { getPlaylistTracks } from './playlist-export.js';
 
 /**
  * Add tracks to a playlist
@@ -39,58 +38,26 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
   const params = AddTracksToPlaylistSchema.parse(args);
 
   try {
-    // Get track count before adding
-    const tracksBefore = await getPlaylistTracks(client, {
-      playlistId: params.playlistId,
-      limit: 500,
-      offset: 0
-    });
-    const countBefore = tracksBefore.tracks.length;
-
     const requestBody: AddTracksToPlaylistRequest = {};
+    if (params.songIds !== undefined) requestBody.ids = params.songIds;
+    if (params.albumIds !== undefined) requestBody.albumIds = params.albumIds;
+    if (params.artistIds !== undefined) requestBody.artistIds = params.artistIds;
+    if (params.discs !== undefined) requestBody.discs = params.discs;
 
-    if (params.songIds !== undefined) {
-      requestBody.ids = params.songIds;
-    }
-
-    if (params.albumIds !== undefined) {
-      requestBody.albumIds = params.albumIds;
-    }
-
-    if (params.artistIds !== undefined) {
-      requestBody.artistIds = params.artistIds;
-    }
-
-    if (params.discs !== undefined) {
-      requestBody.discs = params.discs;
-    }
-
-    const response = await client.request<{ added: number }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const response = await client.request<{ added: number }>(
+      `/playlist/${encodeURIComponent(params.playlistId)}/tracks`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
       },
-      body: JSON.stringify(requestBody),
-    });
+    );
 
-    // Get track count after adding
-    const tracksAfter = await getPlaylistTracks(client, {
-      playlistId: params.playlistId,
-      limit: 500,
-      offset: 0
-    });
-    const countAfter = tracksAfter.tracks.length;
-
-    // Use actual count difference as fallback if API response is incorrect
-    const apiCount = response.added || 0;
-    const actualCount = countAfter - countBefore;
-    const addedCount = Math.max(apiCount, actualCount);
-    const success = addedCount > 0;
-
+    const addedCount = response.added ?? 0;
     return {
       added: addedCount,
       message: `Successfully added ${addedCount} track${addedCount !== 1 ? 's' : ''} to playlist`,
-      success,
+      success: addedCount > 0,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('add_tracks_to_playlist', error));

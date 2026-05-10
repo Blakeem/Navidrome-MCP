@@ -168,6 +168,13 @@ export const TestConnectionSchema = z.object({
   includeServerInfo: OptionalBooleanSchema.default(false),
 });
 
+// Library management validation
+export const SetActiveLibrariesSchema = z.object({
+  libraryIds: z.array(z.number().int().positive().finite())
+    .min(1, 'At least one library ID must be provided')
+    .transform((ids) => Array.from(new Set(ids))),
+}).strict();
+
 // Song playlists schema
 export const GetSongPlaylistsSchema = z.object({
   songId: z.string().min(1, 'Song ID is required'),

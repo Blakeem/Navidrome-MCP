@@ -4,6 +4,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockedFunction } from 'vitest';
+
+// Mock node:dns/promises BEFORE importing the validator so its internal
+// hostResolvesToPrivateIp uses the mock for redirect-target resolution.
+const mockDnsLookup = vi.fn();
+vi.mock('node:dns/promises', () => ({
+  lookup: (...args: unknown[]) => mockDnsLookup(...args),
+}));
+
 import { validateRadioStream } from '../../../src/tools/radio-validation.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
@@ -22,6 +30,9 @@ describe('Radio Stream Validation', () => {
   beforeEach(() => {
     mockClient = {} as NavidromeClient;
     vi.clearAllMocks();
+    // Default DNS mock — most tests don't redirect, so this is unused.
+    // Tests that exercise redirects override this.
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   });
 
   afterEach(() => {
@@ -38,6 +49,35 @@ describe('Radio Stream Validation', () => {
       expect(result.status).toBe('error');
       expect(result.errors[0]).toContain('Invalid parameters');
       expect(result.recommendations[0]).toBe('❌ Please provide a valid URL');
+    });
+
+    it('should reject mms:// with a message pointing to play_radio_station', async () => {
+      const result = await validateRadioStream(mockClient, {
+        url: 'mms://example.com/stream',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.errors[0]).toContain('Invalid parameters');
+      expect(result.errors[0]).toContain('play_radio_station');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject rtsp:// before any fetch is attempted', async () => {
+      const result = await validateRadioStream(mockClient, {
+        url: 'rtsp://example.com/live',
+      });
+
+      expect(result.success).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('should reject file:// URLs', async () => {
+      const result = await validateRadioStream(mockClient, {
+        url: 'file:///etc/passwd',
+      });
+
+      expect(result.success).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should reject timeout too low', async () => {
@@ -351,22 +391,22 @@ describe('Radio Stream Validation', () => {
   });
 
   describe('Redirect Handling', () => {
-    it('should follow redirects when enabled', async () => {
+    it('should follow a public 302 to a public final URL', async () => {
+      // First HEAD: 302 with Location pointing at a public destination
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ 'location': 'https://final-destination.com/stream.mp3' }),
+      });
+      // Second HEAD against the redirect target: 200 with audio content-type
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
-        url: 'https://final-destination.com/stream.mp3', // After redirect
-        headers: new Headers({
-          'content-type': 'audio/mpeg',
-        }),
+        headers: new Headers({ 'content-type': 'audio/mpeg' }),
       });
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 206,
-        headers: new Headers(),
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
-      });
+      // DNS for the redirect host resolves to a public address
+      mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
 
       const result = await validateRadioStream(mockClient, {
         url: 'https://redirect.example.com/stream',
@@ -374,6 +414,62 @@ describe('Radio Stream Validation', () => {
       });
 
       expect(result.finalUrl).toBe('https://final-destination.com/stream.mp3');
+      expect(result.success).toBe(true);
+    });
+
+    it('should refuse to follow a redirect to a private IP', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ 'location': 'http://localhost:4533/api/admin' }),
+      });
+      mockDnsLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
+
+      const result = await validateRadioStream(mockClient, {
+        url: 'https://malicious.example.com/stream',
+        followRedirects: true,
+      });
+
+      // The HEAD got refused → validator falls through to sampleAudioData,
+      // which retries the same redirect and is refused again. Both fetches
+      // went to the ORIGINAL public URL, never to the localhost target.
+      const fetchTargets = mockFetch.mock.calls.map((c) => String(c[0]));
+      expect(fetchTargets.every((u) => u === 'https://malicious.example.com/stream')).toBe(true);
+      expect(fetchTargets.some((u) => u.includes('localhost') || u.includes('127.0.0.1'))).toBe(false);
+
+      const refusal = [...result.warnings, ...result.errors].some((m) =>
+        m.includes('Refusing to follow redirect to private/local address'),
+      );
+      expect(refusal).toBe(true);
+      expect(result.success).toBe(false);
+    });
+
+    it('should refuse to follow a redirect to a non-HTTP scheme', async () => {
+      // Both HEAD and sampleAudioData will see the same 302 mock; queue twice.
+      const redirectMock = {
+        ok: false,
+        status: 302,
+        statusText: 'Found',
+        headers: new Headers({ 'location': 'file:///etc/passwd' }),
+      };
+      mockFetch.mockResolvedValueOnce(redirectMock);
+      mockFetch.mockResolvedValueOnce(redirectMock);
+
+      const result = await validateRadioStream(mockClient, {
+        url: 'https://shady.example.com/stream',
+        followRedirects: true,
+      });
+
+      // Confirm we never followed into the file:// target
+      const fetchTargets = mockFetch.mock.calls.map((c) => String(c[0]));
+      expect(fetchTargets.some((u) => u.startsWith('file://'))).toBe(false);
+
+      const refusal = [...result.warnings, ...result.errors].some((m) =>
+        m.includes('non-HTTP scheme'),
+      );
+      expect(refusal).toBe(true);
+      expect(result.success).toBe(false);
     });
   });
 
@@ -564,6 +660,49 @@ describe('Radio Stream Validation', () => {
 
       expect(result.validation.audioDataDetected).toBe(false);
       expect(result.warnings).toContain('Could not sample audio data from stream');
+    });
+
+    it('should slice oversize chunks to the 8KB cap', async () => {
+      // HEAD returns inconclusive headers so the validator falls through to sampling.
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/octet-stream' }),
+      });
+
+      // GET returns one giant 100KB chunk via getReader() — simulating a server
+      // that ignores Range and dumps the whole file. The validator must NOT
+      // accumulate the full chunk in memory.
+      const giantChunk = new Uint8Array(100 * 1024);
+      giantChunk[0] = 0xFF; // MP3 frame header so detect succeeds
+      giantChunk[1] = 0xFB;
+
+      const reader = {
+        read: vi.fn()
+          .mockResolvedValueOnce({ value: giantChunk, done: false })
+          .mockResolvedValue({ value: undefined, done: true }),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 206,
+        headers: new Headers(),
+        body: { getReader: () => reader },
+      });
+
+      const { fileTypeFromBuffer } = vi.mocked(await import('file-type'));
+      fileTypeFromBuffer.mockResolvedValue(null); // Force manual signature path
+
+      const result = await validateRadioStream(mockClient, {
+        url: 'https://misbehaving.example.com/stream',
+      });
+
+      // Reader was canceled after first oversized chunk
+      expect(reader.cancel).toHaveBeenCalled();
+      // Format detection still found the MP3 signature in the truncated buffer
+      expect(result.audioFormat?.format).toBe('mp3');
+      expect(result.validation.audioDataDetected).toBe(true);
     });
 
     it('should work with HEAD request failure but successful sampling', async () => {

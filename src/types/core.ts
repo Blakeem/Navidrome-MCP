@@ -52,6 +52,8 @@ export interface SongDTO {
   rating?: number;
   /** Whether the song is starred/favorited */
   starred?: boolean;
+  /** ISO 8601 timestamp when the user starred this song, if any */
+  starredAt?: string;
 }
 
 
@@ -89,6 +91,8 @@ export interface AlbumDTO {
   rating?: number;
   /** Whether starred */
   starred?: boolean;
+  /** ISO 8601 timestamp when the user starred this album, if any */
+  starredAt?: string;
 }
 
 /**
@@ -113,6 +117,8 @@ export interface ArtistDTO {
   rating?: number;
   /** Whether starred */
   starred?: boolean;
+  /** ISO 8601 timestamp when the user starred this artist, if any */
+  starredAt?: string;
 }
 
 
