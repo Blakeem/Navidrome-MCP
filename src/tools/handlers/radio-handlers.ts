@@ -123,20 +123,6 @@ function getRadioTools(config: Config): Tool[] {
       },
     },
     {
-      name: 'play_radio_station',
-      description: 'Play a radio station through the local mpv speakers (requires mpv on the host). Replaces the entire live play queue with this single radio stream — radio is mutually exclusive with songs/albums in the play queue, matching Navidrome\'s web UI convention. Use `now_playing` to see the currently-playing station name and ICY metadata.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          id: {
-            type: 'string',
-            description: 'The unique ID of the radio station to play',
-          },
-        },
-        required: ['id'],
-      },
-    },
-    {
       name: 'validate_radio_stream',
       description: 'Tests if a radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and attempts to verify audio data.',
       inputSchema: {
@@ -164,6 +150,26 @@ function getRadioTools(config: Config): Tool[] {
       },
     },
   ];
+
+  // Only expose play_radio_station when local playback (mpv) is available.
+  // Without mpv the engine never gets configured and the call would fail with
+  // an internal error — hiding the tool keeps parity with the other mpv tools.
+  if (config.features.playback) {
+    baseTools.push({
+      name: 'play_radio_station',
+      description: 'Play a radio station through the local mpv speakers (requires mpv on the host). Replaces the entire live play queue with this single radio stream — radio is mutually exclusive with songs/albums in the play queue, matching Navidrome\'s web UI convention. Use `now_playing` to see the currently-playing station name and ICY metadata.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'The unique ID of the radio station to play',
+          },
+        },
+        required: ['id'],
+      },
+    });
+  }
 
   // Add radio discovery tools if Radio Browser is enabled
   if (config.features.radioBrowser) {

@@ -74,11 +74,11 @@ const EXPECTED_CORE_TOOLS = [
   'list_most_played',
 
   // Radio category (core radio management) - UPDATED: removed batch_create_radio_stations after consolidation
+  // play_radio_station is gated on playback (mpv) feature — see EXPECTED_PLAYBACK_TOOLS
   'list_radio_stations',
   'create_radio_station',
   'delete_radio_station',
   'get_radio_station',
-  'play_radio_station',
   'validate_radio_stream',
 
   // Tags category
@@ -117,6 +117,7 @@ const EXPECTED_PLAYBACK_TOOLS = [
   'play_albums',
   'play_albums_search',
   'play_songs_search',
+  'play_radio_station',
   'next',
   'previous',
   'seek',

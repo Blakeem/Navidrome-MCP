@@ -55,7 +55,7 @@ This isn't just another music tool – it's your personal music curator powered 
 
 * **Plays Through Your Speakers**: Audio decodes locally via mpv and outputs through your machine's audio device — no browser, no Navidrome web UI needed
 * **Search-and-Play in One Call**: `play_albums_search` and `play_songs_search` accept all your existing search filters (query, genre, artist, year range, starred, sort, etc.) and pipe results straight into the live play queue
-* **Internet Radio**: `play_radio_station` plays any saved Navidrome radio station through mpv — Icecast, SHOUTcast, etc. ICY metadata flows through to `now_playing` so you can see what's currently playing on the stream
+* **Internet Radio**: `play_radio_station` (registered only when mpv is installed) plays any saved Navidrome radio station through mpv — Icecast, SHOUTcast, etc. ICY metadata flows through to `now_playing` so you can see what's currently playing on the stream
 * **Active Queue Manipulation**: Move tracks to the front to make them play, shuffle the queue and the new top plays, remove the current track and the next one auto-advances — the queue actively reflects what should play
 * **Three Shuffle Modes for Albums**: Keep natural order (`'none'`), randomize album order while preserving track order within each (`'albums'`), or fully interleave all tracks across albums (`'songs'`)
 * **Cross-Platform**: Works on Linux, macOS, and Windows 11; mpv handles every common audio codec via Navidrome's transcoding pipeline
@@ -132,7 +132,7 @@ This isn't just another music tool – it's your personal music curator powered 
 
 ### Installing mpv (optional, for local audio playback)
 
-mpv is a lightweight, cross-platform media player. The MCP server detects it at startup; if installed, it registers 17 additional playback tools (`play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `pause`, `resume`, `next`, `previous`, `seek`, `set_volume`, `now_playing`, `playback_status`, `get_play_queue`, `clear_play_queue`, `shuffle_play_queue`, `move_in_play_queue`, `remove_from_play_queue`) AND wires `play_radio_station` (already present in the radio category) into the local mpv player so saved Navidrome radio stations stream through your machine's speakers. If mpv isn't found, the playback tools simply don't appear and `play_radio_station` returns an error directing you to install mpv.
+mpv is a lightweight, cross-platform media player. The MCP server detects it at startup; if installed, it registers 18 additional playback tools (`play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `pause`, `resume`, `next`, `previous`, `seek`, `set_volume`, `now_playing`, `playback_status`, `get_play_queue`, `clear_play_queue`, `shuffle_play_queue`, `move_in_play_queue`, `remove_from_play_queue`, and `play_radio_station`) so saved Navidrome radio stations and your music library both stream through your machine's speakers. If mpv isn't found, none of these tools are exposed — keeping the tool list clean for setups that don't use local playback.
 
 **macOS** (via [Homebrew](https://brew.sh/)):
 ```bash
@@ -452,7 +452,7 @@ The playback engine has no MCP-specific assumptions — the same engine could be
 | `get_radio_station` | Get detailed information about a specific radio station by ID |
 | `create_radio_station` | Create radio stations using JSON array format (single or multiple stations, with optional validation*) |
 | `delete_radio_station` | Delete an internet radio station by ID |
-| `play_radio_station` | Play a saved radio station through the local mpv speakers (requires mpv). Replaces the entire play queue — radio is mutually exclusive with songs/albums. Use `now_playing` to read the currently-playing station and ICY metadata. |
+| `play_radio_station` | Play a saved radio station through the local mpv speakers. Only registered when mpv is installed. Replaces the entire play queue — radio is mutually exclusive with songs/albums. Use `now_playing` to read the currently-playing station and ICY metadata. |
 | `discover_radio_stations` | Find internet radio stations globally |
 | `get_radio_filters` | Get available search filters (genres, countries, etc.) |
 | `get_station_by_uuid` | Get detailed station information |
