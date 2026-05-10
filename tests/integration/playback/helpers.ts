@@ -42,6 +42,10 @@ import {
   setVolume as setVolumeTool,
   shufflePlayQueue as shufflePlayQueueTool,
 } from '../../../src/tools/playback.js';
+import {
+  listRadioStations as listRadioStationsTool,
+  playRadioStation as playRadioStationTool,
+} from '../../../src/tools/radio.js';
 import { searchAlbums, searchSongs } from '../../../src/tools/search/index.js';
 import { shouldSkipLiveTests } from '../../helpers/env-detection.js';
 import { getSharedLiveClient } from '../../factories/shared-client.js';
@@ -367,4 +371,49 @@ export async function nowPlaying(): Promise<Awaited<ReturnType<typeof nowPlaying
 
 export async function playbackStatus(): Promise<PlaybackStatus> {
   return playbackStatusTool({});
+}
+
+/**
+ * Play a saved Navidrome radio station through mpv. Wraps the
+ * production `play_radio_station` tool. Replaces the entire queue with
+ * this single radio stream (per radio mutual-exclusion rule).
+ */
+export async function playRadioStation(args: {
+  id: string;
+}): Promise<Awaited<ReturnType<typeof playRadioStationTool>>> {
+  const { config } = await ctx();
+  return playRadioStationTool(config, args);
+}
+
+/**
+ * Pick a radio station ID for tests. Lists stations from Navidrome and
+ * returns the first one whose stream URL matches a known-reliable host
+ * pattern (SomaFM is a stable, free-to-stream service that's commonly
+ * present in test libraries). Falls back to the first station if no
+ * match. Throws if the user has zero saved stations.
+ */
+export async function getTestRadioStationId(): Promise<string> {
+  const { config } = await ctx();
+  const result = await listRadioStationsTool(config, {});
+  if (result.stations.length === 0) {
+    throw new Error('No radio stations are saved in Navidrome — radio tests require at least one');
+  }
+  // Prefer SomaFM streams when available (consistently reliable).
+  const somaFm = result.stations.find(s => /soma(fm|\.fm)/i.test(s.streamUrl));
+  if (somaFm !== undefined) {
+    return somaFm.id;
+  }
+  // Otherwise prefer streams that look like real HTTPS Icecast/SHOUTcast.
+  // Filter out fake/test entries with hosts containing "fake" or "test".
+  const realLooking = result.stations.find(s =>
+    s.streamUrl.startsWith('https://') && !/fake|test\./i.test(s.streamUrl)
+  );
+  if (realLooking !== undefined) {
+    return realLooking.id;
+  }
+  // Last resort: first station, even if it's a fake URL — tests that
+  // exercise structural assertions (queue-shape, mutual exclusion) don't
+  // depend on actual audio playback.
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+  return result.stations[0]!.id;
 }

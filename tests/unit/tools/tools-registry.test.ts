@@ -79,7 +79,6 @@ const EXPECTED_CORE_TOOLS = [
   'delete_radio_station',
   'get_radio_station',
   'play_radio_station',
-  'get_current_radio_info',
   'validate_radio_stream',
 
   // Tags category

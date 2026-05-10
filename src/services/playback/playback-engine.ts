@@ -99,6 +99,13 @@ class PlaybackEngine {
   private signalsRegistered = false;
   private shuttingDown = false;
   private readonly propertyCache = new Map<string, unknown>();
+  // Tracks the currently-loaded radio station so `now_playing` can surface
+  // the human-readable name. Set by `enqueueRadio`; cleared by any operation
+  // that replaces the queue with songs (`enqueue`) or empties it
+  // (`clearPlaylist`). Session-scoped — does not survive MCP restart, but
+  // an attached MCP can derive `isRadio` from `getPlaylist()` entries whose
+  // `songId` is null.
+  private currentRadioStation: { name: string } | null = null;
 
   private constructor() {}
 
@@ -221,6 +228,19 @@ class PlaybackEngine {
     await this.ensureRunning();
     const ipc = this.requireIpc();
 
+    // Radio mutual exclusion: a radio stream and songs cannot coexist in the
+    // queue — radio is infinite and breaks queue semantics. If the queue
+    // currently holds a radio stream, any append is demoted to replace so
+    // the radio is cleanly evicted before songs load.
+    if (mode === 'append' && await this.hasRadioStream()) {
+      logger.debug('enqueue: append demoted to replace because queue contains a radio stream');
+      mode = 'replace';
+    }
+
+    // Loading songs always evicts any radio context; clear the station name
+    // so `now_playing` doesn't show a stale radio header.
+    this.currentRadioStation = null;
+
     if (mode === 'replace') {
       // Issue an explicit playlist-clear before loading. `loadfile ... replace`
       // would clear implicitly, but doing it up-front guarantees the prior
@@ -306,6 +326,64 @@ class PlaybackEngine {
   async clearPlaylist(): Promise<void> {
     await this.ensureRunning();
     await this.requireIpc().command('stop');
+    this.currentRadioStation = null;
+  }
+
+  /**
+   * Replace the live queue with a single radio stream and start playback.
+   *
+   * Radio is mutually exclusive with songs/albums: an mpv playlist that
+   * mixes a (potentially infinite) radio stream with finite tracks behaves
+   * unintuitively (skip/next semantics, queue position, scrobbling). Per
+   * Navidrome's web UI convention, calling this method always replaces the
+   * entire queue — regardless of what was previously loaded.
+   *
+   * `loadfile <url> replace` natively clobbers any prior queue contents,
+   * so we don't need an explicit `playlist-clear` first.
+   *
+   * The optional `stationName` is stored on the engine so `now_playing`
+   * can surface a human-readable header. If the MCP server restarts while
+   * a radio stream is playing, the new server attaches to the running mpv
+   * but the station name is lost — callers can derive `isRadio` from
+   * `getPlaylist()` entries whose `songId` is null.
+   */
+  async enqueueRadio(streamUrl: string, stationName?: string): Promise<void> {
+    if (streamUrl.trim() === '') {
+      throw new Error('enqueueRadio requires a non-empty stream URL');
+    }
+    await this.ensureRunning();
+    const ipc = this.requireIpc();
+    await ipc.command('loadfile', streamUrl, 'replace');
+    await ipc.command('set_property', 'pause', false);
+    this.currentRadioStation = stationName !== undefined && stationName !== ''
+      ? { name: stationName }
+      : null;
+  }
+
+  /**
+   * Whether the live queue currently contains a radio stream — defined as
+   * any entry whose stream URL doesn't carry a Navidrome song `id`. Used
+   * by `enqueue` to enforce the radio/songs mutual-exclusion rule.
+   *
+   * Returns false when the engine isn't running OR the queue is empty
+   * (avoiding an unnecessary IPC roundtrip via the cached `playlist-count`).
+   */
+  async hasRadioStream(): Promise<boolean> {
+    if (!this.isRunning()) return false;
+    const count = this.getCachedProperty('playlist-count');
+    if (typeof count !== 'number' || count === 0) return false;
+    const playlist = await this.getPlaylist();
+    return playlist.some(entry => entry.songId === null);
+  }
+
+  /**
+   * Returns the human-readable name of the currently-loaded radio station,
+   * or null if no radio is playing OR if the engine attached to a running
+   * mpv where the station name was set in a previous MCP session (the
+   * name is session-scoped; the URL is recoverable via `getPlaylist()`).
+   */
+  getCurrentRadioStation(): { name: string } | null {
+    return this.currentRadioStation;
   }
 
   /**

@@ -43,7 +43,6 @@ export type {
   CreateRadioStationResponse,
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
-  RadioPlaybackInfo,
   ExternalRadioStationDTO,
   DiscoverRadioStationsResponse,
   RadioFiltersResponse,

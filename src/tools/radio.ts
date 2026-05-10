@@ -1,17 +1,17 @@
 import crypto from 'crypto';
 import type { Config } from '../config.js';
-import type { 
-  RadioStationDTO, 
-  CreateRadioStationRequest, 
+import type {
+  RadioStationDTO,
+  CreateRadioStationRequest,
   CreateRadioStationResponse,
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
-  RadioPlaybackInfo 
 } from '../types/index.js';
 import { logger } from '../utils/logger.js';
 import { getMessageManager } from '../utils/message-manager.js';
 import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { playbackEngine } from '../services/playback/playback-engine.js';
 
 interface SubsonicResponse<T = unknown> {
   'subsonic-response': {
@@ -342,77 +342,60 @@ export async function getRadioStation(
   }
 }
 
+interface PlayRadioStationResult {
+  success: true;
+  station: {
+    id: string;
+    name: string;
+    streamUrl: string;
+  };
+}
+
 /**
- * Play a radio station (sets it in the queue)
+ * Play a radio station through the local mpv player.
+ *
+ * Behavior: replaces the entire live play queue with this single radio
+ * stream and starts playback. Radio is mutually exclusive with songs and
+ * albums in the play queue (mpv playlists mixing infinite streams with
+ * finite tracks behave unintuitively, and Navidrome's web UI follows the
+ * same convention). Conversely, calling `play_songs` / `play_albums` /
+ * `play_*_search` while a radio is playing replaces the radio with songs.
+ *
+ * Requires `mpv` on the host (see `playback_status` to verify). Throws if
+ * the station ID doesn't exist or mpv isn't available.
  */
 export async function playRadioStation(
-  config: Config, 
+  config: Config,
   args: unknown
-): Promise<{ success: boolean; message: string; station?: RadioStationDTO }> {
+): Promise<PlayRadioStationResult> {
   try {
-    const params = args as { id: string };
-    
-    if (!params.id) {
+    const params = args as { id?: unknown };
+    const id = typeof params.id === 'string' ? params.id : '';
+
+    if (id === '') {
       throw new Error('Radio station ID is required');
     }
-    
-    logger.debug('Playing radio station:', params.id);
-    
-    // First get the station details
-    const station = await getRadioStation(config, params);
-    
-    // Note: The actual playback implementation would require additional Subsonic API calls
-    // to set up playback. For now, we'll return success with the station info.
-    // In a full implementation, this might involve:
-    // 1. Calling saveQueue to set up radio playback
-    // 2. Using stream endpoint to start playing
-    
+
+    logger.debug('Playing radio station:', id);
+
+    const station = await getRadioStation(config, { id });
+
+    if (typeof station.streamUrl !== 'string' || station.streamUrl.trim() === '') {
+      throw new Error(`Radio station "${station.name}" has no stream URL`);
+    }
+
+    await playbackEngine.enqueueRadio(station.streamUrl, station.name);
+
     return {
       success: true,
-      message: `Radio station "${station.name}" is ready to play. Stream URL: ${station.streamUrl}`,
-      station,
+      station: {
+        id: station.id,
+        name: station.name,
+        streamUrl: station.streamUrl,
+      },
     };
   } catch (error) {
     logger.error('Error playing radio station:', error);
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : 'Unknown error',
-    };
-  }
-}
-
-
-/**
- * Get current radio playback information
- */
-export async function getCurrentRadioInfo(
-  _config: Config, 
-  _args: unknown
-): Promise<RadioPlaybackInfo> {
-  try {
-    logger.debug('Getting current radio info');
-    
-    // Note: This implementation depends on Navidrome's current playback status API
-    // The Subsonic API has getNowPlaying but it's for regular tracks, not radio streams
-    // This is a placeholder implementation that would need to be adjusted based on
-    // the actual Navidrome radio status endpoints
-    
-    // For now, we'll return a basic response indicating no radio is currently playing
-    // In a real implementation, this would query the current playback status
-    
-    return {
-      playing: false,
-      metadata: {
-        description: 'Radio playback status not available - use getNowPlaying for regular track status',
-      },
-    };
-  } catch (error) {
-    logger.error('Error getting current radio info:', error);
-    return {
-      playing: false,
-      metadata: {
-        description: `Error getting radio info: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      },
-    };
+    throw new Error(ErrorFormatter.toolExecution('play_radio_station', error));
   }
 }

@@ -12,7 +12,6 @@ import {
   deleteRadioStation,
   getRadioStation,
   playRadioStation,
-  getCurrentRadioInfo,
 } from '../radio.js';
 import { validateRadioStream } from '../radio-validation.js';
 import {
@@ -107,7 +106,7 @@ function getRadioTools(config: Config): Tool[] {
     },
     {
       name: 'play_radio_station',
-      description: 'Start playing a radio station by setting it in the playback queue',
+      description: 'Play a radio station through the local mpv speakers (requires mpv on the host). Replaces the entire live play queue with this single radio stream — radio is mutually exclusive with songs/albums in the play queue, matching Navidrome\'s web UI convention. Use `now_playing` to see the currently-playing station name and ICY metadata.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -117,14 +116,6 @@ function getRadioTools(config: Config): Tool[] {
           },
         },
         required: ['id'],
-      },
-    },
-    {
-      name: 'get_current_radio_info',
-      description: 'Get information about currently playing radio station and stream metadata',
-      inputSchema: {
-        type: 'object',
-        properties: {},
       },
     },
     {
@@ -307,8 +298,6 @@ export function createRadioToolCategory(client: NavidromeClient, config: Config)
           return await getRadioStation(config, args);
         case 'play_radio_station':
           return await playRadioStation(config, args);
-        case 'get_current_radio_info':
-          return await getCurrentRadioInfo(config, args);
         case 'validate_radio_stream':
           return await validateRadioStream(client, args);
         case 'discover_radio_stations':

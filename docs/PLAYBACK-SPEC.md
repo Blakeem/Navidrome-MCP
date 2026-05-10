@@ -163,7 +163,7 @@ The codebase has three distinct queue-like concepts. Their tool names are kept u
 
 The `play_` verb prefix consistently means "affect what's audibly coming out of the speakers right now." The `_play_queue` noun suffix means "operate on the live mpv playlist as a whole."
 
-### Implemented tools (17)
+### Implemented tools (17 playback + 1 radio)
 
 #### Playback start
 
@@ -202,10 +202,28 @@ The `play_` verb prefix consistently means "affect what's audibly coming out of 
 
 | Tool | Returns |
 |---|---|
-| `now_playing` | `{ engineRunning, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength? }` (synchronous from cache; does NOT spawn mpv) |
+| `now_playing` | `{ engineRunning, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength?, isRadio?, radioStation? }` (synchronous from cache; does NOT spawn mpv) |
 | `playback_status` | `{ engineRunning, mpvPath, mpvVersion, volume, idle }` (does NOT spawn mpv) |
 
-`now_playing` returns real-time playback state (current title, position, paused). It is **distinct from** `get_play_queue`: "now playing" answers *"what's happening right this second?"*; `get_play_queue` answers *"what's the full ordered list of tracks that are queued up?"*. Same underlying mpv playlist, different granularities and very different payload sizes.
+`now_playing` returns real-time playback state (current title, position, paused). It is **distinct from** `get_play_queue`: "now playing" answers *"what's happening right this second?"*; `get_play_queue` answers *"what's the full ordered list of tracks that are queued up?"*. Same underlying mpv playlist, different granularities and very different payload sizes. When a radio stream is loaded, `now_playing` adds `isRadio: true` and (if the radio was started in the current MCP session) `radioStation: { name }`.
+
+#### Radio playback (lives in the radio category, plays through mpv)
+
+| Tool | Args | Effect |
+|---|---|---|
+| `play_radio_station` | `{ id: string }` | Play a saved Navidrome radio station through the local mpv player. Always replaces the entire play queue with the single radio stream (radio is mutually exclusive with songs/albums — see below). |
+
+##### Radio / songs mutual exclusion
+
+A radio stream is infinite; songs and albums are finite. Mixing them in one mpv playlist breaks queue semantics (skip/next, queue position, scrobbling thresholds). Per Navidrome's web UI convention, the engine enforces strict separation:
+
+- `play_radio_station` always **replaces** whatever is in the queue (even other songs).
+- `play_songs` / `play_albums` / `play_albums_search` / `play_songs_search` with `mode: 'replace'` work normally — the radio is replaced.
+- `play_songs` / `play_albums` / `play_albums_search` / `play_songs_search` with `mode: 'append'` **demote to `'replace'`** when the queue currently contains a radio stream. Appending songs to a radio queue would create `[radio, song1, song2, ...]` which is nonsensical.
+
+The recognition primitive is the queue entry's `songId` field: when a stream URL doesn't carry a Navidrome `?id=...` query parameter (i.e., it's an arbitrary URL like a SomaFM Icecast stream), `parseSongIdFromStreamUrl` returns `null` and the entry is treated as a radio stream. `playbackEngine.hasRadioStream()` exposes this check; `enqueue` calls it to decide whether to demote append → replace.
+
+The engine separately tracks the station name passed to `enqueueRadio(streamUrl, stationName?)` so `now_playing` can surface a human-readable header. This name is session-scoped — if the MCP server restarts and attaches to a running mpv, the new server can still detect `isRadio` from queue inspection, but `radioStation.name` will be `undefined` until the next `play_radio_station` call.
 
 #### Why search-driven tools are separate from `play_albums` / `play_songs`
 
@@ -453,6 +471,17 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
 |---|---|
 | Engine cold | `engineRunning: false`, `mpvPath` set, `mpvVersion: null`, `volume: null`, `idle: null` |
 | Engine running | `engineRunning: true`, `mpvVersion` populated, `volume` populated, `idle` boolean |
+
+#### `play_radio_station`
+
+| Case | Setup | Assert |
+|---|---|---|
+| Loads radio as single-entry queue | empty queue | `result.success === true`, `result.station.{id,name,streamUrl}` present; `get_play_queue.length === 1`; the one entry has `songId: null` (recognition signal) and `filename === streamUrl` |
+| `now_playing` surfaces radio context | radio loaded | `isRadio === true`, `radioStation.name` matches `result.station.name` |
+| `play_songs { mode: 'replace' }` while radio plays → radio replaced | radio loaded | new queue length matches songs count, every entry has non-null `songId`, `now_playing.isRadio` undefined |
+| `play_songs { mode: 'append' }` while radio plays → demoted to replace; radio gone | radio loaded | queue length === songs count (NOT songs.count + 1, which would mean append wasn't demoted), no entry has null `songId` |
+| `play_radio_station` while songs play → songs replaced | songs loaded | queue length === 1, `songId === null`, `isRadio === true` |
+| Invalid station ID throws via `ErrorFormatter` | — | promise rejects with error message |
 
 ### Cross-tool integration
 

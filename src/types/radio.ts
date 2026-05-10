@@ -74,23 +74,6 @@ export interface ListRadioStationsResponse {
   tip?: string;
 }
 
-/** Radio playback status information */
-export interface RadioPlaybackInfo {
-  /** Whether radio is currently playing */
-  playing: boolean;
-  /** Current radio station info if playing */
-  currentStation?: RadioStationDTO;
-  /** Current stream metadata if available */
-  metadata?: {
-    /** Current track/show title */
-    title?: string;
-    /** Current artist/host */
-    artist?: string;
-    /** Station description */
-    description?: string;
-  };
-}
-
 /**
  * External radio station from Radio Browser API
  */

@@ -105,6 +105,12 @@ interface NowPlayingResult {
   paused?: boolean;
   queueIndex?: number;
   queueLength?: number;
+  // Set when a radio stream is currently loaded. `isRadio` is true when the
+  // current queue entry's filename doesn't carry a Navidrome song `id`.
+  // `radioStation` is populated when the engine has recorded a station name
+  // — only when the radio was started in the same MCP session (session-scoped).
+  isRadio?: boolean;
+  radioStation?: { name: string };
 }
 
 interface GetPlayQueueResult {
@@ -601,10 +607,32 @@ export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
     const metadata = playbackEngine.getCachedProperty('metadata');
     if (typeof metadata === 'object' && metadata !== null) {
       const meta = metadata as Record<string, unknown>;
-      const artist = pickFirstString(meta, ['artist', 'Artist', 'ARTIST']);
+      const artist = pickFirstString(meta, ['artist', 'Artist', 'ARTIST', 'icy-name']);
       const album = pickFirstString(meta, ['album', 'Album', 'ALBUM']);
       if (artist !== null) result.artist = artist;
       if (album !== null) result.album = album;
+    }
+
+    // Surface radio context. Two signals: the engine's session-scoped
+    // station-name memory (set by `enqueueRadio`) and a runtime check of
+    // the current queue entry — `songId === null` means a non-Navidrome
+    // URL (almost always a radio stream).
+    const radioStation = playbackEngine.getCurrentRadioStation();
+    if (radioStation !== null) {
+      result.isRadio = true;
+      result.radioStation = radioStation;
+    } else {
+      // Fallback: if we attached to a running mpv where the engine flag was
+      // lost (different MCP session), still detect radio mode from the queue.
+      try {
+        const playlist = await playbackEngine.getPlaylist();
+        const current = playlist.find(e => e.isCurrent);
+        if (current !== undefined && current.songId === null) {
+          result.isRadio = true;
+        }
+      } catch {
+        // Best-effort; if getPlaylist fails, skip the fallback detection
+      }
     }
 
     return result;
