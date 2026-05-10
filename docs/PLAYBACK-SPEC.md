@@ -385,10 +385,10 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
 | Case | Setup | Assert |
 |---|---|---|
 | `from === to` | populated | returns `{ success: true, noop: true }`, queue unchanged |
-| Valid `from < to`, neither is 0 | current at idx 0, move 2 → 4 | source entry now at idx 4, intermediates shift up, `currentIndex` unchanged (lazy is correct here) |
-| Valid `from > to`, neither is 0 | current at idx 0, move 4 → 2 | source entry now at idx 2, `currentIndex` unchanged |
+| Valid `from < to`, neither is 0 | current at idx 0, move 2 → 4 | source entry now at idx **3** (mpv's `playlist-move` removes from source first, then inserts before original `to`, so forward moves land at `to - 1`); intermediates between source and dest shift **down** by 1; `currentIndex` unchanged (lazy is correct here) |
+| Valid `from > to`, neither is 0 | current at idx 0, move 4 → 2 | source entry now at idx 2 (backward moves are exact since source removal doesn't shift the destination); `currentIndex` unchanged |
 | `to === 0` triggers active play | populated, current at idx 0, move 3 → 0 | source entry now at idx 0 AND `now_playing.queueIndex === 0` AND playing the moved track |
-| `from === 0` triggers active play | populated, current at idx 0, move 0 → 4 | the originally-current track is now at idx 4, and `now_playing.queueIndex === 0` (the new top, formerly idx 1, is now playing) |
+| `from === 0` triggers active play | populated, current at idx 0, move 0 → 4 | the originally-current track is now at idx **3** (per mpv's forward-move semantics — see `from < to` row above), and `now_playing.queueIndex === 0` (the new top, formerly idx 1, is now playing) |
 | Pause preserved across active move | populated, paused, move 3 → 0 | after: queueIndex 0, still paused |
 | Out of range `from` | populated, from = length+10 | throws via `ErrorFormatter` (MCP error) |
 

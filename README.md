@@ -1,18 +1,20 @@
 # Navidrome MCP Server
 
-Transform your Navidrome music server with an AI-powered music assistant. This MCP (Model Context Protocol) server enables Claude, ChatGPT, and other AI assistants to interact with your personal music library through natural language, offering intelligent playlist creation, music discovery, and library management.
+Transform your Navidrome music server with an AI-powered music assistant. This MCP (Model Context Protocol) server enables Claude, ChatGPT, and other AI assistants to interact with your personal music library through natural language, offering intelligent playlist creation, music discovery, library management — and **live audio playback directly through your machine's speakers** when mpv is installed.
 
 ## Table of Contents
 
 - [Why Navidrome MCP?](#why-navidrome-mcp)
 - [Features](#features)
   - [Music Library Management](#-music-library-management)
+  - [Local Audio Playback](#-local-audio-playback)
   - [Intelligent Playlist Creation](#-intelligent-playlist-creation)
   - [Personalized Music Discovery](#-personalized-music-discovery)
   - [Smart Radio Management](#-smart-radio-management)
   - [Analytics & Insights](#-analytics--insights)
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
+  - [Installing mpv (optional, for local audio playback)](#installing-mpv-optional-for-local-audio-playback)
   - [Quick Setup](#quick-setup)
   - [Configure Claude Desktop](#configure-claude-desktop)
   - [Configure ChatGPT Desktop](#configure-chatgpt-desktop)
@@ -26,6 +28,7 @@ Transform your Navidrome music server with an AI-powered music assistant. This M
 
 Imagine having an AI assistant that truly understands your music taste. This MCP server enables AI assistants to:
 
+- **Play music directly through your machine's speakers** — queue albums, search-and-play, manipulate the live queue, all in one tool call (requires mpv)
 - **Analyze your listening patterns** and create perfectly curated playlists
 - **Discover hidden gems** in your library based on your mood or activity
 - **Build custom radio stations** from your favorite tracks
@@ -45,6 +48,18 @@ This isn't just another music tool – it's your personal music curator powered 
 * **Rich Metadata**: Access detailed information about tracks, albums, and artists
 * **Tag Analysis**: Explore and analyze metadata tags (genre, composer, label, year, and more)
 * **Clean Responses**: Optimized data transfer with only essential fields (~10 properties vs 50+ raw)
+
+### 🔊 Local Audio Playback
+
+> Requires `mpv` on the host running the MCP server. See [Installing mpv](#installing-mpv-optional-for-local-audio-playback) below.
+
+* **Plays Through Your Speakers**: Audio decodes locally via mpv and outputs through your machine's audio device — no browser, no Navidrome web UI needed
+* **Search-and-Play in One Call**: `play_albums_search` and `play_songs_search` accept all your existing search filters (query, genre, artist, year range, starred, sort, etc.) and pipe results straight into the live play queue
+* **Active Queue Manipulation**: Move tracks to the front to make them play, shuffle the queue and the new top plays, remove the current track and the next one auto-advances — the queue actively reflects what should play
+* **Three Shuffle Modes for Albums**: Keep natural order (`'none'`), randomize album order while preserving track order within each (`'albums'`), or fully interleave all tracks across albums (`'songs'`)
+* **Cross-Platform**: Works on Linux, macOS, and Windows 11; mpv handles every common audio codec via Navidrome's transcoding pipeline
+* **Survives Reconnects**: mpv outlives the MCP server process via a stable per-user socket — restarting your MCP client doesn't interrupt playback
+* **Lazy-Spawned**: mpv is only started on first playback tool call — zero cost when you're not using the feature
 
 ### 🎶 Intelligent Playlist Creation
 
@@ -109,9 +124,57 @@ This isn't just another music tool – it's your personal music curator powered 
 * **Node.js 20+** ([Download here](https://nodejs.org/))
 * **Running Navidrome server** with your music library
 * **Claude Desktop** or **ChatGPT Desktop** (or any MCP-compatible client)
+* **Optional: mpv** for local audio playback through your machine's speakers — see [below](#installing-mpv-optional-for-local-audio-playback)
 
 **Additional for manual build:**
 * **pnpm** package manager ([Install instructions](https://pnpm.io/installation))
+
+### Installing mpv (optional, for local audio playback)
+
+mpv is a lightweight, cross-platform media player. The MCP server detects it at startup; if installed, it registers 17 additional playback tools (`play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `pause`, `resume`, `next`, `previous`, `seek`, `set_volume`, `now_playing`, `playback_status`, `get_play_queue`, `clear_play_queue`, `shuffle_play_queue`, `move_in_play_queue`, `remove_from_play_queue`). If mpv isn't found, the playback tools simply don't appear and everything else works exactly as before.
+
+**macOS** (via [Homebrew](https://brew.sh/)):
+```bash
+brew install mpv
+```
+
+**Linux**:
+```bash
+# Debian / Ubuntu / Mint / PopOS
+sudo apt install mpv
+
+# Fedora / RHEL / CentOS Stream
+sudo dnf install mpv
+
+# Arch / Manjaro
+sudo pacman -S mpv
+
+# openSUSE
+sudo zypper install mpv
+```
+
+**Windows**:
+```powershell
+# winget (included on Windows 11 by default)
+winget install mpv
+
+# scoop
+scoop install mpv
+
+# chocolatey
+choco install mpv
+```
+
+Or download a pre-built binary from [mpv.io](https://mpv.io/installation/).
+
+**Verify**:
+```bash
+mpv --version
+```
+
+After installing, restart your MCP client (Claude Desktop, ChatGPT Desktop, etc.) so the server re-detects mpv and registers the playback tools.
+
+**Tip — non-standard install location**: if mpv is installed somewhere not on your `PATH`, set the `MPV_PATH` environment variable in your MCP client config to point at the binary (e.g. `"MPV_PATH": "C:\\Program Files\\mpv\\mpv.exe"` on Windows).
 
 ### Quick Setup
 
@@ -161,9 +224,9 @@ Add the Navidrome MCP server:
         "NAVIDROME_PASSWORD": "your_password",
         "NAVIDROME_DEFAULT_LIBRARIES": "1,2", // Optional: Set default active libraries (comma-separated IDs)
         "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
-        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
-        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)"
       }
     }
   }
@@ -184,9 +247,9 @@ Add the Navidrome MCP server:
         "NAVIDROME_PASSWORD": "your_password",
         "NAVIDROME_DEFAULT_LIBRARIES": "1,2", // Optional: Set default active libraries (comma-separated IDs)
         "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
-        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
+        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
-        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"
+        "LRCLIB_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)"
       }
     }
   }
@@ -229,6 +292,28 @@ Add the Navidrome MCP server:
 4. Save and restart
 
 ## Powerful Usage Examples
+
+### 🔊 Live Audio Playback (requires mpv)
+
+* **"Play 5 random albums from my starred list"** → one tool call (`play_albums_search { starred: true, sort: 'random', limit: 5 }`)
+* **"Queue up everything I've starred from the 90s, sorted by year"**
+* **"Play all Pink Floyd albums in chronological order, but shuffle the song order within each album"**
+* **"Find a random selection of jazz albums I haven't heard recently and play them through the speakers"**
+* **"Add 10 random rock songs from my library to whatever's already queued, shuffled"**
+* **"Move track 7 to the front of the queue and start playing it"**
+* **"Pause the music, skip the next two tracks, then resume from track 4"**
+* **"What's currently playing? When does this song end?"** → `now_playing` returns title, artist, album, position, duration, and queue position
+
+### 🎙️ Voice-Controlled Jukebox (Power User)
+
+Combine this MCP with a Speech-to-Text layer (e.g., Whisper) and Text-to-Speech feedback (e.g., system TTS or ElevenLabs) on a Raspberry Pi or always-on machine to build a hands-free, voice-controlled music device:
+
+1. STT captures **"Play some upbeat 80s rock"** from the user's microphone
+2. The AI assistant (powered by this MCP) calls `play_songs_search { genre: 'Rock', yearFrom: 1980, yearTo: 1989, sort: 'random', limit: 30, shuffle: true }` — **one tool call from raw intent to audio**
+3. Music plays through the Pi's speakers via mpv (no browser, no external client)
+4. Follow up with natural language: **"Skip this one"** → `next`, **"Pause"** → `pause`, **"What's playing?"** → `now_playing` (TTS reads the result back to the user), **"Move the song called 'Africa' to the front"** → search to find the songId, then `move_in_play_queue` with `to: 0`
+
+The playback engine has no MCP-specific assumptions — the same engine could be wrapped by any voice transport, web UI, or hardware button interface. The active-queue model (move-to-front starts playing, shuffle resets the play head) is built for exactly this kind of conversational control.
 
 ### 🎯 Smart Discovery & Playlist Creation
 
@@ -332,9 +417,9 @@ Add the Navidrome MCP server:
 | `save_queue` | Save a queue to the Navidrome server (shown in the web interface) |
 | `clear_saved_queue` | Clear the saved queue used by the Navidrome web interface |
 
-### 🎵 Local Playback
+### 🔊 Local Playback
 
-> Available when [`mpv`](https://mpv.io/) is installed on the host running the MCP server. Audio plays through the server's speakers; mpv is lazy-spawned on the first playback tool call.
+> Available when [`mpv`](https://mpv.io/) is installed on the host running the MCP server (see [Installing mpv](#installing-mpv-optional-for-local-audio-playback)). Audio plays through the server's speakers; mpv is lazy-spawned on the first playback tool call and survives MCP reconnects via a stable per-user IPC socket.
 
 | Tool | Description |
 |------|-------------|
@@ -412,11 +497,13 @@ Add the Navidrome MCP server:
 
 ### Limitations
 
-**Playback Control**: This MCP server manages your library and queues but doesn't directly control playback. Use your Navidrome client app for play/pause/skip.
+**Playback Control**: When [`mpv`](#installing-mpv-optional-for-local-audio-playback) is installed on the host running the MCP server, the server can play audio directly through your machine's speakers and the AI can fully control playback (play, pause, seek, queue manipulation). Without mpv, the server still manages your library and Navidrome's saved queue but doesn't produce audio — use your Navidrome web UI or a Subsonic client for that.
 
 **Recently Played**: Navidrome doesn't provide last-played timestamps, only play counts and completion status.
 
-**Queue Management**: Works with Subsonic-compatible clients that support jukebox mode.
+**Saved Queue**: `get_saved_queue` / `save_queue` / `clear_saved_queue` operate on Navidrome's server-side advisory queue (the cross-device sync state shown in the web UI). They are distinct from the live `*_play_queue` tools, which control the local mpv playlist.
+
+**Scrobbling for local playback**: Not yet wired up — listens via mpv don't automatically appear in `list_recently_played` / `list_most_played`. Planned future enhancement.
 
 ## Development
 

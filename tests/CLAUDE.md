@@ -54,11 +54,30 @@ Always mock external services:
 ### Directory Structure
 ```
 tests/
-├── unit/tools/           # Tool-specific tests (135 tests total)
-├── unit/utils/           # Utility function tests
-├── factories/            # Mock client & data factories
-└── CLAUDE.md             # This file
+├── unit/tools/                  # Tool-specific tests (135 tests total)
+├── unit/utils/                  # Utility function tests
+├── integration/playback/        # Live-mpv playback integration tests (run via `pnpm test:playback`)
+├── factories/                   # Mock client & data factories
+└── CLAUDE.md                    # This file
 ```
+
+### Playback Integration Tests (separate suite)
+
+Live-mpv playback tests live in `tests/integration/playback/` and are
+**excluded from `pnpm test:run`**. Run them on demand via:
+
+```bash
+pnpm test:playback   # Runs vitest with vitest.playback.config.ts
+```
+
+They require:
+- A real mpv binary on PATH (or `MPV_PATH` env override)
+- A reachable Navidrome instance (per `.env`)
+
+Tests skip cleanly when either is missing. Use `describePlayback` /
+`itPlayback` from `tests/integration/playback/helpers.ts` instead of
+raw `describe`/`it`. Use `waitFor` for async mpv state polling instead
+of fixed `setTimeout`.
 
 ### Current Test Coverage (160+ tests)
 1. **Playlist** - 22 tests (data modification safety)
