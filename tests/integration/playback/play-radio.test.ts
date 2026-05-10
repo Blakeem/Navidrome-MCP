@@ -19,7 +19,7 @@
  * state.
  */
 
-import { afterAll, beforeAll, beforeEach, expect } from 'vitest';
+import { beforeAll, beforeEach, expect } from 'vitest';
 import {
   clearPlayQueue,
   describePlayback,
@@ -48,11 +48,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
   beforeEach(async () => {
     await clearPlayQueue();
   });
-
-  afterAll(async () => {
-    // Don't leave a radio stream playing after tests finish
-    await clearPlayQueue();
-  });
+  // afterAll clearPlayQueue is registered globally via setup-cleanup.ts
 
   itPlayback('loads a radio station as a single-entry queue with songId: null', async () => {
     const result = await playRadioStation({ id: stationId });
