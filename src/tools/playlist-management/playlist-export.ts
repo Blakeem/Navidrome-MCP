@@ -116,7 +116,7 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
       headers['Accept'] = 'audio/x-mpegurl';
     }
 
-    const response = await client.request<unknown>(`/playlist/${params.playlistId}/tracks?${queryParams.toString()}`, {
+    const response = await client.request<unknown>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
       method: 'GET',
       headers,
     });

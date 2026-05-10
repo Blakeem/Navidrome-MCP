@@ -21,7 +21,7 @@ import { AuthManager } from './auth-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { libraryManager } from '../services/library-manager.js';
-import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../constants/defaults.js';
+import { buildSubsonicAuthParams } from '../utils/subsonic-auth.js';
 
 export class NavidromeClient {
   private readonly authManager: AuthManager;
@@ -40,37 +40,17 @@ export class NavidromeClient {
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const token = await this.authManager.getToken();
-
-    const defaultHeaders: Record<string, string> = {
-      'X-ND-Authorization': `Bearer ${token}`,
-    };
-
-    // Only set Content-Type for non-GET requests
-    if (options.method !== null && options.method !== undefined && options.method !== 'GET') {
-      defaultHeaders['Content-Type'] = 'application/json';
+    this.assertSafeEndpoint(endpoint);
+    let response = await this.doFetch(endpoint, options);
+    if (response.status === 401) {
+      // Token rejected — invalidate the cache and retry exactly once with a
+      // fresh authenticate(). If the second attempt also returns 401, fall
+      // through to parseResponse which throws the standard HTTP error.
+      logger.debug('Got 401 from Navidrome; invalidating token and retrying once');
+      this.authManager.invalidate();
+      response = await this.doFetch(endpoint, options);
     }
-
-    const response = await fetch(`${this.baseUrl}/api${endpoint}`, {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
-      },
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(ErrorFormatter.httpRequest('navidrome API', response, errorText));
-    }
-
-    // Handle different content types
-    const contentType = response.headers.get('content-type');
-    if (contentType?.includes('application/json') === true) {
-      return response.json() as Promise<T>;
-    } else {
-      return response.text() as Promise<T>;
-    }
+    return this.parseResponse<T>(response);
   }
 
   /**
@@ -86,7 +66,7 @@ export class NavidromeClient {
     // Add library filtering if LibraryManager is initialized and has active libraries
     if (libraryManager.isInitialized()) {
       const libraryParams = libraryManager.getLibraryQueryParams();
-      
+
       // Add library_id parameters (duplicate parameters as discovered from frontend)
       for (const [key, value] of libraryParams.entries()) {
         existingParams.append(key, value);
@@ -94,7 +74,7 @@ export class NavidromeClient {
     }
 
     // Reconstruct the endpoint with library filters
-    const filteredEndpoint = existingParams.toString() 
+    const filteredEndpoint = existingParams.toString()
       ? `${path}?${existingParams.toString()}`
       : path;
 
@@ -102,18 +82,34 @@ export class NavidromeClient {
     return this.request<T>(filteredEndpoint, options);
   }
 
-  async subsonicRequest(endpoint: string, params: Record<string, string> = {}): Promise<unknown> {
-    // Build Subsonic REST API parameters
-    const queryParams = new URLSearchParams({
-      u: this.config.navidromeUsername,
-      p: this.config.navidromePassword,
-      v: SUBSONIC_API_VERSION,
-      c: SUBSONIC_CLIENT_NAME,
-      f: 'json',
-      ...params,
-    });
+  /**
+   * Send a Subsonic API request. Defaults to POST with auth in the body —
+   * keeps the salted-MD5 secret out of URL query strings (where reverse
+   * proxies and access logs would capture it). Pass `method: 'GET'` only
+   * when the endpoint cannot accept POST (rare; Navidrome's Subsonic
+   * implementation accepts POST for everything we use).
+   */
+  async subsonicRequest(
+    endpoint: string,
+    params: Record<string, string> = {},
+    options: { method?: 'GET' | 'POST' } = {},
+  ): Promise<unknown> {
+    this.assertSafeEndpoint(endpoint);
+    const method = options.method ?? 'POST';
+    const authParams = buildSubsonicAuthParams(
+      this.config.navidromeUsername,
+      this.config.navidromePassword,
+      params,
+    );
 
-    const response = await fetch(`${this.baseUrl}/rest${endpoint}?${queryParams}`);
+    const url = `${this.baseUrl}/rest${endpoint}`;
+    const response = method === 'POST'
+      ? await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: authParams.toString(),
+        })
+      : await fetch(`${url}?${authParams.toString()}`);
 
     if (!response.ok) {
       throw new Error(ErrorFormatter.subsonicApi(response));
@@ -126,5 +122,56 @@ export class NavidromeClient {
     }
 
     return data['subsonic-response'];
+  }
+
+  /**
+   * Reject endpoints that could escape the `/api` path or hit a different
+   * host. Tools build endpoints from constants + interpolated IDs, so an
+   * endpoint with `..` segments or an absolute URL is always a bug —
+   * either a loose schema or a hand-built string that bypassed validation.
+   */
+  private assertSafeEndpoint(endpoint: string): void {
+    if (endpoint.includes('..')) {
+      throw new Error('Endpoint must not contain path-traversal segments');
+    }
+    if (/^https?:\/\//i.test(endpoint)) {
+      throw new Error('Endpoint must be a path, not an absolute URL');
+    }
+  }
+
+  private async doFetch(endpoint: string, options: RequestInit): Promise<Response> {
+    const token = await this.authManager.getToken();
+
+    const defaultHeaders: Record<string, string> = {
+      'X-ND-Authorization': `Bearer ${token}`,
+    };
+
+    // Only set Content-Type for non-GET requests
+    if (options.method !== null && options.method !== undefined && options.method !== 'GET') {
+      defaultHeaders['Content-Type'] = 'application/json';
+    }
+
+    return fetch(`${this.baseUrl}/api${endpoint}`, {
+      ...options,
+      headers: {
+        ...defaultHeaders,
+        ...options.headers,
+      },
+    });
+  }
+
+  private async parseResponse<T>(response: Response): Promise<T> {
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(ErrorFormatter.httpRequest('navidrome API', response, errorText));
+    }
+
+    // Handle different content types
+    const contentType = response.headers.get('content-type');
+    if (contentType?.includes('application/json') === true) {
+      return response.json() as Promise<T>;
+    } else {
+      return response.text() as Promise<T>;
+    }
   }
 }

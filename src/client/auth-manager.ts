@@ -24,12 +24,46 @@ export class AuthManager {
   private token: string | null = null;
   private tokenExpiry: Date | null = null;
   private readonly config: Config;
+  // Single-flight refresh: if N concurrent callers all hit getToken() with
+  // an expired/invalidated token, only ONE actually POSTs /auth/login; the
+  // rest await the same promise. Cleared on settle so failure can be retried.
+  private refreshPromise: Promise<void> | null = null;
 
   constructor(config: Config) {
     this.config = config;
   }
 
   async authenticate(): Promise<void> {
+    this.refreshPromise ??= this.performAuthenticate();
+    try {
+      await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
+    }
+  }
+
+  /**
+   * Discard the cached token so the next getToken() call re-authenticates.
+   * Used by NavidromeClient on 401 responses (server-rotated token, etc.).
+   */
+  invalidate(): void {
+    this.token = null;
+    this.tokenExpiry = null;
+  }
+
+  async getToken(): Promise<string> {
+    if (this.token === null || this.token === undefined || this.token === '' || this.tokenExpiry === null || this.tokenExpiry === undefined || this.tokenExpiry <= new Date()) {
+      await this.authenticate();
+    }
+
+    if (this.token === null || this.token === undefined || this.token === '') {
+      throw new Error(ErrorFormatter.authentication('token not available after authentication'));
+    }
+
+    return this.token;
+  }
+
+  private async performAuthenticate(): Promise<void> {
     const response = await fetch(`${this.config.navidromeUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -47,17 +81,5 @@ export class AuthManager {
     this.token = data.token;
     this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
     logger.debug('Authentication successful');
-  }
-
-  async getToken(): Promise<string> {
-    if (this.token === null || this.token === undefined || this.token === '' || this.tokenExpiry === null || this.tokenExpiry === undefined || this.tokenExpiry <= new Date()) {
-      await this.authenticate();
-    }
-
-    if (this.token === null || this.token === undefined || this.token === '') {
-      throw new Error(ErrorFormatter.authentication('token not available after authentication'));
-    }
-
-    return this.token;
   }
 }

@@ -65,7 +65,7 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
       requestBody.discs = params.discs;
     }
 
-    const response = await client.request<{ added: number }>(`/playlist/${params.playlistId}/tracks`, {
+    const response = await client.request<{ added: number }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -108,7 +108,7 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
     const queryParams = new URLSearchParams();
     params.trackIds.forEach(id => queryParams.append('id', id));
 
-    const response = await client.request<{ ids: string[] }>(`/playlist/${params.playlistId}/tracks?${queryParams.toString()}`, {
+    const response = await client.request<{ ids: string[] }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
       method: 'DELETE',
     });
 
@@ -134,7 +134,7 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
       insert_before: params.insert_before.toString(),
     };
 
-    const response = await client.request<{ id: number }>(`/playlist/${params.playlistId}/tracks/${params.trackId}`, {
+    const response = await client.request<{ id: number }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks/${encodeURIComponent(params.trackId)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',

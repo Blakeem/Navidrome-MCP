@@ -119,7 +119,7 @@ class LibraryManager {
       }
 
       // Get user info including libraries
-      this.userInfo = await client.request<UserInfo>(`/user/${userId}`);
+      this.userInfo = await client.request<UserInfo>(`/user/${encodeURIComponent(userId)}`);
       
       logger.debug(`Loaded ${this.userInfo.libraries.length} libraries for user ${this.userInfo.userName}`);
     } catch (error) {

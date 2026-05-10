@@ -313,15 +313,15 @@ export function createRadioToolCategory(client: NavidromeClient, config: Config)
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
         case 'list_radio_stations':
-          return await listRadioStations(config, args);
+          return await listRadioStations(client, args);
         case 'create_radio_station':
-          return await createRadioStation(config, args);
+          return await createRadioStation(client, config, args);
         case 'delete_radio_station':
-          return await deleteRadioStation(config, args);
+          return await deleteRadioStation(client, args);
         case 'get_radio_station':
-          return await getRadioStation(config, args);
+          return await getRadioStation(client, args);
         case 'play_radio_station':
-          return await playRadioStation(config, args);
+          return await playRadioStation(client, args);
         case 'validate_radio_stream':
           return await validateRadioStream(client, args);
         case 'discover_radio_stations':

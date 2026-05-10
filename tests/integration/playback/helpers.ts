@@ -381,8 +381,8 @@ export async function playbackStatus(): Promise<PlaybackStatus> {
 export async function playRadioStation(args: {
   id: string;
 }): Promise<Awaited<ReturnType<typeof playRadioStationTool>>> {
-  const { config } = await ctx();
-  return playRadioStationTool(config, args);
+  const { client } = await ctx();
+  return playRadioStationTool(client, args);
 }
 
 /**
@@ -393,8 +393,8 @@ export async function playRadioStation(args: {
  * match. Throws if the user has zero saved stations.
  */
 export async function getTestRadioStationId(): Promise<string> {
-  const { config } = await ctx();
-  const result = await listRadioStationsTool(config, {});
+  const { client } = await ctx();
+  const result = await listRadioStationsTool(client, {});
   if (result.stations.length === 0) {
     throw new Error('No radio stations are saved in Navidrome — radio tests require at least one');
   }

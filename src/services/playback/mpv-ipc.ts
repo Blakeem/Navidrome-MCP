@@ -17,6 +17,13 @@
  */
 
 import { createConnection, type Socket } from 'node:net';
+import {
+  MPV_COMMAND_TIMEOUT_LOAD_MS,
+  MPV_COMMAND_TIMEOUT_QUICK_MS,
+  MPV_IPC_CONNECT_DELAY_MS,
+  MPV_IPC_CONNECT_RETRIES,
+  MPV_LOAD_COMMANDS,
+} from '../../constants/timeouts.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -83,7 +90,11 @@ export class MpvIpc {
    *
    * @throws Error if connection cannot be established within the retry budget.
    */
-  async connect(path: string, retries = 50, delayMs = 100): Promise<void> {
+  async connect(
+    path: string,
+    retries = MPV_IPC_CONNECT_RETRIES,
+    delayMs = MPV_IPC_CONNECT_DELAY_MS,
+  ): Promise<void> {
     for (let attempt = 0; attempt < retries; attempt++) {
       try {
         await this.openSocket(path);
@@ -109,15 +120,55 @@ export class MpvIpc {
     }
     const id = this.nextRequestId++;
     const payload = `${JSON.stringify({ command: args, request_id: id })}\n`;
+    const commandName = typeof args[0] === 'string' ? args[0] : String(args[0]);
+    const timeoutMs = MPV_LOAD_COMMANDS.has(commandName)
+      ? MPV_COMMAND_TIMEOUT_LOAD_MS
+      : MPV_COMMAND_TIMEOUT_QUICK_MS;
 
     return new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.socket?.write(payload, (err) => {
-        if (err !== null && err !== undefined) {
-          this.pending.delete(id);
-          reject(err);
-        }
-      });
+      let settled = false;
+      let timer: NodeJS.Timeout | null = null;
+
+      const safeResolve = (data: unknown): void => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        this.pending.delete(id);
+        resolve(data);
+      };
+      const safeReject = (err: Error): void => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        this.pending.delete(id);
+        reject(err);
+      };
+
+      this.pending.set(id, { resolve: safeResolve, reject: safeReject });
+
+      // Per-command timeout. On fire we reject this command AND tear down the
+      // socket — a stalled mpv will hang every subsequent command too, so the
+      // single recovery path is to disconnect and let the next caller's
+      // ensureRunning() re-attach.
+      timer = setTimeout(() => {
+        if (settled) return;
+        const err = new Error(
+          `mpv command timeout (${timeoutMs}ms): ${commandName}`,
+        );
+        safeReject(err);
+        this.handleUnexpectedDisconnect(err.message);
+      }, timeoutMs);
+      timer.unref();
+
+      try {
+        this.socket?.write(payload, (writeErr) => {
+          if (writeErr !== null && writeErr !== undefined) {
+            safeReject(writeErr);
+          }
+        });
+      } catch (err) {
+        safeReject(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
@@ -201,15 +252,7 @@ export class MpvIpc {
           logger.error('mpv IPC socket error:', err.message);
         });
         sock.on('close', () => {
-          if (!this.closed) {
-            logger.debug('mpv IPC socket closed by peer');
-            this.closed = true;
-            this.socket = null;
-            this.rejectAllPending(new Error('mpv IPC socket closed unexpectedly'));
-            for (const handler of this.disconnectHandlers) {
-              try { handler(); } catch (e) { logger.error('disconnect handler error:', e); }
-            }
-          }
+          this.handleUnexpectedDisconnect('mpv IPC socket closed unexpectedly');
         });
         resolve();
       };
@@ -286,6 +329,36 @@ export class MpvIpc {
       pending.reject(err);
     }
     this.pending.clear();
+  }
+
+  /**
+   * Shared teardown path for unexpected disconnects: peer-initiated socket
+   * close and command-timeout (mpv stalled) both route through here. Marks
+   * the IPC closed, drops the socket reference, rejects all in-flight
+   * commands, and fires `disconnectHandlers` so the engine can null its
+   * `this.ipc` reference and re-attach on the next call.
+   *
+   * Idempotent — second calls are no-ops, so a timeout that races a peer
+   * close (or vice-versa) doesn't double-fire handlers.
+   */
+  private handleUnexpectedDisconnect(reason: string): void {
+    if (this.closed) return;
+    logger.debug(`mpv IPC unexpectedly disconnected: ${reason}`);
+    this.closed = true;
+    try {
+      this.socket?.destroy();
+    } catch {
+      // socket already destroyed; ignore
+    }
+    this.socket = null;
+    this.rejectAllPending(new Error(reason));
+    for (const handler of this.disconnectHandlers) {
+      try {
+        handler();
+      } catch (e) {
+        logger.error('disconnect handler error:', e);
+      }
+    }
   }
 }
 

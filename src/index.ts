@@ -29,6 +29,14 @@ import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
 
+// Belt-and-suspenders against any unhandled rejection escaping the system —
+// without this, Node 20+ terminates the process by default. The mpv IPC layer
+// has its own settled-sentinel safety, but a single regression in tool code
+// shouldn't crash the whole MCP server.
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandledRejection:', reason);
+});
+
 async function main(): Promise<void> {
   try {
     const config = await loadConfig();

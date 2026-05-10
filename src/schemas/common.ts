@@ -18,15 +18,24 @@
 
 import { z } from 'zod';
 
+// Navidrome IDs are UUID-shaped (alphanumeric, hyphen, underscore). Reject
+// anything else outright at validation time, BEFORE the value reaches a URL
+// builder — an ID containing `?`, `&`, `..`, or `/` would otherwise inject
+// query params or path segments into the request. encodeURIComponent at the
+// call sites is defense-in-depth on top of this regex.
+const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
 // Basic ID validation schema
 export const IdSchema = z.object({
-  id: z.string().min(1, 'ID is required'),
+  id: z.string().min(1, 'ID is required').regex(ID_PATTERN, 'ID contains invalid characters'),
 });
 
 // Required ID with custom message
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types
 export const createIdSchema = (resourceType: string) => z.object({
-  id: z.string().min(1, `${resourceType} ID is required`),
+  id: z.string()
+    .min(1, `${resourceType} ID is required`)
+    .regex(ID_PATTERN, `${resourceType} ID contains invalid characters`),
 });
 
 // Search query schema

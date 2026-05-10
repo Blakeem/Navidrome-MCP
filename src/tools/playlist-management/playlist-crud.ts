@@ -75,7 +75,7 @@ export async function getPlaylist(client: NavidromeClient, args: unknown): Promi
   const params = PlaylistIdSchema.parse(args);
 
   try {
-    const rawPlaylist = await client.request<unknown>(`/playlist/${params.id}`);
+    const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`);
     return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_playlist', error));
@@ -145,7 +145,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
       requestBody.public = params.public;
     }
 
-    const rawPlaylist = await client.request<unknown>(`/playlist/${params.id}`, {
+    const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -178,7 +178,7 @@ export async function deletePlaylist(client: NavidromeClient, args: unknown): Pr
   const params = PlaylistIdSchema.parse(args);
 
   try {
-    await client.request<unknown>(`/playlist/${params.id}`, {
+    await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`, {
       method: 'DELETE',
     });
 

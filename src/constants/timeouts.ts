@@ -73,3 +73,39 @@ export const RADIO_VALIDATION = {
    */
   FALLBACK_HEAD_TIMEOUT: 4000, // 4 seconds
 } as const;
+
+/**
+ * mpv IPC timing constants.
+ *
+ * The playback subsystem talks to mpv via JSON-IPC over a Unix socket /
+ * Windows named pipe. Production-ready behavior requires per-command timeouts
+ * (so a stalled mpv can't wedge the MCP server) and a probe-first stale-socket
+ * cleanup (so we don't unlink a socket a live mpv is still bound to).
+ */
+
+/** Per-command timeout for short mpv IPC operations (property reads/writes,
+ *  observe, stop, seek, get_version, etc.). Short because these are pure
+ *  in-memory operations on mpv's side; if they don't return in 2s, mpv is
+ *  almost certainly wedged. */
+export const MPV_COMMAND_TIMEOUT_QUICK_MS = 2000;
+
+/** Per-command timeout for mpv loadfile/loadlist operations, which involve
+ *  opening a remote stream — Navidrome may be cold-starting transcoding, so
+ *  this needs more headroom than the QUICK tier. */
+export const MPV_COMMAND_TIMEOUT_LOAD_MS = 5000;
+
+/** Initial-connect retry budget when opening the IPC socket post-spawn while
+ *  mpv is binding the socket. 50 × 100ms = 5s total budget. */
+export const MPV_IPC_CONNECT_RETRIES = 50;
+export const MPV_IPC_CONNECT_DELAY_MS = 100;
+
+/** Probe timeout used by cleanupStaleSocket to decide whether a socket file
+ *  is bound to a live mpv before unlinking. */
+export const MPV_STALE_SOCKET_PROBE_MS = 100;
+
+/** Set of mpv command names that should use the LOAD tier timeout. */
+export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
+  'loadfile',
+  'loadlist',
+  'playlist-load',
+]);

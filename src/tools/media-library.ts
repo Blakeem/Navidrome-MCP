@@ -39,7 +39,7 @@ export async function getSong(client: NavidromeClient, args: unknown): Promise<S
   const params = IdSchema.parse(args);
 
   try {
-    const rawSong = await client.requestWithLibraryFilter<unknown>(`/song/${params.id}`);
+    const rawSong = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.id)}`);
     return transformToSongDTO(rawSong as RawSong);
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_song', error));
@@ -51,7 +51,7 @@ export async function getAlbum(client: NavidromeClient, args: unknown): Promise<
   const params = IdSchema.parse(args);
 
   try {
-    const rawAlbum = await client.requestWithLibraryFilter<unknown>(`/album/${params.id}`);
+    const rawAlbum = await client.requestWithLibraryFilter<unknown>(`/album/${encodeURIComponent(params.id)}`);
     return transformToAlbumDTO(rawAlbum as RawAlbum);
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_album', error));
@@ -63,7 +63,7 @@ export async function getArtist(client: NavidromeClient, args: unknown): Promise
   const params = IdSchema.parse(args);
 
   try {
-    const rawArtist = await client.requestWithLibraryFilter<unknown>(`/artist/${params.id}`);
+    const rawArtist = await client.requestWithLibraryFilter<unknown>(`/artist/${encodeURIComponent(params.id)}`);
     return transformToArtistDTO(rawArtist as RawArtist);
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_artist', error));
@@ -78,7 +78,7 @@ export async function getSongPlaylists(client: NavidromeClient, args: unknown): 
   const params = GetSongPlaylistsSchema.parse(args);
 
   try {
-    const rawPlaylists = await client.requestWithLibraryFilter<unknown>(`/song/${params.songId}/playlists`);
+    const rawPlaylists = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.songId)}/playlists`);
     
     // Workaround: This specific endpoint returns JSON data but with text/plain content-type
     // So we need to parse it manually if it's a string

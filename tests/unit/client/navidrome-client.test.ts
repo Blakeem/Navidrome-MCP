@@ -1,0 +1,144 @@
+/**
+ * Navidrome MCP Server - NavidromeClient unit tests
+ * Copyright (C) 2025
+ *
+ * Covers the B1 retry-on-401 + B2 endpoint-traversal guard. Mocks
+ * `global.fetch` so the request path is exercised without a live Navidrome.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
+import { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import type { Config } from '../../../src/config.js';
+
+const mockFetch = vi.fn() as MockedFunction<typeof fetch>;
+global.fetch = mockFetch;
+
+function makeConfig(): Config {
+  return {
+    navidromeUrl: 'http://test:4533',
+    navidromeUsername: 'tester',
+    navidromePassword: 'pw',
+    tokenExpiry: 86400,
+    debug: false,
+  } as unknown as Config;
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+const tokenResponse = (token: string): Response => jsonResponse({ token });
+
+describe('NavidromeClient', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('request() retry-on-401', () => {
+    it('401 then 200 returns the parsed body and uses the new token on retry', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))            // initial /auth/login
+        .mockResolvedValueOnce(jsonResponse({ ok: false }, 401))  // first /api/album fails
+        .mockResolvedValueOnce(tokenResponse('second'))           // re-auth after invalidate
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));       // retry succeeds
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.request<{ ok: boolean }>('/album/123');
+
+      expect(result).toEqual({ ok: true });
+      // 4 fetches: login, request (401), re-login, request (200)
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+
+      // Inspect the request fetches: both target /api/album/123 and the
+      // second one carries the refreshed token.
+      const apiCalls = mockFetch.mock.calls.filter(
+        ([url]) => typeof url === 'string' && url.includes('/api/album/123'),
+      );
+      expect(apiCalls).toHaveLength(2);
+      const firstHeaders = (apiCalls[0]![1] as RequestInit).headers as Record<string, string>;
+      const retryHeaders = (apiCalls[1]![1] as RequestInit).headers as Record<string, string>;
+      expect(firstHeaders['X-ND-Authorization']).toBe('Bearer first');
+      expect(retryHeaders['X-ND-Authorization']).toBe('Bearer second');
+    });
+
+    it('401 twice throws the standard HTTP error (one retry max)', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ ok: false }, 401))
+        .mockResolvedValueOnce(tokenResponse('second'))
+        .mockResolvedValueOnce(jsonResponse({ ok: false }, 401));
+
+      const client = new NavidromeClient(makeConfig());
+      await expect(client.request('/album/123')).rejects.toThrow();
+      // login + req + re-login + retry = 4 fetches; no third attempt.
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+    });
+
+    it('non-401 errors do not trigger retry', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500));
+
+      const client = new NavidromeClient(makeConfig());
+      await expect(client.request('/album/123')).rejects.toThrow();
+      // login + one request only — 500 is not retried.
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('assertSafeEndpoint', () => {
+    let client: NavidromeClient;
+
+    beforeEach(() => {
+      mockFetch.mockResolvedValueOnce(tokenResponse('initial'));
+      client = new NavidromeClient(makeConfig());
+    });
+
+    it('rejects endpoints with .. segments', async () => {
+      await expect(client.request('/album/../user/admin')).rejects.toThrow(/path-traversal/);
+    });
+
+    it('rejects absolute URLs', async () => {
+      await expect(client.request('http://evil.example/api')).rejects.toThrow(/path, not an absolute URL/);
+      await expect(client.request('https://evil.example/api')).rejects.toThrow(/path, not an absolute URL/);
+    });
+
+    it('also guards subsonicRequest', async () => {
+      await expect(client.subsonicRequest('/../auth/login')).rejects.toThrow(/path-traversal/);
+    });
+  });
+
+  describe('subsonicRequest', () => {
+    it('defaults to POST with auth in form-encoded body (no auth params in URL)', async () => {
+      // subsonicRequest does NOT use the JWT auth path — it builds its own
+      // salted-MD5 auth — so no /auth/login fetch is queued.
+      mockFetch.mockResolvedValueOnce(jsonResponse({ 'subsonic-response': { status: 'ok' } }));
+
+      const client = new NavidromeClient(makeConfig());
+      await client.subsonicRequest('/getStarred');
+
+      const call = mockFetch.mock.calls.find(
+        ([url]) => typeof url === 'string' && url.includes('/rest/getStarred'),
+      );
+      expect(call).toBeDefined();
+      const [url, init] = call!;
+      // URL must be the bare endpoint — no `?u=...&t=...` query string.
+      expect(url).toBe('http://test:4533/rest/getStarred');
+      expect(init?.method).toBe('POST');
+      expect((init?.headers as Record<string, string>)['Content-Type']).toBe('application/x-www-form-urlencoded');
+      const body = init?.body as string;
+      // Body carries the salted-MD5 auth — never plaintext password.
+      expect(body).toContain('u=tester');
+      expect(body).toContain('t=');
+      expect(body).toContain('s=');
+      expect(body).not.toContain('p=pw');
+    });
+  });
+});

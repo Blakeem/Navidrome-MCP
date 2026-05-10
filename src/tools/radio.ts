@@ -1,5 +1,5 @@
-import crypto from 'crypto';
 import type { Config } from '../config.js';
+import type { NavidromeClient } from '../client/navidrome-client.js';
 import type {
   RadioStationDTO,
   CreateRadioStationRequest,
@@ -10,70 +10,33 @@ import type {
 import { logger } from '../utils/logger.js';
 import { getMessageManager } from '../utils/message-manager.js';
 import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
-import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../constants/defaults.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 
-interface SubsonicResponse<T = unknown> {
-  'subsonic-response': {
-    status: string;
-    version: string;
-    type?: string;
-    serverVersion?: string;
-    error?: {
-      code: number;
-      message: string;
-    };
-    internetRadioStations?: {
-      internetRadioStation?: Array<{
-        id: string;
-        name: string;
-        streamUrl: string;
-        homePageUrl?: string;
-      }>;
-    };
-  } & T;
-}
-
-function createSubsonicAuth(config: Config): URLSearchParams {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const token = crypto.createHash('md5').update(config.navidromePassword + salt).digest('hex');
-  
-  return new URLSearchParams({
-    u: config.navidromeUsername,
-    t: token,
-    s: salt,
-    v: SUBSONIC_API_VERSION,
-    c: SUBSONIC_CLIENT_NAME,
-    f: 'json',
-  });
+interface InternetRadioStationsResponse {
+  internetRadioStations?: {
+    internetRadioStation?: Array<{
+      id: string;
+      name: string;
+      streamUrl: string;
+      homePageUrl?: string;
+    }>;
+  };
 }
 
 /**
  * List all internet radio stations
  */
 export async function listRadioStations(
-  config: Config, 
+  client: NavidromeClient,
   args: unknown
 ): Promise<ListRadioStationsResponse> {
   try {
     logger.debug('Listing radio stations', args);
-    
-    const authParams = createSubsonicAuth(config);
-    const httpResponse = await fetch(`${config.navidromeUrl}/rest/getInternetRadioStations?${authParams.toString()}`);
-    
-    if (!httpResponse.ok) {
-      throw new Error(ErrorFormatter.subsonicApi(httpResponse));
-    }
 
-    const data = await httpResponse.json() as SubsonicResponse;
-    
-    if (data['subsonic-response'].status !== 'ok') {
-      const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
-      throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
-    }
+    const response = await client.subsonicRequest('/getInternetRadioStations') as InternetRadioStationsResponse;
+    const radioStations = response.internetRadioStations?.internetRadioStation ?? [];
 
-    const radioStations = data['subsonic-response'].internetRadioStations?.internetRadioStation ?? [];
     const stations: RadioStationDTO[] = radioStations.map(station => {
       const stationDto: RadioStationDTO = {
         id: station.id,
@@ -82,18 +45,18 @@ export async function listRadioStations(
         createdAt: new Date().toISOString(), // Subsonic API doesn't provide timestamps
         updatedAt: new Date().toISOString(),
       };
-      
+
       if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl !== '') {
         stationDto.homePageUrl = station.homePageUrl;
       }
-      
+
       return stationDto;
     });
 
     // Get one-time message for radio list tip
     const messageManager = getMessageManager();
     const tip = messageManager.getMessage('radio.list_tip');
-    
+
     const apiResponse: ListRadioStationsResponse = {
       stations,
       total: stations.length,
@@ -103,11 +66,11 @@ export async function listRadioStations(
     if (tip !== null && tip !== undefined && tip !== '') {
       apiResponse.tip = tip;
     }
-    
+
     return apiResponse;
   } catch (error) {
     logger.error('Error listing radio stations:', error);
-    throw new Error(ErrorFormatter.toolExecution('listRadioStations', error));
+    throw new Error(ErrorFormatter.toolExecution('list_radio_stations', error));
   }
 }
 
@@ -115,6 +78,7 @@ export async function listRadioStations(
  * Create radio stations - always processes as batch (single station = batch of 1)
  */
 export async function createRadioStation(
+  client: NavidromeClient,
   config: Config,
   args: unknown
 ): Promise<{ results: CreateRadioStationResponse[]; summary: string }> {
@@ -163,12 +127,11 @@ export async function createRadioStation(
 
       logger.debug('Creating radio station:', station);
 
-      // Optional stream validation
+      // Optional stream validation. validateRadioStream's `client` parameter
+      // is currently unused (it makes outbound HTTP calls only) but the
+      // signature requires it — pass the existing client, no new auth needed.
       if (params.validateBeforeAdd === true) {
         const { validateRadioStream } = await import('./radio-validation.js');
-        const { NavidromeClient } = await import('../client/navidrome-client.js');
-        const client = new NavidromeClient(config);
-        await client.initialize();
 
         const validationResult = await validateRadioStream(client, {
           url: station.streamUrl,
@@ -186,29 +149,17 @@ export async function createRadioStation(
         }
       }
 
-      // Create the station via Subsonic API
-      const authParams = createSubsonicAuth(config);
-      authParams.set('streamUrl', station.streamUrl);
-      authParams.set('name', station.name);
-
+      // Create the station via Subsonic API. Auth travels in the POST body
+      // (via client.subsonicRequest) — never in URL query params where access
+      // logs would capture it.
+      const subsonicParams: Record<string, string> = {
+        streamUrl: station.streamUrl,
+        name: station.name,
+      };
       if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
-        authParams.set('homePageUrl', station.homePageUrl);
+        subsonicParams['homePageUrl'] = station.homePageUrl;
       }
-
-      const httpResponse = await fetch(`${config.navidromeUrl}/rest/createInternetRadioStation?${authParams.toString()}`, {
-        method: 'POST',
-      });
-
-      if (!httpResponse.ok) {
-        throw new Error(ErrorFormatter.subsonicApi(httpResponse));
-      }
-
-      const data = await httpResponse.json() as SubsonicResponse;
-
-      if (data['subsonic-response'].status !== 'ok') {
-        const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
-        throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
-      }
+      await client.subsonicRequest('/createInternetRadioStation', subsonicParams);
 
       // Successfully created
       const createdStation: RadioStationDTO = {
@@ -261,6 +212,11 @@ export async function createRadioStation(
     }
   }
 
+  // Suppress unused-parameter warning — config remains in the signature for
+  // future use (e.g. honoring validation timeouts from config) and for
+  // call-site symmetry with discoverRadioStations.
+  void config;
+
   return {
     results,
     summary
@@ -271,36 +227,20 @@ export async function createRadioStation(
  * Delete a radio station by ID
  */
 export async function deleteRadioStation(
-  config: Config, 
+  client: NavidromeClient,
   args: unknown
 ): Promise<DeleteRadioStationResponse> {
   try {
     const params = args as { id: string };
-    
+
     if (!params.id) {
       throw new Error('Radio station ID is required');
     }
-    
-    logger.debug('Deleting radio station:', params.id);
-    
-    const authParams = createSubsonicAuth(config);
-    authParams.set('id', params.id);
-    
-    const httpResponse = await fetch(`${config.navidromeUrl}/rest/deleteInternetRadioStation?${authParams.toString()}`, {
-      method: 'POST',
-    });
-    
-    if (!httpResponse.ok) {
-      throw new Error(ErrorFormatter.subsonicApi(httpResponse));
-    }
 
-    const data = await httpResponse.json() as SubsonicResponse;
-    
-    if (data['subsonic-response'].status !== 'ok') {
-      const errorMsg = data['subsonic-response'].error?.message ?? 'Unknown error';
-      throw new Error(ErrorFormatter.subsonicResponse(errorMsg));
-    }
-    
+    logger.debug('Deleting radio station:', params.id);
+
+    await client.subsonicRequest('/deleteInternetRadioStation', { id: params.id });
+
     return {
       success: true,
       id: params.id,
@@ -315,31 +255,31 @@ export async function deleteRadioStation(
  * Get a specific radio station by ID
  */
 export async function getRadioStation(
-  config: Config, 
+  client: NavidromeClient,
   args: unknown
 ): Promise<RadioStationDTO> {
   try {
     const params = args as { id: string };
-    
+
     if (!params.id) {
       throw new Error('Radio station ID is required');
     }
-    
+
     logger.debug('Getting radio station:', params.id);
-    
+
     // Since Subsonic API doesn't have a get single station endpoint,
     // we'll get all stations and filter by ID
-    const allStations = await listRadioStations(config, {});
+    const allStations = await listRadioStations(client, {});
     const station = allStations.stations.find(s => s.id === params.id);
-    
+
     if (!station) {
       throw new Error(`Radio station with ID ${params.id} not found`);
     }
-    
+
     return station;
   } catch (error) {
     logger.error('Error getting radio station:', error);
-    throw new Error(ErrorFormatter.toolExecution('getRadioStation', error));
+    throw new Error(ErrorFormatter.toolExecution('get_radio_station', error));
   }
 }
 
@@ -366,7 +306,7 @@ interface PlayRadioStationResult {
  * the station ID doesn't exist or mpv isn't available.
  */
 export async function playRadioStation(
-  config: Config,
+  client: NavidromeClient,
   args: unknown
 ): Promise<PlayRadioStationResult> {
   try {
@@ -379,7 +319,7 @@ export async function playRadioStation(
 
     logger.debug('Playing radio station:', id);
 
-    const station = await getRadioStation(config, { id });
+    const station = await getRadioStation(client, { id });
 
     if (typeof station.streamUrl !== 'string' || station.streamUrl.trim() === '') {
       throw new Error(`Radio station "${station.name}" has no stream URL`);

@@ -16,12 +16,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import type { ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { unlink } from 'node:fs/promises';
+import { createConnection } from 'node:net';
 import type { Config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
-import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../../constants/defaults.js';
+import { MPV_STALE_SOCKET_PROBE_MS } from '../../constants/timeouts.js';
+import { sanitizeFilename } from '../../utils/sanitize-url.js';
+import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
 import { MpvIpc } from './mpv-ipc.js';
 import { getDefaultIpcPath, spawnMpv } from './mpv-process.js';
 
@@ -107,6 +111,13 @@ class PlaybackEngine {
   // an attached MCP can derive `isRadio` from `getPlaylist()` entries whose
   // `songId` is null.
   private currentRadioStation: { name: string } | null = null;
+  // Serializes mutating queue operations (enqueue, enqueueRadio, clear,
+  // shuffle, move, remove). Without this, two concurrent play_* calls
+  // interleave their IPC commands and can violate the radio/songs
+  // mutual-exclusion invariant — e.g. play_songs racing play_radio_station
+  // can leave a hybrid queue. Reads bypass the lock; mpv's own atomicity
+  // covers single-command operations.
+  private mutationLock: Promise<unknown> = Promise.resolve();
 
   private constructor() {}
 
@@ -227,42 +238,45 @@ class PlaybackEngine {
       throw new Error('enqueue requires at least one song ID');
     }
     await this.ensureRunning();
-    const ipc = this.requireIpc();
+    return this.withMutationLock(async () => {
+      const ipc = this.requireIpc();
 
-    // Radio mutual exclusion: a radio stream and songs cannot coexist in the
-    // queue — radio is infinite and breaks queue semantics. If the queue
-    // currently holds a radio stream, any append is demoted to replace so
-    // the radio is cleanly evicted before songs load.
-    if (mode === 'append' && await this.hasRadioStream()) {
-      logger.debug('enqueue: append demoted to replace because queue contains a radio stream');
-      mode = 'replace';
-    }
+      // Radio mutual exclusion: a radio stream and songs cannot coexist in the
+      // queue — radio is infinite and breaks queue semantics. If the queue
+      // currently holds a radio stream, any append is demoted to replace so
+      // the radio is cleanly evicted before songs load.
+      let effectiveMode = mode;
+      if (effectiveMode === 'append' && await this.hasRadioStream()) {
+        logger.debug('enqueue: append demoted to replace because queue contains a radio stream');
+        effectiveMode = 'replace';
+      }
 
-    // Loading songs always evicts any radio context; clear the station name
-    // so `now_playing` doesn't show a stale radio header.
-    this.currentRadioStation = null;
+      // Loading songs always evicts any radio context; clear the station name
+      // so `now_playing` doesn't show a stale radio header.
+      this.currentRadioStation = null;
 
-    if (mode === 'replace') {
-      // Issue an explicit playlist-clear before loading. `loadfile ... replace`
-      // would clear implicitly, but doing it up-front guarantees the prior
-      // queue is wiped even if the first loadfile fails.
-      await ipc.command('playlist-clear');
-      const [first, ...rest] = songIds;
-      if (first === undefined) {
-        throw new Error('enqueue requires at least one song ID');
+      if (effectiveMode === 'replace') {
+        // Issue an explicit playlist-clear before loading. `loadfile ... replace`
+        // would clear implicitly, but doing it up-front guarantees the prior
+        // queue is wiped even if the first loadfile fails.
+        await ipc.command('playlist-clear');
+        const [first, ...rest] = songIds;
+        if (first === undefined) {
+          throw new Error('enqueue requires at least one song ID');
+        }
+        await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
+        for (const id of rest) {
+          await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+        }
+        await ipc.command('set_property', 'pause', false);
+      } else {
+        // Append-only: do NOT clear the playlist; do NOT unpause. Respect the
+        // existing pause state so an append while paused keeps the queue paused.
+        for (const id of songIds) {
+          await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+        }
       }
-      await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
-      for (const id of rest) {
-        await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
-      }
-      await ipc.command('set_property', 'pause', false);
-    } else {
-      // Append-only: do NOT clear the playlist; do NOT unpause. Respect the
-      // existing pause state so an append while paused keeps the queue paused.
-      for (const id of songIds) {
-        await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
-      }
-    }
+    });
   }
 
   /**
@@ -307,7 +321,10 @@ class PlaybackEngine {
       const entry: PlaylistEntry = {
         index,
         songId,
-        filename,
+        // Strip Subsonic auth params (u/p/s/t) before exposing the URL via
+        // get_play_queue — we don't want any credential-shaped data in the
+        // LLM transcript.
+        filename: sanitizeFilename(filename),
         isCurrent,
         isPlaying,
       };
@@ -326,8 +343,10 @@ class PlaybackEngine {
    */
   async clearPlaylist(): Promise<void> {
     await this.ensureRunning();
-    await this.requireIpc().command('stop');
-    this.currentRadioStation = null;
+    return this.withMutationLock(async () => {
+      await this.requireIpc().command('stop');
+      this.currentRadioStation = null;
+    });
   }
 
   /**
@@ -353,12 +372,14 @@ class PlaybackEngine {
       throw new Error('enqueueRadio requires a non-empty stream URL');
     }
     await this.ensureRunning();
-    const ipc = this.requireIpc();
-    await ipc.command('loadfile', streamUrl, 'replace');
-    await ipc.command('set_property', 'pause', false);
-    this.currentRadioStation = stationName !== undefined && stationName !== ''
-      ? { name: stationName }
-      : null;
+    return this.withMutationLock(async () => {
+      const ipc = this.requireIpc();
+      await ipc.command('loadfile', streamUrl, 'replace');
+      await ipc.command('set_property', 'pause', false);
+      this.currentRadioStation = stationName !== undefined && stationName !== ''
+        ? { name: stationName }
+        : null;
+    });
   }
 
   /**
@@ -400,12 +421,14 @@ class PlaybackEngine {
    */
   async shufflePlaylist(): Promise<void> {
     await this.ensureRunning();
-    const ipc = this.requireIpc();
-    await ipc.command('playlist-shuffle');
-    const count = this.getCachedProperty('playlist-count');
-    if (typeof count === 'number' && count > 0) {
-      await ipc.command('set_property', 'playlist-pos', 0);
-    }
+    return this.withMutationLock(async () => {
+      const ipc = this.requireIpc();
+      await ipc.command('playlist-shuffle');
+      const count = this.getCachedProperty('playlist-count');
+      if (typeof count === 'number' && count > 0) {
+        await ipc.command('set_property', 'playlist-pos', 0);
+      }
+    });
   }
 
   /**
@@ -424,11 +447,13 @@ class PlaybackEngine {
    */
   async movePlaylistEntry(from: number, to: number): Promise<void> {
     await this.ensureRunning();
-    const ipc = this.requireIpc();
-    await ipc.command('playlist-move', from, to);
-    if (from === 0 || to === 0) {
-      await ipc.command('set_property', 'playlist-pos', 0);
-    }
+    return this.withMutationLock(async () => {
+      const ipc = this.requireIpc();
+      await ipc.command('playlist-move', from, to);
+      if (from === 0 || to === 0) {
+        await ipc.command('set_property', 'playlist-pos', 0);
+      }
+    });
   }
 
   /**
@@ -438,7 +463,9 @@ class PlaybackEngine {
    */
   async removePlaylistEntry(index: number): Promise<void> {
     await this.ensureRunning();
-    await this.requireIpc().command('playlist-remove', index);
+    return this.withMutationLock(async () => {
+      await this.requireIpc().command('playlist-remove', index);
+    });
   }
 
   /**
@@ -524,19 +551,37 @@ class PlaybackEngine {
     if (this.config === null) {
       throw new Error('PlaybackEngine has not been configured. Call configure(config) first.');
     }
-    const params = new URLSearchParams({
-      id: songId,
-      format: this.config.playbackTranscodeFormat,
-      maxBitRate: this.config.playbackTranscodeBitrate,
-      u: this.config.navidromeUsername,
-      p: this.config.navidromePassword,
-      v: SUBSONIC_API_VERSION,
-      c: SUBSONIC_CLIENT_NAME,
-      f: 'json',
-    });
+    // Subsonic salted-MD5 auth (s=/t=) — never plaintext password (p=). The
+    // URL is handed to mpv, which loads it; mpv has no auth-computation
+    // capability so credentials of some shape have to be in the URL. The
+    // salted form means leaked URLs (access logs, etc.) cannot recover the
+    // password, and getPlaylist() further sanitizes the URL before exposing
+    // it to the LLM via get_play_queue.
+    const params = buildSubsonicAuthParams(
+      this.config.navidromeUsername,
+      this.config.navidromePassword,
+      {
+        id: songId,
+        format: this.config.playbackTranscodeFormat,
+        maxBitRate: this.config.playbackTranscodeBitrate,
+      },
+    );
     // Trim a single trailing slash so we don't end up with `//rest/stream`.
     const base = this.config.navidromeUrl.replace(/\/+$/, '');
     return `${base}/rest/stream?${params.toString()}`;
+  }
+
+  /**
+   * Run a mutating queue operation under the engine-wide mutation lock so
+   * concurrent callers serialize cleanly. The lock is a promise queue: the
+   * next task chains off the previous task's settle (success or failure).
+   * Failures don't poison the chain — `.catch(() => undefined)` ensures the
+   * stored lock resolves even if `fn` rejected.
+   */
+  private withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.mutationLock.then(fn, fn);
+    this.mutationLock = next.catch(() => undefined);
+    return next;
   }
 
   private async startOrAttach(): Promise<void> {
@@ -579,12 +624,9 @@ class PlaybackEngine {
       // Short retry budget — if it's there, it answers fast; if it's a stale
       // socket file with no listener, we don't want to wait the full 5s.
       await ipc.connect(this.ipcPath, 3, 50);
-      // Verify mpv is actually responsive on this socket
-      const versionRaw = await Promise.race([
-        ipc.command('get_version'),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('get_version timeout')), 500)),
-      ]);
+      // Verify mpv is actually responsive on this socket. The per-command
+      // timeout inside MpvIpc.command() bounds this — no Promise.race needed.
+      const versionRaw = await ipc.command('get_version');
       this.mpvVersion = versionRaw === null || versionRaw === undefined
         ? null
         : String(versionRaw);
@@ -602,24 +644,29 @@ class PlaybackEngine {
   /**
    * Spawn a fresh mpv child, connect IPC, install observers and event
    * handlers. Used only when attach fails. Throws on any failure with state
-   * fully rolled back. We don't retain a child reference — the spawn is
-   * detached + unref'd; the IPC socket is the only handle we use.
+   * fully rolled back AND the spawned child killed — earlier versions left
+   * the child running on rollback "in case the next call attaches", but in
+   * practice that leaks an orphan idle mpv per failed spawn (it accumulates
+   * over uptime and holds the audio device).
    */
   private async spawnAndConnect(): Promise<void> {
-    let ipc: MpvIpc | null = null;
-    try {
-      if (this.mpvBinary === null) {
-        throw new Error(ErrorFormatter.configMissing('Playback', 'mpv binary'));
-      }
-      const child = spawnMpv(this.mpvBinary, this.ipcPath);
-      // We don't track this handle — if mpv exits unexpectedly the IPC
-      // 'close' event will fire and trigger our recovery path.
-      child.on('exit', (code, signal) => {
-        if (!this.shuttingDown) {
-          logger.warn(`mpv exited unexpectedly: code=${code ?? 'null'} signal=${signal ?? 'null'}`);
-        }
-      });
+    if (this.mpvBinary === null) {
+      throw new Error(ErrorFormatter.configMissing('Playback', 'mpv binary'));
+    }
 
+    let ipc: MpvIpc | null = null;
+    let expectedExit = false;
+    const child: ChildProcess = spawnMpv(this.mpvBinary, this.ipcPath);
+
+    // The exit handler suppresses its "unexpected" warning when we deliberately
+    // killed the child during rollback (expectedExit === true).
+    child.on('exit', (code, signal) => {
+      if (!this.shuttingDown && !expectedExit) {
+        logger.warn(`mpv exited unexpectedly: code=${code ?? 'null'} signal=${signal ?? 'null'}`);
+      }
+    });
+
+    try {
       ipc = new MpvIpc();
       await ipc.connect(this.ipcPath);
 
@@ -636,10 +683,14 @@ class PlaybackEngine {
       await this.installObservers(ipc);
 
       this.ipc = ipc;
+      // Success: leave the child detached + unref'd as designed; the IPC
+      // connection is the only liveness handle from here on.
     } catch (err) {
-      // Roll back partial state on failure. We do NOT kill the child even on
-      // rollback — if the spawn succeeded but observe failed, the next call
-      // will attach to it instead of leaving it orphaned + spawning another.
+      // Rollback path: kill the spawned child so we don't leak an orphan.
+      // SIGTERM is sufficient — mpv handles it cleanly; if a future bug shows
+      // it isn't enough, escalate to SIGKILL.
+      expectedExit = true;
+      try { child.kill('SIGTERM'); } catch { /* already exited */ }
       if (ipc !== null) {
         try { ipc.close(); } catch { /* noop */ }
       }
@@ -740,15 +791,46 @@ class PlaybackEngine {
   }
 }
 
+/**
+ * Probe-first stale-socket cleanup. The previous implementation blindly
+ * unlinked the socket file whenever it existed — but `tryAttachExisting()`
+ * can return false for transient reasons (slow get_version, scheduling
+ * pause) while a live mpv is still bound. Unlinking under a live mpv on
+ * Linux is a no-op for the binding but means the next spawn fails with
+ * EADDRINUSE. So we probe first: try a one-shot connect with a short
+ * timeout; only unlink if no one is listening.
+ */
 async function cleanupStaleSocket(path: string): Promise<void> {
   if (process.platform === 'win32') return;
+  if (!existsSync(path)) return;
+
+  const someoneListening = await new Promise<boolean>((resolve) => {
+    const probe = createConnection({ path });
+    let done = false;
+    const finish = (alive: boolean): void => {
+      if (done) return;
+      done = true;
+      try { probe.destroy(); } catch { /* ignore */ }
+      resolve(alive);
+    };
+    const timer = setTimeout(() => finish(false), MPV_STALE_SOCKET_PROBE_MS);
+    timer.unref();
+    probe.once('connect', () => {
+      clearTimeout(timer);
+      finish(true);
+    });
+    probe.once('error', () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+  });
+
+  if (someoneListening) return;
   try {
-    if (existsSync(path)) {
-      await unlink(path);
-    }
+    await unlink(path);
   } catch {
-    // Best-effort; mpv will fail to bind if it's actually busy and the user
-    // will see a real error then.
+    // Best-effort; mpv will fail to bind if the file is somehow still busy
+    // and the user will see a real error then.
   }
 }
 
