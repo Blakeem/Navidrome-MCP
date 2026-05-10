@@ -31,6 +31,9 @@ import { libraryManager } from '../services/library-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
+// Go's zero-time sentinel: the default zero value for time.Time in Go's standard library
+const GO_ZERO_TIME = '0001-01-01T00:00:00Z';
+
 /**
  * Get user details including library information with active status
  */
@@ -62,8 +65,8 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
         totalDuration: lib.totalDuration,
       },
       scanInfo: {
-        lastScanAt: lib.lastScanAt === '0001-01-01T00:00:00Z' ? null : lib.lastScanAt,
-        lastScanStartedAt: lib.lastScanStartedAt === '0001-01-01T00:00:00Z' ? null : lib.lastScanStartedAt,
+        lastScanAt: lib.lastScanAt === GO_ZERO_TIME ? null : lib.lastScanAt,
+        lastScanStartedAt: lib.lastScanStartedAt === GO_ZERO_TIME ? null : lib.lastScanStartedAt,
         fullScanInProgress: lib.fullScanInProgress,
       },
       createdAt: lib.createdAt,
@@ -148,12 +151,12 @@ async function setActiveLibraries(args: unknown): Promise<LibraryManagementRespo
     logger.info(`Set active libraries: ${activeLibraries.map(lib => `${lib.name} (${lib.id})`).join(', ')}`);
     return result;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Failed to set active libraries:', errorMessage);
-    
+    const message = ErrorFormatter.toolExecution('set_active_libraries', error);
+    logger.error(message);
+
     return {
       success: false,
-      message: `Failed to set active libraries: ${errorMessage}`,
+      message,
       activeLibraries: [],
       totalCount: 0,
     };
@@ -265,7 +268,7 @@ export function createLibraryToolCategory(client: NavidromeClient, _config: Conf
         case 'set_active_libraries':
           return await setActiveLibraries(args);
         default:
-          throw new Error(`Unknown library tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

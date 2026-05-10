@@ -1,7 +1,26 @@
+/**
+ * Navidrome MCP Server - Tag Tool Handlers
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -33,6 +52,12 @@ const tools: Tool[] = [
           minimum: 1,
           maximum: 100,
           default: 100,
+        },
+        offset: {
+          type: 'integer',
+          description: 'Pagination offset (0-based)',
+          minimum: 0,
+          default: 0,
         },
       },
     },
@@ -102,7 +127,7 @@ export function createTagsToolCategory(client: NavidromeClient, _config: Config)
         case 'get_filter_options':
           return filterCacheManager.getFilterOptions(args);
         default:
-          throw new Error(`Unknown tags tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

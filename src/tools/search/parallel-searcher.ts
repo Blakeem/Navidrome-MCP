@@ -70,13 +70,8 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
       total: songs.length,
       offset: params.offset ?? 0,
       limit: params.limit,
+      ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
 
     return result;
   } catch (error) {
@@ -125,13 +120,8 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
       total: albums.length,
       offset: params.offset ?? 0,
       limit: params.limit,
+      ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
 
     return result;
   } catch (error) {
@@ -182,13 +172,8 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
       total: artists.length,
       offset: params.offset ?? 0,
       limit: params.limit,
+      ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
 
     return result;
   } catch (error) {

@@ -26,6 +26,7 @@ import type {
 import {
   PlaylistTracksPaginationSchema,
 } from '../../schemas/index.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 /**
  * Raw playlist track data from Navidrome API
@@ -145,8 +146,6 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
       format: 'json',
     };
   } catch (error) {
-    throw new Error(
-      `Failed to fetch playlist tracks: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_playlist_tracks', error));
   }
 }

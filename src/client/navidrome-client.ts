@@ -21,6 +21,7 @@ import { AuthManager } from './auth-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { libraryManager } from '../services/library-manager.js';
+import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../constants/defaults.js';
 
 export class NavidromeClient {
   private readonly authManager: AuthManager;
@@ -106,8 +107,8 @@ export class NavidromeClient {
     const queryParams = new URLSearchParams({
       u: this.config.navidromeUsername,
       p: this.config.navidromePassword,
-      v: '1.16.1',
-      c: 'navidrome-mcp',
+      v: SUBSONIC_API_VERSION,
+      c: SUBSONIC_CLIENT_NAME,
       f: 'json',
       ...params,
     });

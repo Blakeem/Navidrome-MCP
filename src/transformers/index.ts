@@ -19,7 +19,7 @@
 // Re-export all transformer functions and types for backward compatibility
 
 // Shared utilities
-export { formatDuration } from './shared-transformers.js';
+export { formatDuration, parseDuration } from './shared-transformers.js';
 // extractGenre, extractAllGenres, and RawEntityWithGenres are internal utilities
 
 // Song transformers

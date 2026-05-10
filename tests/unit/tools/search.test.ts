@@ -331,17 +331,24 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     it('should handle very long query strings', async () => {
       const longQuery = 'a'.repeat(1000);
-      
-      // Should either work or fail gracefully
+
+      // Should either succeed with proper shape or fail gracefully with an Error.
+      let result: Awaited<ReturnType<typeof searchSongs>> | undefined;
+      let caughtError: unknown;
+
       try {
-        const result = await searchSongs(liveClient, config, { 
-          query: longQuery, 
-          limit: 1 
+        result = await searchSongs(liveClient, config, {
+          query: longQuery,
+          limit: 1,
         });
-        expect(result).toHaveProperty('totalResults');
       } catch (error) {
-        // Acceptable to fail with long queries
-        expect(error).toBeInstanceOf(Error);
+        caughtError = error;
+      }
+
+      if (result !== undefined) {
+        expect(result).toHaveProperty('total');
+      } else {
+        expect(caughtError).toBeInstanceOf(Error);
       }
     });
 

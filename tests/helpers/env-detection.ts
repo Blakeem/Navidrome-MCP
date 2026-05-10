@@ -6,8 +6,6 @@
  * in local development environments.
  */
 
-import { logger } from '../../src/utils/logger.js';
-
 /**
  * Check if we're running in a CI environment
  */
@@ -75,22 +73,6 @@ export function getSkipReason(): string {
 }
 
 /**
- * Log test environment information
- */
-function logTestEnvironment(): void {
-  const skipLive = shouldSkipLiveTests();
-  
-  logger.info('Test Environment Configuration:');
-  logger.info(`- CI Environment: ${isCI()}`);
-  logger.info(`- Has Navidrome Config: ${hasNavidromeConfig()}`);
-  logger.info(`- Skip Live Tests: ${skipLive}`);
-  
-  if (skipLive) {
-    logger.info(`- Skip Reason: ${getSkipReason()}`);
-  }
-}
-
-/**
  * Create a conditional describe block that skips when live tests should be skipped
  */
 export function describeLive(name: string, fn: () => void): void {
@@ -98,45 +80,5 @@ export function describeLive(name: string, fn: () => void): void {
     describe.skip(`${name} (skipped: ${getSkipReason()})`, fn);
   } else {
     describe(name, fn);
-  }
-}
-
-/**
- * Create a conditional test that skips when live tests should be skipped
- */
-function itLive(name: string, fn: () => void | Promise<void>): void {
-  if (shouldSkipLiveTests()) {
-    it.skip(`${name} (skipped: ${getSkipReason()})`, fn);
-  } else {
-    it(name, fn);
-  }
-}
-
-/**
- * Enhanced client getter that provides clear error messaging
- */
-async function getSharedLiveClientSafe(): Promise<any> {
-  if (shouldSkipLiveTests()) {
-    throw new Error(`Live client not available: ${getSkipReason()}`);
-  }
-
-  try {
-    const { getSharedLiveClient } = await import('../factories/shared-client.js');
-    return await getSharedLiveClient();
-  } catch (error) {
-    logger.error('Failed to create live client:', error);
-    
-    // If we're not in CI, this might be a real issue we should know about
-    if (!isCI()) {
-      throw error;
-    }
-    
-    // In CI, provide helpful guidance
-    throw new Error(
-      `Failed to initialize Navidrome client in CI environment. ` +
-      `This usually means the test server is not available. ` +
-      `Consider setting SKIP_INTEGRATION_TESTS=true for CI builds. ` +
-      `Original error: ${error instanceof Error ? error.message : String(error)}`
-    );
   }
 }

@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { LyricsDTO, LyricsLine } from '../types/index.js';
 import type { Config } from '../config.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { DEFAULT_USER_AGENT } from '../constants/defaults.js';
 
 /**
  * Schema for getting lyrics
@@ -93,7 +94,7 @@ async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>, config
     
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': config.lrclibUserAgent ?? 'Navidrome-MCP/1.0',
+        'User-Agent': config.lrclibUserAgent ?? DEFAULT_USER_AGENT,
         'Accept': 'application/json'
       }
     });
@@ -126,7 +127,7 @@ async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config:
     
     const response = await fetch(url.toString(), {
       headers: {
-        'User-Agent': config.lrclibUserAgent ?? 'Navidrome-MCP/1.0',
+        'User-Agent': config.lrclibUserAgent ?? DEFAULT_USER_AGENT,
         'Accept': 'application/json'
       }
     });

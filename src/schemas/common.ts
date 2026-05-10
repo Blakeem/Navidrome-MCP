@@ -78,10 +78,15 @@ export const EnhancedSearchSchema = SearchQuerySchema.extend({
   order: OrderSchema,
   randomSeed: z.number().optional(),
   
-  // Year filtering
-  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
-  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
-  
+  // Year filtering — use refine so the upper bound is re-evaluated at validate time,
+  // not once at module load. (+1 allows valid advance/pre-release year entries.)
+  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearFrom must not be more than one year in the future',
+  }).optional(),
+  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearTo must not be more than one year in the future',
+  }).optional(),
+
   // Boolean filters
   starred: OptionalBooleanSchema,
 });
@@ -150,8 +155,12 @@ export const ListSongsSchema = z.object({
   releaseType: z.string().optional(),
   recordLabel: z.string().optional(),
   mood: z.string().optional(),
-  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
-  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearFrom must not be more than one year in the future',
+  }).optional(),
+  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearTo must not be more than one year in the future',
+  }).optional(),
   starred: OptionalBooleanSchema,
 });
 
@@ -172,8 +181,12 @@ export const ListAlbumsSchema = z.object({
   releaseType: z.string().optional(),
   recordLabel: z.string().optional(),
   mood: z.string().optional(),
-  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
-  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearFrom must not be more than one year in the future',
+  }).optional(),
+  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearTo must not be more than one year in the future',
+  }).optional(),
   starred: OptionalBooleanSchema,
 });
 
@@ -193,8 +206,12 @@ export const ListArtistsSchema = z.object({
   releaseType: z.string().optional(),
   recordLabel: z.string().optional(),
   mood: z.string().optional(),
-  yearFrom: z.number().min(1900).max(new Date().getFullYear()).optional(),
-  yearTo: z.number().min(1900).max(new Date().getFullYear()).optional(),
+  yearFrom: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearFrom must not be more than one year in the future',
+  }).optional(),
+  yearTo: z.number().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
+    message: 'yearTo must not be more than one year in the future',
+  }).optional(),
   starred: OptionalBooleanSchema,
 });
 

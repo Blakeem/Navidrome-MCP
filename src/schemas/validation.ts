@@ -89,7 +89,7 @@ export const SaveQueueSchema = z.object({
 // Search validation schemas - import enhanced schemas from common.js
 // SearchAll has optional query to allow listing all content with filters
 export const SearchAllSchema = EnhancedSearchSchema.extend({
-  query: z.string().optional().default(''), // Override required query to be optional
+  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
   artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
@@ -105,6 +105,7 @@ export const SearchByTagsSchema = z.object({
   tagName: z.string().min(1).optional().default('genre'),
   tagValue: z.string().optional(),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.TAG_SEARCH_LIMIT),
+  offset: z.number().int().nonnegative().default(0),
 });
 
 export const TagDistributionSchema = z.object({
@@ -127,23 +128,23 @@ export const ValidateRadioStreamSchema = z.object({
 
 // Last.fm validation schemas
 export const SimilarArtistsSchema = z.object({
-  artist: z.string(),
+  artist: z.string().min(1),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.SIMILAR_ARTISTS_LIMIT),
 });
 
 export const SimilarTracksSchema = z.object({
-  artist: z.string(),
-  track: z.string(),
+  artist: z.string().min(1),
+  track: z.string().min(1),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.SIMILAR_TRACKS_LIMIT),
 });
 
 export const ArtistInfoSchema = z.object({
-  artist: z.string(),
+  artist: z.string().min(1),
   lang: z.string().optional().default('en'),
 });
 
 export const TopTracksByArtistSchema = z.object({
-  artist: z.string(),
+  artist: z.string().min(1),
   limit: createLimitSchema(1, 50, DEFAULT_VALUES.TOP_TRACKS_BY_ARTIST_LIMIT),
 });
 

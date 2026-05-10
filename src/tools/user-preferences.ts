@@ -19,24 +19,18 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import type { Config } from '../config.js';
-import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/index.js';
+import {
+  parseDuration,
+  transformSongsToDTO,
+  transformAlbumsToDTO,
+  transformArtistsToDTO,
+} from '../transformers/index.js';
 import {
   StarItemSchema,
   SetRatingSchema,
   StarredItemsPaginationSchema,
   TopRatedItemsPaginationSchema,
 } from '../schemas/index.js';
-
-// Helper function to parse duration from MM:SS format to seconds
-function parseDuration(durationFormatted: string): number {
-  const parts = durationFormatted.split(':');
-  if (parts.length === 2) {
-    const minutes = parseInt(parts[0] ?? '0', 10);
-    const seconds = parseInt(parts[1] ?? '0', 10);
-    return minutes * 60 + seconds;
-  }
-  return 0;
-}
 
 // Helper function to extract starredAt timestamp from raw data
 function extractStarredAt(item: unknown): string | undefined {
@@ -172,7 +166,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
   // Fetch more items to account for client-side filtering
   const fetchLimit = Math.min(limit * 5, 500); // Fetch 5x requested or max 500
   
-  const response = await client.request<unknown>(
+  const response = await client.requestWithLibraryFilter<unknown>(
     `${endpoint}?_start=${offset}&_end=${offset + fetchLimit}&_sort=starredAt&_order=DESC`
   );
   
@@ -247,7 +241,7 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
   // We'll fetch 3x the requested amount to ensure we have enough after filtering
   const fetchLimit = limit * 3;
   
-  const response = await client.request<unknown>(
+  const response = await client.requestWithLibraryFilter<unknown>(
     `${endpoint}?_sort=rating&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
   

@@ -16,11 +16,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import {
+  SimilarArtistsSchema,
+  SimilarTracksSchema,
+  ArtistInfoSchema,
+  TopTracksByArtistSchema,
+  TrendingMusicSchema,
+} from '../schemas/index.js';
 
 interface LastFmArtist {
   name: string;
@@ -143,11 +148,6 @@ async function callLastFmApi(method: string, params: Record<string, string>, api
   return data;
 }
 
-const SimilarArtistsSchema = z.object({
-  artist: z.string().min(1),
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SIMILAR_ARTISTS_LIMIT),
-});
-
 export async function getSimilarArtists(config: Config, args: unknown): Promise<SimilarArtistsResult> {
   const { artist, limit = 20 } = SimilarArtistsSchema.parse(args);
   
@@ -179,12 +179,6 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
     }),
   };
 }
-
-const SimilarTracksSchema = z.object({
-  artist: z.string().min(1),
-  track: z.string().min(1),
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.SIMILAR_TRACKS_LIMIT),
-});
 
 export async function getSimilarTracks(config: Config, args: unknown): Promise<SimilarTracksResult> {
   const { artist, track, limit = 20 } = SimilarTracksSchema.parse(args);
@@ -220,11 +214,6 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
     }),
   };
 }
-
-const ArtistInfoSchema = z.object({
-  artist: z.string().min(1),
-  lang: z.string().optional().default('en'),
-});
 
 export async function getArtistInfo(config: Config, args: unknown): Promise<ArtistInfoResult> {
   const { artist, lang = 'en' } = ArtistInfoSchema.parse(args);
@@ -262,11 +251,6 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
   };
 }
 
-const TopTracksByArtistSchema = z.object({
-  artist: z.string().min(1),
-  limit: z.number().min(1).max(50).optional().default(DEFAULT_VALUES.TOP_TRACKS_BY_ARTIST_LIMIT),
-});
-
 export async function getTopTracksByArtist(config: Config, args: unknown): Promise<TopTracksByArtistResult> {
   const { artist, limit = 10 } = TopTracksByArtistSchema.parse(args);
   
@@ -298,14 +282,8 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
   };
 }
 
-const GlobalChartsSchema = z.object({
-  type: z.enum(['artists', 'tracks', 'tags']),
-  limit: z.number().min(1).max(100).optional().default(DEFAULT_VALUES.TRENDING_MUSIC_LIMIT),
-  page: z.number().min(1).optional().default(1),
-});
-
 export async function getTrendingMusic(config: Config, args: unknown): Promise<TrendingMusicResult> {
-  const { type, limit = 20, page = 1 } = GlobalChartsSchema.parse(args);
+  const { type, limit = 20, page = 1 } = TrendingMusicSchema.parse(args);
   
   if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));

@@ -16,22 +16,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/index.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
-
-// Helper function to parse duration from MM:SS format to seconds
-function parseDuration(durationFormatted: string): number {
-  const parts = durationFormatted.split(':');
-  if (parts.length === 2) {
-    const minutes = parseInt(parts[0] ?? '0', 10);
-    const seconds = parseInt(parts[1] ?? '0', 10);
-    return minutes * 60 + seconds;
-  }
-  return 0;
-}
+import {
+  parseDuration,
+  transformSongsToDTO,
+  transformAlbumsToDTO,
+  transformArtistsToDTO,
+} from '../transformers/index.js';
+import {
+  RecentlyPlayedPaginationSchema,
+  MostPlayedPaginationSchema,
+} from '../schemas/index.js';
 
 interface RecentlyPlayedTrack {
   id: string;
@@ -67,20 +63,14 @@ interface MostPlayedResult {
   items: MostPlayedItem[];
 }
 
-const RecentlyPlayedSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.RECENTLY_PLAYED_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  timeRange: z.enum(['today', 'week', 'month', 'all']).optional().default('all'),
-});
-
 export async function listRecentlyPlayed(client: NavidromeClient, args: unknown): Promise<RecentlyPlayedResult> {
-  const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedSchema.parse(args);
+  const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedPaginationSchema.parse(args);
   
   logger.info(`Getting recently played songs (${timeRange})`);
   
   // For now, we'll get songs sorted by addedDate (when added to library) as a proxy for recently played
   // The API doesn't appear to support playDate filtering reliably
-  const response = await client.request<unknown>(
+  const response = await client.requestWithLibraryFilter<unknown>(
     `/song?_sort=addedDate&_order=DESC&_start=${offset}&_end=${offset + limit}`
   );
   
@@ -116,15 +106,8 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
   };
 }
 
-const MostPlayedSchema = z.object({
-  type: z.enum(['songs', 'albums', 'artists']).optional().default('songs'),
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.MOST_PLAYED_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  minPlayCount: z.number().min(1).optional().default(1),
-});
-
 export async function listMostPlayed(client: NavidromeClient, args: unknown): Promise<MostPlayedResult> {
-  const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedSchema.parse(args);
+  const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedPaginationSchema.parse(args);
   
   logger.info(`Getting most played ${type} with minPlayCount: ${minPlayCount}`);
   
@@ -134,7 +117,7 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
   // We'll fetch 3x the requested amount to ensure we have enough after filtering
   const fetchLimit = limit * 3;
   
-  const response = await client.request<unknown>(
+  const response = await client.requestWithLibraryFilter<unknown>(
     `${endpoint}?_sort=playCount&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
   

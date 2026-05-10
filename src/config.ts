@@ -134,11 +134,17 @@ export async function loadConfig(): Promise<Config> {
   const defaultLibrariesEnv = process.env['NAVIDROME_DEFAULT_LIBRARIES'];
   if (defaultLibrariesEnv !== null && defaultLibrariesEnv !== undefined && defaultLibrariesEnv.trim() !== '') {
     try {
-      defaultLibraryIds = defaultLibrariesEnv
-        .split(',')
-        .map(id => parseInt(id.trim(), 10))
+      const tokens = defaultLibrariesEnv.split(',').map(t => t.trim());
+      const rejectedTokens = tokens.filter(t => isNaN(parseInt(t, 10)));
+      if (rejectedTokens.length > 0) {
+        logger.warn(
+          `NAVIDROME_DEFAULT_LIBRARIES contains invalid (non-integer) tokens that will be ignored: ${rejectedTokens.join(', ')}`
+        );
+      }
+      defaultLibraryIds = tokens
+        .map(id => parseInt(id, 10))
         .filter(id => !isNaN(id));
-      
+
       if (defaultLibraryIds.length === 0) {
         logger.warn('NAVIDROME_DEFAULT_LIBRARIES contains no valid library IDs');
         defaultLibraryIds = undefined;

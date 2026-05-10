@@ -21,6 +21,7 @@ import { unlink } from 'node:fs/promises';
 import type { Config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../../constants/defaults.js';
 import { MpvIpc } from './mpv-ipc.js';
 import { getDefaultIpcPath, spawnMpv } from './mpv-process.js';
 
@@ -529,8 +530,8 @@ class PlaybackEngine {
       maxBitRate: this.config.playbackTranscodeBitrate,
       u: this.config.navidromeUsername,
       p: this.config.navidromePassword,
-      v: '1.16.1',
-      c: 'navidrome-mcp',
+      v: SUBSONIC_API_VERSION,
+      c: SUBSONIC_CLIENT_NAME,
       f: 'json',
     });
     // Trim a single trailing slash so we don't end up with `//rest/stream`.

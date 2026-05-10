@@ -10,6 +10,7 @@ import type {
 import { logger } from '../utils/logger.js';
 import { getMessageManager } from '../utils/message-manager.js';
 import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
+import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../constants/defaults.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 
@@ -42,8 +43,8 @@ function createSubsonicAuth(config: Config): URLSearchParams {
     u: config.navidromeUsername,
     t: token,
     s: salt,
-    v: '1.16.1',
-    c: 'NavidromeMCP',
+    v: SUBSONIC_API_VERSION,
+    c: SUBSONIC_CLIENT_NAME,
     f: 'json',
   });
 }
@@ -230,6 +231,9 @@ export async function createRadioStation(
 
     } catch (error) {
       logger.error(`Error creating radio station "${station.name}":`, error);
+      // Per-station error inside batch loop: the outer prefix already names
+      // the operation, so we keep the raw extracted message rather than
+      // double-wrapping with ErrorFormatter.toolExecution.
       results.push({
         success: false,
         error: `Failed to add "${station.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -303,10 +307,7 @@ export async function deleteRadioStation(
     };
   } catch (error) {
     logger.error('Error deleting radio station:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    };
+    throw new Error(ErrorFormatter.toolExecution('delete_radio_station', error));
   }
 }
 

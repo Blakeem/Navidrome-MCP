@@ -42,3 +42,27 @@ export const DEFAULT_VALUES = {
   // Radio discovery
   RADIO_DISCOVERY_LIMIT: 15, // optimal for discovery without overwhelming
 } as const;
+
+/**
+ * Subsonic API protocol version we report when calling Subsonic-compatible endpoints.
+ * Bump together across every Subsonic call site by editing this single constant.
+ */
+export const SUBSONIC_API_VERSION = '1.16.1';
+
+/**
+ * Subsonic API client identifier (the `c` parameter). Servers and access logs
+ * use this to attribute traffic; keep it stable across releases.
+ */
+export const SUBSONIC_CLIENT_NAME = 'navidrome-mcp';
+
+/**
+ * Default User-Agent string used for outbound HTTP calls when no
+ * service-specific override is configured (Radio Browser, LRCLIB, etc.).
+ */
+export const DEFAULT_USER_AGENT = 'Navidrome-MCP/1.0';
+
+/**
+ * Hard cap on tracks fetched per album when expanding `play_albums` /
+ * `play_albums_search` requests. Albums larger than this silently truncate.
+ */
+export const MAX_ALBUM_TRACKS = 500;

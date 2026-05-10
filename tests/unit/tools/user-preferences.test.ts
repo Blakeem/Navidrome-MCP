@@ -7,7 +7,7 @@
  * DATA INTEGRITY: User preferences (stars/ratings) affect personal data - extensive mocking required for safety.
  */
 
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { loadConfig } from '../../../src/config.js';

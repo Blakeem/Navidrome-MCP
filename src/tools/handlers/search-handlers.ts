@@ -1,8 +1,27 @@
+/**
+ * Navidrome MCP Server - Search Tool Handlers
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { DEFAULT_VALUES } from '../../constants/defaults.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -10,7 +29,7 @@ import {
   searchSongs,
   searchAlbums,
   searchArtists,
-} from '../search.js';
+} from '../search/index.js';
 
 // Tool definitions for search category
 const tools: Tool[] = [
@@ -91,13 +110,13 @@ const tools: Tool[] = [
         yearFrom: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results from this year onwards',
         },
         yearTo: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results up to this year',
         },
         // Boolean filters
@@ -178,13 +197,13 @@ const tools: Tool[] = [
         yearFrom: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results from this year onwards',
         },
         yearTo: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results up to this year',
         },
         // Boolean filters
@@ -265,13 +284,13 @@ const tools: Tool[] = [
         yearFrom: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results from this year onwards',
         },
         yearTo: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results up to this year',
         },
         // Boolean filters
@@ -352,13 +371,13 @@ const tools: Tool[] = [
         yearFrom: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results from this year onwards',
         },
         yearTo: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
+          // No maximum enforced here; Navidrome will reject out-of-range values at runtime
           description: 'Filter results up to this year',
         },
         // Boolean filters
@@ -387,7 +406,7 @@ export function createSearchToolCategory(client: NavidromeClient, config: Config
         case 'search_artists':
           return await searchArtists(client, config, args);
         default:
-          throw new Error(`Unknown search tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

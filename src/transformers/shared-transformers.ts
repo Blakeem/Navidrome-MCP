@@ -30,6 +30,23 @@ interface RawEntityWithGenres {
 }
 
 /**
+ * Parse a `MM:SS` formatted duration string into total seconds.
+ * Returns 0 for any input that does not match the two-part `MM:SS` shape.
+ * Inverse of {@link formatDuration}.
+ * @param durationFormatted A duration string like "3:45"
+ * @returns Total seconds, or 0 if the input cannot be parsed
+ */
+export function parseDuration(durationFormatted: string): number {
+  const parts = durationFormatted.split(':');
+  if (parts.length === 2) {
+    const minutes = parseInt(parts[0] ?? '0', 10);
+    const seconds = parseInt(parts[1] ?? '0', 10);
+    return minutes * 60 + seconds;
+  }
+  return 0;
+}
+
+/**
  * Format duration from seconds to MM:SS format
  * @param seconds Duration in seconds
  * @returns Formatted string like "3:45"

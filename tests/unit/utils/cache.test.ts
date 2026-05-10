@@ -1,11 +1,16 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Cache } from '../../../src/utils/cache';
 
 describe('Cache', () => {
   let cache: Cache<string>;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     cache = new Cache<string>(1); // 1 second TTL for testing
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('should store and retrieve values', () => {
@@ -31,13 +36,13 @@ describe('Cache', () => {
     expect(cache.get('key2')).toBeUndefined();
   });
 
-  it('should expire values after TTL', async () => {
+  it('should expire values after TTL', () => {
     cache.set('key1', 'value1');
     expect(cache.get('key1')).toBe('value1');
-    
-    // Wait for TTL to expire
-    await new Promise(resolve => setTimeout(resolve, 1100));
-    
+
+    // Advance fake clock past the 1-second TTL
+    vi.advanceTimersByTime(1100);
+
     expect(cache.get('key1')).toBeUndefined();
   });
 });

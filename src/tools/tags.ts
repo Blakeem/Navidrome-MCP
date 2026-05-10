@@ -26,6 +26,8 @@ import {
   SearchByTagsSchema,
   TagDistributionSchema,
 } from '../schemas/index.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
+import { logger } from '../utils/logger.js';
 
 interface SearchByTagsResult {
   tagName: string;
@@ -77,8 +79,8 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
   try {
     // Build query parameters for server-side filtering
     const queryParams = new URLSearchParams({
-      _start: '0',
-      _end: params.limit.toString(),
+      _start: params.offset.toString(),
+      _end: (params.offset + params.limit).toString(),
       _sort: 'tagValue', // Sort by tag value for consistent ordering
       _order: 'ASC',
       tag_name: params.tagName, // Server-side filter by tag name
@@ -103,9 +105,7 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
       total: allTags.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to search tags: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('search_by_tags', error));
   }
 }
 
@@ -124,40 +124,56 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
       'mood'
     ];
 
-    // Analyze each tag name using server-side filtering
-    for (const tagName of tagNamesToAnalyze.slice(0, params.limit)) {
-      const queryParams = new URLSearchParams({
-        _start: '0',
-        _end: '1000', // Get enough to analyze distribution
-        _sort: 'tagValue',
-        _order: 'ASC',
-        tag_name: tagName,
-      });
+    // Fetch and analyze all tag names in parallel for better performance
+    const tagNamesToFetch = tagNamesToAnalyze.slice(0, params.limit);
 
-      try {
-        const rawTags = await client.requestWithLibraryFilter<unknown>(`/tag?${queryParams.toString()}`);
-        const tags = transformTagsToDTO(rawTags);
+    const tagResults = await Promise.all(
+      tagNamesToFetch.map(async (tagName): Promise<TagDistribution | null> => {
+        const queryParams = new URLSearchParams({
+          _start: '0',
+          _end: '1000', // Get enough to analyze distribution
+          _sort: 'tagValue',
+          _order: 'ASC',
+          tag_name: tagName,
+        });
 
-        if (tags.length > 0) {
+        try {
+          const rawTags = await client.requestWithLibraryFilter<unknown>(`/tag?${queryParams.toString()}`);
+          const tags = transformTagsToDTO(rawTags);
+
+          if (tags.length === 0) {
+            return null;
+          }
+
           // Sort by usage for most relevant results
           const sortedTags = tags.sort((a, b) => b.songCount - a.songCount);
           const mostCommon = sortedTags[0];
 
-          if (mostCommon) {
-            distributions.push({
-              tagName,
-              uniqueValues: tags.length,
-              totalSongs: tags.reduce((sum, tag) => sum + tag.songCount, 0),
-              totalAlbums: tags.reduce((sum, tag) => sum + tag.albumCount, 0),
-              mostCommon,
-              // Limit distribution to prevent massive output
-              distribution: sortedTags.slice(0, params.distributionLimit),
-            });
+          if (!mostCommon) {
+            return null;
           }
+
+          return {
+            tagName,
+            uniqueValues: tags.length,
+            totalSongs: tags.reduce((sum, tag) => sum + tag.songCount, 0),
+            totalAlbums: tags.reduce((sum, tag) => sum + tag.albumCount, 0),
+            mostCommon,
+            // Limit distribution to prevent massive output
+            distribution: sortedTags.slice(0, params.distributionLimit),
+          };
+        } catch (error) {
+          // Skip tag types that don't exist in this library (e.g. 404), but log for observability
+          logger.debug(`getTagDistribution: skipping tag name "${tagName}" due to error:`, error);
+          return null;
         }
-      } catch {
-        // Skip tag types that don't exist in this library
-        continue;
+      })
+    );
+
+    // Collect non-null results in order
+    for (const result of tagResults) {
+      if (result !== null) {
+        distributions.push(result);
       }
     }
 
@@ -166,8 +182,6 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
       totalTagNames: distributions.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to analyze tag distribution: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_tag_distribution', error));
   }
 }

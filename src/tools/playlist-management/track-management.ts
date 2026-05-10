@@ -29,6 +29,7 @@ import {
   RemoveTracksFromPlaylistSchema,
   ReorderPlaylistTrackSchema,
 } from '../../schemas/index.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { getPlaylistTracks } from './playlist-export.js';
 
 /**
@@ -92,9 +93,7 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
       success,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to add tracks to playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('add_tracks_to_playlist', error));
   }
 }
 
@@ -120,9 +119,7 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
       success: removedIds.length > 0,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to remove tracks from playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('remove_tracks_from_playlist', error));
   }
 }
 
@@ -149,8 +146,6 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
       id: response.id || parseInt(params.trackId, 10),
     };
   } catch (error) {
-    throw new Error(
-      `Failed to reorder playlist track: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('reorder_playlist_track', error));
   }
 }

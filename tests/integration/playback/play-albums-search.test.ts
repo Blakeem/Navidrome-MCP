@@ -15,7 +15,7 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { beforeAll, beforeEach, expect } from 'vitest';
+import { beforeAll, beforeEach, expect, it } from 'vitest';
 import {
   clearPlayQueue,
   describePlayback,
@@ -126,11 +126,11 @@ describePlayback('play_albums_search (live)', () => {
   // Pass-through filter (text query)
   // ---------------------------------------------------------------------
 
-  itPlayback('pass-through filter: query by artist enqueues a populated queue', async () => {
+  it('pass-through filter: query by artist enqueues a populated queue', async (ctx) => {
     const artistName = await findSeedArtistName();
     if (artistName === null) {
       logger.info('skipping artist-query test: no seed album with a usable artist string');
-      return;
+      ctx.skip();
     }
 
     const result = await playAlbumsSearch({
@@ -162,11 +162,11 @@ describePlayback('play_albums_search (live)', () => {
   // shuffle: 'albums'
   // ---------------------------------------------------------------------
 
-  itPlayback('shuffle:albums preserves per-album track order; album order may swap', async () => {
+  it('shuffle:albums preserves per-album track order; album order may swap', async (ctx) => {
     const artistName = await findSeedArtistName();
     if (artistName === null) {
       logger.info('skipping shuffle:albums test: no seed album with a usable artist string');
-      return;
+      ctx.skip();
     }
 
     // Capture a no-shuffle baseline so we can compare album order later.
@@ -231,11 +231,11 @@ describePlayback('play_albums_search (live)', () => {
   // shuffle: 'songs'
   // ---------------------------------------------------------------------
 
-  itPlayback('shuffle:songs interleaves tracks across album boundaries', async () => {
+  it('shuffle:songs interleaves tracks across album boundaries', async (ctx) => {
     const artistName = await findSeedArtistName();
     if (artistName === null) {
       logger.info('skipping shuffle:songs test: no seed album with a usable artist string');
-      return;
+      ctx.skip();
     }
 
     let result = await playAlbumsSearch({

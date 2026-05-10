@@ -10,6 +10,7 @@ import type { NavidromeClient } from '../../src/client/navidrome-client.js';
 
 export interface MockNavidromeClient {
   request: MockedFunction<NavidromeClient['request']>;
+  requestWithLibraryFilter: MockedFunction<NavidromeClient['requestWithLibraryFilter']>;
   subsonicRequest: MockedFunction<NavidromeClient['subsonicRequest']>;
   initialize: MockedFunction<() => Promise<void>>;
   getBaseUrl: MockedFunction<() => string>;
@@ -23,6 +24,7 @@ export interface MockNavidromeClient {
 export function createMockClient(): MockNavidromeClient {
   return {
     request: vi.fn(),
+    requestWithLibraryFilter: vi.fn(),
     subsonicRequest: vi.fn(),
     initialize: vi.fn().mockResolvedValue(undefined),
     getBaseUrl: vi.fn().mockReturnValue('http://mock-server:4533'),

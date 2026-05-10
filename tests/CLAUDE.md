@@ -124,7 +124,7 @@ const mockClient = createMockClient();
 const liveClient = await getSharedLiveClient();
 
 // Mock data
-import { mockSong, mockPlaylist } from '../../factories/mock-data.js';
+import { mockPlaylist } from '../../factories/mock-data.js';
 ```
 
 ---

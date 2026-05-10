@@ -7,10 +7,10 @@
  * HIGHEST RISK: Playlist operations modify server data - extensive mocking required for safety.
  */
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { getSharedLiveClient, createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
-import { mockPlaylist, mockSong, mockResponses } from '../../factories/mock-data.js';
+import { mockPlaylist } from '../../factories/mock-data.js';
 import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
 // Import playlist management functions

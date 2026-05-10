@@ -33,6 +33,7 @@ import {
   UpdatePlaylistSchema,
   PlaylistIdSchema,
 } from '../../schemas/index.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 /**
  * List all playlists accessible to the user
@@ -63,9 +64,7 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
       limit: params.limit,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to fetch playlists: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('list_playlists', error));
   }
 }
 
@@ -79,9 +78,7 @@ export async function getPlaylist(client: NavidromeClient, args: unknown): Promi
     const rawPlaylist = await client.request<unknown>(`/playlist/${params.id}`);
     return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
   } catch (error) {
-    throw new Error(
-      `Failed to fetch playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_playlist', error));
   }
 }
 
@@ -123,9 +120,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
 
     return playlist;
   } catch (error) {
-    throw new Error(
-      `Failed to create playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('create_playlist', error));
   }
 }
 
@@ -172,9 +167,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
 
     return playlist;
   } catch (error) {
-    throw new Error(
-      `Failed to update playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('update_playlist', error));
   }
 }
 
@@ -195,8 +188,6 @@ export async function deletePlaylist(client: NavidromeClient, args: unknown): Pr
       message: `Successfully deleted playlist with ID: ${params.id}`,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to delete playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('delete_playlist', error));
   }
 }

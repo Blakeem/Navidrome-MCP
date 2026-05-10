@@ -210,17 +210,15 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
+        // Year filtering — no maximum enforced here; Navidrome will reject out-of-range values
         yearFrom: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
           description: 'Filter results from this year onwards',
         },
         yearTo: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
           description: 'Filter results up to this year',
         },
         // Boolean filters
@@ -311,17 +309,15 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
+        // Year filtering — no maximum enforced here; Navidrome will reject out-of-range values
         yearFrom: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
           description: 'Filter results from this year onwards',
         },
         yearTo: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
           description: 'Filter results up to this year',
         },
         // Boolean filters

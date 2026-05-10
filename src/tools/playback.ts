@@ -32,6 +32,7 @@ import {
 import { searchAlbums, searchSongs } from './search/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
+import { MAX_ALBUM_TRACKS } from '../constants/defaults.js';
 
 interface PauseResult {
   success: true;
@@ -502,7 +503,7 @@ async function fetchAlbumTrackIds(client: NavidromeClient, albumId: string): Pro
   const params = new URLSearchParams({
     album_id: albumId,
     _start: '0',
-    _end: '500',
+    _end: String(MAX_ALBUM_TRACKS),
     _sort: 'album',
     _order: 'ASC',
   });
