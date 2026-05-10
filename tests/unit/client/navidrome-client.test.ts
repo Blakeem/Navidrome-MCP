@@ -139,6 +139,118 @@ describe('NavidromeClient', () => {
     });
   });
 
+  describe('requestWithMeta — X-Total-Count surfacing', () => {
+    // The pagination-correctness fix surfaces Navidrome's `X-Total-Count`
+    // header so listing tools can report the real match count instead of
+    // the page size. Subsonic and single-resource REST endpoints don't
+    // emit this header, so callers fall back to items.length when
+    // `total` comes back null.
+
+    function jsonWithTotal(body: unknown, total: string): Response {
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', 'X-Total-Count': total },
+      });
+    }
+
+    it('returns parsed body and numeric total when X-Total-Count is present', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(jsonWithTotal([{ id: '1' }, { id: '2' }], '12345'));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.requestWithMeta<unknown[]>('/album?_start=0&_end=2');
+      expect(result.data).toEqual([{ id: '1' }, { id: '2' }]);
+      expect(result.total).toBe(12345);
+    });
+
+    it('returns total: null when the header is absent', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.requestWithMeta<{ ok: boolean }>('/single-resource');
+      expect(result.data).toEqual({ ok: true });
+      expect(result.total).toBeNull();
+    });
+
+    it('returns total: null when the header is malformed', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Total-Count': 'not-a-number' },
+        }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.requestWithMeta<unknown[]>('/album');
+      expect(result.total).toBeNull();
+    });
+
+    it('total: null when the header is empty string', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Total-Count': '' },
+        }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.requestWithMeta<unknown[]>('/album');
+      expect(result.total).toBeNull();
+    });
+
+    it('preserves 401 retry semantics through requestWithMeta', async () => {
+      // 401 → invalidate → retry → 200 + header. We assert the retry
+      // path still works AND the second response's header is what gets
+      // returned (not the failed first response's).
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ ok: false }, 401))
+        .mockResolvedValueOnce(tokenResponse('second'))
+        .mockResolvedValueOnce(jsonWithTotal([{ id: '1' }], '99'));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.requestWithMeta<unknown[]>('/album');
+      expect(result.data).toEqual([{ id: '1' }]);
+      expect(result.total).toBe(99);
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+    });
+
+    it('request<T>() delegates to requestWithMeta and discards total', async () => {
+      // Regression: ensure the body-only wrapper still works after the
+      // refactor that made it call requestWithMeta internally. JSON-sniff
+      // for text/plain bodies must still kick in.
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(new Response('{"added":3}', {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8', 'X-Total-Count': '999' },
+        }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.request<{ added: number }>('/playlist/abc/tracks', { method: 'POST' });
+      // Body-only — total is silently discarded.
+      expect(result.added).toBe(3);
+    });
+
+    it('requestWithLibraryFilterAndMeta appends library_id AND surfaces total', async () => {
+      // The library-filter URL mutation should run AND the X-Total-Count
+      // should still come through. We can't easily assert the URL contains
+      // library_id without initializing the LibraryManager, but the call
+      // shape and total propagation are the regression we want to lock in.
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(jsonWithTotal([{ id: '1' }], '42'));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.requestWithLibraryFilterAndMeta<unknown[]>('/song?_start=0&_end=1');
+      expect(result.data).toEqual([{ id: '1' }]);
+      expect(result.total).toBe(42);
+    });
+  });
+
   describe('assertSafeEndpoint', () => {
     let client: NavidromeClient;
 

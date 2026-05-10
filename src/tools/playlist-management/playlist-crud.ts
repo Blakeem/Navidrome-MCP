@@ -54,12 +54,12 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
       _order: params.order,
     });
 
-    const rawPlaylists = await client.request<unknown>(`/playlist?${queryParams.toString()}`);
-    const playlists = transformPlaylistsToDTO(rawPlaylists);
+    const { data, total } = await client.requestWithMeta<unknown>(`/playlist?${queryParams.toString()}`);
+    const playlists = transformPlaylistsToDTO(data);
 
     return {
       playlists,
-      total: playlists.length,
+      total: total ?? playlists.length,
       offset: params.offset,
       limit: params.limit,
     };

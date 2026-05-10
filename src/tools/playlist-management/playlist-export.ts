@@ -116,30 +116,34 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
       headers['Accept'] = 'audio/x-mpegurl';
     }
 
-    const response = await client.request<unknown>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
-      method: 'GET',
-      headers,
-    });
+    const { data, total } = await client.requestWithMeta<unknown>(
+      `/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`,
+      { method: 'GET', headers },
+    );
 
     if (params.format === 'm3u') {
+      // m3u branch returns the raw text payload — there are no DTO items to
+      // count. Surface the X-Total-Count if Navidrome sent one (it does for
+      // the JSON path; m3u typically omits it), otherwise fall back to 0.
+      // The actual track count is in the m3u body and via get_playlist.songCount.
       return {
         tracks: [],
-        total: 0,
+        total: total ?? 0,
         offset: params.offset,
         limit: params.limit,
         playlistId: params.playlistId,
         format: 'm3u',
-        m3uContent: response as string,
+        m3uContent: data as string,
       };
     }
 
-    const tracks = Array.isArray(response)
-      ? response.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack))
+    const tracks = Array.isArray(data)
+      ? data.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack))
       : [];
 
     return {
       tracks,
-      total: tracks.length,
+      total: total ?? tracks.length,
       offset: params.offset,
       limit: params.limit,
       playlistId: params.playlistId,

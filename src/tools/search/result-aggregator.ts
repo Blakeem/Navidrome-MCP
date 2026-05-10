@@ -30,13 +30,31 @@ export interface ParallelSearchResponses {
 }
 
 /**
- * Aggregated search results with metadata
+ * Per-type total counts captured from each sub-fetch's X-Total-Count header.
+ * `null` means the header was absent or unparseable; aggregator falls back
+ * to the array length at the call site.
+ */
+export interface ParallelSearchTotals {
+  songsTotal: number | null;
+  albumsTotal: number | null;
+  artistsTotal: number | null;
+}
+
+/**
+ * Aggregated search results with metadata. The per-type totals (`totalSongs`,
+ * `totalAlbums`, `totalArtists`) reflect the server's full match count for
+ * each type — the LLM uses these to know whether more results exist beyond
+ * the current page. `totalResults` is the sum so the LLM has a single number
+ * to report.
  */
 interface AggregatedSearchResult {
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
   query: string;
+  totalArtists: number;
+  totalAlbums: number;
+  totalSongs: number;
   totalResults: number;
   appliedFilters?: Record<string, string>;
 }
@@ -46,12 +64,14 @@ interface AggregatedSearchResult {
  * Handles the transformation of raw API responses to DTOs and combines them with metadata
  *
  * @param responses - Raw responses from parallel API calls
+ * @param totals - Per-type totals from X-Total-Count (null falls back to array length)
  * @param query - Original search query string
  * @param appliedFilters - Filters that were successfully applied to the search
  * @returns Aggregated search result with transformed DTOs and metadata
  */
 export function aggregateSearchResults(
   responses: ParallelSearchResponses,
+  totals: ParallelSearchTotals,
   query: string,
   appliedFilters: Record<string, string>
 ): AggregatedSearchResult {
@@ -63,10 +83,13 @@ export function aggregateSearchResults(
   const albums = transformAlbumsToDTO(albumsResponse);
   const artists = transformArtistsToDTO(artistsResponse);
 
-  // Calculate total results across all content types
-  const totalResults = songs.length + albums.length + artists.length;
+  // Resolve per-type totals — header value if available, else page size.
+  const totalSongs = totals.songsTotal ?? songs.length;
+  const totalAlbums = totals.albumsTotal ?? albums.length;
+  const totalArtists = totals.artistsTotal ?? artists.length;
+  const totalResults = totalSongs + totalAlbums + totalArtists;
 
-  logger.debug(`Enhanced search completed: ${totalResults} total results (${songs.length} songs, ${albums.length} albums, ${artists.length} artists)`);
+  logger.debug(`Enhanced search completed: ${totalResults} total (${totalSongs} songs / ${totalAlbums} albums / ${totalArtists} artists), returned ${songs.length}/${albums.length}/${artists.length}`);
 
   // Output construction - build aggregated result
   const result: AggregatedSearchResult = {
@@ -74,6 +97,9 @@ export function aggregateSearchResults(
     albums,
     songs,
     query,
+    totalArtists,
+    totalAlbums,
+    totalSongs,
     totalResults,
   };
 
@@ -93,6 +119,8 @@ interface SearchParamsConfig {
   albumCount: number;
   songCount: number;
   query: string;
+  // Same offset applied to all 3 sub-fetches — see SearchAllSchema for why.
+  offset: number;
   sort?: string | undefined;
   order?: 'ASC' | 'DESC' | undefined;
   randomSeed?: number | undefined;
@@ -121,7 +149,7 @@ interface ContentTypeParams {
  */
 export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeParams {
   // Data collection - extract configuration values
-  const { artistCount, albumCount, songCount, query, sort, order, randomSeed, resolvedFilters, year, starred } = config;
+  const { artistCount, albumCount, songCount, query, offset, sort, order, randomSeed, resolvedFilters, year, starred } = config;
 
   // Processing - create parameter building function
   const buildParams = (
@@ -132,8 +160,8 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
     const searchParams = new URLSearchParams();
 
     // Add pagination
-    searchParams.set('_start', '0');
-    searchParams.set('_end', limit.toString());
+    searchParams.set('_start', offset.toString());
+    searchParams.set('_end', (offset + limit).toString());
 
     // Add search term as direct parameter (only if not empty)
     if (query !== '' && query.trim() !== '') {

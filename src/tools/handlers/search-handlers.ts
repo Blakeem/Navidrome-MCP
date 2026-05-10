@@ -64,6 +64,12 @@ const tools: Tool[] = [
           maximum: 100,
           default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
         },
+        offset: {
+          type: 'number',
+          description: 'Number of items to skip per type for pagination. The same offset is applied to all three sub-fetches (songs/albums/artists), so a single value pages forward across all types together. For deep single-type pagination, use search_songs/search_albums/search_artists.',
+          minimum: 0,
+          default: 0,
+        },
         // Text-based filters - resolved to IDs internally
         genre: {
           type: 'string',

@@ -87,12 +87,18 @@ export const SaveQueueSchema = z.object({
 });
 
 // Search validation schemas - import enhanced schemas from common.js
-// SearchAll has optional query to allow listing all content with filters
+// SearchAll has optional query to allow listing all content with filters.
+// Single `offset` is applied to all three sub-fetches — paginating searchAll
+// means "the same page across each type". Per-type offsets aren't worth the
+// complexity for the LLM use case (and the per-type counts already let the
+// LLM drop down to single-type search_* tools when it needs to deep-paginate
+// just one type).
 export const SearchAllSchema = EnhancedSearchSchema.extend({
   query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
   artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  offset: z.number().int().min(0).optional().default(0),
 });
 
 // These are now imported from common.js to avoid duplication

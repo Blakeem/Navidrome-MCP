@@ -77,18 +77,23 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle pagination parameters correctly', async () => {
-        const result = await listPlaylists(liveClient, { 
-          limit: 5, 
+        const result = await listPlaylists(liveClient, {
+          limit: 5,
           offset: 0,
           sort: 'name',
-          order: 'ASC' 
+          order: 'ASC'
         });
 
         expect(result.limit).toBe(5);
         expect(result.offset).toBe(0);
-        
+
         // Should not return more than requested
         expect(result.playlists.length).toBeLessThanOrEqual(5);
+
+        // Pagination correctness: `total` is the server's full match count
+        // (from X-Total-Count), never the page size. So total must be at
+        // least as large as the items we got back.
+        expect(result.total).toBeGreaterThanOrEqual(result.playlists.length);
       });
     });
 

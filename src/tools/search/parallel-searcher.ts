@@ -55,19 +55,20 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
 
     logger.debug('Enhanced song search parameters:', { searchParams, appliedFilters });
 
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/song?${searchParams}`);
+    // Make request with library filtering; capture X-Total-Count so the
+    // LLM sees the real match count, not just the page size.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/song?${searchParams}`);
 
     // Transform response to DTOs
-    const songs = transformSongsToDTO(response);
+    const songs = transformSongsToDTO(data);
 
-    logger.debug(`Song search completed: ${songs.length} results`);
+    logger.debug(`Song search completed: ${songs.length} of ${total ?? `${songs.length} (no header)`} results`);
 
     // Output construction - build result object with conditional applied filters
     const result = {
       songs,
       query: params.query,
-      total: songs.length,
+      total: total ?? songs.length,
       offset: params.offset ?? 0,
       limit: params.limit,
       ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
@@ -105,19 +106,19 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
 
     logger.debug('Enhanced album search parameters:', { searchParams, appliedFilters });
 
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/album?${searchParams}`);
+    // Make request with library filtering; capture X-Total-Count for real total.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${searchParams}`);
 
     // Transform response to DTOs
-    const albums = transformAlbumsToDTO(response);
+    const albums = transformAlbumsToDTO(data);
 
-    logger.debug(`Album search completed: ${albums.length} results`);
+    logger.debug(`Album search completed: ${albums.length} of ${total ?? `${albums.length} (no header)`} results`);
 
     // Output construction - build result object with conditional applied filters
     const result = {
       albums,
       query: params.query,
-      total: albums.length,
+      total: total ?? albums.length,
       offset: params.offset ?? 0,
       limit: params.limit,
       ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
@@ -157,19 +158,19 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
 
     logger.debug('Enhanced artist search parameters:', { searchParams, appliedFilters });
 
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/artist?${searchParams}`);
+    // Make request with library filtering; capture X-Total-Count for real total.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${searchParams}`);
 
     // Transform response to DTOs
-    const artists = transformArtistsToDTO(response);
+    const artists = transformArtistsToDTO(data);
 
-    logger.debug(`Artist search completed: ${artists.length} results`);
+    logger.debug(`Artist search completed: ${artists.length} of ${total ?? `${artists.length} (no header)`} results`);
 
     // Output construction - build result object with conditional applied filters
     const result = {
       artists,
       query: params.query,
-      total: artists.length,
+      total: total ?? artists.length,
       offset: params.offset ?? 0,
       limit: params.limit,
       ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),

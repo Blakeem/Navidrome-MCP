@@ -39,7 +39,29 @@ export class NavidromeClient {
     logger.info('Navidrome client initialized');
   }
 
+  /**
+   * Body-only request — thin wrapper over `requestWithMeta` that discards
+   * the X-Total-Count value. Use this for single-resource fetches and any
+   * endpoint where the caller doesn't need the total.
+   */
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const { data } = await this.requestWithMeta<T>(endpoint, options);
+    return data;
+  }
+
+  /**
+   * Like `request<T>()` but also surfaces the parsed `X-Total-Count` header
+   * (Navidrome's listing endpoints expose this in `Access-Control-Expose-Headers`
+   * and use it to communicate the full match count vs. the page-sized body).
+   *
+   * Returns `total: null` when the header is absent or unparseable — the caller
+   * is responsible for choosing a fallback (typically `items.length`). Subsonic
+   * endpoints don't emit this header at all; use `subsonicRequest` for those.
+   */
+  async requestWithMeta<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<{ data: T; total: number | null }> {
     this.assertSafeEndpoint(endpoint);
     let response = await this.doFetch(endpoint, options);
     if (response.status === 401) {
@@ -50,36 +72,61 @@ export class NavidromeClient {
       this.authManager.invalidate();
       response = await this.doFetch(endpoint, options);
     }
-    return this.parseResponse<T>(response);
+    // Read X-Total-Count alongside the body. Header / body streams are
+    // independent so order doesn't matter, but reading first matches the
+    // data flow. Number.parseInt loses precision above 2^53 — not a real
+    // concern for music libraries (largest known Navidrome instance is in
+    // the low millions).
+    const totalHeader = response.headers.get('x-total-count');
+    const parsed = totalHeader !== null ? Number.parseInt(totalHeader, 10) : NaN;
+    const total = Number.isFinite(parsed) ? parsed : null;
+    const data = await this.parseResponse<T>(response);
+    return { data, total };
   }
 
   /**
-   * Make a request with automatic library filtering applied.
-   * This method automatically adds library_id parameters for active libraries.
+   * Make a request with automatic library filtering applied. Body-only —
+   * thin wrapper over `requestWithLibraryFilterAndMeta` that discards the
+   * X-Total-Count value.
    */
   async requestWithLibraryFilter<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    // Parse the endpoint to extract path and existing query parameters
-    const url = new URL(endpoint, 'http://localhost'); // Base doesn't matter, we just need to parse
+    const { data } = await this.requestWithLibraryFilterAndMeta<T>(endpoint, options);
+    return data;
+  }
+
+  /**
+   * Like `requestWithLibraryFilter<T>()` but also surfaces X-Total-Count.
+   * Use this for any tool that paginates and needs to report the real total
+   * (vs. the page size) back to the LLM.
+   */
+  async requestWithLibraryFilterAndMeta<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<{ data: T; total: number | null }> {
+    const filteredEndpoint = this.buildLibraryFilteredEndpoint(endpoint);
+    logger.debug(`Request with library filter: ${filteredEndpoint}`);
+    return this.requestWithMeta<T>(filteredEndpoint, options);
+  }
+
+  /**
+   * Append `library_id` query params for each active library (the frontend
+   * convention is to repeat the param rather than send a comma-joined list).
+   * Returns the path verbatim if no libraries are active.
+   */
+  private buildLibraryFilteredEndpoint(endpoint: string): string {
+    // Base doesn't matter — only parsing the path + query.
+    const url = new URL(endpoint, 'http://localhost');
     const path = url.pathname;
     const existingParams = url.searchParams;
 
-    // Add library filtering if LibraryManager is initialized and has active libraries
     if (libraryManager.isInitialized()) {
       const libraryParams = libraryManager.getLibraryQueryParams();
-
-      // Add library_id parameters (duplicate parameters as discovered from frontend)
       for (const [key, value] of libraryParams.entries()) {
         existingParams.append(key, value);
       }
     }
 
-    // Reconstruct the endpoint with library filters
-    const filteredEndpoint = existingParams.toString()
-      ? `${path}?${existingParams.toString()}`
-      : path;
-
-    logger.debug(`Request with library filter: ${filteredEndpoint}`);
-    return this.request<T>(filteredEndpoint, options);
+    return existingParams.toString() ? `${path}?${existingParams.toString()}` : path;
   }
 
   /**

@@ -51,10 +51,14 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
         // Validate response structure (not specific content)
         expect(result).toHaveProperty('artists');
-        expect(result).toHaveProperty('albums'); 
+        expect(result).toHaveProperty('albums');
         expect(result).toHaveProperty('songs');
         expect(result).toHaveProperty('query');
         expect(result).toHaveProperty('totalResults');
+        // Pagination fix: per-type real totals from X-Total-Count.
+        expect(result).toHaveProperty('totalArtists');
+        expect(result).toHaveProperty('totalAlbums');
+        expect(result).toHaveProperty('totalSongs');
 
         // Ensure correct types
         expect(Array.isArray(result.artists)).toBe(true);
@@ -62,6 +66,18 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
         expect(Array.isArray(result.songs)).toBe(true);
         expect(typeof result.query).toBe('string');
         expect(typeof result.totalResults).toBe('number');
+        expect(typeof result.totalArtists).toBe('number');
+        expect(typeof result.totalAlbums).toBe('number');
+        expect(typeof result.totalSongs).toBe('number');
+
+        // Per-type totals must be at least as large as their corresponding
+        // returned arrays (the lie was: totalResults === arrays.length sum;
+        // now totals come from X-Total-Count so they reflect server reality).
+        expect(result.totalArtists).toBeGreaterThanOrEqual(result.artists.length);
+        expect(result.totalAlbums).toBeGreaterThanOrEqual(result.albums.length);
+        expect(result.totalSongs).toBeGreaterThanOrEqual(result.songs.length);
+        // totalResults is the sum of the three per-type totals.
+        expect(result.totalResults).toBe(result.totalArtists + result.totalAlbums + result.totalSongs);
 
         // Query should match what we searched for
         expect(result.query).toBe(testQuery);
@@ -154,10 +170,15 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
         // Should not return more than requested
         expect(result.songs.length).toBeLessThanOrEqual(2);
 
+        // Pagination correctness: `total` is the server's full match count
+        // from X-Total-Count, not the page size. It must be at least as
+        // large as the items we got back (the lie was: total === songs.length).
+        expect(result.total).toBeGreaterThanOrEqual(result.songs.length);
+
         // Validate song structure if results exist
         if (result.songs.length > 0) {
           const song = result.songs[0];
-          
+
           // Required SongDTO fields
           expect(song).toHaveProperty('id');
           expect(song).toHaveProperty('title');
@@ -203,6 +224,9 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
         // Should not return more than requested
         expect(result.albums.length).toBeLessThanOrEqual(2);
+
+        // Pagination correctness — see searchSongs test above.
+        expect(result.total).toBeGreaterThanOrEqual(result.albums.length);
 
         // Validate album structure if results exist
         if (result.albums.length > 0) {
@@ -259,6 +283,9 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
         // Should not return more than requested
         expect(result.artists.length).toBeLessThanOrEqual(2);
+
+        // Pagination correctness — see searchSongs test above.
+        expect(result.total).toBeGreaterThanOrEqual(result.artists.length);
 
         // Validate artist structure if results exist
         if (result.artists.length > 0) {
@@ -377,6 +404,26 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       expect(result).toHaveProperty('query');
       expect(result.query).toBe(''); // Default empty query
       expect(typeof result.totalResults).toBe('number');
+    });
+
+    it.skipIf(shouldSkipLiveTests())('searchAll offset paginates each sub-fetch (no longer hardcoded _start=0)', async () => {
+      // Pre-fix: hardcoded `_start: '0'` in result-aggregator made searchAll
+      // unable to paginate beyond the first page. This test locks in the
+      // fix by asking for a specific offset and asserting the items differ
+      // from the offset=0 page (when the library is large enough to have
+      // multiple pages — gated behind a length check).
+      const sortArgs = { sort: 'name' as const, order: 'ASC' as const, songCount: 2, albumCount: 2, artistCount: 0 };
+      const page0 = await searchAll(liveClient, config, { query: '', offset: 0, ...sortArgs });
+      const page1 = await searchAll(liveClient, config, { query: '', offset: 2, ...sortArgs });
+
+      // Only assert "different items" when both pages have items AND the
+      // total is large enough to actually have a different second page.
+      if (page0.songs.length > 0 && page1.songs.length > 0 && page0.totalSongs > 2) {
+        expect(page1.songs[0]?.id).not.toBe(page0.songs[0]?.id);
+      }
+      if (page0.albums.length > 0 && page1.albums.length > 0 && page0.totalAlbums > 2) {
+        expect(page1.albums[0]?.id).not.toBe(page0.albums[0]?.id);
+      }
     });
 
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchSongs', async () => {

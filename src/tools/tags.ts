@@ -91,9 +91,11 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
       queryParams.append('tag_value', params.tagValue);
     }
 
-    // Use server-side filtering for optimal performance
-    const rawTags = await client.requestWithLibraryFilter<unknown>(`/tag?${queryParams.toString()}`);
-    const allTags = transformTagsToDTO(rawTags);
+    // Use server-side filtering for optimal performance; capture X-Total-Count
+    // so the LLM sees how many tag values exist matching the filter, not just
+    // the slice we returned.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(`/tag?${queryParams.toString()}`);
+    const allTags = transformTagsToDTO(data);
 
     // Sort by song count descending for most relevant results (after getting from server)
     allTags.sort((a, b) => b.songCount - a.songCount);
@@ -102,7 +104,7 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
       tagName: params.tagName,
       tagValue: params.tagValue,
       matches: allTags,
-      total: allTags.length,
+      total: total ?? allTags.length,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('search_by_tags', error));
