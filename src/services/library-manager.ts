@@ -127,6 +127,12 @@ class LibraryManager {
    * shape check). The previous implementation reached into `client.authManager`
    * via `as unknown as`, used `atob` (mishandles base64url), and called
    * `JSON.parse` outside any try/catch — three compounding fragility bugs.
+   *
+   * After the user payload arrives we make a second call to `/api/library`
+   * and merge the per-library stats (`totalSongs`/`totalAlbums`/...) and
+   * timestamps (`createdAt`/`updatedAt`/`lastScanAt`) into the user's library
+   * list. `/api/user/{id}` zeros these out (server-side bug as of 0.55) and
+   * `/api/library` is the only endpoint that returns real values.
    */
   private async loadUserLibraries(client: NavidromeClient): Promise<boolean> {
     const token = await client.getCurrentToken();
@@ -147,10 +153,65 @@ class LibraryManager {
       throw new Error(ErrorFormatter.toolExecution('loadUserLibraries', error));
     }
 
+    await this.enrichLibraryStats(client);
+
     logger.debug(
       `Loaded ${this.userInfo.libraries.length} libraries for user ${this.userInfo.userName}`,
     );
     return true;
+  }
+
+  /**
+   * Best-effort enrichment of library stats from `/api/library`. The user
+   * endpoint returns stat fields as zero / Go zero-time; this endpoint
+   * returns the real values. We log + swallow errors here — the rest of the
+   * server can keep running with the unenriched user payload (stats just
+   * show as zero, the existing observed behaviour).
+   */
+  private async enrichLibraryStats(client: NavidromeClient): Promise<void> {
+    if (!this.userInfo) {
+      return;
+    }
+    try {
+      const libraries = await client.request<LibraryInfo[]>('/library');
+      if (!Array.isArray(libraries)) {
+        return;
+      }
+      const byId = new Map<number, LibraryInfo>();
+      for (const lib of libraries) {
+        if (typeof lib?.id === 'number') {
+          byId.set(lib.id, lib);
+        }
+      }
+
+      // Mutate in place so any downstream snapshots stay consistent.
+      this.userInfo.libraries = this.userInfo.libraries.map((userLib) => {
+        const stats = byId.get(userLib.id);
+        if (stats === undefined) {
+          return userLib;
+        }
+        return {
+          ...userLib,
+          totalSongs: stats.totalSongs ?? userLib.totalSongs,
+          totalAlbums: stats.totalAlbums ?? userLib.totalAlbums,
+          totalArtists: stats.totalArtists ?? userLib.totalArtists,
+          totalFolders: stats.totalFolders ?? userLib.totalFolders,
+          totalFiles: stats.totalFiles ?? userLib.totalFiles,
+          totalMissingFiles: stats.totalMissingFiles ?? userLib.totalMissingFiles,
+          totalSize: stats.totalSize ?? userLib.totalSize,
+          totalDuration: stats.totalDuration ?? userLib.totalDuration,
+          lastScanAt: stats.lastScanAt ?? userLib.lastScanAt,
+          lastScanStartedAt: stats.lastScanStartedAt ?? userLib.lastScanStartedAt,
+          fullScanInProgress: stats.fullScanInProgress ?? userLib.fullScanInProgress,
+          createdAt: stats.createdAt ?? userLib.createdAt,
+          updatedAt: stats.updatedAt ?? userLib.updatedAt,
+        };
+      });
+    } catch (error) {
+      logger.warn(
+        `LibraryManager: failed to enrich library stats from /api/library; stats will show as zero: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

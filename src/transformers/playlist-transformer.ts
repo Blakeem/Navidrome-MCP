@@ -20,7 +20,12 @@ import type { PlaylistDTO } from '../types/index.js';
 import { formatDuration } from './shared-transformers.js';
 
 /**
- * Raw playlist data from Navidrome API
+ * Raw playlist data from Navidrome API.
+ *
+ * Navidrome's `/api/playlist` returns the owner as `ownerName` + `ownerId`,
+ * not `owner`. We retain `owner` here as a fallback for older deployments or
+ * fixtures that still emit the legacy field — the transformer prefers
+ * `ownerName` when both are present.
  */
 export interface RawPlaylist {
   id: string;
@@ -29,7 +34,11 @@ export interface RawPlaylist {
   public: boolean;
   songCount: number;
   duration?: number;
-  owner: string;
+  owner?: string;
+  ownerName?: string;
+  ownerId?: string;
+  createdAt?: string;
+  updatedAt?: string;
   [key: string]: unknown;
 }
 
@@ -39,17 +48,35 @@ export interface RawPlaylist {
  * @returns Clean playlist DTO for LLM consumption
  */
 export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
+  // Owner field naming: live Navidrome (>=0.50) emits `ownerName` /
+  // `ownerId`; older mocks / fixtures still ship `owner` as a string.
+  // Prefer the real-world shape but accept the legacy one so existing test
+  // fixtures keep working.
+  const owner = rawPlaylist.ownerName ?? rawPlaylist.owner ?? '';
+
   const dto: PlaylistDTO = {
     id: rawPlaylist.id,
     name: rawPlaylist.name || '',
     public: rawPlaylist.public || false,
     songCount: rawPlaylist.songCount || 0,
     durationFormatted: formatDuration(rawPlaylist.duration),
-    owner: rawPlaylist.owner || '',
+    owner,
   };
+
+  if (rawPlaylist.ownerId !== undefined) {
+    dto.ownerId = rawPlaylist.ownerId;
+  }
 
   if (rawPlaylist.comment !== undefined) {
     dto.comment = rawPlaylist.comment;
+  }
+
+  if (rawPlaylist.createdAt !== undefined) {
+    dto.createdAt = rawPlaylist.createdAt;
+  }
+
+  if (rawPlaylist.updatedAt !== undefined) {
+    dto.updatedAt = rawPlaylist.updatedAt;
   }
 
   return dto;

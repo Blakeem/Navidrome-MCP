@@ -114,6 +114,7 @@ interface TrendingTagItem {
   rank: number;
   name: string;
   count: number;
+  reach: number;
   url: string;
 }
 
@@ -352,10 +353,16 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
       items: tracks,
     };
   } else {
+    // Last.fm's chart.getTopTags response does NOT include a `count` field —
+    // it returns `reach` (unique users) and `taggings` (total tag applications)
+    // instead. Surface `taggings` as `count` (the LLM-facing semantic field)
+    // because that's the closer analogue to per-tag popularity; also expose
+    // `reach` so callers that care about distinct users can use it.
     const tags = ((data['tags'] as Record<string, unknown>)?.['tag'] as Record<string, unknown>[] ?? []).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
       rank: (page - 1) * limit + index + 1,
       name: String(t['name'] ?? ''),
-      count: safeNumber(t['count']),
+      count: safeNumber(t['taggings'] ?? t['count']),
+      reach: safeNumber(t['reach']),
       url: String(t['url'] ?? ''),
     }));
 

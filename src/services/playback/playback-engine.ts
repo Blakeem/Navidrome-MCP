@@ -73,14 +73,45 @@ export interface PlaybackStatus {
  * filename is one of our Subsonic stream URLs (see `buildStreamUrl`). It is
  * `null` if the URL doesn't parse or doesn't carry an `id` — e.g. when
  * something else has loaded a track into mpv via the shared IPC socket.
+ *
+ * `filename` is the (sanitized) stream URL that was loaded into mpv. It is
+ * retained on the internal entry shape so the engine can answer questions
+ * like `hasRadioStream`, but it is stripped from the LLM-facing
+ * `get_play_queue` response — internal mpv plumbing has no business in the
+ * model's context window, and even sanitized URLs leak LAN topology.
+ *
+ * `title`/`artist`/`album`/`duration` come from one of two sources:
+ *   1. mpv's own metadata (only for tracks it has loaded — current + recent).
+ *   2. The engine's per-session metadata cache, populated by `enqueue` from
+ *      the song DTOs the tool layer already has on hand. This makes
+ *      future-queue tracks reportable too.
  */
 export interface PlaylistEntry {
   index: number;
   songId: string | null;
   filename: string;
   title?: string;
+  artist?: string;
+  album?: string;
+  duration?: number;
   isCurrent: boolean;
   isPlaying: boolean;
+}
+
+/**
+ * Track metadata the tool layer passes to the engine at enqueue time so the
+ * engine can answer `get_play_queue` with full titles/artists for every
+ * queue entry — not just the currently-playing one. mpv only loads metadata
+ * for tracks it touches, so without this cache future-queue entries surface
+ * as bare song IDs.
+ */
+export interface QueueTrackMetadata {
+  songId: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  /** Duration in seconds; matches mpv's own `duration` units. */
+  duration?: number;
 }
 
 /**
@@ -136,6 +167,14 @@ class PlaybackEngine {
   // entries to bound memory; if a user churns through that many distinct
   // tracks in one session, we re-parse — still O(1) amortized.
   private readonly filenameCache = new Map<string, string | null>();
+  // Per-session metadata cache keyed by songId. Populated by `enqueue` when
+  // the tool layer hands us song DTOs alongside the IDs, so `getPlaylist()`
+  // can report title/artist/album/duration for every queue entry — not just
+  // the one mpv is currently spinning. Cleared on full replace and on
+  // shutdown; entries are NOT evicted when an item is removed from the queue
+  // (the cost of a stale entry is just bytes — there's no correctness hazard
+  // and the next enqueue overwrites it). Cap mirrors FILENAME_CACHE_LIMIT.
+  private readonly metadataCache = new Map<string, QueueTrackMetadata>();
 
   private constructor() {}
 
@@ -251,7 +290,11 @@ class PlaybackEngine {
    * Caller is responsible for ordering / shuffle of `songIds`. Lazy-spawns
    * mpv on first call.
    */
-  async enqueue(songIds: readonly string[], mode: 'replace' | 'append'): Promise<{ demoted: boolean }> {
+  async enqueue(
+    songIds: readonly string[],
+    mode: 'replace' | 'append',
+    metadata?: ReadonlyArray<QueueTrackMetadata>,
+  ): Promise<{ demoted: boolean }> {
     if (songIds.length === 0) {
       throw new Error('enqueue requires at least one song ID');
     }
@@ -293,6 +336,10 @@ class PlaybackEngine {
         if (first === undefined) {
           throw new Error('enqueue requires at least one song ID');
         }
+        // Replace wipes any prior metadata — the previous queue's titles are
+        // no longer reachable and shouldn't bleed into the new queue's view.
+        this.metadataCache.clear();
+        this.ingestMetadata(metadata);
         // Issue an explicit playlist-clear before loading. `loadfile ... replace`
         // would clear implicitly, but doing it up-front guarantees the prior
         // queue is wiped even if the first loadfile fails.
@@ -326,6 +373,9 @@ class PlaybackEngine {
       } else {
         // Append-only: do NOT clear the playlist; do NOT unpause. Respect the
         // existing pause state so an append while paused keeps the queue paused.
+        // Merge the new batch's metadata over any prior entries — duplicates
+        // are overwritten with the freshest values from the caller.
+        this.ingestMetadata(metadata);
         for (const id of songIds) {
           await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
         }
@@ -362,9 +412,18 @@ class PlaybackEngine {
       const isCurrent = record['current'] === true;
       const isPlaying = record['playing'] === true;
       const titleRaw = record['title'];
-      const title = typeof titleRaw === 'string' && titleRaw !== '' ? titleRaw : undefined;
+      const mpvTitle = typeof titleRaw === 'string' && titleRaw !== '' ? titleRaw : undefined;
 
       const songId = filename === '' ? null : this.parseSongIdCached(filename);
+
+      // Merge engine-side metadata (populated by `enqueue` from song DTOs) on
+      // top of mpv's own bookkeeping. mpv only knows about tracks it has
+      // touched — current + recent. Our cache covers the rest of the queue
+      // so an LLM polling `get_play_queue` sees titles all the way down the
+      // line, not just for the actively-playing entry. mpv wins where it has
+      // a value (it sees ICY updates for radio, dynamic title changes, etc.);
+      // our cache fills in everything mpv left blank.
+      const cached = songId !== null ? this.metadataCache.get(songId) : undefined;
 
       const entry: PlaylistEntry = {
         index,
@@ -376,10 +435,47 @@ class PlaybackEngine {
         isCurrent,
         isPlaying,
       };
-      if (title !== undefined) entry.title = title;
+      const resolvedTitle = mpvTitle ?? cached?.title;
+      if (resolvedTitle !== undefined && resolvedTitle !== '') entry.title = resolvedTitle;
+      if (cached?.artist !== undefined && cached.artist !== '') entry.artist = cached.artist;
+      if (cached?.album !== undefined && cached.album !== '') entry.album = cached.album;
+      if (cached?.duration !== undefined && cached.duration > 0) entry.duration = cached.duration;
       entries.push(entry);
     }
     return entries;
+  }
+
+  /**
+   * Public ingress for filling the metadata cache after engine
+   * construction — used by `get_play_queue` to back-fill entries the engine
+   * never saw (post-MCP-restart attach, or radio entries with no `songId`
+   * to key by but with a freshly-fetched DTO). Internally delegates to the
+   * same `ingestMetadata` path the enqueue methods use, so cap and overwrite
+   * semantics are identical.
+   */
+  ingestQueueMetadata(metadata: ReadonlyArray<QueueTrackMetadata>): void {
+    this.ingestMetadata(metadata);
+  }
+
+  /**
+   * Merge a batch of caller-supplied track metadata into the per-session cache.
+   * Entries missing `songId` are skipped (no key to index by). Existing keys
+   * are overwritten with the freshest values — re-enqueueing a track with
+   * updated metadata wins.
+   */
+  private ingestMetadata(metadata: ReadonlyArray<QueueTrackMetadata> | undefined): void {
+    if (metadata === undefined || metadata.length === 0) return;
+    for (const m of metadata) {
+      if (typeof m.songId !== 'string' || m.songId === '') continue;
+      this.metadataCache.set(m.songId, m);
+    }
+    // Bound the cache so a long-running session that churns through tracks
+    // doesn't grow unbounded. Cap mirrors filenameCache.
+    while (this.metadataCache.size > FILENAME_CACHE_LIMIT) {
+      const oldest = this.metadataCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.metadataCache.delete(oldest);
+    }
   }
 
   /**
@@ -394,6 +490,7 @@ class PlaybackEngine {
     return this.withMutationLock(async () => {
       await this.requireIpc().command('stop');
       this.currentRadioStation = null;
+      this.metadataCache.clear();
     });
   }
 
@@ -618,6 +715,43 @@ class PlaybackEngine {
     return songId;
   }
 
+  /**
+   * Read mpv's human-readable release version via the `mpv-version` property
+   * (string, e.g. "mpv 0.39.0"). Falls back to decoding the integer
+   * `get_version` command output when the property read fails or returns a
+   * non-string: that command returns the *client API* version as
+   * `(major << 16) | (minor << 8) | patch` packed in an int, which is not
+   * the mpv release but is at least more readable than the raw number.
+   *
+   * Returns null if neither source is available — callers leave the field
+   * unset rather than surfacing a bogus value.
+   */
+  private async readMpvVersion(ipc: MpvIpc): Promise<string | null> {
+    try {
+      const property = await ipc.command('get_property', 'mpv-version');
+      if (typeof property === 'string' && property !== '') {
+        return property;
+      }
+    } catch {
+      // Property may not exist on older mpv builds; fall through to fallback.
+    }
+    try {
+      const fallback = await ipc.command('get_version');
+      if (typeof fallback === 'number' && Number.isFinite(fallback)) {
+        const major = (fallback >>> 16) & 0xff;
+        const minor = (fallback >>> 8) & 0xff;
+        const patch = fallback & 0xff;
+        return `client-api ${major}.${minor}.${patch}`;
+      }
+      if (fallback !== null && fallback !== undefined) {
+        return String(fallback);
+      }
+    } catch {
+      // ignore — no version available
+    }
+    return null;
+  }
+
   private requireIpc(): MpvIpc {
     if (this.ipc?.isConnected() !== true) {
       throw new Error('mpv IPC is not connected');
@@ -708,12 +842,13 @@ class PlaybackEngine {
       // Short retry budget — if it's there, it answers fast; if it's a stale
       // socket file with no listener, we don't want to wait the full 5s.
       await ipc.connect(this.ipcPath, 3, 50);
-      // Verify mpv is actually responsive on this socket. The per-command
-      // timeout inside MpvIpc.command() bounds this — no Promise.race needed.
-      const versionRaw = await ipc.command('get_version');
-      this.mpvVersion = versionRaw === null || versionRaw === undefined
-        ? null
-        : String(versionRaw);
+      // Verify mpv is actually responsive on this socket AND read the
+      // human-readable mpv release version (e.g. "mpv 0.39.0"). The
+      // `mpv-version` *property* is a string; `get_version` is a different
+      // command that returns the integer-encoded client-API version (e.g.
+      // 131077 = 0x20005) which is meaningless to end users. The per-command
+      // timeout inside MpvIpc.command() bounds the call.
+      this.mpvVersion = await this.readMpvVersion(ipc);
 
       await this.installObservers(ipc);
       this.ipc = ipc;
@@ -754,12 +889,12 @@ class PlaybackEngine {
       ipc = new MpvIpc();
       await ipc.connect(this.ipcPath);
 
-      // Fetch the mpv version once for status reporting
+      // Fetch the mpv release version (e.g. "mpv 0.39.0") for status
+      // reporting. Uses the `mpv-version` string property — NOT `get_version`,
+      // which returns the integer client-API version (0x20005 etc.) that is
+      // meaningless to end users.
       try {
-        const version = await ipc.command('get_version');
-        if (version !== null && version !== undefined) {
-          this.mpvVersion = String(version);
-        }
+        this.mpvVersion = await this.readMpvVersion(ipc);
       } catch (err) {
         logger.debug('Failed to read mpv version:', err);
       }
@@ -900,6 +1035,7 @@ class PlaybackEngine {
     this.mpvVersion = null;
     this.propertyCache.clear();
     this.filenameCache.clear();
+    this.metadataCache.clear();
     this.currentRadioStation = null;
     this.startPromise = null;
 

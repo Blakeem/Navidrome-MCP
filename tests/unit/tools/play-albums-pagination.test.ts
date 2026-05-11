@@ -56,9 +56,14 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
     expect(result.success).toBe(true);
     expect(result.trackCount).toBe(12);
     expect(client.requestWithMeta).toHaveBeenCalledTimes(1);
+    // Third arg is the optional metadata array — the engine ingests it into
+    // its per-session cache so `get_play_queue` reports titles for the full
+    // queue, not just mpv's current track. Mock-track rows omit title/etc.
+    // so each entry is just `{ songId }`.
     expect(enqueueMock).toHaveBeenCalledWith(
       Array.from({ length: 12 }, (_, i) => `track-${i}`),
       'replace',
+      Array.from({ length: 12 }, (_, i) => ({ songId: `track-${i}` })),
     );
   });
 

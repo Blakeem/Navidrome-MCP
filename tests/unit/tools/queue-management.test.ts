@@ -65,6 +65,11 @@ describe('getSavedQueue', () => {
     expect(result.tracks[0]).toHaveProperty('artist');
     expect(result.tracks[0]).toHaveProperty('album');
     expect(result.tracks[0]).toHaveProperty('duration');
+    // Issue #24: surface a human-readable duration alongside raw seconds so
+    // queue items match the convention used by every other song-bearing tool.
+    expect(result.tracks[0]).toHaveProperty('durationFormatted');
+    expect(result.tracks[0]?.durationFormatted).toBe('4:00');
+    expect(result.tracks[1]?.durationFormatted).toBe('3:00');
   });
 
   it('requests GET /queue', async () => {
@@ -77,7 +82,10 @@ describe('getSavedQueue', () => {
     expect(endpoint).toBe('/queue');
   });
 
-  it('omits updatedAt when server returns empty/null updatedAt', async () => {
+  it('emits updatedAt: null when server returns empty/null updatedAt', async () => {
+    // Issue #33: the prior shape `omitted` updatedAt in this case, which
+    // forced the LLM to infer "field exists but is empty" — null is the
+    // clearer signal for a never-saved/just-cleared queue.
     mockClient.request.mockResolvedValue({
       current: 0,
       position: 0,
@@ -87,7 +95,30 @@ describe('getSavedQueue', () => {
 
     const result = await getSavedQueue(mockClient as unknown as NavidromeClient, {});
 
-    expect(result.updatedAt).toBeUndefined();
+    expect(result.updatedAt).toBeNull();
+  });
+
+  it('maps Go zero-time updatedAt to null (issue #33)', async () => {
+    mockClient.request.mockResolvedValue({
+      current: 0,
+      position: 0,
+      // The exact sentinel Navidrome returns when the queue was cleared or
+      // never saved (Go's time.Time zero value in RFC 3339 form).
+      updatedAt: '0001-01-01T00:00:00Z',
+      items: [],
+    });
+
+    const result = await getSavedQueue(mockClient as unknown as NavidromeClient, {});
+
+    expect(result.updatedAt).toBeNull();
+  });
+
+  it('emits updatedAt: null on the empty-response path', async () => {
+    mockClient.request.mockResolvedValue(null);
+
+    const result = await getSavedQueue(mockClient as unknown as NavidromeClient, {});
+
+    expect(result.updatedAt).toBeNull();
   });
 });
 

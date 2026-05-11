@@ -182,10 +182,12 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     const queue = await getPlayQueue();
     expect(queue.length).toBe(5);
 
-    // songId parsed out of the stream URL `id` query parameter
+    // songId parsed out of the stream URL `id` query parameter. `filename`
+    // is intentionally NOT exposed on the LLM-facing shape — see the
+    // PlayQueueItem doc-comment for the security rationale.
     for (const item of queue.items) {
       expect(item.songId).toMatch(/^[A-Za-z0-9-]+$/);
-      expect(item.filename).toContain('id=');
+      expect(item).not.toHaveProperty('filename');
     }
 
     const currents = queue.items.filter((e) => e.isCurrent);

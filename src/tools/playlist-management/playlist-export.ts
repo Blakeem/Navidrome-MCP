@@ -93,17 +93,38 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
 }
 
 /**
- * Get all tracks in a playlist. The LLM-supplied `offset`, `limit`,
- * `playlistId`, and `format` are NOT echoed back — they only consume context
- * window. The presence of `m3uContent` (vs `tracks`) implicitly signals the
- * format; `total` (server-derived from X-Total-Count) is what the LLM needs
- * for further pagination. The original args are captured in the DEBUG log.
+ * JSON-mode response: structured track DTOs plus the paginated total.
  */
-export async function getPlaylistTracks(client: NavidromeClient, args: unknown): Promise<{
+interface GetPlaylistTracksJsonResponse {
+  format: 'json';
   tracks: PlaylistTrackDTO[];
   total: number;
-  m3uContent?: string;
-}> {
+}
+
+/**
+ * M3U-mode response: only the raw m3u payload. We intentionally omit
+ * `tracks`/`total` here (Batch 2 #4) — the previous shape returned
+ * `tracks: []` and `total: 0` even when `m3uContent` was fully populated,
+ * which was misleading. The track count is implicit in the m3u body and is
+ * also available via `get_playlist`.songCount.
+ */
+interface GetPlaylistTracksM3UResponse {
+  format: 'm3u';
+  m3uContent: string;
+}
+
+type GetPlaylistTracksResponse =
+  | GetPlaylistTracksJsonResponse
+  | GetPlaylistTracksM3UResponse;
+
+/**
+ * Get all tracks in a playlist. The LLM-supplied `offset`, `limit`, and
+ * `playlistId` are NOT echoed back — they only consume context window. The
+ * response shape is discriminated by `format`: JSON mode returns `tracks` and
+ * `total` (server-derived from X-Total-Count); M3U mode returns only
+ * `m3uContent`. The original args are captured in the DEBUG log.
+ */
+export async function getPlaylistTracks(client: NavidromeClient, args: unknown): Promise<GetPlaylistTracksResponse> {
   const params = PlaylistTracksPaginationSchema.parse(args);
   logger.debug('Tool getPlaylistTracks called with args:', params);
 
@@ -124,14 +145,9 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
     );
 
     if (params.format === 'm3u') {
-      // m3u branch returns the raw text payload — there are no DTO items to
-      // count. Surface the X-Total-Count if Navidrome sent one (it does for
-      // the JSON path; m3u typically omits it), otherwise fall back to 0.
-      // The actual track count is in the m3u body and via get_playlist.songCount.
       return {
-        tracks: [],
-        total: total ?? 0,
-        m3uContent: data as string,
+        format: 'm3u',
+        m3uContent: typeof data === 'string' ? data : String(data ?? ''),
       };
     }
 
@@ -140,6 +156,7 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
       : [];
 
     return {
+      format: 'json',
       tracks,
       total: total ?? tracks.length,
     };

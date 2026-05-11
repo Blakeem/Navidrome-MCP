@@ -99,7 +99,7 @@ const tools: Tool[] = [
         filterType: {
           type: 'string',
           enum: ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'],
-          description: 'Type of metadata filter to discover options for. Valid values: "genres" (Rock, Jazz, etc.), "mediaTypes" (CD, Vinyl, etc.), "countries" (US, UK, etc.), "releaseTypes" (Album, EP, etc.), "recordLabels" (Sony Music, etc.), "moods" (Energetic, etc.)'
+          description: 'Type of metadata filter to discover options for. Valid values: "genres" (Rock, Jazz, etc.), "mediaTypes" (CD, Vinyl, etc.), "countries" (ISO 3166-1 alpha-2 codes — "US", "GB", "DE", etc.), "releaseTypes" (lowercase MusicBrainz values — "album", "ep", "single", etc.), "recordLabels" (Sony Music, etc.), "moods" (Energetic, etc.)'
         },
         limit: {
           type: 'number',

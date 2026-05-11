@@ -8,32 +8,44 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createRadioStation } from '../../../src/tools/radio.js';
+import { createRadioStation, resetRadioStationCacheForTesting } from '../../../src/tools/radio.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 
 const stubConfig = {} as Config;
 
+/**
+ * Build a synthetic Navidrome REST `/radio` response (array of rows). Defaults
+ * are sufficient for createRadioStation's post-create id-resolution path —
+ * it matches on (name, streamUrl) and reads id/createdAt/updatedAt.
+ */
+function makeRestList(stations: Array<{ id: string; name: string; streamUrl: string }>) {
+  return stations.map(s => ({
+    id: s.id,
+    name: s.name,
+    streamUrl: s.streamUrl,
+    homePageUrl: '',
+    createdAt: '2025-09-03T22:07:50Z',
+    updatedAt: '2025-09-03T22:07:50Z',
+  }));
+}
+
 describe('createRadioStation real-id resolution', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
+    resetRadioStationCacheForTesting();
     mockClient = createMockClient();
   });
 
-  it('looks up the real station id via listInternetRadioStations after create', async () => {
-    // First subsonicRequest call = createInternetRadioStation (returns nothing)
-    // Second subsonicRequest call = getInternetRadioStations (returns the new one)
-    mockClient.subsonicRequest
-      .mockResolvedValueOnce({ status: 'ok' })
-      .mockResolvedValueOnce({
-        internetRadioStations: {
-          internetRadioStation: [
-            { id: 'real-uuid-001', name: 'Test Station', streamUrl: 'http://stream.test/audio' },
-          ],
-        },
-      });
+  it('looks up the real station id via REST /radio after create', async () => {
+    // subsonicRequest = createInternetRadioStation (returns nothing useful)
+    // request = REST GET /radio for post-create id resolution
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([{ id: 'real-uuid-001', name: 'Test Station', streamUrl: 'http://stream.test/audio' }])
+    );
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
       stations: [{ name: 'Test Station', streamUrl: 'http://stream.test/audio' }],
@@ -47,21 +59,19 @@ describe('createRadioStation real-id resolution', () => {
     expect(created.station?.id).not.toBe('');
   });
 
-  it('only issues ONE listInternetRadioStations call regardless of batch size', async () => {
-    // 3 creates + 1 list = 4 subsonicRequest calls total.
+  it('only issues ONE REST list call regardless of batch size', async () => {
+    // 3 creates (Subsonic) + 1 REST list = 4 total network calls.
     mockClient.subsonicRequest
       .mockResolvedValueOnce({ status: 'ok' }) // create #1
       .mockResolvedValueOnce({ status: 'ok' }) // create #2
-      .mockResolvedValueOnce({ status: 'ok' }) // create #3
-      .mockResolvedValueOnce({                 // single list
-        internetRadioStations: {
-          internetRadioStation: [
-            { id: 'id-1', name: 'A', streamUrl: 'http://a.test/' },
-            { id: 'id-2', name: 'B', streamUrl: 'http://b.test/' },
-            { id: 'id-3', name: 'C', streamUrl: 'http://c.test/' },
-          ],
-        },
-      });
+      .mockResolvedValueOnce({ status: 'ok' }); // create #3
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([
+        { id: 'id-1', name: 'A', streamUrl: 'http://a.test/' },
+        { id: 'id-2', name: 'B', streamUrl: 'http://b.test/' },
+        { id: 'id-3', name: 'C', streamUrl: 'http://c.test/' },
+      ])
+    );
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
       stations: [
@@ -71,16 +81,16 @@ describe('createRadioStation real-id resolution', () => {
       ],
     });
 
-    // 3 createInternetRadioStation + 1 getInternetRadioStations = 4
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(4);
+    // 3 createInternetRadioStation (Subsonic) + 1 REST listRadioStations
+    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(3);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
     expect(result.results).toHaveLength(3);
     expect(result.results.map(r => r.station?.id)).toEqual(['id-1', 'id-2', 'id-3']);
   });
 
   it('falls back to empty id with a note when the lookup fails', async () => {
-    mockClient.subsonicRequest
-      .mockResolvedValueOnce({ status: 'ok' })            // create succeeded
-      .mockRejectedValueOnce(new Error('list failed'));   // list failed
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' }); // create succeeded
+    mockClient.request.mockRejectedValueOnce(new Error('list failed'));  // REST list failed
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
       stations: [{ name: 'Orphan', streamUrl: 'http://orphan.test/' }],
@@ -95,11 +105,8 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('annotates with a note when create succeeded but station vanished from the listing', async () => {
-    mockClient.subsonicRequest
-      .mockResolvedValueOnce({ status: 'ok' })           // create succeeded
-      .mockResolvedValueOnce({                           // listing returned without our station
-        internetRadioStations: { internetRadioStation: [] },
-      });
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });        // create succeeded
+    mockClient.request.mockResolvedValueOnce(makeRestList([]));                // listing returned empty
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
       stations: [{ name: 'Phantom', streamUrl: 'http://phantom.test/' }],
@@ -116,15 +123,13 @@ describe('createRadioStation real-id resolution', () => {
     // would land on the same lex-max id and one create would be unreachable.
     mockClient.subsonicRequest
       .mockResolvedValueOnce({ status: 'ok' })  // create #1
-      .mockResolvedValueOnce({ status: 'ok' })  // create #2
-      .mockResolvedValueOnce({
-        internetRadioStations: {
-          internetRadioStation: [
-            { id: 'aaa', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
-            { id: 'zzz', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
-          ],
-        },
-      });
+      .mockResolvedValueOnce({ status: 'ok' }); // create #2
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([
+        { id: 'aaa', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
+        { id: 'zzz', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
+      ])
+    );
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
       stations: [
@@ -142,17 +147,14 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('on duplicate name+streamUrl, picks the lexicographically max id (newest)', async () => {
-    mockClient.subsonicRequest
-      .mockResolvedValueOnce({ status: 'ok' })
-      .mockResolvedValueOnce({
-        internetRadioStations: {
-          internetRadioStation: [
-            { id: 'aaa', name: 'Dup', streamUrl: 'http://dup.test/' },
-            { id: 'zzz', name: 'Dup', streamUrl: 'http://dup.test/' },
-            { id: 'mmm', name: 'Dup', streamUrl: 'http://dup.test/' },
-          ],
-        },
-      });
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([
+        { id: 'aaa', name: 'Dup', streamUrl: 'http://dup.test/' },
+        { id: 'zzz', name: 'Dup', streamUrl: 'http://dup.test/' },
+        { id: 'mmm', name: 'Dup', streamUrl: 'http://dup.test/' },
+      ])
+    );
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
       stations: [{ name: 'Dup', streamUrl: 'http://dup.test/' }],
@@ -170,6 +172,7 @@ describe('createRadioStation real-id resolution', () => {
     expect(result.results[0]?.success).toBe(false);
     // Only the failed create. No follow-up list call (nothing to look up).
     expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(mockClient.request).not.toHaveBeenCalled();
   });
 });
 

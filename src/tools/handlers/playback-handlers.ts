@@ -375,7 +375,7 @@ const tools: Tool[] = [
   },
   {
     name: 'now_playing',
-    description: "Report the current local playback state — title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache; does NOT spawn mpv if it isn't already running.",
+    description: "Report the current local playback state — title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache; does NOT spawn mpv if it isn't already running. `duration` is reconciled against Navidrome's pre-scanned per-song metadata, so it's accurate from the first poll even for VBR streams where mpv would otherwise report a partial value during its scan.",
     inputSchema: {
       type: 'object',
       properties: {},
@@ -484,7 +484,7 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
         case 'now_playing':
           return nowPlaying(args);
         case 'get_play_queue':
-          return getPlayQueue(args);
+          return getPlayQueue(client, args);
         case 'clear_play_queue':
           return clearPlayQueue(args);
         case 'shuffle_play_queue':

@@ -8,16 +8,24 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { listRadioStations, getRadioStation, deleteRadioStation } from '../../../src/tools/radio.js';
+import { listRadioStations, getRadioStation, deleteRadioStation, resetRadioStationCacheForTesting } from '../../../src/tools/radio.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
-function makeSubsonicList(stations: Array<{ id: string; name: string; streamUrl: string; homePageUrl?: string }>) {
-  return {
-    internetRadioStations: {
-      internetRadioStation: stations,
-    },
-  };
+/**
+ * Build a synthetic Navidrome REST `/radio` response. The endpoint returns a
+ * raw array (no envelope), with per-station `createdAt`/`updatedAt` and an
+ * always-present (but possibly empty) `homePageUrl`.
+ */
+function makeRestList(stations: Array<{ id: string; name: string; streamUrl: string; homePageUrl?: string; createdAt?: string; updatedAt?: string }>) {
+  return stations.map(s => ({
+    id: s.id,
+    name: s.name,
+    streamUrl: s.streamUrl,
+    homePageUrl: s.homePageUrl ?? '',
+    createdAt: s.createdAt ?? '2025-09-03T22:07:50Z',
+    updatedAt: s.updatedAt ?? '2025-09-03T22:07:50Z',
+  }));
 }
 
 // ---- listRadioStations ------------------------------------------------------
@@ -26,12 +34,13 @@ describe('listRadioStations', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
+    resetRadioStationCacheForTesting();
     mockClient = createMockClient();
   });
 
   it('returns stations array + total on happy path', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([
+    mockClient.request.mockResolvedValue(
+      makeRestList([
         { id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
         { id: 'st-2', name: 'NPR', streamUrl: 'http://npr.test/', homePageUrl: 'https://npr.org' },
       ])
@@ -52,8 +61,8 @@ describe('listRadioStations', () => {
   });
 
   it('maps homePageUrl only when present', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([
+    mockClient.request.mockResolvedValue(
+      makeRestList([
         { id: 'st-1', name: 'A', streamUrl: 'http://a.test/', homePageUrl: 'https://a.test' },
         { id: 'st-2', name: 'B', streamUrl: 'http://b.test/' },
       ])
@@ -62,12 +71,43 @@ describe('listRadioStations', () => {
     const result = await listRadioStations(mockClient as unknown as NavidromeClient, {});
 
     expect(result.stations[0]!.homePageUrl).toBe('https://a.test');
-    // second station has no homePageUrl
+    // second station's empty-string homePageUrl is treated as unset
     expect(result.stations[1]!.homePageUrl).toBeUndefined();
   });
 
-  it('returns empty list when Subsonic response has no stations', async () => {
-    mockClient.subsonicRequest.mockResolvedValue({ internetRadioStations: {} });
+  it('preserves per-station createdAt/updatedAt from the REST response', async () => {
+    mockClient.request.mockResolvedValue(
+      makeRestList([
+        { id: 'st-1', name: 'A', streamUrl: 'http://a.test/', createdAt: '2025-01-15T10:00:00Z', updatedAt: '2025-01-15T10:00:00Z' },
+        { id: 'st-2', name: 'B', streamUrl: 'http://b.test/', createdAt: '2025-06-20T20:30:00Z', updatedAt: '2025-06-20T20:30:00Z' },
+      ])
+    );
+
+    const result = await listRadioStations(mockClient as unknown as NavidromeClient, {});
+
+    expect(result.stations[0]!.createdAt).toBe('2025-01-15T10:00:00Z');
+    expect(result.stations[1]!.createdAt).toBe('2025-06-20T20:30:00Z');
+    // Distinct timestamps (regression test for the "all stations got the
+    // same bulk-import timestamp" Subsonic limitation we worked around by
+    // switching to REST).
+    expect(result.stations[0]!.createdAt).not.toBe(result.stations[1]!.createdAt);
+  });
+
+  it('maps Go zero-time timestamps to empty strings', async () => {
+    mockClient.request.mockResolvedValue(
+      makeRestList([
+        { id: 'st-1', name: 'A', streamUrl: 'http://a.test/', createdAt: '0001-01-01T00:00:00Z', updatedAt: '0001-01-01T00:00:00Z' },
+      ])
+    );
+
+    const result = await listRadioStations(mockClient as unknown as NavidromeClient, {});
+
+    expect(result.stations[0]!.createdAt).toBe('');
+    expect(result.stations[0]!.updatedAt).toBe('');
+  });
+
+  it('returns empty list when REST response is empty', async () => {
+    mockClient.request.mockResolvedValue([]);
 
     const result = await listRadioStations(mockClient as unknown as NavidromeClient, {});
 
@@ -75,12 +115,12 @@ describe('listRadioStations', () => {
     expect(result.total).toBe(0);
   });
 
-  it('calls /getInternetRadioStations', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(makeSubsonicList([]));
+  it('calls REST /radio with a generous _end limit', async () => {
+    mockClient.request.mockResolvedValue([]);
 
     await listRadioStations(mockClient as unknown as NavidromeClient, {});
 
-    expect(mockClient.subsonicRequest).toHaveBeenCalledWith('/getInternetRadioStations');
+    expect(mockClient.request).toHaveBeenCalledWith(expect.stringMatching(/^\/radio\?/));
   });
 });
 
@@ -90,12 +130,13 @@ describe('getRadioStation', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
+    resetRadioStationCacheForTesting();
     mockClient = createMockClient();
   });
 
   it('returns the matching station DTO', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([
+    mockClient.request.mockResolvedValue(
+      makeRestList([
         { id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
         { id: 'st-2', name: 'NPR', streamUrl: 'http://npr.test/' },
       ])
@@ -109,8 +150,8 @@ describe('getRadioStation', () => {
   });
 
   it('throws when the station ID is not found', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
+    mockClient.request.mockResolvedValue(
+      makeRestList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
     );
 
     await expect(

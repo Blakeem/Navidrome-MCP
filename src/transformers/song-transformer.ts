@@ -38,7 +38,7 @@ export interface RawSong {
   trackNumber?: number;
   playCount?: number;
   rating?: number;
-  starred?: boolean;
+  starred?: boolean | null;
   starredAt?: string;
   playDate?: string;
   createdAt?: string;
@@ -95,12 +95,14 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     dto.rating = rawSong.rating;
   }
 
-  if (rawSong.starred !== undefined) {
-    dto.starred = rawSong.starred;
-  }
-
-  if (rawSong.starredAt !== undefined) {
+  // Treat `starredAt` as authoritative for the starred state — Navidrome
+  // listings sometimes emit `starred: null` alongside a populated timestamp
+  // (observed on /api/album, kept consistent across all DTOs).
+  if (rawSong.starredAt !== undefined && rawSong.starredAt !== null) {
+    dto.starred = true;
     dto.starredAt = rawSong.starredAt;
+  } else if (rawSong.starred === true || rawSong.starred === false) {
+    dto.starred = rawSong.starred;
   }
 
   if (rawSong.playDate !== undefined) {

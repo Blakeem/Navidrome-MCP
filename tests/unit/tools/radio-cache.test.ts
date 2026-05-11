@@ -38,12 +38,20 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-function makeSubsonicList(stations: Array<{ id: string; name: string; streamUrl: string }>) {
-  return {
-    internetRadioStations: {
-      internetRadioStation: stations,
-    },
-  };
+/**
+ * Build a synthetic Navidrome REST `/radio` response (array of rows, no
+ * envelope). createdAt/updatedAt default to a stable timestamp so cache
+ * tests don't need to care about them.
+ */
+function makeRestList(stations: Array<{ id: string; name: string; streamUrl: string }>) {
+  return stations.map(s => ({
+    id: s.id,
+    name: s.name,
+    streamUrl: s.streamUrl,
+    homePageUrl: '',
+    createdAt: '2025-09-03T22:07:50Z',
+    updatedAt: '2025-09-03T22:07:50Z',
+  }));
 }
 
 describe('radio station cache', () => {
@@ -60,9 +68,9 @@ describe('radio station cache', () => {
     resetRadioStationCacheForTesting();
   });
 
-  it('caches the station list when config is provided — second call avoids Subsonic', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
+  it('caches the station list when config is provided — second call avoids the REST fetch', async () => {
+    mockClient.request.mockResolvedValue(
+      makeRestList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
     );
 
     const config = makeConfig();
@@ -70,23 +78,23 @@ describe('radio station cache', () => {
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
 
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
   });
 
   it('skips the cache when config is omitted (back-compat)', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
+    mockClient.request.mockResolvedValue(
+      makeRestList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
     );
 
     await listRadioStations(mockClient as unknown as NavidromeClient, {});
     await listRadioStations(mockClient as unknown as NavidromeClient, {});
 
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(2);
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
   });
 
   it('expires after TTL — third call after the window refetches', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
+    mockClient.request.mockResolvedValue(
+      makeRestList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
     );
 
     // 2-second TTL so we don't have to advance virtual time too far
@@ -94,18 +102,18 @@ describe('radio station cache', () => {
 
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
 
     // Advance past TTL
     vi.advanceTimersByTime(2_500);
 
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(2);
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
   });
 
   it('getRadioStation hits the cache on the second lookup', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([
+    mockClient.request.mockResolvedValue(
+      makeRestList([
         { id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
         { id: 'st-2', name: 'NPR', streamUrl: 'http://npr.test/' },
       ])
@@ -118,13 +126,13 @@ describe('radio station cache', () => {
 
     expect(a.name).toBe('WBEZ');
     expect(b.name).toBe('NPR');
-    // One Subsonic call shared by both lookups.
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    // One REST call shared by both lookups.
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
   });
 
   it('invalidateRadioStationCache forces the next read to refetch', async () => {
-    mockClient.subsonicRequest.mockResolvedValue(
-      makeSubsonicList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
+    mockClient.request.mockResolvedValue(
+      makeRestList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
     );
 
     const config = makeConfig();
@@ -133,13 +141,13 @@ describe('radio station cache', () => {
     invalidateRadioStationCache();
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
 
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(2);
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
   });
 
   it('deleteRadioStation invalidates the cache so a subsequent read refetches', async () => {
     // Pre-warm the cache, then delete, then re-read
-    mockClient.subsonicRequest.mockResolvedValueOnce(
-      makeSubsonicList([
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([
         { id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
         { id: 'st-2', name: 'NPR', streamUrl: 'http://npr.test/' },
       ])
@@ -148,20 +156,22 @@ describe('radio station cache', () => {
     const config = makeConfig();
 
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
 
-    // Delete: subsonicRequest mock resolves again
+    // deleteRadioStation still uses the Subsonic delete endpoint —
+    // listRadioStations switched to REST, but Subsonic remains the only
+    // mutation surface Navidrome exposes for radio.
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
     await deleteRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-1' });
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(2);
+    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
 
     // Subsequent listRadioStations must refetch (post-invalidation)
-    mockClient.subsonicRequest.mockResolvedValueOnce(
-      makeSubsonicList([{ id: 'st-2', name: 'NPR', streamUrl: 'http://npr.test/' }])
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([{ id: 'st-2', name: 'NPR', streamUrl: 'http://npr.test/' }])
     );
     const afterDelete = await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
 
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(3);
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
     expect(afterDelete.stations).toHaveLength(1);
     expect(afterDelete.stations[0]!.id).toBe('st-2');
   });
@@ -169,42 +179,43 @@ describe('radio station cache', () => {
   it('createRadioStation invalidates the cache on success', async () => {
     const config = makeConfig();
 
-    // 1) Pre-warm
-    mockClient.subsonicRequest.mockResolvedValueOnce(makeSubsonicList([]));
+    // 1) Pre-warm via REST
+    mockClient.request.mockResolvedValueOnce(makeRestList([]));
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
 
-    // 2) createInternetRadioStation (one POST per station) + post-create
-    //    listRadioStations() to resolve the new id (uncached because the
-    //    internal call passes no config)
-    mockClient.subsonicRequest
-      .mockResolvedValueOnce({ status: 'ok' }) // /createInternetRadioStation
-      .mockResolvedValueOnce( // post-create lookup
-        makeSubsonicList([{ id: 'st-new', name: 'New', streamUrl: 'http://new.test/' }])
-      );
+    // 2) createInternetRadioStation (Subsonic POST per station) +
+    //    post-create REST listRadioStations() to resolve the new id
+    //    (uncached because the internal call passes no config).
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' }); // /createInternetRadioStation
+    mockClient.request.mockResolvedValueOnce( // post-create lookup
+      makeRestList([{ id: 'st-new', name: 'New', streamUrl: 'http://new.test/' }])
+    );
 
     await createRadioStation(mockClient as unknown as NavidromeClient, config, {
       stations: [{ name: 'New', streamUrl: 'http://new.test/' }],
     });
 
     // After the create, the cache must have been dropped — the next
-    // listRadioStations(config) call must hit Subsonic again.
-    mockClient.subsonicRequest.mockResolvedValueOnce(
-      makeSubsonicList([{ id: 'st-new', name: 'New', streamUrl: 'http://new.test/' }])
+    // listRadioStations(config) call must hit the REST endpoint again.
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([{ id: 'st-new', name: 'New', streamUrl: 'http://new.test/' }])
     );
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
 
-    // 1 (pre-warm) + 1 (create) + 1 (post-create lookup) + 1 (post-invalidation refetch) = 4
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(4);
+    // REST calls: 1 (pre-warm) + 1 (post-create lookup) + 1 (post-invalidation refetch) = 3
+    expect(mockClient.request).toHaveBeenCalledTimes(3);
+    // Subsonic calls: 1 (the create itself)
+    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
   });
 
   it('createRadioStation does NOT invalidate when every station fails validation', async () => {
     const config = makeConfig();
 
     // Pre-warm
-    mockClient.subsonicRequest.mockResolvedValueOnce(makeSubsonicList([]));
+    mockClient.request.mockResolvedValueOnce(makeRestList([]));
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
 
     // All-fail batch: validation errors only, no Subsonic POST happens
     await createRadioStation(mockClient as unknown as NavidromeClient, config, {
@@ -213,6 +224,6 @@ describe('radio station cache', () => {
 
     // Cache should still be warm — next list serves from memory
     await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
-    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(mockClient.request).toHaveBeenCalledTimes(1);
   });
 });

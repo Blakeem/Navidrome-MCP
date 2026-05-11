@@ -376,7 +376,6 @@ class FilterCacheManager {
     filterType: FilterType;
     available: string[];
     total: number;
-    cacheStats: Record<FilterType, number>;
   }> {
     // Basic validation for required filterType
     if (typeof args !== 'object' || args === null) {
@@ -410,16 +409,15 @@ class FilterCacheManager {
       const allOptions = this.getAvailableOptions(filterType);
       const limitedOptions = allOptions.slice(0, limit);
 
-      // Get cache statistics for debugging
-      const cacheStats = this.getStats();
-
-      logger.debug(`Retrieved ${limitedOptions.length} ${filterType} options (of ${allOptions.length} total)`);
+      // Cache statistics are intentionally NOT included in the LLM-facing
+      // response — they're an internal implementation detail (per-type Map
+      // sizes). The data is still observable via DEBUG logging.
+      logger.debug(`Retrieved ${limitedOptions.length} ${filterType} options (of ${allOptions.length} total); cache stats: ${JSON.stringify(this.getStats())}`);
 
       return {
         filterType,
         available: limitedOptions,
         total: allOptions.length,
-        cacheStats
       };
     } catch (error) {
       throw new Error(ErrorFormatter.toolExecution('getFilterOptions', error));

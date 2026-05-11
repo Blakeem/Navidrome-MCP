@@ -73,10 +73,15 @@ export const RemoveTracksFromPlaylistSchema = z.object({
   trackIds: NonEmptyStringArraySchema,
 });
 
+// Navidrome's reorder endpoint uses 1-based position IDs (the same IDs returned
+// by `get_playlist_tracks`). `insert_before=1` puts the track in the first slot
+// (before the current position-1 row); `insert_before=N+1` appends. Passing 0
+// returns 500 from Navidrome, so the schema enforces >= 1 with a friendly message
+// (see Batch 2 #1 fix).
 export const ReorderPlaylistTrackSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required'),
   trackId: z.string().min(1, 'Track ID is required'),
-  insert_before: z.number().min(0, 'Insert position must be non-negative'),
+  insert_before: z.number().int().min(1, 'insert_before must be a 1-based position (use 1 for the first slot)'),
 });
 
 // Saved queue (Navidrome cross-device sync) validation

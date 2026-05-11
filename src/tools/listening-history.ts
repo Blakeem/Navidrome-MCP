@@ -19,47 +19,36 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import {
-  parseDuration,
   transformSongsToDTO,
   transformAlbumsToDTO,
   transformArtistsToDTO,
 } from '../transformers/index.js';
+import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/index.js';
 import {
   RecentlyPlayedPaginationSchema,
   MostPlayedPaginationSchema,
 } from '../schemas/index.js';
 
-interface RecentlyPlayedTrack {
-  id: string;
-  title: string;
-  artist: string;
-  album: string;
-  playCount: number;
-  /** ISO 8601 timestamp of the user's most recent play. Omitted only if the
-      raw row had no playDate. */
+/**
+ * Recently-played track shape: the full SongDTO (artist/album IDs, formatted
+ * duration, genres, year, rating, starred state, etc.) plus a convenience
+ * `lastPlayed` mirror of `playDate` so callers don't have to know that the
+ * underlying field is named `playDate`.
+ */
+type RecentlyPlayedTrack = SongDTO & {
+  /** ISO 8601 timestamp of the user's most recent play. Mirror of `playDate`
+      for back-compat — present iff the source row carried a playDate. */
   lastPlayed?: string;
-  duration: number;
-}
+};
 
 interface RecentlyPlayedResult {
   count: number;
   tracks: RecentlyPlayedTrack[];
 }
 
-interface MostPlayedItem {
-  id: string;
-  title?: string;
-  name?: string;
-  artist?: string;
-  album?: string;
-  playCount: number;
-  songCount?: number;
-  albumCount?: number;
-}
-
 interface MostPlayedResult {
   count: number;
-  items: MostPlayedItem[];
+  items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
 }
 
 export async function listRecentlyPlayed(client: NavidromeClient, args: unknown): Promise<RecentlyPlayedResult> {
@@ -106,15 +95,11 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
       return Number.isFinite(played.getTime()) && played >= cutoff;
     })
     .slice(0, limit)
-    .map((song) => {
-      const track: RecentlyPlayedTrack = {
-        id: song.id,
-        title: song.title,
-        artist: song.artist,
-        album: song.album,
-        playCount: song.playCount ?? 0,
-        duration: parseDuration(song.durationFormatted),
-      };
+    .map((song): RecentlyPlayedTrack => {
+      // Return the full SongDTO so the LLM gets durationFormatted, artistId,
+      // albumId, genres, year, rating, starred state — everything other song
+      // responses carry. Mirror playDate → lastPlayed for back-compat.
+      const track: RecentlyPlayedTrack = { ...song };
       if (song.playDate !== undefined && song.playDate !== '') {
         track.lastPlayed = song.playDate;
       }
@@ -132,55 +117,37 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
 
   logger.debug('Tool listMostPlayed called with args:', { type, limit, offset, minPlayCount });
   logger.info(`Getting most played ${type} with minPlayCount: ${minPlayCount}`);
-  
+
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
-  
+
   // Fetch more items to account for filtering by minPlayCount
   // We'll fetch 3x the requested amount to ensure we have enough after filtering
   const fetchLimit = limit * 3;
-  
+
   const response = await client.requestWithLibraryFilter<unknown>(
     `${endpoint}?_sort=playCount&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
-  
-  // Transform using the appropriate transformer
-  let transformedItems: (MostPlayedItem & { playCount?: number })[];
+
+  // Use the shared transformers so the response carries the same rich fields
+  // (durationFormatted, artistId/albumId, genres, year, rating, starred,
+  // …) that every other song/album/artist tool produces.
+  let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
   if (type === 'songs') {
-    const songs = transformSongsToDTO(response);
-    transformedItems = songs.map(song => ({
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      album: song.album,
-      playCount: song.playCount ?? 0
-    }));
+    items = transformSongsToDTO(response)
+      .filter((song) => (song.playCount ?? 0) >= minPlayCount)
+      .slice(0, limit);
   } else if (type === 'albums') {
-    const albums = transformAlbumsToDTO(response);
-    transformedItems = albums.map(album => ({
-      id: album.id,
-      name: album.name,
-      artist: album.artist,
-      songCount: album.songCount,
-      playCount: album.playCount ?? 0
-    }));
+    items = transformAlbumsToDTO(response)
+      .filter((album) => (album.playCount ?? 0) >= minPlayCount)
+      .slice(0, limit);
   } else {
-    const artists = transformArtistsToDTO(response);
-    transformedItems = artists.map(artist => ({
-      id: artist.id,
-      name: artist.name,
-      albumCount: artist.albumCount,
-      songCount: artist.songCount,
-      playCount: artist.playCount ?? 0
-    }));
+    items = transformArtistsToDTO(response)
+      .filter((artist) => (artist.playCount ?? 0) >= minPlayCount)
+      .slice(0, limit);
   }
-  
-  // Filter by minPlayCount and limit results
-  const filteredItems = transformedItems
-    .filter(item => (item.playCount || 0) >= minPlayCount)
-    .slice(0, limit);
-  
+
   return {
-    count: filteredItems.length,
-    items: filteredItems as MostPlayedItem[],
+    count: items.length,
+    items,
   };
 }

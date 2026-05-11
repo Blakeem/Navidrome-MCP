@@ -13,6 +13,7 @@ import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { Cache } from '../utils/cache.js';
+import { nullIfGoZeroTime } from '../utils/go-time.js';
 
 // Zod schemas for radio tool arguments — used instead of `args as { ... }` casts
 // to catch invalid inputs before they reach the Subsonic API.
@@ -100,15 +101,27 @@ export function resetRadioStationCacheForTesting(): void {
   inflightFetch = null;
 }
 
-interface InternetRadioStationsResponse {
-  internetRadioStations?: {
-    internetRadioStation?: Array<{
-      id: string;
-      name: string;
-      streamUrl: string;
-      homePageUrl?: string;
-    }>;
-  };
+/**
+ * Raw row shape from Navidrome's REST `/api/radio` endpoint.
+ *
+ * Why REST instead of Subsonic /getInternetRadioStations:
+ *  - Subsonic drops `homePageUrl` and ships no per-station timestamps —
+ *    every station shared one bulk-import timestamp, which made the list
+ *    response look like a bug to LLM consumers.
+ *  - REST `/radio` returns `homePageUrl`, real per-station `createdAt`
+ *    and `updatedAt`. It's the same auth (X-ND-Authorization) the rest
+ *    of the codebase already uses for non-Subsonic endpoints.
+ *
+ * `homePageUrl` is often emitted as an empty string for stations created
+ * without one — treated as "unset" downstream.
+ */
+interface RestRadioStationRow {
+  id: string;
+  name: string;
+  streamUrl: string;
+  homePageUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 /**
@@ -145,20 +158,30 @@ export async function listRadioStations(
       stations = await inflightFetch;
     } else {
       const fetchPromise = (async (): Promise<RadioStationDTO[]> => {
-        const response = await client.subsonicRequest('/getInternetRadioStations') as InternetRadioStationsResponse;
-        const radioStations = response.internetRadioStations?.internetRadioStation ?? [];
+        // Use Navidrome's REST `/radio` endpoint instead of Subsonic
+        // `/getInternetRadioStations`. The REST endpoint preserves
+        // `homePageUrl` and ships real per-station `createdAt`/`updatedAt`
+        // timestamps. `_end=10000` is the same "fetch all" idiom used for
+        // other unpaginated list views — Navidrome instances in the wild top
+        // out at hundreds of radio stations, so this is one HTTP round trip.
+        const rows = await client.request<RestRadioStationRow[]>('/radio?_start=0&_end=10000');
 
-        const result = radioStations.map(station => {
+        const result = rows.map(row => {
           const stationDto: RadioStationDTO = {
-            id: station.id,
-            name: station.name,
-            streamUrl: station.streamUrl,
-            createdAt: new Date().toISOString(), // Subsonic API doesn't provide timestamps
-            updatedAt: new Date().toISOString(),
+            id: row.id,
+            name: row.name,
+            streamUrl: row.streamUrl,
+            // nullIfGoZeroTime guards against Navidrome rows that somehow
+            // came through without a real timestamp (would be the Go zero
+            // value). createdAt/updatedAt are required strings in the DTO,
+            // so fall back to "" when the server gave us nothing — callers
+            // already null-check via `=== ''` for absent timestamps.
+            createdAt: nullIfGoZeroTime(row.createdAt) ?? '',
+            updatedAt: nullIfGoZeroTime(row.updatedAt) ?? '',
           };
 
-          if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl !== '') {
-            stationDto.homePageUrl = station.homePageUrl;
+          if (row.homePageUrl !== null && row.homePageUrl !== undefined && row.homePageUrl !== '') {
+            stationDto.homePageUrl = row.homePageUrl;
           }
 
           return stationDto;
@@ -266,12 +289,21 @@ export async function createRadioStation(
       // Create the station via Subsonic API. Auth travels in the POST body
       // (via client.subsonicRequest) — never in URL query params where access
       // logs would capture it.
+      //
+      // Param name pedantry: the Subsonic spec parameter is `homepageUrl`
+      // (lowercase 'p'), NOT `homePageUrl` — Navidrome silently drops the
+      // mis-cased variant and stores an empty string, which is why every
+      // existing station in the wild has an empty homePageUrl even though
+      // create_radio_station echoed it back to the caller. The REST `/radio`
+      // response field is `homePageUrl` (camelCase 'P'), so input and output
+      // capitalisation differ. We accept the camelCase form in our schema for
+      // consistency with the output shape but translate to lowercase here.
       const subsonicParams: Record<string, string> = {
         streamUrl: station.streamUrl,
         name: station.name,
       };
       if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
-        subsonicParams['homePageUrl'] = station.homePageUrl;
+        subsonicParams['homepageUrl'] = station.homePageUrl;
       }
       await client.subsonicRequest('/createInternetRadioStation', subsonicParams);
 
@@ -369,7 +401,15 @@ export async function createRadioStation(
     }
   }
 
-  // Generate summary
+  // Generate summary. Plain prose — no emoji, no inline tips. The previous
+  // implementation always appended a static "STREAM VALIDATION RECOMMENDED"
+  // reminder block for single-station creates, even when validateBeforeAdd
+  // had already validated the stream end-to-end. The reminder was both
+  // factually wrong (validation had just happened) and visually noisy.
+  // It is now omitted entirely: discover_radio_stations validates as part
+  // of the discovery surface, and create_radio_station(validateBeforeAdd:true)
+  // validates inline — so by the time a row reaches the LLM, validation is
+  // either done or was explicitly opted out of by the caller.
   let summary = `Added ${successCount} of ${params.stations.length} station(s).`;
   if (failedCount > 0) {
     summary += ` ${failedCount} failed`;
@@ -377,15 +417,6 @@ export async function createRadioStation(
       summary += ` (${validationFailedCount} due to validation)`;
     }
     summary += '.';
-  }
-
-  // Add validation reminder for first-time users (single station only)
-  if (successCount > 0 && params.stations.length === 1) {
-    const messageManager = getMessageManager();
-    const validationReminder = messageManager.getMessage('radio.validation_reminder');
-    if (validationReminder !== null && validationReminder !== undefined && validationReminder !== '') {
-      summary += ` ${validationReminder}`;
-    }
   }
 
   // Suppress unused-parameter warning — config remains in the signature for

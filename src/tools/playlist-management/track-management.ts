@@ -94,7 +94,13 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
 }
 
 /**
- * Reorder a track in the playlist
+ * Reorder a track in the playlist.
+ *
+ * Navidrome's reorder endpoint uses 1-based position IDs. Calling with
+ * `insert_before=0` returns HTTP 500 (Batch 2 #1) — the schema now blocks that
+ * at parse time. The API response itself is sparse — just `{"id":"<trackId>"}`
+ * (string), so we synthesize a confirmation from the request parameters
+ * (Batch 2 #29) instead of issuing another round-trip just to enrich it.
  */
 export async function reorderPlaylistTrack(client: NavidromeClient, args: unknown): Promise<ReorderPlaylistTrackResponse> {
   const params = ReorderPlaylistTrackSchema.parse(args);
@@ -105,7 +111,10 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
       insert_before: params.insert_before.toString(),
     };
 
-    const response = await client.request<{ id: number }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks/${encodeURIComponent(params.trackId)}`, {
+    // Navidrome returns `{"id":"4"}` (string) with Content-Type: text/plain.
+    // The client transparently sniffs the body so we can read `response.id`
+    // directly. The id echoed back is the input trackId, not the new position.
+    const response = await client.request<{ id?: number | string }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks/${encodeURIComponent(params.trackId)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -113,8 +122,21 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
       body: JSON.stringify(requestBody),
     });
 
+    const previousPosition = parseInt(params.trackId, 10);
+    const newPosition = params.insert_before;
+    const echoedId = typeof response.id === 'number'
+      ? response.id
+      : typeof response.id === 'string'
+        ? parseInt(response.id, 10) || previousPosition
+        : previousPosition;
+
     return {
-      id: response.id || parseInt(params.trackId, 10),
+      playlistId: params.playlistId,
+      id: echoedId,
+      previousPosition,
+      newPosition,
+      message: `Moved track from position ${previousPosition} to position ${newPosition}`,
+      success: true,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('reorder_playlist_track', error));

@@ -593,10 +593,21 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
       markClicked(params.stationUuid);
     }
 
+    // On a successful click we override Radio Browser's `message`. Upstream
+    // returns the internal debug-y text "retrieved station url" which reads
+    // like a leak of implementation detail to LLM consumers — semantically
+    // a click registers a play with Radio Browser's popularity counters.
+    // On failure we surface the upstream message so the caller can see what
+    // went wrong (e.g. "station not found").
+    const ok = Boolean(data.ok);
+    const message = ok
+      ? 'Click registered successfully'
+      : (data.message ?? 'Click failed');
+
     return {
-      ok: Boolean(data.ok),
+      ok,
       playUrl: data.url ?? '',
-      message: data.message ?? 'Click registered successfully'
+      message,
     };
   } catch (error) {
     invalidateRadioBrowserBase();

@@ -30,7 +30,7 @@ export interface RawArtist {
   biography?: string;
   playCount?: number;
   rating?: number;
-  starred?: boolean;
+  starred?: boolean | null;
   starredAt?: string;
   [key: string]: unknown;
 }
@@ -46,6 +46,12 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
     name: rawArtist.name || '',
     albumCount: rawArtist.albumCount || 0,
     songCount: rawArtist.songCount || 0,
+    // Default to 0 explicitly. Navidrome omits `playCount` entirely for
+    // never-played artists (only emits the field for playCount > 0), which
+    // made sort=playCount results ambiguous: an LLM couldn't distinguish
+    // "never played" from "field unavailable". An explicit zero is the
+    // unambiguous representation.
+    playCount: rawArtist.playCount ?? 0,
   };
 
   if (rawArtist.genres !== undefined) {
@@ -56,20 +62,19 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
     dto.biography = rawArtist.biography;
   }
 
-  if (rawArtist.playCount !== undefined) {
-    dto.playCount = rawArtist.playCount;
-  }
-
   if (rawArtist.rating !== undefined) {
     dto.rating = rawArtist.rating;
   }
 
-  if (rawArtist.starred !== undefined) {
-    dto.starred = rawArtist.starred;
-  }
-
-  if (rawArtist.starredAt !== undefined) {
+  // Mirror album-transformer behaviour: starredAt is authoritative for the
+  // starred state. The artist endpoint hasn't been observed to return
+  // `starred: null` in the wild, but the consistency makes the DTOs easier
+  // to reason about and guards us against future inconsistencies.
+  if (rawArtist.starredAt !== undefined && rawArtist.starredAt !== null) {
+    dto.starred = true;
     dto.starredAt = rawArtist.starredAt;
+  } else if (rawArtist.starred === true || rawArtist.starred === false) {
+    dto.starred = rawArtist.starred;
   }
 
   return dto;

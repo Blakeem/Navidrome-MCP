@@ -20,11 +20,11 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import type { Config } from '../config.js';
 import {
-  parseDuration,
   transformSongsToDTO,
   transformAlbumsToDTO,
   transformArtistsToDTO,
 } from '../transformers/index.js';
+import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/index.js';
 import {
   StarItemSchema,
   SetRatingSchema,
@@ -43,22 +43,9 @@ interface StarItemResult {
   message: string;
 }
 
-interface StarredItem {
-  id: string;
-  title?: string;
-  name?: string;
-  artist?: string;
-  album?: string;
-  year?: number;
-  duration?: number;
-  albumCount?: number;
-  songCount?: number;
-  starredAt?: string;
-}
-
 interface ListStarredResult {
   count: number;
-  items: StarredItem[];
+  items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
 }
 
 interface RatedItem {
@@ -147,69 +134,40 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
 
   logger.debug('Tool listStarredItems called with args:', { type, limit, offset });
   logger.info(`Listing starred ${type}`);
-  
+
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
-  
+
   // Fetch more items to account for client-side filtering
   const fetchLimit = Math.min(limit * 5, 500); // Fetch 5x requested or max 500
-  
+
   const response = await client.requestWithLibraryFilter<unknown>(
     `${endpoint}?_start=${offset}&_end=${offset + fetchLimit}&_sort=starredAt&_order=DESC`
   );
-  
-  // Transform using the appropriate transformer. Each branch slices the
-  // result to `limit` because we deliberately over-fetched (5x) to compensate
-  // for the client-side starred filter — without the slice we'd return up to
-  // limit*5 items, ignoring the user's pagination request.
-  let transformedItems: StarredItem[];
+
+  // Return the full DTOs from the shared transformers so starred items carry
+  // the same field set (durationFormatted, artistId/albumId, genres, year,
+  // albumArtist, rating, …) that every other song/album/artist response
+  // produces. We over-fetched (5x) to compensate for the client-side
+  // `starred === true` filter, then slice back to `limit` so we honour the
+  // caller's pagination request.
+  let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
   if (type === 'songs') {
-    const songs = transformSongsToDTO(response);
-    transformedItems = songs
-      .filter(song => song.starred === true) // Filter on client side to ensure we only get starred items
-      .map(song => {
-        const item: StarredItem = { id: song.id };
-        if (song.title !== null && song.title !== undefined && song.title !== '') item.title = song.title;
-        if (song.artist !== null && song.artist !== undefined && song.artist !== '') item.artist = song.artist;
-        if (song.album !== null && song.album !== undefined && song.album !== '') item.album = song.album;
-        if (song.durationFormatted !== null && song.durationFormatted !== undefined && song.durationFormatted !== '') {
-          item.duration = parseDuration(song.durationFormatted);
-        }
-        if (song.starredAt !== undefined && song.starredAt !== '') item.starredAt = song.starredAt;
-        return item;
-      })
+    items = transformSongsToDTO(response)
+      .filter((song) => song.starred === true)
       .slice(0, limit);
   } else if (type === 'albums') {
-    const albums = transformAlbumsToDTO(response);
-    transformedItems = albums
-      .filter(album => album.starred === true)
-      .map(album => {
-        const item: StarredItem = { id: album.id };
-        if (album.name !== null && album.name !== undefined && album.name !== '') item.name = album.name;
-        if (album.artist !== null && album.artist !== undefined && album.artist !== '') item.artist = album.artist;
-        if (album.releaseYear !== null && album.releaseYear !== undefined) item.year = album.releaseYear;
-        item.songCount = album.songCount; // Always present in albums
-        if (album.starredAt !== undefined && album.starredAt !== '') item.starredAt = album.starredAt;
-        return item;
-      })
+    items = transformAlbumsToDTO(response)
+      .filter((album) => album.starred === true)
       .slice(0, limit);
   } else {
-    const artists = transformArtistsToDTO(response);
-    transformedItems = artists
-      .filter(artist => artist.starred === true)
-      .map(artist => {
-        const item: StarredItem = { id: artist.id };
-        if (artist.name !== null && artist.name !== undefined && artist.name !== '') item.name = artist.name;
-        item.albumCount = artist.albumCount; // Always present
-        item.songCount = artist.songCount; // Always present
-        if (artist.starredAt !== undefined && artist.starredAt !== '') item.starredAt = artist.starredAt;
-        return item;
-      })
+    items = transformArtistsToDTO(response)
+      .filter((artist) => artist.starred === true)
       .slice(0, limit);
   }
 
   return {
-    count: transformedItems.length,
-    items: transformedItems,
+    count: items.length,
+    items,
   };
 }
 

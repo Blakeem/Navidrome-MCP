@@ -150,9 +150,24 @@ export interface ReorderPlaylistTrackRequest {
 }
 
 /**
- * Response DTO for reordering a track
+ * Response DTO for reordering a track. The Navidrome API echoes back only the
+ * trackId that was moved (`{"id":"4"}`) — it does not return the new position
+ * or any track metadata. To avoid an extra round-trip just to enrich the
+ * response (per Batch 2 #29), we synthesize a confirmation from the request
+ * parameters: `previousPosition` = the trackId the caller asked to move,
+ * `newPosition` = the `insert_before` value the caller asked for.
  */
 export interface ReorderPlaylistTrackResponse {
-  /** Track position ID */
+  /** Playlist that was reordered */
+  playlistId: string;
+  /** Track position ID (echoed from the API; matches the input trackId) */
   id: number;
+  /** Original 1-based position the track was moved FROM (= input trackId) */
+  previousPosition: number;
+  /** New 1-based position the track was moved TO (= input insert_before) */
+  newPosition: number;
+  /** Human-readable confirmation message */
+  message: string;
+  /** Whether the operation succeeded */
+  success: boolean;
 }

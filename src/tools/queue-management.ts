@@ -19,13 +19,30 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import { SaveQueueSchema } from '../schemas/validation.js';
+import { formatDuration } from '../transformers/shared-transformers.js';
+import { nullIfGoZeroTime } from '../utils/go-time.js';
 
+/** Raw shape returned by Navidrome's `/queue` GET endpoint. */
+interface RawQueueTrack {
+  id: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  /** Seconds; float for sub-second precision on some formats. */
+  duration?: number;
+}
+
+/** Queue track as exposed to the LLM. Mirrors the convention used by the
+ *  rest of the song surface (Batch 1): keep raw `duration` (seconds) AND
+ *  add `durationFormatted` (M:SS) so callers don't have to format on their
+ *  side and never have to guess units. */
 interface QueueTrack {
   id: string;
   title: string;
   artist: string;
   album: string;
   duration: number;
+  durationFormatted: string;
 }
 
 interface SavedQueueResult {
@@ -33,7 +50,9 @@ interface SavedQueueResult {
   position: number;
   trackCount: number;
   tracks: QueueTrack[];
-  updatedAt?: string;
+  /** ISO 8601 timestamp; null when the queue was never saved or was
+   *  cleared (Navidrome returns Go's zero-time sentinel here). */
+  updatedAt: string | null;
   message?: string;
   queue?: null;
 }
@@ -52,7 +71,7 @@ interface ClearSavedQueueResult {
 export async function getSavedQueue(client: NavidromeClient, _args: unknown): Promise<SavedQueueResult> {
   logger.info('Getting saved queue from Navidrome server');
 
-  const response = await client.request<{ current?: number; position?: number; items?: QueueTrack[]; updatedAt?: string }>('/queue');
+  const response = await client.request<{ current?: number; position?: number; items?: RawQueueTrack[]; updatedAt?: string }>('/queue');
 
   if (response === null || response === undefined || Object.keys(response).length === 0) {
     return {
@@ -60,27 +79,38 @@ export async function getSavedQueue(client: NavidromeClient, _args: unknown): Pr
       position: 0,
       trackCount: 0,
       tracks: [],
+      // Cleared/never-saved queues have no meaningful `updatedAt`; expose
+      // null rather than the Go zero-time sentinel that Navidrome returns
+      // here in the same code path.
+      updatedAt: null,
       message: 'Saved queue is empty',
       queue: null,
     };
   }
 
-  const result: SavedQueueResult = {
+  return {
     current: response.current ?? 0,
     position: response.position ?? 0,
     trackCount: response.items?.length ?? 0,
-    tracks: (response.items ?? []).map((track: QueueTrack) => ({
-      id: track.id,
-      title: track.title ?? '',
-      artist: track.artist ?? '',
-      album: track.album ?? '',
-      duration: track.duration ?? 0,
-    })),
+    tracks: (response.items ?? []).map((track: RawQueueTrack) => {
+      const duration = track.duration ?? 0;
+      return {
+        id: track.id,
+        title: track.title ?? '',
+        artist: track.artist ?? '',
+        album: track.album ?? '',
+        // Keep both representations: raw seconds for math, formatted M:SS
+        // for display. Matches every other song-bearing tool response.
+        duration,
+        durationFormatted: formatDuration(duration),
+      };
+    }),
+    // Map Go's zero-time sentinel ('0001-01-01T00:00:00Z') AND empty strings
+    // to null so a freshly-cleared (or never-saved) queue doesn't surface a
+    // fake 1-Jan-0001 timestamp OR an empty-string placeholder. Same Go
+    // zero-time convention library.ts uses for library createdAt/updatedAt.
+    updatedAt: response.updatedAt === '' ? null : nullIfGoZeroTime(response.updatedAt ?? null),
   };
-  if (response.updatedAt !== null && response.updatedAt !== undefined && response.updatedAt !== '') {
-    result.updatedAt = response.updatedAt;
-  }
-  return result;
 }
 
 export async function saveQueue(client: NavidromeClient, args: unknown): Promise<SaveQueueResult> {

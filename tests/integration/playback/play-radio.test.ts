@@ -72,8 +72,9 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
     const entry = queue.items[0]!;
     // The defining radio signal: stream URL doesn't carry a Navidrome songId
     expect(entry.songId).toBeNull();
-    // The filename mpv stored should be the streamUrl we passed
-    expect(entry.filename).toBe(result.station.streamUrl);
+    // `filename` is intentionally NOT on the LLM-facing shape — the engine
+    // retains it internally for hasRadioStream() / now_playing() detection.
+    expect(entry).not.toHaveProperty('filename');
     expect(entry.isCurrent).toBe(true);
   });
 
@@ -151,7 +152,10 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
     const queue = await getPlayQueue();
     expect(queue.length).toBe(1);
     expect(queue.items[0]!.songId).toBeNull();
-    expect(queue.items[0]!.filename).toBe(result.station.streamUrl);
+    // `filename` no longer surfaces on the LLM-facing PlayQueueItem (it
+    // leaked internal LAN topology). Identity of the new radio entry is
+    // proven by `songId: null` + the `now_playing` radio context below.
+    expect(queue.items[0]).not.toHaveProperty('filename');
 
     const np = await nowPlaying();
     expect(np.isRadio).toBe(true);

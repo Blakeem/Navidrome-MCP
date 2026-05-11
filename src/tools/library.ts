@@ -31,9 +31,7 @@ import {
 import { libraryManager } from '../services/library-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
-
-// Go's zero-time sentinel: the default zero value for time.Time in Go's standard library
-const GO_ZERO_TIME = '0001-01-01T00:00:00Z';
+import { nullIfGoZeroTime } from '../utils/go-time.js';
 
 /**
  * Get user details including library information with active status
@@ -52,7 +50,12 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
     const librariesWithStatus = libraryManager.getLibrariesWithActiveStatus();
     const activeLibraries = librariesWithStatus.filter(lib => lib.isActive);
 
-    // Transform to clean DTO format
+    // Transform to clean DTO format. Map Go's zero-time sentinel (the
+    // server's "never set" value) to null across every timestamp field, not
+    // just `scanInfo` — when the user endpoint never populated createdAt /
+    // updatedAt and the /library enrichment couldn't reach it either, the
+    // sentinel should not be surfaced to LLM consumers as if it were a real
+    // 1-Jan-0001 timestamp.
     const libraryDTOs: LibraryDTO[] = librariesWithStatus.map(lib => ({
       id: lib.id,
       name: lib.name,
@@ -66,12 +69,12 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
         totalDuration: lib.totalDuration,
       },
       scanInfo: {
-        lastScanAt: lib.lastScanAt === GO_ZERO_TIME ? null : lib.lastScanAt,
-        lastScanStartedAt: lib.lastScanStartedAt === GO_ZERO_TIME ? null : lib.lastScanStartedAt,
+        lastScanAt: nullIfGoZeroTime(lib.lastScanAt),
+        lastScanStartedAt: nullIfGoZeroTime(lib.lastScanStartedAt),
         fullScanInProgress: lib.fullScanInProgress,
       },
-      createdAt: lib.createdAt,
-      updatedAt: lib.updatedAt,
+      createdAt: nullIfGoZeroTime(lib.createdAt),
+      updatedAt: nullIfGoZeroTime(lib.updatedAt),
     }));
 
     // Calculate summary statistics
@@ -155,7 +158,7 @@ async function setActiveLibraries(args: unknown): Promise<LibraryManagementRespo
 const tools: Tool[] = [
   {
     name: 'get_song',
-    description: 'Get detailed information about a specific song by ID',
+    description: 'Returns the full record for a single song by ID. Same fields as search_songs results — use this when you already have the song ID and want the canonical SongDTO without searching. To list a song\'s containing playlists, use get_song_playlists.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -169,7 +172,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_album',
-    description: 'Get detailed information about a specific album by ID',
+    description: 'Returns the full record for a single album by ID. Same fields as search_albums results — use this when you already have the album ID. Does NOT include the album\'s tracks; call search_songs with the album ID (or list_recently_played / playlist tools) to enumerate tracks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -183,7 +186,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_artist',
-    description: 'Get detailed information about a specific artist by ID',
+    description: 'Returns the full record for a single artist by ID. Same fields as search_artists results (id, name, albumCount, songCount, plus optional playCount/rating/starred). For biography, similar artists, and top tracks, use the Last.fm tools (get_artist_info, get_similar_artists, get_top_tracks_by_artist).',
     inputSchema: {
       type: 'object',
       properties: {

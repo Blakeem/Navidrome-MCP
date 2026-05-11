@@ -225,8 +225,11 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       await libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig());
 
       // Token + user fetched once; second initialize() short-circuits.
+      // request() is called twice on first init: /user/{uid} then /library
+      // (the enrichment step that backfills the stats Navidrome zeros out
+      // on the user payload).
       expect(mockClient.getCurrentToken).toHaveBeenCalledTimes(1);
-      expect(mockClient.request).toHaveBeenCalledTimes(1);
+      expect(mockClient.request).toHaveBeenCalledTimes(2);
     });
   });
 });
