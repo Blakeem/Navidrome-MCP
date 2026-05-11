@@ -102,12 +102,13 @@ export async function handleStatic(res: ServerResponse, pathname: string): Promi
     res.writeHead(200, {
       'Content-Type': mimeFor(filePath),
       'Content-Length': body.byteLength.toString(),
-      // index.html should not be cached (it bootstraps the app and we want
-      // updates to be visible immediately on next reload); other static
-      // assets can be cached for a day.
-      'Cache-Control': pathname === '/' || pathname.endsWith('/index.html')
-        ? 'no-cache, must-revalidate'
-        : 'public, max-age=86400',
+      // No persistent caching for any webui asset. The panel is served to
+      // LAN clients, all files are KB-scale, and aggressive caching on
+      // app.js/styles.css had been silently locking users on stale JS
+      // (volume-icon state machine missing from cached bundle even after
+      // a hard refresh). Browsers will still revalidate cheaply via
+      // If-Modified-Since.
+      'Cache-Control': 'no-cache, must-revalidate',
     });
     res.end(body);
   } catch (err) {

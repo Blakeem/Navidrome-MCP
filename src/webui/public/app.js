@@ -32,6 +32,7 @@
     iconPause: $('icon-pause'),
     btnMute: $('btn-mute'),
     iconVolHigh: $('icon-vol-high'),
+    iconVolMid: $('icon-vol-mid'),
     iconVolLow: $('icon-vol-low'),
     iconVolMute: $('icon-vol-mute'),
     volume: $('volume-slider'),
@@ -62,6 +63,13 @@
     volumeDragging: false,
     preMuteVolume: 80,
     coverSongId: null,
+    // Identity of the queue currently materialized in the DOM. When the
+    // next snapshot's queue has the same signature, we skip the full
+    // replaceChildren rebuild and only sync the .current marker — full
+    // rebuilds at SSE rate (~1Hz) race the user's mousedown/mouseup on
+    // queue rows and the click event is lost when the row gets recreated
+    // between press and release.
+    queueSignature: null,
   };
 
   // ---------- helpers ----------
@@ -81,6 +89,16 @@
   function setProgressVar(el, percent) {
     const clamped = Math.max(0, Math.min(100, percent));
     el.style.setProperty('--progress', `${clamped}%`);
+  }
+
+  // SVG elements don't reflect the `hidden` IDL attribute to the HTML
+  // attribute in every browser (Chrome 147/Win64 is one such — the JS
+  // property gets set but the `svg[hidden] { display: none }` CSS rule
+  // never matches, so the icon stays visible). Use direct attribute
+  // manipulation so the swap works everywhere.
+  function setHidden(el, hide) {
+    if (hide) el.setAttribute('hidden', '');
+    else el.removeAttribute('hidden');
   }
 
   async function post(path, body) {
@@ -190,17 +208,46 @@
     }
   }
 
+  function queueAriaLabel(item) {
+    const titleLabel = item.title ?? (item.songId ?? 'Track');
+    return item.isCurrent
+      ? `Currently playing: ${titleLabel}`
+      : `Play track ${item.index + 1}: ${titleLabel}`;
+  }
+
   function renderQueue() {
     const items = state.queue.items ?? [];
     els.queueCount.textContent = String(state.queue.length ?? items.length);
     if (items.length === 0) {
-      els.queueList.innerHTML = '<li class="empty">Queue is empty</li>';
+      if (state.queueSignature !== '') {
+        els.queueList.innerHTML = '<li class="empty">Queue is empty</li>';
+        state.queueSignature = '';
+      }
+      return;
+    }
+
+    // Queue identity, not playback position. Time-pos snapshots arrive at
+    // ~1Hz and would otherwise trigger a full replaceChildren rebuild,
+    // recreating every <li> under the user's cursor — that races their
+    // mousedown→mouseup and drops clicks, and restarts hover transitions
+    // (visible as flicker on the hovered row).
+    const signature = items.map((it) => `${it.index}:${it.songId ?? ''}`).join('|');
+    if (signature === state.queueSignature) {
+      const existing = els.queueList.children;
+      for (let i = 0; i < existing.length && i < items.length; i++) {
+        const li = existing[i];
+        const item = items[i];
+        if (item.isCurrent) li.classList.add('current');
+        else li.classList.remove('current');
+        li.setAttribute('aria-label', queueAriaLabel(item));
+      }
       return;
     }
 
     // Build rows imperatively. Using innerHTML for the whole list is simpler
-    // than diffing — queues are short and this list is recreated only when
-    // a queue-mutating event lands, not on every time-pos update.
+    // than diffing — queues are short and this branch only fires when the
+    // queue actually mutates (add/remove/reorder), not on every time-pos
+    // update.
     const rows = items.map((item) => {
       const li = document.createElement('li');
       if (item.isCurrent) li.classList.add('current');
@@ -211,12 +258,7 @@
       const titleLabel = item.title ?? (item.songId ?? 'Track');
       li.tabIndex = 0;
       li.setAttribute('role', 'button');
-      li.setAttribute(
-        'aria-label',
-        item.isCurrent
-          ? `Currently playing: ${titleLabel}`
-          : `Play track ${item.index + 1}: ${titleLabel}`,
-      );
+      li.setAttribute('aria-label', queueAriaLabel(item));
 
       const icon = document.createElement('span');
       icon.className = 'qicon';
@@ -251,9 +293,12 @@
 
       // Click → jump playback to that index. The currently-playing row is
       // a no-op so users don't accidentally restart the track they're
-      // listening to. The next SSE snapshot will update isCurrent for us.
+      // listening to. We read the live `.current` class rather than the
+      // captured `item.isCurrent` because identity-preserving snapshots
+      // re-use this <li> and only flip the class — the closure value can
+      // be stale by the time the user clicks.
       const onActivate = () => {
-        if (item.isCurrent) return;
+        if (li.classList.contains('current')) return;
         post('/api/controls/play-index', { index: item.index });
       };
       li.addEventListener('click', onActivate);
@@ -267,18 +312,19 @@
       return li;
     });
     els.queueList.replaceChildren(...rows);
+    state.queueSignature = signature;
   }
 
   function renderPlayState() {
     const np = state.nowPlaying;
     state.paused = np?.paused !== false;
     if (state.paused) {
-      els.iconPlay.hidden = false;
-      els.iconPause.hidden = true;
+      setHidden(els.iconPlay, false);
+      setHidden(els.iconPause, true);
       els.btnPlay.setAttribute('aria-label', 'Play');
     } else {
-      els.iconPlay.hidden = true;
-      els.iconPause.hidden = false;
+      setHidden(els.iconPlay, true);
+      setHidden(els.iconPause, false);
       els.btnPlay.setAttribute('aria-label', 'Pause');
     }
 
@@ -306,9 +352,14 @@
 
   function updateVolumeIcon(vol) {
     const v = Number(vol);
-    els.iconVolHigh.hidden = !(v >= 50);
-    els.iconVolLow.hidden = !(v > 0 && v < 50);
-    els.iconVolMute.hidden = !(v === 0);
+    // Four-state ramp across the slider's 0–100 range so the transitions
+    // feel evenly paced rather than jumping speaker → two-waves at 50%.
+    // Thresholds split 1–100 into rough thirds: low (1–33), mid (34–66),
+    // high (67+). Mute occupies the single 0 value.
+    setHidden(els.iconVolMute, v !== 0);
+    setHidden(els.iconVolLow, !(v > 0 && v <= 33));
+    setHidden(els.iconVolMid, !(v >= 34 && v <= 66));
+    setHidden(els.iconVolHigh, !(v >= 67));
   }
 
   function rebaseProgress() {
