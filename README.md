@@ -157,6 +157,12 @@ choco install mpv
 ```
 
 > Use the full package ID `shinchiro.mpv` to skip the disambiguation prompt; the Microsoft Store also lists an unofficial third-party `mpv` package, and plain `winget install mpv` will ask you to pick. The shinchiro build is the community standard that [mpv.io](https://mpv.io/installation/) itself points to for Windows.
+>
+> **Windows `PATH` note.** The `shinchiro.mpv` winget package installs to `C:\Program Files\MPV Player\` on Windows 11 and does **not** add itself to `PATH`. You have two options:
+> - Add the install folder to your user or system `PATH` (System Properties → Environment Variables → Path → New → `C:\Program Files\MPV Player`), then open a new terminal so the change takes effect.
+> - Or set `MPV_PATH` in your MCP client config to the full `mpv.exe` path, e.g. `"MPV_PATH": "C:\\Program Files\\MPV Player\\mpv.exe"`.
+>
+> Other install methods (scoop, chocolatey, manual zip from mpv.io) drop `mpv.exe` in a different folder. If `mpv --version` doesn't work in a fresh terminal after install, locate `mpv.exe` and apply one of the two fixes above.
 
 Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `mpv --version`, then restart your MCP client so the server re-detects mpv.
 
