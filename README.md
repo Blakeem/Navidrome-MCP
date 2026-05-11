@@ -151,10 +151,12 @@ sudo zypper install mpv    # openSUSE
 
 **Windows:**
 ```powershell
-winget install mpv         # included on Windows 11
+winget install shinchiro.mpv   # winget is included on Windows 11
 scoop install mpv
 choco install mpv
 ```
+
+> Use the full package ID `shinchiro.mpv` to skip the disambiguation prompt; the Microsoft Store also lists an unofficial third-party `mpv` package, and plain `winget install mpv` will ask you to pick. The shinchiro build is the community standard that [mpv.io](https://mpv.io/installation/) itself points to for Windows.
 
 Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `mpv --version`, then restart your MCP client so the server re-detects mpv.
 
