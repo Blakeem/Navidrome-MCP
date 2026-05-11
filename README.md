@@ -1,6 +1,6 @@
 # Navidrome MCP Server
 
-Turn your Navidrome music server into a conversational music assistant. This MCP (Model Context Protocol) server lets Claude, Cursor, and other MCP-compatible AI clients browse and curate your library, build playlists, discover new music, and play audio directly through your machine's speakers.
+Turn your Navidrome music server into a conversational music assistant. This MCP (Model Context Protocol) server lets Claude Desktop, Claude Code, Cursor, and other MCP-compatible clients browse and curate your library, build playlists, discover new music, and play audio directly through your machine's speakers.
 
 ## Table of Contents
 
@@ -67,7 +67,7 @@ Filter all operations to a subset of your Navidrome libraries, either by setting
 
 - **Node.js 20+** ([download](https://nodejs.org/))
 - **A running Navidrome server**
-- **An MCP-compatible client** (Claude Desktop, Cursor, Continue, or similar)
+- **An MCP-compatible client** (Claude Desktop, Claude Code, Cursor, or another MCP client with local stdio support)
 - **Optional: [mpv](https://mpv.io/)** for local audio playback
 
 ### Quick Setup
@@ -160,7 +160,7 @@ Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `
 
 ### A Note on ChatGPT Desktop
 
-ChatGPT Desktop's MCP integration requires a hosted HTTPS endpoint and is not currently compatible with local stdio servers like this one. Use Claude Desktop, Cursor, Continue, or another MCP client that supports local stdio servers. Re-check once OpenAI adds first-party stdio MCP support.
+ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and is not currently compatible with local stdio servers like this one. If you really want to make it work with ChatGPT, you can wrap a stdio server in HTTPS using a bridge like [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), but that adds operational complexity for a self-hosted music server. Otherwise, use Claude Desktop, Claude Code, Cursor, or another client with native stdio support. Re-check once OpenAI adds first-party stdio MCP support.
 
 ## Available Tools
 
