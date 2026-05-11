@@ -148,7 +148,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_albums_search',
-    description: "Play albums matching search filters via the local mpv player. Pass any filter from `search_albums` (query, genre, artist, year range, starred, etc.) plus `mode` and `shuffle`. Use this when you don't have explicit album IDs in hand. For 'N random albums' use `sort: 'random'` and `limit: N`.",
+    description: "ONE-SHOT search + enqueue for albums — runs the album search AND pipes every matched album's tracks into mpv in a single call. PREFER THIS over the two-step pattern (`search_albums` or `list_starred_items` → `play_albums`); passing matched IDs back through the LLM wastes context tokens. Common intents → invocation: 'play 5 random starred albums' → `{starred: true, sort: 'random', limit: 5}`; 'queue up some jazz' → `{genre: 'Jazz', limit: 10}`; 'shuffle my 2024 releases' → `{year: 2024, shuffle: 'songs'}`; 'add this artist's albums to the queue' → `{query: '<artist>', mode: 'append'}`. Accepts every `search_albums` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace') and `shuffle` ('none' | 'albums' | 'songs', default 'none'). Use the two-step pattern only when you need to show the user the album list first before playing.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -243,7 +243,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_songs_search',
-    description: "Play songs matching search filters via the local mpv player. Pass any filter from `search_songs` plus `mode` and `shuffle`. Use this when you don't have explicit song IDs in hand. For 'play all my starred songs' use `starred: true, limit: 500`.",
+    description: "ONE-SHOT search + enqueue for songs — runs the song search AND pipes the matched track IDs into mpv in a single call. PREFER THIS over the two-step pattern (`search_songs` or `list_starred_items` → `play_songs`); passing matched IDs back through the LLM wastes context tokens, especially for large result sets. Common intents → invocation: 'play all my starred songs' → `{starred: true, limit: 500}`; 'play 50 random rock songs' → `{genre: 'Rock', sort: 'random', limit: 50}`; 'queue up my top-rated tracks' → `{sort: 'rating', order: 'DESC', limit: 100}`; 'shuffle recent additions' → `{sort: 'recently_added', order: 'DESC', limit: 100, shuffle: true}`; 'add songs by this artist' → `{query: '<artist>', mode: 'append'}`. Accepts every `search_songs` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace') and `shuffle` (boolean, default false). Use the two-step pattern only when you need to show the user the song list first before playing.",
     inputSchema: {
       type: 'object',
       properties: {

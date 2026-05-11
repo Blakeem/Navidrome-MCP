@@ -379,9 +379,17 @@ class PlaybackEngine {
           await ipc.command('set_property', 'pause', false);
         } catch (err) {
           // Land in a clean idle state so subsequent reads aren't lying
-          // about a half-loaded queue. `stop` is idempotent and tolerates
-          // an already-cleared queue. Best-effort — if the IPC connection
-          // is itself dead, the next ensureRunning() will re-attach.
+          // about a half-loaded queue. `stop` only halts playback — it does
+          // NOT clear the playlist — so we must issue `playlist-clear`
+          // first to make the "queue cleared and is now empty" error
+          // message below actually true. Both calls are best-effort: if
+          // the IPC connection is itself dead, the next ensureRunning()
+          // will re-attach and mpv will resync state on its own.
+          try {
+            await ipc.command('playlist-clear');
+          } catch {
+            // Connection is gone; the cache-zero below + next attach handle it.
+          }
           try {
             await ipc.command('stop');
           } catch {

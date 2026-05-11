@@ -187,16 +187,19 @@ describe('MpvIpc', () => {
     expect(ipc.isConnected()).toBe(false);
   });
 
-  it('caps the IPC framing buffer at 64KB and tears down on overflow (M6)', async () => {
+  it('caps the IPC framing buffer at 16MB and tears down on overflow (M6)', async () => {
     const ipc = await connectedIpc();
     const sock = latestSocket();
     const onDisconnect = vi.fn();
     ipc.onDisconnect(onDisconnect);
 
-    // Emit a single chunk >64KB with no newline. The IPC parser cannot frame
+    // Emit a single chunk >16MB with no newline. The IPC parser cannot frame
     // it as a complete response and is supposed to drop the buffer + tear
-    // down the connection (next ensureRunning() will re-attach).
-    sock.emit('data', 'a'.repeat(70 * 1024));
+    // down the connection (next ensureRunning() will re-attach). The cap was
+    // raised from 64KB to 16MB to accommodate large-playlist `get_property`
+    // responses (~400 bytes/entry × queue length), which can legitimately be
+    // hundreds of KB on a 500+-track queue.
+    sock.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1024));
 
     expect(ipc.isConnected()).toBe(false);
     expect(onDisconnect).toHaveBeenCalledTimes(1);
@@ -207,9 +210,12 @@ describe('MpvIpc', () => {
     const sock = latestSocket();
 
     const promise = ipc.command('pause');
-    sock.emit('data', 'a'.repeat(70 * 1024));
+    sock.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1024));
 
-    await expect(promise).rejects.toThrow(/exceeded 65536 bytes/);
+    // Regex is intentionally loose on the byte count so future cap tweaks
+    // don't require test updates — the assertion is "we surface a frame-
+    // -size violation," not "the cap is exactly N."
+    await expect(promise).rejects.toThrow(/exceeded \d+ bytes/);
   });
 
   it('timeout-then-close does not double-fire disconnect handlers', async () => {

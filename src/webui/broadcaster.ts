@@ -26,15 +26,27 @@ import { getPlayQueue, nowPlaying, playbackStatus } from '../tools/playback.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Minimum gap between consecutive `time-pos` driven broadcasts. mpv emits the
- * time-pos property change roughly every 250ms while playing — broadcasting
- * the full now-playing + queue snapshot at that cadence wastes CPU on every
- * connected client, and the UI is happy interpolating between 1-second-spaced
- * server values for a smooth progress bar. Other events (pause, volume,
- * playlist-pos, queue mutations) bypass the throttle so they're reflected
- * immediately — those are the ones the user feels as latency.
+ * Minimum gap between consecutive broadcasts triggered by mpv property
+ * changes. mpv emits property events at high frequency in two cases:
+ *   - `time-pos` ticks ~every 250ms during playback.
+ *   - `playlist-count` / `playlist-pos` / `metadata` burst-fire during a bulk
+ *     `loadfile` sequence (one event per loaded track — hundreds, for a
+ *     "play 500 starred albums" stress test).
+ *
+ * Without coalescing, each event would trigger a full `buildSnapshot` that
+ * runs `getPlayQueue` against a *growing* playlist on every step of a bulk
+ * load — gratuitous CPU/IPC churn, and historically the proximate trigger
+ * of the 64KB mpv-IPC buffer overflow.
+ *
+ * 1000ms (1Hz) is fine for the progress bar (the UI interpolates between
+ * server values), and is the right ceiling for bulk-load coalescing too.
+ *
+ * `kind: 'queue'` events (the explicit post-enqueue emit) are NOT throttled
+ * — those mark "the user-facing operation is done, the UI should reflect
+ * it now." Same for `kind: 'station'` (radio start/stop) and any future
+ * non-property kinds.
  */
-const POSITION_THROTTLE_MS = 1000;
+const BROADCAST_THROTTLE_MS = 1000;
 
 /**
  * EventSource reconnect interval the server advertises on connect. Browsers
@@ -54,18 +66,21 @@ const SSE_RETRY_MS = 10_000;
  *   - On disconnect, the response is removed from the active set.
  *   - `stop()` unsubscribes and ends every active SSE response cleanly.
  *
- * Throttling: `time-pos` events are debounced (leading + trailing) to at
- * most one broadcast per second. All other events flush immediately.
+ * Throttling: all property-change events are debounced (leading + trailing)
+ * to at most one broadcast per `BROADCAST_THROTTLE_MS`. Non-property events
+ * (queue mutations, station start/stop) flush immediately so user-actioned
+ * boundaries land in the UI within one frame.
  *
- * Snapshot construction reuses the existing `nowPlaying` and `getPlayQueue`
- * tool impl functions so the web UI sees byte-identical shapes to what an
- * MCP client would see. Failures (e.g. mpv momentarily unreachable) are
- * swallowed at debug level — the next event will produce a fresh attempt.
+ * Snapshot construction reuses the existing `nowPlaying`, `getPlayQueue`,
+ * and `playbackStatus` tool impl functions so the web UI sees byte-identical
+ * shapes to what an MCP client would see. Each read is independently
+ * resilient via `Promise.allSettled` — one failed read leaves a `null` field
+ * on the wire rather than blanking the whole snapshot.
  */
 export class SseBroadcaster {
   private readonly clients = new Set<ServerResponse>();
-  private lastPositionEmitMs = 0;
-  private pendingPositionTimer: NodeJS.Timeout | null = null;
+  private lastBroadcastMs = 0;
+  private pendingBroadcastTimer: NodeJS.Timeout | null = null;
   private unsubscribe: (() => void) | null = null;
 
   constructor(private readonly client: NavidromeClient) {}
@@ -80,9 +95,9 @@ export class SseBroadcaster {
       this.unsubscribe();
       this.unsubscribe = null;
     }
-    if (this.pendingPositionTimer !== null) {
-      clearTimeout(this.pendingPositionTimer);
-      this.pendingPositionTimer = null;
+    if (this.pendingBroadcastTimer !== null) {
+      clearTimeout(this.pendingBroadcastTimer);
+      this.pendingBroadcastTimer = null;
     }
     for (const res of this.clients) {
       try { res.end(); } catch { /* client already gone */ }
@@ -120,36 +135,39 @@ export class SseBroadcaster {
   }
 
   private handleEvent(evt: StateChangeEvent): void {
-    // time-pos is the only high-frequency property; everything else fires on
-    // discrete user actions or track boundaries. Throttle time-pos to ~1Hz
-    // (leading edge fires immediately, trailing edge ensures the final
-    // post-pause value is delivered).
-    if (evt.kind === 'property' && evt.name === 'time-pos') {
+    // All property-change events go through the throttle (leading +
+    // trailing edge). This covers high-frequency time-pos ticks AND the
+    // burst of playlist-count/metadata events that fires during a bulk
+    // loadfile sequence — without coalescing, both would trigger a full
+    // buildSnapshot per event.
+    if (evt.kind === 'property') {
       const now = Date.now();
-      const elapsed = now - this.lastPositionEmitMs;
-      if (elapsed >= POSITION_THROTTLE_MS) {
-        this.lastPositionEmitMs = now;
+      const elapsed = now - this.lastBroadcastMs;
+      if (elapsed >= BROADCAST_THROTTLE_MS) {
+        this.lastBroadcastMs = now;
         void this.broadcast();
-      } else if (this.pendingPositionTimer === null) {
-        const delay = POSITION_THROTTLE_MS - elapsed;
-        this.pendingPositionTimer = setTimeout(() => {
-          this.pendingPositionTimer = null;
-          this.lastPositionEmitMs = Date.now();
+      } else if (this.pendingBroadcastTimer === null) {
+        const delay = BROADCAST_THROTTLE_MS - elapsed;
+        this.pendingBroadcastTimer = setTimeout(() => {
+          this.pendingBroadcastTimer = null;
+          this.lastBroadcastMs = Date.now();
           void this.broadcast();
         }, delay);
         // Don't keep the event loop alive solely for a pending broadcast.
-        this.pendingPositionTimer.unref();
+        this.pendingBroadcastTimer.unref();
       }
       return;
     }
 
-    // All other events: immediate fan-out. Also reset the trailing-edge
-    // timer's deadline by stamping lastPositionEmitMs — the snapshot we're
-    // about to send is fresher than any queued time-pos broadcast.
-    this.lastPositionEmitMs = Date.now();
-    if (this.pendingPositionTimer !== null) {
-      clearTimeout(this.pendingPositionTimer);
-      this.pendingPositionTimer = null;
+    // Non-property events (queue mutations, station start/stop, etc.):
+    // immediate fan-out — these mark user-facing operation boundaries and
+    // the UI should reflect them within one frame. Also reset the
+    // trailing-edge timer's deadline since the snapshot we're about to
+    // send is fresher than any queued throttled broadcast.
+    this.lastBroadcastMs = Date.now();
+    if (this.pendingBroadcastTimer !== null) {
+      clearTimeout(this.pendingBroadcastTimer);
+      this.pendingBroadcastTimer = null;
     }
     void this.broadcast();
   }
@@ -177,22 +195,46 @@ export class SseBroadcaster {
   }
 
   private async buildSnapshot(): Promise<string | null> {
-    try {
-      // Status carries volume + engine running flag; the now-playing and
-      // queue shapes don't include volume so the web UI has no other path
-      // to seed the slider. Three reads are kept parallel for latency on
-      // first-paint; they all hit local caches after the first sample.
-      const [np, queue, status] = await Promise.all([
-        nowPlaying({}),
-        getPlayQueue(this.client, {}),
-        playbackStatus({}),
-      ]);
-      return JSON.stringify({ nowPlaying: np, queue, status });
-    } catch (err) {
-      logger.debug(
-        `webui: buildSnapshot failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    // Status carries volume + engine running flag; the now-playing and
+    // queue shapes don't include volume so the web UI has no other path
+    // to seed the slider. Three reads are kept parallel for latency on
+    // first-paint; they all hit local caches after the first sample.
+    //
+    // allSettled (not all) so a single failed read doesn't blank the
+    // entire snapshot. The web UI already tolerates null for any of the
+    // three fields — better to ship "engine alive but queue temporarily
+    // unavailable" than to fall silent and leave the user wondering if
+    // the MCP server has died.
+    const [npResult, queueResult, statusResult] = await Promise.allSettled([
+      nowPlaying({}),
+      getPlayQueue(this.client, {}),
+      playbackStatus({}),
+    ]);
+
+    const np = settled(npResult, 'nowPlaying');
+    const queue = settled(queueResult, 'queue');
+    const status = settled(statusResult, 'status');
+
+    // If every read failed, there's nothing useful to broadcast.
+    // Returning null skips the SSE write — clients keep their last
+    // snapshot rather than seeing a triple-null frame.
+    if (np === null && queue === null && status === null) {
       return null;
     }
+
+    return JSON.stringify({ nowPlaying: np, queue, status });
   }
+}
+
+/**
+ * Unwrap a settled promise result, logging at debug on rejection and
+ * returning null so the caller can ship a partial snapshot. The `field`
+ * label is included in the log so a recurring failure is identifiable
+ * without ambiguity about which read broke.
+ */
+function settled<T>(result: PromiseSettledResult<T>, field: string): T | null {
+  if (result.status === 'fulfilled') return result.value;
+  const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+  logger.debug(`webui: buildSnapshot ${field} read failed: ${reason}`);
+  return null;
 }

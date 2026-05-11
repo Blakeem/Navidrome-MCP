@@ -6,6 +6,7 @@ Turn your Navidrome music server into a conversational music assistant. This MCP
 
 - [Features](#features)
 - [Installation](#installation)
+- [MPV Remote (Web UI)](#mpv-remote-web-ui)
 - [Available Tools](#available-tools)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -26,6 +27,12 @@ Audio plays through your machine's speakers, no browser or Navidrome web UI need
 The live queue is actively manipulable: move a track to the front and it starts playing, shuffle and the new top plays, remove the current track and the next one auto-advances. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
 
 This design is built for conversational control and pairs cleanly with voice transports (Whisper STT + TTS) to build a hands-free music device on a Raspberry Pi or always-on machine.
+
+### 🎛️ MPV Remote (Web Control Panel)
+
+> Requires `mpv` (same as Local Audio Playback). On by default; lazy-binds once playback starts.
+
+A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser. Now-playing card with cover art, transport controls (previous / pause-resume / next), seek bar, volume slider, and a queue list with click-to-jump. Updates live via Server-Sent Events so a phone laid on the desk stays in sync as the assistant feeds the queue. Defaults to localhost-only; flip one env var to expose it on your LAN and use a phone or tablet as a music remote. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup and the security note.
 
 ### 🎶 Playlists
 
@@ -129,6 +136,7 @@ For a manual build, replace `command`/`args` with:
 - `RADIO_BROWSER_USER_AGENT`: enables Radio Browser global station discovery. Replace the project URL with your own.
 - `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`: enables lyrics fetching.
 - `MPV_PATH`: point at the mpv binary if it's not on `PATH` (e.g. `"C:\\Program Files\\mpv\\mpv.exe"`).
+- `WEBUI_PORT` / `WEBUI_HOST` / `WEBUI_EXPOSE` / `WEBUI_ENABLED`: configure the [MPV Remote web UI](#mpv-remote-web-ui) — defaults to `localhost:8808` and lazy-binds once mpv is playing.
 
 Features turn on automatically when their config is present. Restart your MCP client after changing the config.
 
@@ -169,6 +177,56 @@ Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `
 ### A Note on ChatGPT Desktop
 
 ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and is not currently compatible with local stdio servers like this one. If you really want to make it work with ChatGPT, you can wrap a stdio server in HTTPS using a bridge like [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), but that adds operational complexity for a self-hosted music server. Otherwise, use Claude Desktop, Claude Code, Cursor, or another client with native stdio support. Re-check once OpenAI adds first-party stdio MCP support.
+
+## MPV Remote (Web UI)
+
+When local audio playback is active, the MCP server runs a companion web interface that doubles as a now-playing display and a transport-control remote. Open it in any browser on the host (or anywhere on your LAN once exposed) — no extra install, no separate process.
+
+![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)
+
+### What it does
+
+- **Now-playing card** — cover art, title, artist, album, and queue position (e.g. `3 / 15`). A `Live` indicator confirms the SSE stream is healthy.
+- **Transport controls** — previous / pause-resume / next, with a seek bar showing current position and remaining time.
+- **Volume slider** — drives mpv's internal volume property (independent of your OS volume).
+- **Queue list** — every track in the current mpv queue with title, artist · album, and duration. Click any row to jump to it.
+- **Live state updates** — Server-Sent Events push state changes the instant they happen, throttled to ~1 Hz so the progress bar runs smoothly without flooding the network. Connections auto-reconnect on Wi-Fi blips.
+
+### Enabling
+
+The web UI is **on by default** and binds **lazily**: the port only opens once mpv has something playing, OR when the server reattaches to a pre-existing mpv queue across MCP restarts. Hosts without mpv installed see no listener at all.
+
+To turn it off entirely, set `WEBUI_ENABLED=false` in your MCP client's env block.
+
+### Configuration
+
+All variables are optional. Add them alongside `NAVIDROME_URL` etc. in your MCP client's `env` block, then restart the client.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `WEBUI_ENABLED` | `true` | Set to `false` to disable the panel entirely. |
+| `WEBUI_PORT` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
+| `WEBUI_HOST` | `127.0.0.1` | Bind address. Override only if you know which interface you want — usually `WEBUI_EXPOSE` is the right knob. |
+| `WEBUI_EXPOSE` | `false` | Set to `true` to bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
+
+When `WEBUI_EXPOSE=true`, the MCP server logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one of those on your phone or tablet.
+
+### Using it as a phone/tablet remote
+
+1. Set `"WEBUI_EXPOSE": "true"` in your MCP client's env block.
+2. Restart the MCP client.
+3. Trigger any playback (e.g. ask the assistant to *"play all my starred songs"*) — this is what causes the web UI to bind.
+4. Open the LAN URL from the startup log on your phone's browser. Bookmark it for one-tap access — the page is a single static HTML/CSS/JS bundle, no install required.
+
+The page auto-reconnects via SSE (10-second retry interval), so a phone laid on a desk through a brief Wi-Fi drop just resumes when the link comes back.
+
+### Security note
+
+The web UI has **no authentication** — anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
+
+- On `WEBUI_HOST=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
+- On `WEBUI_EXPOSE=true` it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation.
+- For remote access from outside your network, put it behind a VPN, a reverse proxy with auth (nginx basic auth / Authelia / similar), or a Tailscale-style overlay.
 
 ## Available Tools
 

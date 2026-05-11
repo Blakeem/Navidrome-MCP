@@ -65,11 +65,20 @@ interface IpcResponse {
 
 /**
  * Hard cap for partial-frame buffering on the IPC socket. mpv responses are
- * newline-delimited JSON and well-formed responses fit in a few KB; anything
- * larger without a newline indicates the stream is corrupt or mpv is in a
- * bad state. 64KB matches the stdio line cap in mpv-process.ts.
+ * newline-delimited JSON; most responses fit in a few KB, but `get_property
+ * 'playlist'` (and similar queue-scaled reads) serialize the full playlist
+ * as a single JSON array on one line — ~400 bytes per entry × queue length.
+ * A 583-track stress test landed at ~150–250 KB on a single frame, so the
+ * cap has to comfortably exceed that.
+ *
+ * 16 MB covers ~40,000-track queues at typical entry size — well past any
+ * realistic music-server scenario. The buffer is allocation-on-demand
+ * (Node string growth) so the only cost of the higher cap is the worst-case
+ * RAM ceiling if a frame ever runs away. mpv IPC is a local-only trust
+ * boundary (Unix socket / named pipe), so framing DoS is not a real threat;
+ * the cap remains as a sanity guard against true corruption.
  */
-const MAX_IPC_BUFFER_BYTES = 64 * 1024;
+const MAX_IPC_BUFFER_BYTES = 16 * 1024 * 1024;
 
 /**
  * mpv JSON-IPC client.

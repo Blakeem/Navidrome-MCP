@@ -98,7 +98,7 @@ const tools: Tool[] = [
   },
   {
     name: 'list_starred_items',
-    description: 'List starred/favorited songs, albums, or artists',
+    description: "List starred/favorited songs, albums, or artists. If the goal is to PLAY the starred items (not just show them), use `play_songs_search`/`play_albums_search` with `{starred: true, ...}` instead — those tools search AND enqueue in one shot, avoiding a context-heavy round-trip of IDs through the LLM.",
     inputSchema: {
       type: 'object',
       properties: {

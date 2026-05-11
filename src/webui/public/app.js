@@ -70,6 +70,12 @@
     // queue rows and the click event is lost when the row gets recreated
     // between press and release.
     queueSignature: null,
+    // The queueIndex of the row last marked .current in the DOM. Used to
+    // gate `ensureCurrentVisible` so the auto-scroll only fires on real
+    // current-track transitions (track advance, prev/next, click-to-jump,
+    // first paint) — NOT on every 1Hz time-pos snapshot, which would
+    // otherwise yank the list whenever the user has manually scrolled.
+    lastCurrentIndex: null,
   };
 
   // ---------- helpers ----------
@@ -168,6 +174,61 @@
     renderVolume();
     rebaseProgress();
     renderCover();
+    // Auto-scroll the queue so the currently-playing row is on-screen.
+    // Called LAST so the DOM reflects the snapshot before we measure.
+    ensureCurrentVisible();
+  }
+
+  // Scroll the queue list so the .current row is visible, but ONLY when
+  // the current row has actually changed since the last check — track
+  // advance, prev/next, click-to-jump, or first paint. A snapshot whose
+  // queueIndex matches the last one (e.g. a routine time-pos tick) is a
+  // no-op so the user's manual scroll position is respected. If the
+  // current row is already on screen, no scroll happens either.
+  //
+  // .queue-list has overflow-y:auto with max-height:50svh in styles.css,
+  // so it IS the scrollable viewport — scrollIntoView({block:'start'})
+  // scrolls only the list, not the page, leaving the now-playing card
+  // and controls in place.
+  function ensureCurrentVisible() {
+    const np = state.nowPlaying;
+    const idx = (np !== null && np.engineRunning && typeof np.queueIndex === 'number')
+      ? np.queueIndex
+      : null;
+    if (idx === state.lastCurrentIndex) return;
+    state.lastCurrentIndex = idx;
+    if (idx === null) return;
+
+    const current = els.queueList.querySelector('li.current');
+    if (current === null) return;
+
+    // Visibility test against the queue container's own box. Both rects
+    // are in browser-viewport coords, so this is a pure geometric "is
+    // this rect inside that rect" check — it works whether the queue
+    // list itself is on-screen, half-scrolled-off, or completely below
+    // the fold. A row inside the list's box counts as visible even if
+    // the user is looking at the album art at the top of the page; the
+    // auto-scroll won't yank them just because they scrolled away.
+    const liRect = current.getBoundingClientRect();
+    const listRect = els.queueList.getBoundingClientRect();
+    if (liRect.top >= listRect.top && liRect.bottom <= listRect.bottom) return;
+
+    // Scroll ONLY the queue list — NEVER the page. Element.scrollIntoView
+    // walks every scrollable ancestor and would also scroll the browser
+    // viewport, which is wrong on mobile where the page itself scrolls
+    // (album art + controls + queue together exceed phone viewport
+    // height). The album art and controls must stay put; the user reads
+    // them while the queue auto-tracks current independently.
+    //
+    // Compute the absolute scroll offset within the list's internal scroll
+    // space: (liRect.top - listRect.top) is the row's visual distance from
+    // the list's top edge; adding the list's current scrollTop converts
+    // that to an offset from the scroll content's origin. Setting
+    // scrollTop to that puts the row flush against the list's top. Works
+    // in both directions — negative delta when the row is above the
+    // visible area, positive when below.
+    const targetScrollTop = liRect.top - listRect.top + els.queueList.scrollTop;
+    els.queueList.scrollTo({ top: targetScrollTop, behavior: 'smooth' });
   }
 
   function renderTrackInfo() {
