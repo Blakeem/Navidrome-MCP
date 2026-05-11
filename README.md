@@ -1,6 +1,6 @@
 # Navidrome MCP Server
 
-Turn your Navidrome music server into a conversational music assistant. This MCP (Model Context Protocol) server lets Claude, Cursor, and other MCP-compatible AI clients browse and curate your library, build playlists, discover new music, and — when [mpv](https://mpv.io/) is installed — play audio directly through your machine's speakers.
+Turn your Navidrome music server into a conversational music assistant. This MCP (Model Context Protocol) server lets Claude, Cursor, and other MCP-compatible AI clients browse and curate your library, build playlists, discover new music, and play audio directly through your machine's speakers.
 
 ## Table of Contents
 
@@ -13,53 +13,53 @@ Turn your Navidrome music server into a conversational music assistant. This MCP
 
 ## Features
 
-### Music Library
+### 🎵 Music Library
 
-Browse and search songs, albums, artists, genres, and tags with rich filtering — query, starred status, year range, sort order, tag values, and more. Combine filters to ask things like *"all my starred jazz albums from the 90s, sorted by year"* or *"every song tagged Soundtrack with a 5-star rating"*. Tag analysis tools surface what's actually in your library so you don't have to guess at filter values.
+Browse and search songs, albums, artists, genres, and tags with rich filtering: query, starred status, year range, sort order, tag values, and more. Combine filters to ask things like *"all my starred jazz albums from the 90s, sorted by year"* or *"every song tagged Soundtrack with a 5-star rating"*. Tag analysis tools surface what's actually in your library so you don't have to guess at filter values.
 
-### Local Audio Playback
+### 🔊 Local Audio Playback
 
 > Requires [`mpv`](https://mpv.io/) on the host running the MCP server (see [Installing mpv](#installing-mpv-optional)).
 
-Audio plays through your machine's speakers — no browser, no Navidrome web UI. Search and play in a single step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, *"add 10 random rock songs to whatever's already playing, shuffled"*. Three shuffle modes for albums (keep order, randomize album order, fully interleave tracks).
+Audio plays through your machine's speakers, no browser or Navidrome web UI needed. Search and play in a single step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, *"add 10 random rock songs to whatever's already playing, shuffled"*. Three shuffle modes for albums (keep order, randomize album order, fully interleave tracks).
 
-The live queue is actively manipulable — move a track to the front and it starts playing, shuffle and the new top plays, remove the current track and the next one auto-advances. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
+The live queue is actively manipulable: move a track to the front and it starts playing, shuffle and the new top plays, remove the current track and the next one auto-advances. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
 
 This design is built for conversational control and pairs cleanly with voice transports (Whisper STT + TTS) to build a hands-free music device on a Raspberry Pi or always-on machine.
 
-### Playlists
+### 🎶 Playlists
 
-Create, update, reorder, and delete playlists conversationally. Add content flexibly — single songs, entire albums, whole artist discographies, or specific discs — in one operation. Find which playlists contain a given song. Build dynamic playlists from listening data: *"a 'Hidden Gems' playlist of 5-star songs with under 5 plays"*, *"one top track from each album of my top 10 artists, in chronological order"*.
+Create, update, reorder, and delete playlists conversationally. Add content flexibly in one operation: single songs, entire albums, whole artist discographies, or specific discs. Find which playlists contain a given song. Build dynamic playlists from listening data: *"a 'Hidden Gems' playlist of 5-star songs with under 5 plays"*, *"one top track from each album of my top 10 artists, in chronological order"*.
 
-### Music Discovery (Last.fm)
+### 🎼 Music Discovery (Last.fm)
 
 > Requires `LASTFM_API_KEY`. Free key at [last.fm/api](https://www.last.fm/api/account/create).
 
 Find similar artists and tracks, fetch biographies and top tracks, and browse global music charts. Combine with your library to do gap analysis (*"albums missing from my top 5 artists, ranked by popularity"*), rediscover overlooked music (*"tracks similar to my favorites that I own but never play"*), or build curated "Best Of" playlists scoped to what you actually own.
 
-### Synchronized Lyrics
+### 🎤 Synchronized Lyrics
 
 > Requires `LYRICS_PROVIDER=lrclib` and `LRCLIB_USER_AGENT`. No API key needed.
 
 Fetch time-synced lyrics with millisecond-precision timestamps (LRC format) and plain-text fallbacks from LRCLIB's community database. Matched automatically by title, artist, album, and duration.
 
-### Internet Radio
+### 📻 Internet Radio
 
 Manage Navidrome radio stations and discover new ones globally. Stream URLs are validated before adding (MP3, AAC, OGG, FLAC detection) and SHOUTcast/Icecast metadata is extracted automatically. Bulk maintenance is supported: *"validate all my stations and remove the broken ones"* or *"test these 10 URLs and add the working ones"*.
 
 Global station discovery via Radio Browser (requires `RADIO_BROWSER_USER_AGENT`) covers thousands of stations filterable by genre, country, language, codec, bitrate, and popularity, with vote and click registration so your usage feeds the community ranking.
 
-### Listening Analytics
+### 📊 Listening Analytics
 
 Access play counts, recently-played activity, top-rated and most-played listings, and tag distribution across your library. Use this to drive taste analysis (*"genres I'm playing more vs. less this year"*), discover forgotten favorites, identify one-hit-wonders in your collection, or build mood-based playlists from your listening patterns.
 
-### Ratings & Favorites
+### ⭐ Ratings & Favorites
 
-Star/unstar songs, albums, and artists, set 0–5 star ratings, and list everything starred or top-rated. Read and write the saved Navidrome queue used by the web UI for cross-device sync.
+Star/unstar songs, albums, and artists, set 0-5 star ratings, and list everything starred or top-rated. Read and write the saved Navidrome queue used by the web UI for cross-device sync.
 
-### Multi-Library Support
+### 📚 Multi-Library Support
 
-Filter all operations to a subset of your Navidrome libraries — either by setting a default in your client config (`NAVIDROME_DEFAULT_LIBRARIES`) or by switching active libraries at runtime.
+Filter all operations to a subset of your Navidrome libraries, either by setting a default in your client config (`NAVIDROME_DEFAULT_LIBRARIES`) or by switching active libraries at runtime.
 
 ## Installation
 
@@ -67,7 +67,7 @@ Filter all operations to a subset of your Navidrome libraries — either by sett
 
 - **Node.js 20+** ([download](https://nodejs.org/))
 - **A running Navidrome server**
-- **An MCP-compatible client** — Claude Desktop, Cursor, Continue, or similar
+- **An MCP-compatible client** (Claude Desktop, Cursor, Continue, or similar)
 - **Optional: [mpv](https://mpv.io/)** for local audio playback
 
 ### Quick Setup
@@ -124,17 +124,17 @@ For a manual build, replace `command`/`args` with:
 **Required:** `NAVIDROME_URL`, `NAVIDROME_USERNAME`, `NAVIDROME_PASSWORD`.
 
 **Optional:**
-- `NAVIDROME_DEFAULT_LIBRARIES` — comma-separated library IDs to activate by default; omit for all libraries.
-- `LASTFM_API_KEY` — enables Last.fm discovery features.
-- `RADIO_BROWSER_USER_AGENT` — enables Radio Browser global station discovery. Replace the project URL with your own.
-- `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT` — enables lyrics fetching.
-- `MPV_PATH` — point at the mpv binary if it's not on `PATH` (e.g. `"C:\\Program Files\\mpv\\mpv.exe"`).
+- `NAVIDROME_DEFAULT_LIBRARIES`: comma-separated library IDs to activate by default; omit for all libraries.
+- `LASTFM_API_KEY`: enables Last.fm discovery features.
+- `RADIO_BROWSER_USER_AGENT`: enables Radio Browser global station discovery. Replace the project URL with your own.
+- `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`: enables lyrics fetching.
+- `MPV_PATH`: point at the mpv binary if it's not on `PATH` (e.g. `"C:\\Program Files\\mpv\\mpv.exe"`).
 
 Features turn on automatically when their config is present. Restart your MCP client after changing the config.
 
 ### Installing mpv (optional)
 
-mpv is a lightweight, cross-platform media player. When detected at startup, the server registers an additional set of playback tools so audio streams through your machine's speakers. Without it, the server still manages your library and Navidrome's saved queue — it just doesn't produce audio.
+mpv is a lightweight, cross-platform media player. When detected at startup, the server registers an additional set of playback tools so audio streams through your machine's speakers. Without it, the server still manages your library and Navidrome's saved queue; it just doesn't produce audio.
 
 **macOS** (via [Homebrew](https://brew.sh/)):
 ```bash
@@ -212,7 +212,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 |------|-------------|
 | `star_item` | Star a song, album, or artist |
 | `unstar_item` | Remove a star |
-| `set_rating` | Set a 0–5 star rating |
+| `set_rating` | Set a 0-5 star rating |
 | `list_starred_items` | View starred songs, albums, or artists |
 | `list_top_rated` | View highest-rated items |
 
@@ -234,7 +234,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `get_tag_distribution` | Tag usage counts across the library |
 | `get_filter_options` | Discover available filter values for search operations |
 
-### Last.fm Discovery — *conditional on `LASTFM_API_KEY`*
+### Last.fm Discovery (requires `LASTFM_API_KEY`)
 
 | Tool | Description |
 |------|-------------|
@@ -244,7 +244,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `get_top_tracks_by_artist` | Top tracks for an artist |
 | `get_trending_music` | Trending artists, tracks, and tags from Last.fm charts |
 
-### Lyrics — *conditional on `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`*
+### Lyrics (requires `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`)
 
 | Tool | Description |
 |------|-------------|
@@ -260,7 +260,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `delete_radio_station` | Delete a station |
 | `validate_radio_stream` | Test an http(s) stream URL for accessibility and audio content |
 
-### Global Radio Discovery — *conditional on `RADIO_BROWSER_USER_AGENT`*
+### Global Radio Discovery (requires `RADIO_BROWSER_USER_AGENT`)
 
 | Tool | Description |
 |------|-------------|
@@ -270,7 +270,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `click_station` | Register a play click for popularity metrics |
 | `vote_station` | Vote for a station |
 
-### Local Playback — *conditional on [`mpv`](https://mpv.io/)*
+### Local Playback (requires [`mpv`](https://mpv.io/))
 
 Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket.
 
@@ -278,15 +278,15 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 |------|-------------|
 | `play_songs` | Play one or many songs; `mode: 'replace' \| 'append'`, optional `shuffle` |
 | `play_albums` | Play one or many albums; `mode` plus `shuffle: 'none' \| 'albums' \| 'songs'` (preserve, randomize album order, or fully interleave) |
-| `play_albums_search` | One-shot filter-driven album playback — accepts all `search_albums` filters plus `mode`/`shuffle` |
-| `play_songs_search` | One-shot filter-driven song playback — accepts all `search_songs` filters plus `mode`/`shuffle` |
+| `play_albums_search` | One-shot filter-driven album playback; accepts all `search_albums` filters plus `mode`/`shuffle` |
+| `play_songs_search` | One-shot filter-driven song playback; accepts all `search_songs` filters plus `mode`/`shuffle` |
 | `play_radio_station` | Play a saved Navidrome radio station; replaces the queue (mutually exclusive with songs/albums) |
 | `pause` | Pause playback (position preserved) |
 | `resume` | Resume playback |
 | `next` | Skip to the next track |
 | `previous` | Skip to the previous track |
 | `seek` | Move within the current track (absolute or relative) |
-| `set_volume` | Set mpv's internal volume (0–100) |
+| `set_volume` | Set mpv's internal volume (0-100) |
 | `now_playing` | Current title/artist/album/position/duration and queue index (or station + ICY metadata for radio) |
 | `playback_status` | Engine health probe (running, mpv version, idle) without spawning mpv |
 | `get_play_queue` | Snapshot of the live queue with metadata and current-track index |
@@ -303,7 +303,7 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 - Test credentials with `curl` or a browser first
 
 **macOS-specific**
-- See the [macOS Troubleshooting Guide](docs/MACOS_TROUBLESHOOTING.md) (commonly: Node.js path not found — fix with symlinks or full paths)
+- See the [macOS Troubleshooting Guide](docs/MACOS_TROUBLESHOOTING.md) (commonly: Node.js path not found; fix with symlinks or full paths)
 
 **Configuration**
 - Use absolute paths in config files
@@ -312,7 +312,7 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 
 ### Known Limitations
 
-- **No audio without mpv.** When mpv isn't installed the library and saved-queue tools still work, but audio playback isn't available — use the Navidrome web UI or a Subsonic client.
+- **No audio without mpv.** When mpv isn't installed the library and saved-queue tools still work, but audio playback isn't available; use the Navidrome web UI or a Subsonic client.
 - **Recently-played has no timestamps.** Navidrome exposes play counts and completion status, not last-played times.
 - **Saved queue ≠ live queue.** The `*_saved_queue` tools operate on Navidrome's server-side advisory queue (web UI sync). The `*_play_queue` tools operate on the local mpv playlist. They are independent.
 - **Scrobbling for local playback isn't wired up yet.** Listens through mpv don't currently feed back into Navidrome's play counts. Planned.
