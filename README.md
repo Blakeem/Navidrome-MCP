@@ -1,199 +1,86 @@
 # Navidrome MCP Server
 
-Transform your Navidrome music server with an AI-powered music assistant. This MCP (Model Context Protocol) server enables Claude, ChatGPT, and other AI assistants to interact with your personal music library through natural language, offering intelligent playlist creation, music discovery, library management — and **live audio playback directly through your machine's speakers** when mpv is installed.
+Turn your Navidrome music server into a conversational music assistant. This MCP (Model Context Protocol) server lets Claude, Cursor, and other MCP-compatible AI clients browse and curate your library, build playlists, discover new music, and — when [mpv](https://mpv.io/) is installed — play audio directly through your machine's speakers.
 
 ## Table of Contents
 
-- [Why Navidrome MCP?](#why-navidrome-mcp)
 - [Features](#features)
-  - [Music Library Management](#-music-library-management)
-  - [Local Audio Playback](#-local-audio-playback)
-  - [Intelligent Playlist Creation](#-intelligent-playlist-creation)
-  - [Personalized Music Discovery](#-personalized-music-discovery)
-  - [Smart Radio Management](#-smart-radio-management)
-  - [Analytics & Insights](#-analytics--insights)
 - [Installation](#installation)
-  - [Prerequisites](#prerequisites)
-  - [Installing mpv (optional, for local audio playback)](#installing-mpv-optional-for-local-audio-playback)
-  - [Quick Setup](#quick-setup)
-  - [Configure Claude Desktop](#configure-claude-desktop)
-  - [Configure ChatGPT Desktop](#configure-chatgpt-desktop)
-- [Powerful Usage Examples](#powerful-usage-examples)
 - [Available Tools](#available-tools)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [License](#license)
 
-## Why Navidrome MCP?
-
-Imagine having an AI assistant that truly understands your music taste. This MCP server enables AI assistants to:
-
-- **Play music directly through your machine's speakers** — queue albums, search-and-play, manipulate the live queue, all in one tool call (requires mpv)
-- **Analyze your listening patterns** and create perfectly curated playlists
-- **Discover hidden gems** in your library based on your mood or activity
-- **Build custom radio stations** from your favorite tracks
-- **Find music similar to what you love** using Last.fm's recommendation engine
-- **Discover internet radio stations** from around the world with advanced filtering
-- **Get synchronized lyrics** with millisecond-precision timestamps for your favorite tracks
-- **Manage your library** with simple conversational commands
-
-This isn't just another music tool – it's your personal music curator powered by AI.
-
 ## Features
 
-### 🎵 Music Library Management
+### Music Library
 
-* **Intelligent Browsing**: Navigate songs, albums, artists, and genres with smart filtering
-* **Deep Search**: Full-text search across all metadata or targeted searches for specific content
-* **Rich Metadata**: Access detailed information about tracks, albums, and artists
-* **Tag Analysis**: Explore and analyze metadata tags (genre, composer, label, year, and more)
-* **Clean Responses**: Optimized data transfer with only essential fields (~10 properties vs 50+ raw)
+Browse and search songs, albums, artists, genres, and tags with rich filtering — query, starred status, year range, sort order, tag values, and more. Combine filters to ask things like *"all my starred jazz albums from the 90s, sorted by year"* or *"every song tagged Soundtrack with a 5-star rating"*. Tag analysis tools surface what's actually in your library so you don't have to guess at filter values.
 
-### 🔊 Local Audio Playback
+### Local Audio Playback
 
-> Requires `mpv` on the host running the MCP server. See [Installing mpv](#installing-mpv-optional-for-local-audio-playback) below.
+> Requires [`mpv`](https://mpv.io/) on the host running the MCP server (see [Installing mpv](#installing-mpv-optional)).
 
-* **Plays Through Your Speakers**: Audio decodes locally via mpv and outputs through your machine's audio device — no browser, no Navidrome web UI needed
-* **Search-and-Play in One Call**: `play_albums_search` and `play_songs_search` accept all your existing search filters (query, genre, artist, year range, starred, sort, etc.) and pipe results straight into the live play queue
-* **Internet Radio**: `play_radio_station` (registered only when mpv is installed) plays any saved Navidrome radio station through mpv — Icecast, SHOUTcast, etc. ICY metadata flows through to `now_playing` so you can see what's currently playing on the stream
-* **Active Queue Manipulation**: Move tracks to the front to make them play, shuffle the queue and the new top plays, remove the current track and the next one auto-advances — the queue actively reflects what should play
-* **Three Shuffle Modes for Albums**: Keep natural order (`'none'`), randomize album order while preserving track order within each (`'albums'`), or fully interleave all tracks across albums (`'songs'`)
-* **Cross-Platform**: Works on Linux, macOS, and Windows 11; mpv handles every common audio codec via Navidrome's transcoding pipeline
-* **Survives Reconnects**: mpv outlives the MCP server process via a stable per-user socket — restarting your MCP client doesn't interrupt playback
-* **Lazy-Spawned**: mpv is only started on first playback tool call — zero cost when you're not using the feature
+Audio plays through your machine's speakers — no browser, no Navidrome web UI. Search and play in a single step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, *"add 10 random rock songs to whatever's already playing, shuffled"*. Three shuffle modes for albums (keep order, randomize album order, fully interleave tracks).
 
-### 🎶 Intelligent Playlist Creation
+The live queue is actively manipulable — move a track to the front and it starts playing, shuffle and the new top plays, remove the current track and the next one auto-advances. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
 
-* **AI Assistant Integration**: Enables AI assistants to analyze your taste and build themed playlists
-* **Smart Management**: Create, update, and organize playlists conversationally
-* **Flexible Track Addition**: Add songs by ID, entire albums, artist discographies, or specific discs
-* **Dynamic Reordering**: Rearrange tracks with simple commands
-* **Cross-Reference**: Find which playlists contain specific songs
+This design is built for conversational control and pairs cleanly with voice transports (Whisper STT + TTS) to build a hands-free music device on a Raspberry Pi or always-on machine.
 
-### 🎼 Personalized Music Discovery
+### Playlists
 
-* **Listening Data Access**: Provides listening history data for AI assistants to understand your preferences
-* **Similar Artist/Track Finding**: Discover music similar to your favorites via Last.fm
-* **Artist Deep Dives**: Get biographies, popular tracks, and related artists
-* **Global Trends**: Browse worldwide music charts and trending genres
-* **Library Analysis Tools**: Access data to help AI assistants find overlooked tracks in your library
+Create, update, reorder, and delete playlists conversationally. Add content flexibly — single songs, entire albums, whole artist discographies, or specific discs — in one operation. Find which playlists contain a given song. Build dynamic playlists from listening data: *"a 'Hidden Gems' playlist of 5-star songs with under 5 plays"*, *"one top track from each album of my top 10 artists, in chronological order"*.
 
-### 📻 Smart Radio Management
+### Music Discovery (Last.fm)
 
-* **Stream Validation**: Test radio URLs before adding to avoid broken streams
-* **Format Detection**: Automatic detection of MP3, AAC, OGG, FLAC streams
-* **Metadata Extraction**: Pull station info from SHOUTcast/Icecast headers
-* **Custom Station Creation**: Build radio stations from your collection
-* **One-Time Setup Tips**: Smart contextual help that appears only when needed
+> Requires `LASTFM_API_KEY`. Free key at [last.fm/api](https://www.last.fm/api/account/create).
 
-### 🌍 Internet Radio Discovery
+Find similar artists and tracks, fetch biographies and top tracks, and browse global music charts. Combine with your library to do gap analysis (*"albums missing from my top 5 artists, ranked by popularity"*), rediscover overlooked music (*"tracks similar to my favorites that I own but never play"*), or build curated "Best Of" playlists scoped to what you actually own.
 
-* **Global Station Database**: Access thousands of internet radio stations worldwide via Radio Browser
-* **Advanced Filtering**: Search by genre, country, language, codec, bitrate, and more
-* **Automatic Validation**: Discovered stations are tested for availability
-* **Quality Control**: Filter out broken stations and focus on high-quality streams
-* **Popularity Metrics**: Discover stations by vote count and listener engagement
-* **Station Management**: Tools for AI assistants to add discovered stations to your collection
+### Synchronized Lyrics
 
-### 🎤 Synchronized Lyrics
+> Requires `LYRICS_PROVIDER=lrclib` and `LRCLIB_USER_AGENT`. No API key needed.
 
-* **Time-Synchronized Lyrics**: Get lyrics with millisecond-precision timestamps for line-by-line timing
-* **Dual Format Support**: Access both time-synced and plain text lyrics
-* **Community-Powered**: Lyrics sourced from LRCLIB's community database
-* **Smart Matching**: Automatic matching by title, artist, album, and duration
-* **No API Keys Required**: Free lyrics access without registration
+Fetch time-synced lyrics with millisecond-precision timestamps (LRC format) and plain-text fallbacks from LRCLIB's community database. Matched automatically by title, artist, album, and duration.
 
-### 📊 Analytics & Insights
+### Internet Radio
 
-* **Listening Patterns**: Understand your music habits with play statistics
-* **Taste Evolution**: Track how your preferences change over time
-* **Most/Least Played**: Discover your true favorites and forgotten tracks
-* **Genre Distribution**: Access data about your library's composition for analysis
-* **Recommendation Data**: Provides data for AI assistants to generate suggestions based on your history
+Manage Navidrome radio stations and discover new ones globally. Stream URLs are validated before adding (MP3, AAC, OGG, FLAC detection) and SHOUTcast/Icecast metadata is extracted automatically. Bulk maintenance is supported: *"validate all my stations and remove the broken ones"* or *"test these 10 URLs and add the working ones"*.
 
-### ⭐ Preference Management
+Global station discovery via Radio Browser (requires `RADIO_BROWSER_USER_AGENT`) covers thousands of stations filterable by genre, country, language, codec, bitrate, and popularity, with vote and click registration so your usage feeds the community ranking.
 
-* **Star System**: Mark favorites for quick access
-* **5-Star Ratings**: Rate content for better recommendations
-* **Queue Control**: Manage playback queues across devices
-* **Data Access for Organization**: Provides preference data for AI assistants to help organize your collection
+### Listening Analytics
+
+Access play counts, recently-played activity, top-rated and most-played listings, and tag distribution across your library. Use this to drive taste analysis (*"genres I'm playing more vs. less this year"*), discover forgotten favorites, identify one-hit-wonders in your collection, or build mood-based playlists from your listening patterns.
+
+### Ratings & Favorites
+
+Star/unstar songs, albums, and artists, set 0–5 star ratings, and list everything starred or top-rated. Read and write the saved Navidrome queue used by the web UI for cross-device sync.
+
+### Multi-Library Support
+
+Filter all operations to a subset of your Navidrome libraries — either by setting a default in your client config (`NAVIDROME_DEFAULT_LIBRARIES`) or by switching active libraries at runtime.
 
 ## Installation
 
 ### Prerequisites
 
-* **Node.js 20+** ([Download here](https://nodejs.org/))
-* **Running Navidrome server** with your music library
-* **Claude Desktop** or **ChatGPT Desktop** (or any MCP-compatible client)
-* **Optional: mpv** for local audio playback through your machine's speakers — see [below](#installing-mpv-optional-for-local-audio-playback)
-
-**Additional for manual build:**
-* **pnpm** package manager ([Install instructions](https://pnpm.io/installation))
-
-### Installing mpv (optional, for local audio playback)
-
-mpv is a lightweight, cross-platform media player. The MCP server detects it at startup; if installed, it registers 18 additional playback tools (`play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `pause`, `resume`, `next`, `previous`, `seek`, `set_volume`, `now_playing`, `playback_status`, `get_play_queue`, `clear_play_queue`, `shuffle_play_queue`, `move_in_play_queue`, `remove_from_play_queue`, and `play_radio_station`) so saved Navidrome radio stations and your music library both stream through your machine's speakers. If mpv isn't found, none of these tools are exposed — keeping the tool list clean for setups that don't use local playback.
-
-**macOS** (via [Homebrew](https://brew.sh/)):
-```bash
-brew install mpv
-```
-
-**Linux**:
-```bash
-# Debian / Ubuntu / Mint / PopOS
-sudo apt install mpv
-
-# Fedora / RHEL / CentOS Stream
-sudo dnf install mpv
-
-# Arch / Manjaro
-sudo pacman -S mpv
-
-# openSUSE
-sudo zypper install mpv
-```
-
-**Windows**:
-```powershell
-# winget (included on Windows 11 by default)
-winget install mpv
-
-# scoop
-scoop install mpv
-
-# chocolatey
-choco install mpv
-```
-
-Or download a pre-built binary from [mpv.io](https://mpv.io/installation/).
-
-**Verify**:
-```bash
-mpv --version
-```
-
-After installing, restart your MCP client (Claude Desktop, ChatGPT Desktop, etc.) so the server re-detects mpv and registers the playback tools.
-
-**Tip — non-standard install location**: if mpv is installed somewhere not on your `PATH`, set the `MPV_PATH` environment variable in your MCP client config to point at the binary (e.g. `"MPV_PATH": "C:\\Program Files\\mpv\\mpv.exe"` on Windows).
+- **Node.js 20+** ([download](https://nodejs.org/))
+- **A running Navidrome server**
+- **An MCP-compatible client** — Claude Desktop, Cursor, Continue, or similar
+- **Optional: [mpv](https://mpv.io/)** for local audio playback
 
 ### Quick Setup
 
-#### Method 1: NPM Package (Recommended)
-
-The easiest way to get started is using the published npm package, which auto-updates on launch:
+Install the published package (auto-updates on launch):
 
 ```bash
 npm install -g navidrome-mcp
 ```
 
-📦 **Package**: [navidrome-mcp on npm](https://www.npmjs.com/package/navidrome-mcp)
+Package: [navidrome-mcp on npm](https://www.npmjs.com/package/navidrome-mcp).
 
-This installs the MCP server globally and keeps it up-to-date automatically.
-
-#### Method 2: Manual Build (Development)
-
-For development or custom builds:
+For a development build:
 
 ```bash
 git clone https://github.com/Blakeem/Navidrome-MCP.git
@@ -202,16 +89,9 @@ pnpm install
 pnpm build
 ```
 
-### Configure Claude Desktop
+### Configure Your MCP Client
 
-Find your configuration file:
-* **Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
-* **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-* **Linux**: `~/.config/Claude/claude_desktop_config.json`
-
-Add the Navidrome MCP server:
-
-#### Using NPM Package (Recommended)
+For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Claude/` on Windows, `~/Library/Application Support/Claude/` on macOS, `~/.config/Claude/` on Linux). Other MCP clients use the same JSON shape.
 
 ```json
 {
@@ -234,331 +114,242 @@ Add the Navidrome MCP server:
 }
 ```
 
-Optional env vars:
-- `NAVIDROME_DEFAULT_LIBRARIES` — comma-separated library IDs to activate by default (e.g. `"1,2"`). Omit to use all libraries.
-- `LASTFM_API_KEY` — enables music discovery tools. Get a free key at [last.fm/api](https://www.last.fm/api/account/create).
-- `RADIO_BROWSER_USER_AGENT` / `LRCLIB_USER_AGENT` — required for Radio Browser and LRCLIB integrations. Use the string shown above (replace with your own project URL).
-- `LYRICS_PROVIDER` — set to `lrclib` to enable lyrics fetching (free, no key needed).
-
-#### Using Manual Build (Alternative)
+For a manual build, replace `command`/`args` with:
 
 ```json
-{
-  "mcpServers": {
-    "navidrome": {
-      "command": "node",
-      "args": ["/absolute/path/to/Navidrome-MCP/dist/index.js"],
-      "env": {
-        "NAVIDROME_URL": "http://your-server:4533",
-        "NAVIDROME_USERNAME": "your_username",
-        "NAVIDROME_PASSWORD": "your_password",
-        "NAVIDROME_DEFAULT_LIBRARIES": "1,2",
-        "LASTFM_API_KEY": "your_api_key",
-        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)",
-        "LYRICS_PROVIDER": "lrclib",
-        "LRCLIB_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)"
-      }
-    }
-  }
-}
+"command": "node",
+"args": ["/absolute/path/to/Navidrome-MCP/dist/index.js"]
 ```
 
-Optional env vars: same as the NPM block above.
+**Required:** `NAVIDROME_URL`, `NAVIDROME_USERNAME`, `NAVIDROME_PASSWORD`.
 
-**Important**:
-- **NPM method**: Uses `npx navidrome-mcp` which auto-updates on each launch
-- **Manual method**: Requires absolute paths (full path from root) and manual updates
-- **Library filtering**: Use `NAVIDROME_DEFAULT_LIBRARIES` to set default active libraries (e.g., "1" for one library, "1,2,3" for multiple)
-  - If not set, all libraries are active by default
-  - You can change active libraries at runtime using the `set_active_libraries` tool
-  - Invalid library IDs are ignored with a warning
-- Get a free Last.fm API key at [Last.fm](https://www.last.fm/api) (optional - enables music discovery)
-- Radio Browser integration requires a User-Agent string (enables station discovery)
-- Lyrics integration works without API keys (LRCLIB is free)
-- Features are automatically enabled/disabled based on available configuration
-- Restart Claude Desktop after saving
+**Optional:**
+- `NAVIDROME_DEFAULT_LIBRARIES` — comma-separated library IDs to activate by default; omit for all libraries.
+- `LASTFM_API_KEY` — enables Last.fm discovery features.
+- `RADIO_BROWSER_USER_AGENT` — enables Radio Browser global station discovery. Replace the project URL with your own.
+- `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT` — enables lyrics fetching.
+- `MPV_PATH` — point at the mpv binary if it's not on `PATH` (e.g. `"C:\\Program Files\\mpv\\mpv.exe"`).
 
-### Configure ChatGPT Desktop
+Features turn on automatically when their config is present. Restart your MCP client after changing the config.
 
-> **ChatGPT Desktop MCP support is not currently compatible with local stdio servers.**
->
-> ChatGPT's MCP integration requires a hosted HTTPS endpoint, not a local `stdio` command. Navidrome-MCP runs as a local process that communicates over stdio (the same model used by Claude Desktop, Cursor, and other MCP clients). Bridging it to ChatGPT would require running a separate HTTP-to-stdio proxy on a public URL, which is out of scope for this project.
->
-> Check back once OpenAI adds first-party stdio MCP support. In the meantime, use **Claude Desktop**, **Cursor**, **Continue**, or any other MCP client that supports local stdio servers.
+### Installing mpv (optional)
 
-## Powerful Usage Examples
+mpv is a lightweight, cross-platform media player. When detected at startup, the server registers an additional set of playback tools so audio streams through your machine's speakers. Without it, the server still manages your library and Navidrome's saved queue — it just doesn't produce audio.
 
-### 🔊 Live Audio Playback (requires mpv)
+**macOS** (via [Homebrew](https://brew.sh/)):
+```bash
+brew install mpv
+```
 
-* **"Play 5 random albums from my starred list"** → one tool call (`play_albums_search { starred: true, sort: 'random', limit: 5 }`)
-* **"Queue up everything I've starred from the 90s, sorted by year"**
-* **"Play all Pink Floyd albums in chronological order, but shuffle the song order within each album"**
-* **"Find a random selection of jazz albums I haven't heard recently and play them through the speakers"**
-* **"Add 10 random rock songs from my library to whatever's already queued, shuffled"**
-* **"Move track 7 to the front of the queue and start playing it"**
-* **"Pause the music, skip the next two tracks, then resume from track 4"**
-* **"Put on SomaFM Groove Salad"** → `play_radio_station { id: ... }` (radio replaces the queue cleanly; switch back to your music with any `play_songs` / `play_albums` call)
-* **"What's currently playing? When does this song end?"** → `now_playing` returns title, artist, album, position, duration, and queue position (or `isRadio: true` and the station name when a radio is loaded)
+**Linux:**
+```bash
+sudo apt install mpv       # Debian / Ubuntu / Mint / PopOS
+sudo dnf install mpv       # Fedora / RHEL / CentOS Stream
+sudo pacman -S mpv         # Arch / Manjaro
+sudo zypper install mpv    # openSUSE
+```
 
-### 🎙️ Voice-Controlled Jukebox (Power User)
+**Windows:**
+```powershell
+winget install mpv         # included on Windows 11
+scoop install mpv
+choco install mpv
+```
 
-Combine this MCP with a Speech-to-Text layer (e.g., Whisper) and Text-to-Speech feedback (e.g., system TTS or ElevenLabs) on a Raspberry Pi or always-on machine to build a hands-free, voice-controlled music device:
+Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `mpv --version`, then restart your MCP client so the server re-detects mpv.
 
-1. STT captures **"Play some upbeat 80s rock"** from the user's microphone
-2. The AI assistant (powered by this MCP) calls `play_songs_search { genre: 'Rock', yearFrom: 1980, yearTo: 1989, sort: 'random', limit: 30, shuffle: true }` — **one tool call from raw intent to audio**
-3. Music plays through the Pi's speakers via mpv (no browser, no external client)
-4. Follow up with natural language: **"Skip this one"** → `next`, **"Pause"** → `pause`, **"What's playing?"** → `now_playing` (TTS reads the result back to the user), **"Move the song called 'Africa' to the front"** → search to find the songId, then `move_in_play_queue` with `to: 0`
+### A Note on ChatGPT Desktop
 
-The playback engine has no MCP-specific assumptions — the same engine could be wrapped by any voice transport, web UI, or hardware button interface. The active-queue model (move-to-front starts playing, shuffle resets the play head) is built for exactly this kind of conversational control.
-
-### 🎯 Smart Discovery & Playlist Creation
-
-* **"Look at my most played artists, find what albums I'm missing from their discographies, and tell me which ones are most popular"**
-* **"Create a 'Best of Pink Floyd' playlist using Last.fm's top tracks data, but only with songs I actually own"**
-* **"Analyze my recently played songs, find similar tracks in my library I haven't played in 6 months, and create a rediscovery playlist"**
-* **"Build me a playlist mixing my top 10 most played songs with similar tracks from artists I own but rarely listen to"**
-
-### 🔍 Collection Gap Analysis
-
-* **"Show me which albums are missing from my top 5 most played artists and rank them by Last.fm popularity"**
-* **"Find artists where I only own singles or compilations, not their main albums"**
-* **"Identify my favorite genres, then show me highly-rated albums in those genres that I don't own"**
-* **"Look at artists similar to my favorites and tell me which ones I already have in my library but never play"**
-
-### 📻 Radio Station Maintenance
-
-* **"Go through all my existing radio stations, validate each one, and remove the broken ones"**
-* **"Here are 10 jazz radio URLs I found online - test them all and add only the working ones with good bitrates"**
-* **"Find the top-voted jazz and classical stations worldwide, validate them, and add the best 5 of each genre"**
-* **"Check all my radio stations and replace any broken ones with similar working stations"**
-
-### 🎼 Advanced Playlist Automation
-
-* **"Create a 'Hidden Gems' playlist with 5-star rated songs that have less than 5 plays"**
-* **"Build weekly playlists based on what I listened to most each month of last year"**
-* **"Make a 'Complete Artist Journey' playlist with one top track from each album of my top 10 artists, in chronological order"**
-* **"Generate mood playlists by analyzing my listening patterns: what I play in mornings vs evenings vs weekends"**
-
-### 📊 Listening Insights & Organization
-
-* **"Analyze my jazz collection: show play counts, ratings, and find which albums I've never fully listened to"**
-* **"Find duplicate songs across different albums and create a cleanup list"**
-* **"Show me my listening evolution: which genres I've moved away from and which I'm playing more"**
-* **"Identify 'one-hit wonders' in my library - artists where I only play one song repeatedly"**
+ChatGPT Desktop's MCP integration requires a hosted HTTPS endpoint and is not currently compatible with local stdio servers like this one. Use Claude Desktop, Cursor, Continue, or another MCP client that supports local stdio servers. Re-check once OpenAI adds first-party stdio MCP support.
 
 ## Available Tools
 
-### 🔧 Core System
+Tools marked **conditional** are only registered when the corresponding configuration is present.
+
+### Core System
 
 | Tool | Description |
 |------|-------------|
-| `test_connection` | Verify Navidrome server connectivity and feature status |
+| `test_connection` | Verify Navidrome connectivity and report feature/tool availability |
 
-### 📚 Library Management
-
-| Tool | Description |
-|------|-------------|
-| `get_song` | Detailed song information |
-| `get_album` | Detailed album information |
-| `get_artist` | Detailed artist information |
-| `get_song_playlists` | Get all playlists that contain a specific song |
-| `get_user_details` | Get user information and available libraries |
-| `set_active_libraries` | Set which libraries are active for filtering content |
-
-### 🔍 Search & Discovery
+### Library Management
 
 | Tool | Description |
 |------|-------------|
-| `search_all` | Search across all content types |
-| `search_songs` | Search for specific songs |
-| `search_albums` | Search for albums |
-| `search_artists` | Search for artists |
-| `get_similar_artists` | Find similar artists (Last.fm) |
-| `get_similar_tracks` | Find similar tracks (Last.fm) |
+| `get_song` | Detailed song metadata by ID |
+| `get_album` | Detailed album metadata by ID |
+| `get_artist` | Detailed artist metadata by ID |
+| `get_song_playlists` | List all playlists containing a given song |
+| `get_user_details` | User profile, available libraries, and active-library status |
+| `set_active_libraries` | Set which libraries are active for all search/list operations |
+
+### Search
+
+| Tool | Description |
+|------|-------------|
+| `search_all` | Search across artists, albums, and songs with filters and sorting |
+| `search_songs` | Search songs with advanced filters and sorting |
+| `search_albums` | Search albums with advanced filters and sorting |
+| `search_artists` | Search artists with advanced filters and sorting |
+
+### Playlists
+
+| Tool | Description |
+|------|-------------|
+| `list_playlists` | View all accessible playlists |
+| `get_playlist` | Get playlist metadata by ID |
+| `create_playlist` | Create a new playlist |
+| `update_playlist` | Update name, description, or visibility |
+| `delete_playlist` | Delete a playlist |
+| `get_playlist_tracks` | Get playlist contents (JSON or M3U) |
+| `add_tracks_to_playlist` | Add songs, albums, artist discographies, or specific discs in one operation |
+| `remove_tracks_from_playlist` | Remove tracks by position |
+| `reorder_playlist_track` | Move a track to a new position |
+
+### Ratings & Favorites
+
+| Tool | Description |
+|------|-------------|
+| `star_item` | Star a song, album, or artist |
+| `unstar_item` | Remove a star |
+| `set_rating` | Set a 0–5 star rating |
+| `list_starred_items` | View starred songs, albums, or artists |
+| `list_top_rated` | View highest-rated items |
+
+### Listening History & Saved Queue
+
+| Tool | Description |
+|------|-------------|
+| `list_recently_played` | Recent listening activity with optional time-range filter |
+| `list_most_played` | Most-played songs, albums, or artists |
+| `get_saved_queue` | Read the Navidrome saved queue (web UI sync) |
+| `save_queue` | Save a queue to Navidrome for web UI sync |
+| `clear_saved_queue` | Clear the Navidrome saved queue |
+
+### Metadata & Tags
+
+| Tool | Description |
+|------|-------------|
+| `search_by_tags` | Search by tag values (genre, releasetype, media, etc.) |
+| `get_tag_distribution` | Tag usage counts across the library |
+| `get_filter_options` | Discover available filter values for search operations |
+
+### Last.fm Discovery — *conditional on `LASTFM_API_KEY`*
+
+| Tool | Description |
+|------|-------------|
+| `get_similar_artists` | Find artists similar to a given artist |
+| `get_similar_tracks` | Find tracks similar to a given track |
 | `get_artist_info` | Artist biography and tags |
-| `get_top_tracks_by_artist` | Get top tracks for an artist from Last.fm |
-| `get_trending_music` | Global music trends |
+| `get_top_tracks_by_artist` | Top tracks for an artist |
+| `get_trending_music` | Trending artists, tracks, and tags from Last.fm charts |
 
-### 🎵 Playlist Operations
-
-| Tool | Description |
-|------|-------------|
-| `list_playlists` | View all playlists |
-| `get_playlist` | Get detailed information about a specific playlist by ID |
-| `create_playlist` | Create new playlist |
-| `update_playlist` | Update playlist metadata |
-| `delete_playlist` | Remove playlist |
-| `get_playlist_tracks` | Get playlist contents |
-| `add_tracks_to_playlist` | Add multiple types of content (songs/albums/artists) in a single operation |
-| `remove_tracks_from_playlist` | Remove specific tracks |
-| `reorder_playlist_track` | Rearrange track order |
-
-### ⭐ Ratings & Favorites
+### Lyrics — *conditional on `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`*
 
 | Tool | Description |
 |------|-------------|
-| `star_item` | Mark as favorite |
-| `unstar_item` | Remove from favorites |
-| `set_rating` | Set 0-5 star rating |
-| `list_starred_items` | View favorites |
-| `list_top_rated` | View highest rated items |
+| `get_lyrics` | Time-synced (LRC) and plain-text lyrics, matched by title/artist/album/duration |
 
-### 📊 Analytics & History
+### Radio Management
 
 | Tool | Description |
 |------|-------------|
-| `list_recently_played` | View recent listening activity |
-| `list_most_played` | Find most played content |
-| `get_saved_queue` | View the saved queue used by the Navidrome web interface |
-| `save_queue` | Save a queue to the Navidrome server (shown in the web interface) |
-| `clear_saved_queue` | Clear the saved queue used by the Navidrome web interface |
+| `list_radio_stations` | List all saved Navidrome radio stations |
+| `get_radio_station` | Detailed info for a station by ID |
+| `create_radio_station` | Create one or more stations (JSON array, optional `validateBeforeAdd`) |
+| `delete_radio_station` | Delete a station |
+| `validate_radio_stream` | Test an http(s) stream URL for accessibility and audio content |
 
-### 🔊 Local Playback
-
-> Available when [`mpv`](https://mpv.io/) is installed on the host running the MCP server (see [Installing mpv](#installing-mpv-optional-for-local-audio-playback)). Audio plays through the server's speakers; mpv is lazy-spawned on the first playback tool call and survives MCP reconnects via a stable per-user IPC socket.
+### Global Radio Discovery — *conditional on `RADIO_BROWSER_USER_AGENT`*
 
 | Tool | Description |
 |------|-------------|
-| `play_songs` | Play one or many songs through the local speakers. Accepts `songIds: string[]`, `mode: 'replace' \| 'append'` (default `'replace'`), and `shuffle: boolean` (shuffles only the new batch) |
-| `play_albums` | Play one or many albums. Accepts `albumIds: string[]`, `mode: 'replace' \| 'append'`, and `shuffle: 'none' \| 'albums' \| 'songs'` (album-order, song-within-album, or fully randomized) |
-| `play_albums_search` | Play albums matching `search_albums` filters (query, genre, artist, year range, starred, etc.) plus `mode` and `shuffle: 'none' \| 'albums' \| 'songs'`. One-shot path for filter-driven album playback (e.g. `{ starred: true, sort: 'random', limit: 5 }` for 5 random starred albums) |
-| `play_songs_search` | Play songs matching `search_songs` filters plus `mode` and `shuffle: boolean`. One-shot path for filter-driven song playback (e.g. `{ starred: true, limit: 500 }` for every starred song) |
-| `pause` | Pause local audio playback (position preserved) |
-| `resume` | Resume local audio playback |
-| `next` | Skip to the next track in the local playlist |
-| `previous` | Skip to the previous track in the local playlist |
+| `discover_radio_stations` | Find stations globally via Radio Browser |
+| `get_radio_filters` | Available filter values (tags, countries, languages, codecs) |
+| `get_station_by_uuid` | Detailed Radio Browser station info |
+| `click_station` | Register a play click for popularity metrics |
+| `vote_station` | Vote for a station |
+
+### Local Playback — *conditional on [`mpv`](https://mpv.io/)*
+
+Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket.
+
+| Tool | Description |
+|------|-------------|
+| `play_songs` | Play one or many songs; `mode: 'replace' \| 'append'`, optional `shuffle` |
+| `play_albums` | Play one or many albums; `mode` plus `shuffle: 'none' \| 'albums' \| 'songs'` (preserve, randomize album order, or fully interleave) |
+| `play_albums_search` | One-shot filter-driven album playback — accepts all `search_albums` filters plus `mode`/`shuffle` |
+| `play_songs_search` | One-shot filter-driven song playback — accepts all `search_songs` filters plus `mode`/`shuffle` |
+| `play_radio_station` | Play a saved Navidrome radio station; replaces the queue (mutually exclusive with songs/albums) |
+| `pause` | Pause playback (position preserved) |
+| `resume` | Resume playback |
+| `next` | Skip to the next track |
+| `previous` | Skip to the previous track |
 | `seek` | Move within the current track (absolute or relative) |
-| `set_volume` | Set mpv's internal volume (0-100) |
-| `now_playing` | Report current title/artist/album/position/duration and queue index/length |
-| `playback_status` | Probe engine health (running, mpv version, volume, idle) |
-| `get_play_queue` | Read-only snapshot of the live play queue with track metadata and the current-track index |
-| `clear_play_queue` | Clear the live play queue and stop playback |
-| `shuffle_play_queue` | Randomize the order of items in the live play queue (membership unchanged) |
-| `move_in_play_queue` | Move a play-queue entry from one index to another |
-| `remove_from_play_queue` | Remove the play-queue entry at the given index (mpv auto-advances when the current track is removed) |
-
-### 📻 Radio Management
-
-| Tool | Description |
-|------|-------------|
-| `validate_radio_stream` | Test stream URL validity |
-| `list_radio_stations` | View all stations |
-| `get_radio_station` | Get detailed information about a specific radio station by ID |
-| `create_radio_station` | Create radio stations using JSON array format (single or multiple stations, with optional validation*) |
-| `delete_radio_station` | Delete an internet radio station by ID |
-| `play_radio_station` | Play a saved radio station through the local mpv speakers. Only registered when mpv is installed. Replaces the entire play queue — radio is mutually exclusive with songs/albums. Use `now_playing` to read the currently-playing station and ICY metadata. |
-| `discover_radio_stations` | Find internet radio stations globally |
-| `get_radio_filters` | Get available search filters (genres, countries, etc.) |
-| `get_station_by_uuid` | Get detailed station information |
-| `click_station` | Register play click for popularity metrics |
-| `vote_station` | Vote for a radio station |
-
-*Note: `create_radio_station` supports an optional `validateBeforeAdd` parameter that will test stream URLs before adding them to Navidrome.
-
-### 🎤 Lyrics & Timestamps
-
-| Tool | Description |
-|------|-------------|
-| `get_lyrics` | Get synchronized and plain text lyrics |
-
-### 🏷️ Metadata & Tags
-
-| Tool | Description |
-|------|-------------|
-| `search_by_tags` | Search by specific tags |
-| `get_tag_distribution` | Analyze tag usage patterns and distribution |
-| `get_filter_options` | Get available filter values for search operations |
+| `set_volume` | Set mpv's internal volume (0–100) |
+| `now_playing` | Current title/artist/album/position/duration and queue index (or station + ICY metadata for radio) |
+| `playback_status` | Engine health probe (running, mpv version, idle) without spawning mpv |
+| `get_play_queue` | Snapshot of the live queue with metadata and current-track index |
+| `clear_play_queue` | Clear the queue and stop playback |
+| `shuffle_play_queue` | Randomize queue order (membership unchanged) |
+| `move_in_play_queue` | Move a queue entry between indices |
+| `remove_from_play_queue` | Remove an entry; mpv auto-advances if the current track is removed |
 
 ## Troubleshooting
 
-### Common Issues
+**Connection problems**
+- Verify Navidrome is running and reachable
+- Ensure `NAVIDROME_URL` includes the protocol (`http://` or `https://`)
+- Test credentials with `curl` or a browser first
 
-**Connection Problems**
-- Verify Navidrome server is running
-- Check URL includes protocol (http:// or https://)
-- Ensure credentials are correct
-- Test with `curl` or browser first
+**macOS-specific**
+- See the [macOS Troubleshooting Guide](docs/MACOS_TROUBLESHOOTING.md) (commonly: Node.js path not found — fix with symlinks or full paths)
 
-**macOS Specific**
-- See [macOS Troubleshooting Guide](docs/MACOS_TROUBLESHOOTING.md)
-- Common issue: Node.js path not found
-- Solution: Create symlinks or use full paths
-
-**Configuration Issues**
+**Configuration**
 - Use absolute paths in config files
-- Validate JSON syntax (no trailing commas)
-- Check environment variables are set
-- Restart client after changes
+- Validate JSON (no trailing commas)
+- Restart your MCP client after changes
 
-### Limitations
+### Known Limitations
 
-**Playback Control**: When [`mpv`](#installing-mpv-optional-for-local-audio-playback) is installed on the host running the MCP server, the server can play audio directly through your machine's speakers and the AI can fully control playback (play, pause, seek, queue manipulation). Without mpv, the server still manages your library and Navidrome's saved queue but doesn't produce audio — use your Navidrome web UI or a Subsonic client for that.
-
-**Recently Played**: Navidrome doesn't provide last-played timestamps, only play counts and completion status.
-
-**Saved Queue**: `get_saved_queue` / `save_queue` / `clear_saved_queue` operate on Navidrome's server-side advisory queue (the cross-device sync state shown in the web UI). They are distinct from the live `*_play_queue` tools, which control the local mpv playlist.
-
-**Scrobbling for local playback**: Not yet wired up — listens via mpv don't automatically appear in `list_recently_played` / `list_most_played`. Planned future enhancement.
+- **No audio without mpv.** When mpv isn't installed the library and saved-queue tools still work, but audio playback isn't available — use the Navidrome web UI or a Subsonic client.
+- **Recently-played has no timestamps.** Navidrome exposes play counts and completion status, not last-played times.
+- **Saved queue ≠ live queue.** The `*_saved_queue` tools operate on Navidrome's server-side advisory queue (web UI sync). The `*_play_queue` tools operate on the local mpv playlist. They are independent.
+- **Scrobbling for local playback isn't wired up yet.** Listens through mpv don't currently feed back into Navidrome's play counts. Planned.
 
 ## Development
 
-### Setup for Contributors
-
 ```bash
-# Clone and setup
 git clone https://github.com/Blakeem/Navidrome-MCP.git
 cd Navidrome-MCP
 cp .env.example .env
 # Edit .env with your credentials
 
-# Development
-pnpm dev       # Hot reload mode
-pnpm test      # Run tests
-pnpm lint      # Check code style
-pnpm typecheck # Type checking
+pnpm dev          # hot reload
+pnpm test         # watch-mode tests
+pnpm test:run     # one-shot tests
+pnpm check:all    # lint + typecheck + dead-code
+pnpm build        # production bundle
 ```
 
-### Testing with MCP Inspector
+Testing with [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
 
 ```bash
-# Build first
 pnpm build
-
-# Web UI testing
-npx @modelcontextprotocol/inspector node dist/index.js
-
-# CLI testing
+npx @modelcontextprotocol/inspector node dist/index.js                  # web UI
 npx @modelcontextprotocol/inspector --cli node dist/index.js \
-  --method tools/call \
-  --tool-name search_all \
-  --tool-arg query="jazz"
-```
-
-### Project Structure
-
-```
-navidrome-mcp/
-├── src/           # TypeScript source
-├── dist/          # Compiled JavaScript
-├── docs/          # Documentation
-├── tests/         # Test suites
-└── CLAUDE.md      # AI assistant instructions
+  --method tools/call --tool-name search_all --tool-arg query="jazz"    # CLI
 ```
 
 ## License
 
-### Code: AGPL-3.0
-
-Source code is licensed under GNU Affero General Public License v3.0. See [LICENSE](LICENSE).
-
-### Documentation: CC-BY-SA-4.0
-
-Documentation is licensed under Creative Commons Attribution-ShareAlike 4.0 International.
+- **Code:** [AGPL-3.0](LICENSE)
+- **Documentation:** CC-BY-SA-4.0
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/Blakeem/Navidrome-MCP/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/Blakeem/Navidrome-MCP/discussions)
+- [GitHub Issues](https://github.com/Blakeem/Navidrome-MCP/issues)
+- [GitHub Discussions](https://github.com/Blakeem/Navidrome-MCP/discussions)
 
 ---
 
