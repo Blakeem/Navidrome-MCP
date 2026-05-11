@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f17" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Navidrome MCP MPV Remote</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='22'%3E%F0%9F%8E%B5%3C/text%3E%3C/svg%3E" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="title-link"
+       href="https://github.com/Blakeem/Navidrome-MCP"
+       target="_blank"
+       rel="noopener noreferrer"
+       aria-label="Open Navidrome MCP project on GitHub (opens in a new tab)">
+      <h1 class="title">Navidrome MCP MPV Remote</h1>
+    </a>
+    <div class="topbar-actions">
+      <span class="conn" data-state="connecting" aria-live="polite">
+        <span class="conn-dot"></span>
+        <span class="conn-label">Connecting&hellip;</span>
+      </span>
+      <button type="button" class="ghost-btn" id="open-network-info" aria-label="Show network info">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm-1 17.93A8 8 0 0 1 4.07 13H7a14 14 0 0 0 1.46 6.93ZM11 11H4.07A8 8 0 0 1 11 4.07Zm0-6.93V11H8.5C8.61 8.34 9.5 5.85 11 4.07ZM13 4.07c1.5 1.78 2.39 4.27 2.5 6.93H13Zm0 8.93h2.5c-.11 2.66-1 5.15-2.5 6.93Zm0 8.93V13h2.93A14 14 0 0 1 13 19.93ZM19.93 13H17a14 14 0 0 0-1.46-6.93A8 8 0 0 1 19.93 13Zm0-2H17V4.07A8 8 0 0 1 19.93 11Z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="now-playing-card" aria-label="Now playing">
+      <div class="cover" id="cover">
+        <svg class="cover-placeholder" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3Z"/>
+        </svg>
+      </div>
+      <div class="track-info">
+        <div class="badge" id="state-badge" data-state="idle">Idle</div>
+        <h2 class="track-title" id="track-title">No track loaded</h2>
+        <p class="track-artist" id="track-artist"></p>
+        <p class="track-album" id="track-album"></p>
+        <p class="queue-pos" id="queue-pos"></p>
+      </div>
+    </section>
+
+    <section class="progress-section" aria-label="Progress">
+      <div class="progress-row">
+        <input
+          type="range"
+          id="seek-slider"
+          class="slider seek-slider"
+          min="0"
+          max="100"
+          step="1"
+          value="0"
+          aria-label="Seek"
+          disabled
+        />
+      </div>
+      <div class="progress-times">
+        <span id="position-label">0:00</span>
+        <span id="duration-label">0:00</span>
+      </div>
+    </section>
+
+    <section class="transport" aria-label="Transport controls">
+      <button type="button" class="transport-btn" id="btn-prev" aria-label="Previous track">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
+        </svg>
+      </button>
+      <button type="button" class="transport-btn play-btn" id="btn-play-pause" aria-label="Play / Pause">
+        <svg id="icon-play" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M8 5v14l11-7z"/>
+        </svg>
+        <svg id="icon-pause" viewBox="0 0 24 24" aria-hidden="true" hidden>
+          <path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/>
+        </svg>
+      </button>
+      <button type="button" class="transport-btn" id="btn-next" aria-label="Next track">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z"/>
+        </svg>
+      </button>
+    </section>
+
+    <section class="volume-section" aria-label="Volume">
+      <button type="button" class="volume-icon" id="btn-mute" aria-label="Toggle mute">
+        <svg id="icon-vol-high" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.06A4.49 4.49 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4-.91 7-4.49 7-8.77S18 4.14 14 3.23z"/>
+        </svg>
+        <svg id="icon-vol-low" viewBox="0 0 24 24" aria-hidden="true" hidden>
+          <path fill="currentColor" d="M3 9v6h4l5 5V4L7 9z"/>
+        </svg>
+        <svg id="icon-vol-mute" viewBox="0 0 24 24" aria-hidden="true" hidden>
+          <path fill="currentColor" d="M16.5 12A4.5 4.5 0 0 0 14 7.97v2.21l2.45 2.45A4.5 4.5 0 0 0 16.5 12zM19 12c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.79 8.79 0 0 0 21 12c0-4.28-3-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.7 8.7 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9zM12 4 9.91 6.09 12 8.18z"/>
+        </svg>
+      </button>
+      <input
+        type="range"
+        id="volume-slider"
+        class="slider volume-slider"
+        min="0"
+        max="100"
+        step="1"
+        value="80"
+        aria-label="Volume"
+      />
+      <span id="volume-label" class="volume-label">--</span>
+    </section>
+
+    <section class="queue" aria-label="Play queue">
+      <header class="queue-header">
+        <h3>Queue <span class="queue-count" id="queue-count">0</span></h3>
+      </header>
+      <ol class="queue-list" id="queue-list"></ol>
+    </section>
+  </main>
+
+  <dialog id="network-info-dialog" class="modal">
+    <form method="dialog" class="modal-content">
+      <h2>Network Info</h2>
+      <p class="modal-help" id="network-info-help"></p>
+      <ul class="network-list" id="network-info-list"></ul>
+      <p class="modal-hint" id="network-info-hint"></p>
+      <menu class="modal-actions">
+        <button type="submit" class="primary-btn">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

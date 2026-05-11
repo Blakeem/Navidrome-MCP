@@ -165,6 +165,10 @@ interface RemoveFromPlayQueueResult {
   success: true;
 }
 
+interface PlayQueueIndexResult {
+  success: true;
+}
+
 const SetVolumeSchema = z.object({
   level: z.number().min(0).max(100),
 });
@@ -204,6 +208,10 @@ const MoveInPlayQueueSchema = z.object({
 });
 
 const RemoveFromPlayQueueSchema = z.object({
+  index: z.number().int().min(0),
+});
+
+const PlayQueueIndexSchema = z.object({
   index: z.number().int().min(0),
 });
 
@@ -999,6 +1007,36 @@ export async function moveInPlayQueue(args: unknown): Promise<MoveInPlayQueueRes
     return { success: true };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('move_in_play_queue', error));
+  }
+}
+
+/**
+ * Jump the play head to the play-queue entry at the given index.
+ *
+ * Companion to `next` / `previous` for non-adjacent navigation — equivalent
+ * to clicking a row in a media-player queue. Queue contents are unchanged;
+ * only the active track shifts. mpv unpauses implicitly so the action feels
+ * responsive: a user expressing intent to "play this row" with a paused
+ * engine would otherwise silently change tracks without resuming playback.
+ *
+ * Out-of-range indices surface as mpv errors via `ErrorFormatter` (no
+ * pre-validation — avoids a TOCTOU race with concurrent queue mutations
+ * that change the length).
+ */
+export async function playQueueIndex(args: unknown): Promise<PlayQueueIndexResult> {
+  let parsed: z.infer<typeof PlayQueueIndexSchema>;
+  try {
+    parsed = PlayQueueIndexSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_queue_index', error));
+  }
+
+  try {
+    logger.debug(`playback: play_queue_index index=${parsed.index}`);
+    await playbackEngine.jumpToPlaylistEntry(parsed.index);
+    return { success: true };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_queue_index', error));
   }
 }
 

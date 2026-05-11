@@ -115,6 +115,24 @@ export interface QueueTrackMetadata {
 }
 
 /**
+ * Engine state-change event delivered to subscribers of `onStateChange`.
+ *
+ * `kind === 'property'` is forwarded from mpv's own observe-property stream;
+ * `name` is the mpv property (`pause`, `volume`, `time-pos`, `playlist-pos`,
+ * `playlist-count`, `duration`, `media-title`, `metadata`, `idle-active`,
+ * `eof-reached`) and `data` is the new value (unknown JSON shape).
+ *
+ * `kind === 'queue'` fires after a queue-mutating IPC sequence completes
+ * (enqueue/clear/shuffle/move/remove/enqueueRadio). It carries no payload —
+ * subscribers are expected to re-read state from the public getters.
+ */
+export type StateChangeEvent =
+  | { kind: 'property'; name: string; data: unknown }
+  | { kind: 'queue' };
+
+type StateChangeHandler = (event: StateChangeEvent) => void;
+
+/**
  * Singleton playback engine wrapping mpv.
  *
  * Lifecycle:
@@ -175,6 +193,15 @@ class PlaybackEngine {
   // (the cost of a stale entry is just bytes — there's no correctness hazard
   // and the next enqueue overwrites it). Cap mirrors FILENAME_CACHE_LIMIT.
   private readonly metadataCache = new Map<string, QueueTrackMetadata>();
+  // Subscribers that want to know when engine-observable state changes. Two
+  // kinds of events fan out here: `'property'` events relay mpv's own
+  // property-change notifications (volume, pause, time-pos, playlist-pos,
+  // etc.); `'queue'` events fire after a queue-mutating IPC sequence completes
+  // (enqueue, clear, shuffle, move, remove, enqueueRadio) because mpv's own
+  // property events don't always cover the full set of changes a mutation
+  // produces. Subscribers should treat the payload as advisory and re-derive
+  // any state they care about from the public getters. See `onStateChange`.
+  private readonly stateChangeHandlers: Array<StateChangeHandler> = [];
 
   private constructor() {}
 
@@ -299,7 +326,7 @@ class PlaybackEngine {
       throw new Error('enqueue requires at least one song ID');
     }
     await this.ensureRunning();
-    return this.withMutationLock(async () => {
+    const result = await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
 
       // Radio mutual exclusion: a radio stream and songs cannot coexist in the
@@ -383,6 +410,8 @@ class PlaybackEngine {
 
       return { demoted };
     });
+    this.emitStateChange({ kind: 'queue' });
+    return result;
   }
 
   /**
@@ -487,11 +516,12 @@ class PlaybackEngine {
    */
   async clearPlaylist(): Promise<void> {
     await this.ensureRunning();
-    return this.withMutationLock(async () => {
+    await this.withMutationLock(async () => {
       await this.requireIpc().command('stop');
       this.currentRadioStation = null;
       this.metadataCache.clear();
     });
+    this.emitStateChange({ kind: 'queue' });
   }
 
   /**
@@ -517,7 +547,7 @@ class PlaybackEngine {
       throw new Error('enqueueRadio requires a non-empty stream URL');
     }
     await this.ensureRunning();
-    return this.withMutationLock(async () => {
+    await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       await ipc.command('loadfile', streamUrl, 'replace');
       await ipc.command('set_property', 'pause', false);
@@ -525,6 +555,7 @@ class PlaybackEngine {
         ? { name: stationName }
         : null;
     });
+    this.emitStateChange({ kind: 'queue' });
   }
 
   /**
@@ -566,7 +597,7 @@ class PlaybackEngine {
    */
   async shufflePlaylist(): Promise<void> {
     await this.ensureRunning();
-    return this.withMutationLock(async () => {
+    await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       await ipc.command('playlist-shuffle');
       const count = this.getCachedProperty('playlist-count');
@@ -574,6 +605,7 @@ class PlaybackEngine {
         await ipc.command('set_property', 'playlist-pos', 0);
       }
     });
+    this.emitStateChange({ kind: 'queue' });
   }
 
   /**
@@ -592,13 +624,14 @@ class PlaybackEngine {
    */
   async movePlaylistEntry(from: number, to: number): Promise<void> {
     await this.ensureRunning();
-    return this.withMutationLock(async () => {
+    await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       await ipc.command('playlist-move', from, to);
       if (from === 0 || to === 0) {
         await ipc.command('set_property', 'playlist-pos', 0);
       }
     });
+    this.emitStateChange({ kind: 'queue' });
   }
 
   /**
@@ -608,9 +641,10 @@ class PlaybackEngine {
    */
   async removePlaylistEntry(index: number): Promise<void> {
     await this.ensureRunning();
-    return this.withMutationLock(async () => {
+    await this.withMutationLock(async () => {
       await this.requireIpc().command('playlist-remove', index);
     });
+    this.emitStateChange({ kind: 'queue' });
   }
 
   /**
@@ -643,6 +677,32 @@ class PlaybackEngine {
   }
 
   /**
+   * Jump the play head to the play-queue entry at `index`. Companion to
+   * `next` / `previous` for non-adjacent navigation — equivalent to
+   * clicking a row in a media player's queue. Queue contents are NOT
+   * mutated; only the play position changes.
+   *
+   * Implicitly unpauses because the action signals "play this now" — a
+   * paused engine that silently stays paused after a jump is consistently
+   * the wrong behavior in every other media player I've seen. Mirrors the
+   * unpause in `enqueue(replace)`.
+   *
+   * Out-of-range indices surface as mpv errors via the IPC layer; we don't
+   * pre-validate (avoids a race with concurrent mutations that change the
+   * length). Same approach as `movePlaylistEntry` / `removePlaylistEntry`.
+   *
+   * No explicit `emitStateChange` — mpv's own property-change event for
+   * `playlist-pos` is already wired through the observer and will fan out
+   * to subscribers on its own.
+   */
+  async jumpToPlaylistEntry(index: number): Promise<void> {
+    await this.ensureRunning();
+    const ipc = this.requireIpc();
+    await ipc.command('set_property', 'playlist-pos', index);
+    await ipc.command('set_property', 'pause', false);
+  }
+
+  /**
    * Read a property from the engine's local observed-property cache. Returns
    * `undefined` if the property has never been observed (or its value has
    * not yet changed from mpv's initial state — `idle-active` notably does
@@ -650,6 +710,27 @@ class PlaybackEngine {
    */
   getCachedProperty(name: string): unknown {
     return this.propertyCache.get(name);
+  }
+
+  /**
+   * Register a subscriber for engine state-change events (mpv property
+   * updates + queue mutations). Returns an unsubscribe function — callers
+   * should invoke it on shutdown or when they no longer care, to avoid a
+   * handler leak across long-running connections (e.g. SSE clients).
+   *
+   * Handlers are invoked synchronously in registration order; a throwing
+   * handler is logged and skipped so it cannot deny notifications to others.
+   * The engine does not buffer events: only changes that occur after the
+   * subscription is in place are delivered. Callers that need a baseline
+   * snapshot should read it via the public getters immediately after
+   * subscribing.
+   */
+  onStateChange(handler: StateChangeHandler): () => void {
+    this.stateChangeHandlers.push(handler);
+    return () => {
+      const idx = this.stateChangeHandlers.indexOf(handler);
+      if (idx !== -1) this.stateChangeHandlers.splice(idx, 1);
+    };
   }
 
   /**
@@ -757,6 +838,23 @@ class PlaybackEngine {
       throw new Error('mpv IPC is not connected');
     }
     return this.ipc;
+  }
+
+  /**
+   * Dispatch a state-change event to every registered subscriber, isolating
+   * each handler from the others. A handler that throws is logged and
+   * skipped — the engine must not silently lose notifications because a
+   * single misbehaving listener (e.g. a dead SSE client mid-flush) raised.
+   */
+  private emitStateChange(event: StateChangeEvent): void {
+    if (this.stateChangeHandlers.length === 0) return;
+    for (const handler of this.stateChangeHandlers) {
+      try {
+        handler(event);
+      } catch (err) {
+        logger.debug(`state-change handler threw: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   /**
@@ -971,6 +1069,7 @@ class PlaybackEngine {
     //    the immediate change event mpv emits on observe would be lost.
     ipc.onPropertyChange((evt) => {
       this.propertyCache.set(evt.name, evt.data);
+      this.emitStateChange({ kind: 'property', name: evt.name, data: evt.data });
     });
 
     // 3. Subscribe last. mpv emits a change event with the current value
@@ -1038,6 +1137,9 @@ class PlaybackEngine {
     this.metadataCache.clear();
     this.currentRadioStation = null;
     this.startPromise = null;
+    // Drop subscribers — they would point at handlers from the prior session
+    // that have no business firing after a process-level restart-equivalent.
+    this.stateChangeHandlers.length = 0;
 
     // Allow restarting after an explicit shutdown
     this.shuttingDown = false;

@@ -88,9 +88,53 @@ const ConfigSchema = z.object({
   // instead of using the startup snapshot. Set to false if you curate your library
   // mid-session and need newly-added genres/labels/moods to be immediately visible.
   filterCacheEnabled: z.boolean().default(true),
+
+  // Web UI Configuration — companion HTTP control panel for mpv playback.
+  // The web UI is implicitly gated by the playback feature: it only ever
+  // initializes when mpv is detected. Even when `enabled` is true, the
+  // server does not bind a port until something has been queued (avoids
+  // leaving a port listening when the user never plays anything in a session).
+  // `host=127.0.0.1` keeps the panel on localhost only. Setting `expose=true`
+  // is a convenience shortcut that forces the bind to `0.0.0.0` so a phone
+  // on the same LAN can reach it; explicit `host` overrides this.
+  webui: z.object({
+    enabled: z.boolean().default(true),
+    host: z.string().default('127.0.0.1'),
+    port: z.number().int().min(1).max(65535).default(8808),
+    expose: z.boolean().default(false),
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+interface RawWebUiConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  expose: boolean;
+}
+
+/**
+ * Parse WEBUI_* environment variables into the raw shape ConfigSchema.webui
+ * expects. Extracted so the rawConfig literal in loadConfig stays readable
+ * and so the explicit return type satisfies the project's
+ * `explicit-function-return-type` lint rule.
+ */
+function buildWebUiConfig(): RawWebUiConfig {
+  const rawPort = process.env['WEBUI_PORT'];
+  const parsedPort = (rawPort !== undefined && rawPort !== '') ? parseInt(rawPort, 10) : 8808;
+  const expose = process.env['WEBUI_EXPOSE'] === 'true';
+  const explicitHost = process.env['WEBUI_HOST'];
+  const host = (explicitHost !== undefined && explicitHost !== '')
+    ? explicitHost
+    : (expose ? '0.0.0.0' : '127.0.0.1');
+  return {
+    enabled: process.env['WEBUI_ENABLED'] !== 'false',
+    host,
+    port: Number.isFinite(parsedPort) ? parsedPort : 8808,
+    expose,
+  };
+}
 
 export async function loadConfig(): Promise<Config> {
   // Try to safely load .env file only in development mode
@@ -205,6 +249,13 @@ export async function loadConfig(): Promise<Config> {
 
     // Filter cache — disabled when env var is explicitly 'false'
     filterCacheEnabled: process.env['NAVIDROME_FILTER_CACHE_ENABLED'] !== 'false',
+
+    // Web UI — see ConfigSchema.webui doc for behavior.
+    // `WEBUI_ENABLED=false` disables it entirely; `WEBUI_EXPOSE=true` flips
+    // the bind host to 0.0.0.0 unless the user also set WEBUI_HOST explicitly
+    // (explicit host always wins). Parsed here once so downstream code never
+    // re-reads process.env for these.
+    webui: buildWebUiConfig(),
   };
 
   try {

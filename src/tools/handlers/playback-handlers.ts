@@ -40,6 +40,7 @@ import {
   shufflePlayQueue,
   moveInPlayQueue,
   removeFromPlayQueue,
+  playQueueIndex,
 } from '../playback.js';
 
 // Tool definitions for the playback category (Stage 2 + Stage 3 + Stage 4 — 17 tools).
@@ -446,6 +447,22 @@ const tools: Tool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'play_queue_index',
+    description: 'Start playing the existing play-queue entry at the given index (jumps the play head without changing queue contents). Unpauses if paused. Use this to skip to a non-adjacent track; for adjacent moves prefer `next`/`previous`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        index: {
+          type: 'number',
+          minimum: 0,
+          description: 'Zero-based queue index of the entry to play.',
+        },
+      },
+      required: ['index'],
+      additionalProperties: false,
+    },
+  },
 ];
 
 /**
@@ -493,6 +510,8 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
           return moveInPlayQueue(args);
         case 'remove_from_play_queue':
           return removeFromPlayQueue(args);
+        case 'play_queue_index':
+          return playQueueIndex(args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }
