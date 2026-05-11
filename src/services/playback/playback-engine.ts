@@ -30,6 +30,15 @@ import { MpvIpc } from './mpv-ipc.js';
 import { getDefaultIpcPath, spawnMpv } from './mpv-process.js';
 
 /**
+ * Soft upper bound for the per-engine `filenameCache` (used by `getPlaylist`
+ * to avoid re-parsing the same Subsonic stream URLs on every poll). When the
+ * cache reaches this size, the oldest entries are evicted FIFO. 4096 covers
+ * even very large Navidrome libraries played in a single session without
+ * thrashing — and at ~100 bytes/entry stays well under 1MB.
+ */
+const FILENAME_CACHE_LIMIT = 4096;
+
+/**
  * Properties we observe on the engine and cache locally so consumers can
  * read state without round-tripping IPC. Each entry is `[observeId, name]`.
  */
@@ -118,6 +127,15 @@ class PlaybackEngine {
   // can leave a hybrid queue. Reads bypass the lock; mpv's own atomicity
   // covers single-command operations.
   private mutationLock: Promise<unknown> = Promise.resolve();
+  // Per-session cache of filename → songId (or null when no id is present).
+  // getPlaylist() is hot — called by now_playing/get_play_queue which an LLM
+  // may poll many times per minute, with 100+ entries each. Re-parsing every
+  // filename through `new URL()` is wasteful, and the parser cost grows with
+  // URL length. mpv playlist filenames are stable for the queue's lifetime,
+  // so caching the parsed result is safe. Capped at FILENAME_CACHE_LIMIT
+  // entries to bound memory; if a user churns through that many distinct
+  // tracks in one session, we re-parse — still O(1) amortized.
+  private readonly filenameCache = new Map<string, string | null>();
 
   private constructor() {}
 
@@ -261,19 +279,50 @@ class PlaybackEngine {
       this.currentRadioStation = null;
 
       if (effectiveMode === 'replace') {
-        // Issue an explicit playlist-clear before loading. `loadfile ... replace`
-        // would clear implicitly, but doing it up-front guarantees the prior
-        // queue is wiped even if the first loadfile fails.
-        await ipc.command('playlist-clear');
+        // Replace-mode is a multi-command sequence (clear → loadfile* → unpause)
+        // and not atomic on mpv's side. If any loadfile mid-sequence fails
+        // (network blip, mpv ENOMEM, transcoder hiccup), the prior queue is
+        // already gone and we'd leave the user with a half-loaded queue and
+        // no signal to the LLM that "queue cleared, load failed". Recovery:
+        // on any failure after the initial clear, issue `stop` so we land
+        // in a clean idle state (empty queue, no playback) and surface a
+        // structured error mentioning the partial-state recovery — better
+        // than letting `now_playing` show one paused track that contradicts
+        // the failure response.
         const [first, ...rest] = songIds;
         if (first === undefined) {
           throw new Error('enqueue requires at least one song ID');
         }
-        await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
-        for (const id of rest) {
-          await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+        // Issue an explicit playlist-clear before loading. `loadfile ... replace`
+        // would clear implicitly, but doing it up-front guarantees the prior
+        // queue is wiped even if the first loadfile fails.
+        await ipc.command('playlist-clear');
+        try {
+          await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
+          for (const id of rest) {
+            await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+          }
+          await ipc.command('set_property', 'pause', false);
+        } catch (err) {
+          // Land in a clean idle state so subsequent reads aren't lying
+          // about a half-loaded queue. `stop` is idempotent and tolerates
+          // an already-cleared queue. Best-effort — if the IPC connection
+          // is itself dead, the next ensureRunning() will re-attach.
+          try {
+            await ipc.command('stop');
+          } catch {
+            // Connection is gone; tearing down further is the IPC layer's job.
+          }
+          this.currentRadioStation = null;
+          // Proactively zero the cached counts so a `now_playing` call between
+          // this throw and mpv's async property-change event for `playlist-count`
+          // doesn't report a stale non-zero queue length. mpv will overwrite
+          // these via the change event shortly with the same values.
+          this.propertyCache.set('playlist-count', 0);
+          this.propertyCache.set('playlist-pos', null);
+          const reason = err instanceof Error ? err.message : String(err);
+          throw new Error(`enqueue failed mid-sequence; queue was cleared and is now empty: ${reason}`);
         }
-        await ipc.command('set_property', 'pause', false);
       } else {
         // Append-only: do NOT clear the playlist; do NOT unpause. Respect the
         // existing pause state so an append while paused keeps the queue paused.
@@ -315,15 +364,7 @@ class PlaybackEngine {
       const titleRaw = record['title'];
       const title = typeof titleRaw === 'string' && titleRaw !== '' ? titleRaw : undefined;
 
-      let songId: string | null = null;
-      if (filename !== '') {
-        try {
-          songId = new URL(filename).searchParams.get('id');
-        } catch {
-          // Filename isn't a parseable URL (e.g. a local path); leave songId null.
-          songId = null;
-        }
-      }
+      const songId = filename === '' ? null : this.parseSongIdCached(filename);
 
       const entry: PlaylistEntry = {
         index,
@@ -541,6 +582,42 @@ class PlaybackEngine {
 
   // ---------- internals ----------
 
+  /**
+   * Parse the Navidrome song id out of a stream URL, with per-session caching.
+   * Cheap prefilter avoids `new URL()` for non-HTTP filenames (local paths,
+   * raw radio URLs without a query string) — `new URL()` is the only step
+   * here that can be expensive on pathological input.
+   */
+  private parseSongIdCached(filename: string): string | null {
+    const cached = this.filenameCache.get(filename);
+    if (cached !== undefined) return cached;
+
+    let songId: string | null = null;
+    // Cheap prefilter: only attempt to parse as URL if the filename looks
+    // URL-shaped. Non-URL filenames (local paths, raw radio URLs without
+    // an `id` query param) all resolve to null; no need to construct URL.
+    if (filename.startsWith('http://') || filename.startsWith('https://')) {
+      const idIdx = filename.indexOf('id=');
+      if (idIdx !== -1) {
+        try {
+          songId = new URL(filename).searchParams.get('id');
+        } catch {
+          songId = null;
+        }
+      }
+    }
+
+    if (this.filenameCache.size >= FILENAME_CACHE_LIMIT) {
+      // FIFO eviction: drop the oldest entry. Map preserves insertion order,
+      // so .keys().next() yields the oldest. Cheap enough at our cap that we
+      // don't need an LRU.
+      const oldest = this.filenameCache.keys().next().value;
+      if (oldest !== undefined) this.filenameCache.delete(oldest);
+    }
+    this.filenameCache.set(filename, songId);
+    return songId;
+  }
+
   private requireIpc(): MpvIpc {
     if (this.ipc?.isConnected() !== true) {
       throw new Error('mpv IPC is not connected');
@@ -714,15 +791,23 @@ class PlaybackEngine {
    * values for each observed property — this is necessary because mpv only
    * emits property-change events when values *change* from the prior state,
    * so values that already match mpv's startup state would never populate.
+   *
+   * Ordering is load-bearing:
+   *   1. PRIME the cache via `get_property` for each observed property.
+   *   2. REGISTER the property-change handler.
+   *   3. SUBSCRIBE via `observe_property`.
+   *
+   * If we subscribed first, mpv would start emitting change events
+   * immediately — and any event arriving between subscribe and the prime
+   * read for the same property would be overwritten by the (potentially
+   * staler) get_property response. Doing prime → handler → subscribe means
+   * the very first observe-triggered change event (mpv emits the current
+   * value once on subscribe) is the freshest write into the cache, which is
+   * the desired outcome.
    */
   private async installObservers(ipc: MpvIpc): Promise<void> {
-    for (const [id, name] of OBSERVED_PROPERTIES) {
-      await ipc.observeProperty(id, name);
-    }
-
-    ipc.onPropertyChange((evt) => {
-      this.propertyCache.set(evt.name, evt.data);
-    });
+    // Always-on event/disconnect handlers — set up first so we don't miss
+    // events that fire during the prime/observe sequence.
     ipc.onEvent((evt) => {
       const reason = typeof evt['reason'] === 'string' ? ` (${evt['reason']})` : '';
       logger.debug(`mpv event: ${evt.event}${reason}`);
@@ -735,8 +820,8 @@ class PlaybackEngine {
       this.ipc = null;
     });
 
-    // Prime the cache with current values so consumers see populated state
-    // immediately after startup/attach without waiting for changes.
+    // 1. Prime the cache with current values FIRST. This is the snapshot
+    //    that consumers see if they read before any property has changed.
     for (const [, name] of OBSERVED_PROPERTIES) {
       try {
         const value = await ipc.command('get_property', name);
@@ -745,6 +830,19 @@ class PlaybackEngine {
         // Some properties (e.g. duration with no file loaded) error out;
         // leave them unset.
       }
+    }
+
+    // 2. Register the property-change handler BEFORE subscribing — otherwise
+    //    the immediate change event mpv emits on observe would be lost.
+    ipc.onPropertyChange((evt) => {
+      this.propertyCache.set(evt.name, evt.data);
+    });
+
+    // 3. Subscribe last. mpv emits a change event with the current value
+    //    immediately after observe_property is acked; that overrides any
+    //    stale prime value with mpv's freshest reading.
+    for (const [id, name] of OBSERVED_PROPERTIES) {
+      await ipc.observeProperty(id, name);
     }
   }
 
@@ -762,8 +860,18 @@ class PlaybackEngine {
         try { this.ipc.close(); } catch { /* noop */ }
       }
       this.ipc = null;
-      const code = signal === 'SIGINT' ? 130 : 143;
-      process.exit(code);
+      // Set exitCode and let the event loop drain naturally — calling
+      // process.exit() here truncates the MCP stdio transport (which is
+      // line-buffered JSON-RPC), so the host loses the last response and
+      // any final logger output. With the IPC socket closed and mpv
+      // unref'd the loop should empty within milliseconds.
+      process.exitCode = signal === 'SIGINT' ? 130 : 143;
+      // Release the stdin hold the MCP transport keeps for JSON-RPC reads.
+      // Without this the loop stays alive until the host closes stdin (or
+      // SIGKILLs us after a multi-second grace period), which makes Ctrl+C
+      // in dev hang. unref() leaves the transport intact for any in-flight
+      // response write while telling the loop "don't wait on stdin."
+      try { process.stdin.unref(); } catch { /* noop */ }
     };
 
     process.on('SIGINT', onSignal);
@@ -791,6 +899,8 @@ class PlaybackEngine {
     this.ipc = null;
     this.mpvVersion = null;
     this.propertyCache.clear();
+    this.filenameCache.clear();
+    this.currentRadioStation = null;
     this.startPromise = null;
 
     // Allow restarting after an explicit shutdown

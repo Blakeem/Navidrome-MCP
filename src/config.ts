@@ -67,7 +67,12 @@ const ConfigSchema = z.object({
   // API Keys and External Service Configuration
   lastFmApiKey: z.string().optional(),
   radioBrowserUserAgent: z.string().optional(),
-  radioBrowserBase: z.string().url().default('https://de1.api.radio-browser.info'),
+  // Set only when the user explicitly provides RADIO_BROWSER_BASE in the
+  // environment — bypasses SRV resolution and pins to the chosen mirror.
+  // Production base resolution flows through `getRadioBrowserBase()` which
+  // does SRV-record lookup + caching, with a hardcoded fallback in
+  // `RADIO_BROWSER_FALLBACK_BASE`.
+  radioBrowserBaseOverride: z.string().url().optional(),
 
   // Lyrics Configuration
   lyricsProvider: z.string().optional(),
@@ -182,7 +187,11 @@ export async function loadConfig(): Promise<Config> {
     // API Keys and External Service Configuration
     lastFmApiKey,
     radioBrowserUserAgent,
-    radioBrowserBase: process.env['RADIO_BROWSER_BASE'] ?? 'https://de1.api.radio-browser.info',
+    // Only populated when user explicitly set the env var. Resolver consults
+    // this first; if undefined it falls back to SRV resolution.
+    radioBrowserBaseOverride: (process.env['RADIO_BROWSER_BASE'] !== undefined && process.env['RADIO_BROWSER_BASE'] !== '')
+      ? process.env['RADIO_BROWSER_BASE']
+      : undefined,
 
     // Lyrics Configuration
     lyricsProvider,

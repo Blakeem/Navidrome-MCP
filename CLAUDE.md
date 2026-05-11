@@ -67,8 +67,26 @@ Feature-gated: `LASTFM_API_KEY` (Last.fm tools), `RADIO_BROWSER_USER_AGENT`
 (radio discovery), `LYRICS_PROVIDER=lrclib` (lyrics), `MPV_PATH` /
 auto-detected (playback). `DEBUG=true` for verbose logging.
 
-Local config lives in `.env` (main) and `.env.test` (test runs). Read these
-files directly when you need values.
+Local config lives in `.env` (main) and `.env.test` (test runs). **Both files
+are populated and ready to use** — no need to ask the user for credentials.
+Pull values directly with `grep` (see curl recipe below) rather than
+`source .env`, because the file contains values with shell-special chars
+(parens in `RADIO_BROWSER_USER_AGENT`) that break `set -a; source`.
+
+---
+
+## What's running where (live vs stale)
+
+- **Navidrome server:** running, reachable at `$NAVIDROME_URL`. Use curl
+  freely for verifying API behavior, schema assumptions, sort orders, etc.
+- **mpv:** installed and reachable. Use `pnpm test:playback` for the live
+  integration suite when you've changed playback subsystem code.
+- **The MCP server itself (`mcp__navidrome__*` tools in your tool list):** is
+  whatever build the user's client started with. **It does NOT auto-reload
+  when you change source files.** Treat the live `mcp__navidrome__*` tool
+  responses as evidence about the *previous* build, not the current code on
+  disk. Ask the user to restart their MCP client when you need end-to-end
+  verification of changes you just made.
 
 ---
 
@@ -78,7 +96,14 @@ The auth endpoint is `/auth/login` (NOT `/auth` or `/api/login`). The
 authenticated `/api/*` calls use the `X-ND-Authorization: Bearer <token>`
 header (NOT `Authorization`).
 
+Pull credentials from `.env` per-variable (avoids the `source .env` parse
+break on parens in `RADIO_BROWSER_USER_AGENT`):
+
 ```bash
+export NAVIDROME_URL=$(grep '^NAVIDROME_URL=' .env | cut -d= -f2-)
+export NAVIDROME_USERNAME=$(grep '^NAVIDROME_USERNAME=' .env | cut -d= -f2-)
+export NAVIDROME_PASSWORD=$(grep '^NAVIDROME_PASSWORD=' .env | cut -d= -f2-)
+
 TOKEN=$(curl -s -X POST "$NAVIDROME_URL/auth/login" \
   -H "Content-Type: application/json" \
   -d "{\"username\":\"$NAVIDROME_USERNAME\",\"password\":\"$NAVIDROME_PASSWORD\"}" | jq -r '.token')

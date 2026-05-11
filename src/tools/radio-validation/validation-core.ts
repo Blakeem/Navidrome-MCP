@@ -71,9 +71,15 @@ export async function validateRadioStream(
     params = ValidateStreamSchema.parse(args);
   } catch (error) {
     if (error instanceof z.ZodError) {
+      // Extract a displayable URL from the raw args (best-effort). When args
+      // is an object like { url: "..." }, String(args) would be "[object Object]"
+      // which is useless in error context. The LLM needs to see what it sent.
+      const rawUrl = (typeof args === 'object' && args !== null && 'url' in args && typeof (args as Record<string, unknown>)['url'] === 'string')
+        ? (args as Record<string, unknown>)['url'] as string
+        : '(invalid input)';
       return {
         success: false,
-        url: String(args),
+        url: rawUrl,
         status: 'error',
         streamingHeaders: {},
         validation: {
@@ -84,7 +90,7 @@ export async function validateRadioStream(
         },
         errors: [`Invalid parameters: ${error.issues.map((e: { message: string }) => e.message).join(', ')}`],
         warnings: [],
-        recommendations: ['❌ Please provide a valid URL'],
+        recommendations: ['Please provide a valid http:// or https:// URL'],
         testDuration: Date.now() - startTime,
       };
     }
@@ -129,6 +135,10 @@ export async function validateRadioStream(
   let headers: Headers | null = null;
   let sampleError: string | null = null;
   let resolvedFinalUrl: string | null = null;
+  // Hoisted to function scope so the post-validation warning logic (~line 243)
+  // can tell the difference between "sampling was tried and produced no data"
+  // and "sampling was deliberately skipped because headers were conclusive".
+  let skipAudioSampling = false;
 
   try {
     // Step 1: Try HEAD request first
@@ -144,7 +154,6 @@ export async function validateRadioStream(
     }
 
     // Step 2: Check if HEAD response gives us enough info to determine validity
-    let skipAudioSampling = false;
     if (headResponse) {
       const contentType = headResponse.headers.get('content-type');
       const streamHeaders = extractStreamingHeaders(headResponse.headers);
@@ -155,8 +164,12 @@ export async function validateRadioStream(
 
       if (hasAudioContentType === true || hasStreamingHeaders === true) {
         skipAudioSampling = true;
-        // Create a fake successful result for audio detection based on content-type
-        buffer = new Uint8Array([0xFF, 0xFB]); // Minimal buffer to satisfy validation logic
+        // Headers were conclusive — no need to sample audio data.
+        // We intentionally do NOT synthesize a fake buffer here; that would
+        // set audioDataDetected=true via the magic-bytes path in detectAudioFormat,
+        // making the field dishonest (we never actually read stream bytes).
+        // Success is determined below from hasAudioContentType || hasStreamingHeaders,
+        // which correctly covers this case without a fake signal.
         headers = headResponse.headers;
         sampleError = null;
       }
@@ -230,7 +243,9 @@ export async function validateRadioStream(
     if (!audioFormat.detected && result.validation.hasAudioContentType) {
       warnings.push('Could not detect audio format from data sample');
     }
-  } else if (result.validation.httpAccessible) {
+  } else if (result.validation.httpAccessible === true && !skipAudioSampling) {
+    // Only warn about missing samples when sampling was actually attempted —
+    // when headers are conclusive we deliberately skip the body read.
     warnings.push('Could not sample audio data from stream');
   }
 

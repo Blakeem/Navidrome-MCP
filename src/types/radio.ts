@@ -32,16 +32,6 @@ export interface RadioStationDTO {
   updatedAt: string;
 }
 
-/** Request to create a new radio station */
-export interface CreateRadioStationRequest {
-  /** Station name (required) */
-  name: string;
-  /** Stream URL (required) */
-  streamUrl: string;
-  /** Optional homepage URL */
-  homePageUrl?: string;
-}
-
 /** Response from creating a radio station */
 export interface CreateRadioStationResponse {
   /** Success status */

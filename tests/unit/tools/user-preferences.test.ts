@@ -603,41 +603,35 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       expect(result.count).toBe(0);
     });
 
-    it('should handle already starred items correctly', async () => {
-      const mockResponse = {
-        success: true,
-        message: 'Item already starred',
+    it('should call subsonicRequest /star and return success for starItem', async () => {
+      // starItem/unstarItem use client.subsonicRequest, not client.request.
+      // The Subsonic endpoint is idempotent (re-starring is not an error), so
+      // we just verify the correct endpoint and id are forwarded.
+      mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
+
+      const result = await starItem(mockClient, config, {
         id: 'song-123',
         type: 'song'
-      };
-      
-      mockClient.request.mockResolvedValue(mockResponse);
-      
-      const result = await starItem(mockClient, config, { 
-        id: 'song-123', 
-        type: 'song' 
       });
 
+      expect(mockClient.subsonicRequest).toHaveBeenCalledWith('/star', { id: 'song-123' });
       expect(result.success).toBe(true);
       expect(result.message).toContain('starred');
     });
 
-    it('should handle unstarring non-starred items correctly', async () => {
-      const mockResponse = {
-        success: true,
-        message: 'Item was not starred',
+    it('should call subsonicRequest /unstar and return success for unstarItem', async () => {
+      // Unstarring a non-starred item is also idempotent on the Subsonic API —
+      // the endpoint succeeds regardless. Verify the right path and id are sent.
+      mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
+
+      const result = await unstarItem(mockClient, config, {
         id: 'song-123',
         type: 'song'
-      };
-      
-      mockClient.request.mockResolvedValue(mockResponse);
-      
-      const result = await unstarItem(mockClient, config, { 
-        id: 'song-123', 
-        type: 'song' 
       });
 
+      expect(mockClient.subsonicRequest).toHaveBeenCalledWith('/unstar', { id: 'song-123' });
       expect(result.success).toBe(true);
+      expect(result.message).toContain('unstarred');
     });
   });
 });

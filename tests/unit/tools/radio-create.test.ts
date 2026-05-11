@@ -172,3 +172,51 @@ describe('createRadioStation real-id resolution', () => {
     expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---- createRadioStation Zod input validation --------------------------------
+
+describe('createRadioStation Zod input validation', () => {
+  let mockClient: MockNavidromeClient;
+
+  beforeEach(() => {
+    mockClient = createMockClient();
+  });
+
+  it('throws when args is null', async () => {
+    await expect(
+      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, null)
+    ).rejects.toThrow();
+  });
+
+  it('throws when stations array is missing', async () => {
+    await expect(
+      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, { validateBeforeAdd: false })
+    ).rejects.toThrow();
+  });
+
+  it('throws when stations is empty array', async () => {
+    await expect(
+      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, { stations: [] })
+    ).rejects.toThrow();
+  });
+
+  it('throws when stations is not an array', async () => {
+    await expect(
+      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, { stations: 'bad' })
+    ).rejects.toThrow();
+  });
+
+  it('returns per-item failure (not a throw) for empty name within valid batch', async () => {
+    // Per-item validation stays in the loop so a batch with one bad entry
+    // still processes the rest — Zod validates array structure but not min(1)
+    // on individual name/url (those are checked per-item in the loop).
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+      stations: [{ name: '', streamUrl: 'http://stream.test/' }],
+    });
+
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[0]?.error).toMatch(/name.*required|required.*name/i);
+    // No Subsonic call — validation failed before network
+    expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
+  });
+});

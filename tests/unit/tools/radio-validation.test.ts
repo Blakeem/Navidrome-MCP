@@ -48,7 +48,7 @@ describe('Radio Stream Validation', () => {
       expect(result.success).toBe(false);
       expect(result.status).toBe('error');
       expect(result.errors[0]).toContain('Invalid parameters');
-      expect(result.recommendations[0]).toBe('❌ Please provide a valid URL');
+      expect(result.recommendations[0]).toBe('Please provide a valid http:// or https:// URL');
     });
 
     it('should reject mms:// with a message pointing to play_radio_station', async () => {
@@ -100,6 +100,28 @@ describe('Radio Stream Validation', () => {
       expect(result.success).toBe(false);
       expect(result.status).toBe('error');
       expect(result.errors[0]).toContain('Invalid parameters');
+    });
+
+    it('should return the actual URL in the error response, not [object Object]', async () => {
+      // Before the fix, String({ url: 'mms://...' }) = '[object Object]',
+      // making the error response useless for the LLM.
+      const result = await validateRadioStream(mockClient, {
+        url: 'mms://example.com/stream',
+        timeout: 5000,
+      });
+
+      expect(result.success).toBe(false);
+      // url field should be the actual URL string, not '[object Object]'
+      expect(result.url).toBe('mms://example.com/stream');
+      expect(result.url).not.toBe('[object Object]');
+      expect(result.url).not.toContain('object Object');
+    });
+
+    it('should return (invalid input) when args is not an object', async () => {
+      const result = await validateRadioStream(mockClient, 'not-an-object');
+
+      expect(result.success).toBe(false);
+      expect(result.url).toBe('(invalid input)');
     });
 
     it('should accept valid parameters', async () => {
@@ -291,23 +313,38 @@ describe('Radio Stream Validation', () => {
       vi.mocked(fileTypeFromBuffer).mockClear();
     });
 
-    it('should detect MP3 format', async () => {
+    it('should detect MP3 format via audio sampling', async () => {
       const { fileTypeFromBuffer } = vi.mocked(await import('file-type'));
-      
+
+      // HEAD with a generic content-type so headers are inconclusive — forces
+      // the validator to fall through to actual audio sampling (GET request).
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
         headers: new Headers({
-          'content-type': 'audio/mpeg',
+          'content-type': 'application/octet-stream',
         }),
       });
 
+      // Audio sampling GET response with a real (mocked) reader
+      const mp3Data = new Uint8Array([0xFF, 0xFB, 0x90, 0x00]);
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 206,
         headers: new Headers(),
-        arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
-      });
+        body: {
+          getReader: () => {
+            let done = false;
+            return {
+              read: vi.fn().mockImplementation(() => {
+                if (!done) { done = true; return Promise.resolve({ value: mp3Data, done: false }); }
+                return Promise.resolve({ value: undefined, done: true });
+              }),
+              cancel: vi.fn().mockResolvedValue(undefined),
+            };
+          },
+        },
+      } as unknown as Response);
 
       fileTypeFromBuffer.mockResolvedValue({
         ext: 'mp3',
@@ -354,31 +391,41 @@ describe('Radio Stream Validation', () => {
       expect(result.audioFormat?.detected ?? false).toBe(false);
     });
 
-    it('should detect MP3 signature manually', async () => {
+    it('should detect MP3 signature manually via audio sampling', async () => {
       const { fileTypeFromBuffer } = vi.mocked(await import('file-type'));
-      
+
+      // HEAD with a generic content-type — forces audio sampling (GET request).
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
         headers: new Headers({
-          'content-type': 'audio/mpeg',
+          'content-type': 'application/octet-stream',
         }),
       });
 
-      // Create buffer with MP3 signature
-      const mp3Buffer = new ArrayBuffer(1024);
-      const view = new Uint8Array(mp3Buffer);
-      view[0] = 0xFF; // MP3 frame header
-      view[1] = 0xFB;
+      // Create buffer with MP3 magic-bytes signature
+      const mp3Data = new Uint8Array([0xFF, 0xFB, 0x90, 0x00]);
 
+      // Audio sampling GET response with a streaming reader
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 206,
         headers: new Headers(),
-        arrayBuffer: () => Promise.resolve(mp3Buffer),
-      });
+        body: {
+          getReader: () => {
+            let done = false;
+            return {
+              read: vi.fn().mockImplementation(() => {
+                if (!done) { done = true; return Promise.resolve({ value: mp3Data, done: false }); }
+                return Promise.resolve({ value: undefined, done: true });
+              }),
+              cancel: vi.fn().mockResolvedValue(undefined),
+            };
+          },
+        },
+      } as unknown as Response);
 
-      fileTypeFromBuffer.mockResolvedValue(null); // file-type fails
+      fileTypeFromBuffer.mockResolvedValue(null); // file-type can't detect; falls back to magic bytes
 
       const result = await validateRadioStream(mockClient, {
         url: 'https://example.com/stream.mp3',
@@ -475,6 +522,8 @@ describe('Radio Stream Validation', () => {
 
   describe('Success Scenarios', () => {
     it('should validate a perfect stream', async () => {
+      // HEAD returns clear audio content-type + ICY streaming headers:
+      // skipAudioSampling = true, so only one fetch is made.
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -486,28 +535,23 @@ describe('Radio Stream Validation', () => {
         }),
       });
 
-      const mp3Buffer = new ArrayBuffer(1024);
-      const view = new Uint8Array(mp3Buffer);
-      view[0] = 0xFF;
-      view[1] = 0xFB;
-
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 206,
-        headers: new Headers(),
-        arrayBuffer: () => Promise.resolve(mp3Buffer),
-      });
-
       const result = await validateRadioStream(mockClient, {
         url: 'https://perfect-radio.com/stream.mp3',
       });
 
+      // Only one fetch (HEAD) — audio sampling skipped because headers are conclusive.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(result.success).toBe(true);
       expect(result.status).toBe('valid');
       expect(result.validation.httpAccessible).toBe(true);
       expect(result.validation.hasAudioContentType).toBe(true);
       expect(result.validation.hasStreamingHeaders).toBe(true);
-      expect(result.validation.audioDataDetected).toBe(true);
+      // audioDataDetected is honestly false — no stream bytes were read;
+      // success is determined from hasAudioContentType + hasStreamingHeaders.
+      expect(result.validation.audioDataDetected).toBe(false);
+      // No spurious "Could not sample audio data" warning when sampling was
+      // deliberately skipped because headers were conclusive.
+      expect(result.warnings).not.toContain('Could not sample audio data from stream');
       expect(result.recommendations).toContain('✅ Stream validated successfully');
       expect(result.recommendations).toContain('🎵 Station: Perfect FM');
       expect(result.recommendations).toContain('📊 Bitrate: 320kbps');
@@ -577,11 +621,14 @@ describe('Radio Stream Validation', () => {
       expect(result.validation.httpAccessible).toBe(true);
       expect(result.validation.hasAudioContentType).toBe(true);
       expect(result.validation.hasStreamingHeaders).toBe(true);
-      expect(result.validation.audioDataDetected).toBe(true);
+      // audioDataDetected is honestly false — we skipped audio sampling because
+      // headers were conclusive; success is determined from hasAudioContentType
+      // and hasStreamingHeaders instead (no fake buffer is written).
+      expect(result.validation.audioDataDetected).toBe(false);
       expect(result.streamingHeaders['icy-br']).toBe('320');
       expect(result.streamingHeaders['icy-genre']).toBe('Synthwave');
-      expect(result.audioFormat?.format).toBe('mp3');
-      expect(result.audioFormat?.mime).toBe('audio/mpeg');
+      // audioFormat is not set when audio sampling is skipped (no magic-bytes check)
+      expect(result.audioFormat).toBeUndefined();
       expect(result.recommendations).toContain('✅ Stream validated successfully');
     });
 
@@ -604,7 +651,9 @@ describe('Radio Stream Validation', () => {
       expect(result.success).toBe(true);
       expect(result.validation.hasAudioContentType).toBe(true);
       expect(result.validation.hasStreamingHeaders).toBe(false);
-      expect(result.validation.audioDataDetected).toBe(true); // Inferred from content-type
+      // audioDataDetected is honestly false — we didn't sample stream bytes;
+      // success is driven by hasAudioContentType alone (no fake buffer).
+      expect(result.validation.audioDataDetected).toBe(false);
     });
 
     it('should fall back to audio sampling when headers are inconclusive', async () => {

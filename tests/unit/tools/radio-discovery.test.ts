@@ -25,6 +25,10 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     features: { lastfm: false, radioBrowser: true, lyrics: false, playback: false },
     lastFmApiKey: undefined,
     radioBrowserBase: 'https://de1.api.radio-browser.info',
+    // Setting the override pins the resolver and avoids real DNS lookups
+    // (the SRV-resolution path is exercised separately in
+    // radio-browser-resolver.test.ts with a mocked dns module).
+    radioBrowserBaseOverride: 'https://de1.api.radio-browser.info',
     radioBrowserUserAgent: 'TestAgent/1.0',
     lyricsProvider: undefined,
     lrclibUserAgent: undefined,
@@ -258,7 +262,11 @@ describe('getStationByUuid', () => {
 // ---- clickStation -----------------------------------------------------------
 
 describe('clickStation', () => {
-  beforeEach(() => { vi.restoreAllMocks(); });
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    const { resetRadioBrowserRateLimit } = await import('../../../src/utils/radio-browser-rate-limit.js');
+    resetRadioBrowserRateLimit();
+  });
 
   it('returns ok:true and playUrl on success', async () => {
     global.fetch = makeFetch(200, { ok: true, message: 'Click registered', url: 'http://stream.test/audio' });
@@ -286,12 +294,57 @@ describe('clickStation', () => {
     const { clickStation } = await import('../../../src/tools/radio-discovery.js');
     await expect(clickStation(makeConfig(), { stationUuid: 'uuid' })).rejects.toThrow();
   });
+
+  it('dedupes a second click for the same UUID without hitting Radio Browser', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ ok: true, message: 'Click registered', url: 'http://stream.test/audio' }),
+      headers: new Headers(),
+      text: () => Promise.resolve(''),
+    } as unknown as Response);
+    global.fetch = fetchMock;
+
+    const { clickStation } = await import('../../../src/tools/radio-discovery.js');
+
+    const first = await clickStation(makeConfig(), { stationUuid: 'uuid-dup' });
+    const second = await clickStation(makeConfig(), { stationUuid: 'uuid-dup' });
+
+    // Only one outbound HTTP call — second was served from the dedup set.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    expect(second.message).toMatch(/already clicked/i);
+  });
+
+  it('does NOT mark as deduped when Radio Browser responded ok:false', async () => {
+    // Server-side rejection is not a real click — we want the LLM to be
+    // able to retry next session with a corrected UUID, so don't poison
+    // the dedup set on a failed attempt.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ ok: false, message: 'Station not found' }),
+      headers: new Headers(),
+      text: () => Promise.resolve(''),
+    } as unknown as Response);
+    global.fetch = fetchMock;
+
+    const { clickStation } = await import('../../../src/tools/radio-discovery.js');
+
+    await clickStation(makeConfig(), { stationUuid: 'uuid-fail' });
+    await clickStation(makeConfig(), { stationUuid: 'uuid-fail' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 // ---- voteStation ------------------------------------------------------------
 
 describe('voteStation', () => {
-  beforeEach(() => { vi.restoreAllMocks(); });
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    const { resetRadioBrowserRateLimit } = await import('../../../src/utils/radio-browser-rate-limit.js');
+    resetRadioBrowserRateLimit();
+  });
 
   it('returns ok:true and message on success', async () => {
     global.fetch = makeFetch(200, { ok: true, message: 'Vote registered' });
@@ -317,5 +370,184 @@ describe('voteStation', () => {
 
     const { voteStation } = await import('../../../src/tools/radio-discovery.js');
     await expect(voteStation(makeConfig(), { stationUuid: 'uuid' })).rejects.toThrow();
+  });
+
+  it('dedupes a second vote for the same UUID without hitting Radio Browser', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ ok: true, message: 'Vote registered' }),
+      headers: new Headers(),
+      text: () => Promise.resolve(''),
+    } as unknown as Response);
+    global.fetch = fetchMock;
+
+    const { voteStation } = await import('../../../src/tools/radio-discovery.js');
+
+    const first = await voteStation(makeConfig(), { stationUuid: 'uuid-vote-dup' });
+    const second = await voteStation(makeConfig(), { stationUuid: 'uuid-vote-dup' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    expect(second.message).toMatch(/already voted/i);
+  });
+
+  it('vote and click for the same UUID are independent (one of each allowed)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: () => Promise.resolve({ ok: true, message: 'Recorded', url: 'http://stream.test/' }),
+      headers: new Headers(),
+      text: () => Promise.resolve(''),
+    } as unknown as Response);
+    global.fetch = fetchMock;
+
+    const { voteStation, clickStation } = await import('../../../src/tools/radio-discovery.js');
+
+    const v = await voteStation(makeConfig(), { stationUuid: 'uuid-mix' });
+    const c = await clickStation(makeConfig(), { stationUuid: 'uuid-mix' });
+
+    // Two distinct upstream calls — vote and click slots are independent.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(v.ok).toBe(true);
+    expect(c.ok).toBe(true);
+  });
+});
+
+// ---- mapStationToDTO (empty-field filtering) ---------------------------------
+
+describe('discoverRadioStations: empty-field filtering and deduplication', () => {
+  let mockClient: MockNavidromeClient;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mockClient = createMockClient();
+  });
+
+  it('drops stations with empty stationuuid from results', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([
+          makeStation({ stationuuid: '' }),   // should be dropped
+          makeStation({ stationuuid: 'valid-uuid', name: 'Good FM', url: 'http://good.test/stream' }),
+        ]),
+        headers: new Headers(),
+      } as unknown as Response)
+      // Validation HEAD for the one kept station
+      .mockResolvedValue({
+        ok: true, status: 200,
+        headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
+        body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: true, value: undefined }), cancel: vi.fn() }) },
+        text: () => Promise.resolve(''),
+      } as unknown as Response);
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    const result = await discoverRadioStations(makeConfig(), mockClient as unknown as NavidromeClient, { limit: 5 });
+
+    // Only the station with a valid UUID should appear
+    expect(result.stations.every(s => s.stationUuid !== '')).toBe(true);
+    expect(result.stations.some(s => s.stationUuid === 'valid-uuid')).toBe(true);
+  });
+
+  it('drops stations with empty name from results', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([
+          makeStation({ name: '' }),  // should be dropped
+          makeStation({ stationuuid: 'uuid-2', name: 'Named FM', url: 'http://named.test/stream' }),
+        ]),
+        headers: new Headers(),
+      } as unknown as Response)
+      .mockResolvedValue({
+        ok: true, status: 200,
+        headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
+        body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: true, value: undefined }), cancel: vi.fn() }) },
+        text: () => Promise.resolve(''),
+      } as unknown as Response);
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    const result = await discoverRadioStations(makeConfig(), mockClient as unknown as NavidromeClient, { limit: 5 });
+
+    expect(result.stations.every(s => s.name !== '')).toBe(true);
+  });
+
+  it('dedupes stations with the same playUrl before validation (case/spelling-tolerant)', async () => {
+    // Three rows from Radio Browser. mapStationToDTO prefers url_resolved
+    // when set, so we override BOTH url and url_resolved to make the test
+    // actually exercise distinct playUrls. The two Jazz FM rows differ in
+    // casing — dedup keys on playUrl only so they collapse.
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([
+          makeStation({ stationuuid: 'uuid-a', name: 'Jazz FM', url: 'http://jazz.test/stream', url_resolved: 'http://jazz.test/stream' }),
+          makeStation({ stationuuid: 'uuid-b', name: 'jazz fm', url: 'http://jazz.test/stream', url_resolved: 'http://jazz.test/stream' }), // duplicate by playUrl, casing differs
+          makeStation({ stationuuid: 'uuid-c', name: 'Rock FM', url: 'http://rock.test/stream', url_resolved: 'http://rock.test/stream' }),
+        ]),
+        headers: new Headers(),
+      } as unknown as Response)
+      // Validation for each kept station (2 unique, not 3)
+      .mockResolvedValue({
+        ok: true, status: 200,
+        headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
+        body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: true, value: undefined }), cancel: vi.fn() }) },
+        text: () => Promise.resolve(''),
+      } as unknown as Response);
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    const result = await discoverRadioStations(makeConfig(), mockClient as unknown as NavidromeClient, { limit: 5 });
+
+    // 2 unique stations (dedup dropped 1 duplicate)
+    expect(result.stations.length).toBe(2);
+    const names = result.stations.map(s => s.name);
+    expect(names).toContain('Jazz FM');
+    expect(names).toContain('Rock FM');
+  });
+
+  it('validates stations in parallel (Promise.all) — all complete in roughly one timeout window', async () => {
+    // Use a timing-based check: if validations run serially with individual
+    // delays each call would take N * delay; in parallel, total ≈ 1 * delay.
+    // We fake individual delays via mockImplementation and verify total call
+    // timing doesn't accumulate (pass if all validations resolve successfully).
+    let concurrentCount = 0;
+    let maxConcurrent = 0;
+
+    global.fetch = vi.fn()
+      // First call: search results
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([
+          makeStation({ stationuuid: 'uuid-1', name: 'Station 1', url: 'http://s1.test/stream', url_resolved: 'http://s1.test/stream' }),
+          makeStation({ stationuuid: 'uuid-2', name: 'Station 2', url: 'http://s2.test/stream', url_resolved: 'http://s2.test/stream' }),
+          makeStation({ stationuuid: 'uuid-3', name: 'Station 3', url: 'http://s3.test/stream', url_resolved: 'http://s3.test/stream' }),
+        ]),
+        headers: new Headers(),
+      } as unknown as Response)
+      // Subsequent validation HEAD calls — each increments the concurrency counter
+      .mockImplementation(() => {
+        concurrentCount++;
+        maxConcurrent = Math.max(maxConcurrent, concurrentCount);
+        return Promise.resolve({
+          ok: true, status: 200,
+          headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
+          body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: true, value: undefined }), cancel: vi.fn() }) },
+          text: () => Promise.resolve(''),
+        } as unknown as Response).finally(() => {
+          concurrentCount--;
+        });
+      });
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    await discoverRadioStations(makeConfig(), mockClient as unknown as NavidromeClient, { limit: 5 });
+
+    // At least 2 validations ran concurrently at some point — confirms Promise.all
+    // (serial for-loop would cap maxConcurrent at 1 since each await resolves
+    // before the next starts).
+    expect(maxConcurrent).toBeGreaterThan(1);
   });
 });

@@ -62,7 +62,18 @@ export const SUBSONIC_CLIENT_NAME = 'navidrome-mcp';
 export const DEFAULT_USER_AGENT = 'Navidrome-MCP/1.0';
 
 /**
- * Hard cap on tracks fetched per album when expanding `play_albums` /
- * `play_albums_search` requests. Albums larger than this silently truncate.
+ * Per-page size when expanding `play_albums` / `play_albums_search` requests.
+ * `fetchAlbumTrackIds` paginates with this page size and follows X-Total-Count
+ * until the full track list is fetched, so multi-disc boxsets play through
+ * completely instead of truncating at the first 500 tracks.
  */
 export const MAX_ALBUM_TRACKS = 500;
+
+/**
+ * Safety cap on the number of pages `fetchAlbumTrackIds` will follow before
+ * giving up and returning what it has. Protects against an inconsistent
+ * X-Total-Count loop. 20 × 500 = 10000 tracks per album is well past any
+ * realistic release, including the "complete works" boxsets the original
+ * 500-track ceiling used to silently truncate.
+ */
+export const MAX_ALBUM_PAGES = 20;

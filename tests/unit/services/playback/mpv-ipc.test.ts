@@ -187,6 +187,31 @@ describe('MpvIpc', () => {
     expect(ipc.isConnected()).toBe(false);
   });
 
+  it('caps the IPC framing buffer at 64KB and tears down on overflow (M6)', async () => {
+    const ipc = await connectedIpc();
+    const sock = latestSocket();
+    const onDisconnect = vi.fn();
+    ipc.onDisconnect(onDisconnect);
+
+    // Emit a single chunk >64KB with no newline. The IPC parser cannot frame
+    // it as a complete response and is supposed to drop the buffer + tear
+    // down the connection (next ensureRunning() will re-attach).
+    sock.emit('data', 'a'.repeat(70 * 1024));
+
+    expect(ipc.isConnected()).toBe(false);
+    expect(onDisconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('IPC buffer overflow rejects pending commands', async () => {
+    const ipc = await connectedIpc();
+    const sock = latestSocket();
+
+    const promise = ipc.command('pause');
+    sock.emit('data', 'a'.repeat(70 * 1024));
+
+    await expect(promise).rejects.toThrow(/exceeded 65536 bytes/);
+  });
+
   it('timeout-then-close does not double-fire disconnect handlers', async () => {
     const ipc = await connectedIpc();
     const onDisconnect = vi.fn();

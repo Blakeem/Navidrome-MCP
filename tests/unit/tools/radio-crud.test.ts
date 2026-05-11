@@ -160,3 +160,37 @@ describe('deleteRadioStation', () => {
     ).rejects.toThrow();
   });
 });
+
+// ---- Zod schema validation (replaces args-as casts) -------------------------
+
+describe('radio.ts Zod schema validation', () => {
+  let mockClient: MockNavidromeClient;
+
+  beforeEach(() => {
+    mockClient = createMockClient();
+  });
+
+  it('deleteRadioStation rejects null args', async () => {
+    await expect(
+      deleteRadioStation(mockClient as unknown as NavidromeClient, null)
+    ).rejects.toThrow();
+  });
+
+  it('deleteRadioStation rejects non-string id', async () => {
+    await expect(
+      deleteRadioStation(mockClient as unknown as NavidromeClient, { id: 42 })
+    ).rejects.toThrow();
+  });
+
+  it('getRadioStation rejects empty-string id', async () => {
+    await expect(
+      getRadioStation(mockClient as unknown as NavidromeClient, { id: '' })
+    ).rejects.toThrow();
+  });
+
+  it('getRadioStation rejects null args', async () => {
+    await expect(
+      getRadioStation(mockClient as unknown as NavidromeClient, null)
+    ).rejects.toThrow();
+  });
+});

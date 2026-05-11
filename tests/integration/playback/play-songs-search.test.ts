@@ -115,7 +115,8 @@ describePlayback('play_songs_search (live)', () => {
       shuffle: false,
     });
     expect(baseline.success).toBe(true);
-    expect(baseline.shuffled).toBe(false);
+    // Note: response no longer echoes `shuffled` — LLM already knows what it
+    // asked for. Behavior is verified by comparing baselineIds vs shuffledIds.
     expect(baseline.count).toBeGreaterThan(0);
 
     if (baseline.count < 2) {
@@ -143,7 +144,7 @@ describePlayback('play_songs_search (live)', () => {
       shuffle: true,
     });
     expect(shuffled.success).toBe(true);
-    expect(shuffled.shuffled).toBe(true);
+    // Behavior (actual reordering) is verified by comparing IDs below.
     expect(shuffled.count).toBe(baseline.count);
 
     await waitFor(async () => {

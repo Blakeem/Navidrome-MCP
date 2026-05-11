@@ -70,7 +70,8 @@ describePlayback('play_albums + queue manipulation (live)', () => {
     });
     expect(result.albumCount).toBe(1);
     expect(result.trackCount).toBe(albumATrackIds.length);
-    expect(result.shuffle).toBe('none');
+    // Note: response no longer echoes the `shuffle` input — the LLM already
+    // knows what it asked for. Behavior is verified by checking queue order below.
 
     await waitFor(async () => {
       const np = await nowPlaying();

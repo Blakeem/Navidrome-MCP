@@ -1,8 +1,8 @@
+import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type {
   RadioStationDTO,
-  CreateRadioStationRequest,
   CreateRadioStationResponse,
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
@@ -12,6 +12,93 @@ import { getMessageManager } from '../utils/message-manager.js';
 import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
+import { Cache } from '../utils/cache.js';
+
+// Zod schemas for radio tool arguments — used instead of `args as { ... }` casts
+// to catch invalid inputs before they reach the Subsonic API.
+const RadioStationIdSchema = z.object({
+  id: z.string().min(1, 'Radio station ID is required'),
+});
+
+// Per-station name/url validation is intentionally kept in the loop below so
+// that a batch with one bad entry still processes the rest and returns per-item
+// success/failure results rather than throwing for the entire batch.
+const CreateRadioStationArgsSchema = z.object({
+  stations: z.array(z.object({
+    name: z.string(),
+    streamUrl: z.string(),
+    homePageUrl: z.string().optional(),
+  })).min(1, 'At least one station must be provided'),
+  validateBeforeAdd: z.boolean().optional().default(false),
+});
+
+/**
+ * Cache for the Subsonic /getInternetRadioStations result.
+ *
+ * Why: Subsonic has no "get one station" endpoint, so getRadioStation()
+ * (and play_radio_station via getRadioStation) used to do a full list-fetch
+ * + in-memory filter on every call. For a user with hundreds of saved
+ * stations that's hundreds of rows pulled per play. Cache the snapshot so
+ * a typical "play this station" hits memory.
+ *
+ * Shape: single keyed entry ('all') holding the full station array.
+ * Subsonic returns the whole list anyway and Navidrome's free API has no
+ * pagination on this endpoint — caching the entire array keeps the lookup
+ * trivially correct (no partial-page corner cases) and the memory cost is
+ * negligible (a few KB even for 1000+ stations).
+ *
+ * TTL: pulled from `config.cacheTtl` (default 300s, env-configurable via
+ * CACHE_TTL). This is the only consumer of `cacheTtl` so it doubles as a
+ * fix for the "cacheTtl parsed but never read" review item.
+ *
+ * Invalidation: createRadioStation and deleteRadioStation both call
+ * invalidateRadioStationCache() after a successful mutation. Discovery
+ * (Radio Browser) does NOT touch this cache — those are external stations,
+ * not Navidrome's saved list. There is no updateRadioStation in Subsonic;
+ * if Navidrome ever ships one, add a call site here.
+ *
+ * Module-level singleton so every getRadioStation/listRadioStations call
+ * across all tool invocations shares the same snapshot. Auto-cleanup is
+ * disabled — the data set is small and already TTL-checked on every read,
+ * so the periodic-cleanup timer would just keep the process alive for no
+ * reason.
+ */
+let stationCache: Cache<RadioStationDTO[]> | null = null;
+const CACHE_KEY = 'all';
+
+// In-flight fetch dedup so concurrent cold-cache callers (e.g. two rapid
+// `play_radio_station` calls at startup) all await the same Subsonic round
+// trip instead of stampeding the server. Mirrors the inflight pattern in
+// `radio-browser-resolver.ts`.
+let inflightFetch: Promise<RadioStationDTO[]> | null = null;
+
+function getStationCache(config: Config): Cache<RadioStationDTO[]> {
+  stationCache ??= new Cache<RadioStationDTO[]>(config.cacheTtl, false);
+  return stationCache;
+}
+
+/**
+ * Drop the cached station snapshot. Call after any successful mutation
+ * (create/delete) so the next read goes back to Navidrome.
+ */
+export function invalidateRadioStationCache(): void {
+  if (stationCache !== null) {
+    stationCache.delete(CACHE_KEY);
+  }
+}
+
+/**
+ * Test-only: fully discard the cache instance (releases setInterval if
+ * auto-cleanup were ever enabled, and resets singleton state). Production
+ * code calls invalidateRadioStationCache() instead.
+ */
+export function resetRadioStationCacheForTesting(): void {
+  if (stationCache !== null) {
+    stationCache.destroy();
+  }
+  stationCache = null;
+  inflightFetch = null;
+}
 
 interface InternetRadioStationsResponse {
   internetRadioStations?: {
@@ -25,33 +112,72 @@ interface InternetRadioStationsResponse {
 }
 
 /**
- * List all internet radio stations
+ * List all internet radio stations.
+ *
+ * Cached for `config.cacheTtl` seconds (default 300) — Subsonic only offers
+ * a list endpoint, so all single-station lookups (`getRadioStation`,
+ * `play_radio_station`) flow through this and benefit from the snapshot.
+ * Mutations (create/delete) invalidate the cache so the next read is fresh.
+ *
+ * `config` is optional purely for backward compat with internal callers
+ * (the post-create id-resolution path inside `createRadioStation` already
+ * has config in scope but threads through `client` only). When omitted,
+ * the cache is bypassed for that single call.
  */
 export async function listRadioStations(
   client: NavidromeClient,
-  args: unknown
+  args: unknown,
+  config?: Config
 ): Promise<ListRadioStationsResponse> {
   try {
     logger.debug('Tool listRadioStations called with args:', args);
 
-    const response = await client.subsonicRequest('/getInternetRadioStations') as InternetRadioStationsResponse;
-    const radioStations = response.internetRadioStations?.internetRadioStation ?? [];
+    let cachedStations: RadioStationDTO[] | undefined;
+    if (config !== undefined) {
+      cachedStations = getStationCache(config).get(CACHE_KEY);
+    }
 
-    const stations: RadioStationDTO[] = radioStations.map(station => {
-      const stationDto: RadioStationDTO = {
-        id: station.id,
-        name: station.name,
-        streamUrl: station.streamUrl,
-        createdAt: new Date().toISOString(), // Subsonic API doesn't provide timestamps
-        updatedAt: new Date().toISOString(),
-      };
+    let stations: RadioStationDTO[];
+    if (cachedStations !== undefined) {
+      stations = cachedStations;
+    } else if (inflightFetch !== null) {
+      // Another caller is already fetching — piggy-back instead of stampeding.
+      stations = await inflightFetch;
+    } else {
+      const fetchPromise = (async (): Promise<RadioStationDTO[]> => {
+        const response = await client.subsonicRequest('/getInternetRadioStations') as InternetRadioStationsResponse;
+        const radioStations = response.internetRadioStations?.internetRadioStation ?? [];
 
-      if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl !== '') {
-        stationDto.homePageUrl = station.homePageUrl;
+        const result = radioStations.map(station => {
+          const stationDto: RadioStationDTO = {
+            id: station.id,
+            name: station.name,
+            streamUrl: station.streamUrl,
+            createdAt: new Date().toISOString(), // Subsonic API doesn't provide timestamps
+            updatedAt: new Date().toISOString(),
+          };
+
+          if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl !== '') {
+            stationDto.homePageUrl = station.homePageUrl;
+          }
+
+          return stationDto;
+        });
+
+        if (config !== undefined) {
+          getStationCache(config).set(CACHE_KEY, result);
+        }
+        return result;
+      })();
+      inflightFetch = fetchPromise;
+      try {
+        stations = await fetchPromise;
+      } finally {
+        // Clear regardless of success/failure so a failed fetch doesn't poison
+        // subsequent retries. The cache itself is only written on success.
+        if (inflightFetch === fetchPromise) inflightFetch = null;
       }
-
-      return stationDto;
-    });
+    }
 
     // Get one-time message for radio list tip
     const messageManager = getMessageManager();
@@ -82,19 +208,7 @@ export async function createRadioStation(
   config: Config,
   args: unknown
 ): Promise<{ results: CreateRadioStationResponse[]; summary: string }> {
-  const params = args as {
-    stations: CreateRadioStationRequest[];
-    validateBeforeAdd?: boolean;
-  };
-
-  // Validate input
-  if (params.stations === null || params.stations === undefined || !Array.isArray(params.stations)) {
-    throw new Error('Provide stations array. Example: {"stations": [{"name": "Station Name", "streamUrl": "http://stream.url"}]}');
-  }
-
-  if (params.stations.length === 0) {
-    throw new Error('At least one station must be provided in the stations array');
-  }
+  const params = CreateRadioStationArgsSchema.parse(args);
 
   logger.debug('Tool createRadioStation called with args:', { stationCount: params.stations.length, validateBeforeAdd: params.validateBeforeAdd });
 
@@ -197,6 +311,12 @@ export async function createRadioStation(
     }
   }
 
+  // We just mutated the station list — drop any cached snapshot so the
+  // next listRadioStations/getRadioStation call refetches.
+  if (successCount > 0) {
+    invalidateRadioStationCache();
+  }
+
   // Resolve the real station IDs for everything we just created. Subsonic's
   // createInternetRadioStation doesn't echo the new id, so without this
   // lookup the response carries empty ids and a follow-up
@@ -211,6 +331,10 @@ export async function createRadioStation(
   );
   if (pendingLookups.length > 0) {
     try {
+      // Bypass cache for the post-create lookup — we just mutated Navidrome
+      // and need a fresh snapshot to match the new ids. Passing no config
+      // skips the cache entirely (rather than using a stale snapshot from
+      // before this batch ran).
       const allStations = await listRadioStations(client, {});
       const assignedIds = new Set<string>();
       for (const result of pendingLookups) {
@@ -285,15 +409,15 @@ export async function deleteRadioStation(
   args: unknown
 ): Promise<DeleteRadioStationResponse> {
   try {
-    const params = args as { id: string };
-
-    if (!params.id) {
-      throw new Error('Radio station ID is required');
-    }
+    const params = RadioStationIdSchema.parse(args);
 
     logger.debug('Tool deleteRadioStation called with args:', params);
 
     await client.subsonicRequest('/deleteInternetRadioStation', { id: params.id });
+
+    // Drop the cached station snapshot — a subsequent get_radio_station(deleted-id)
+    // would otherwise return the stale row and confuse the LLM.
+    invalidateRadioStationCache();
 
     return {
       success: true,
@@ -305,24 +429,30 @@ export async function deleteRadioStation(
 }
 
 /**
- * Get a specific radio station by ID
+ * Get a specific radio station by ID.
+ *
+ * Subsonic has no "get one" endpoint, so this fetches the full list and
+ * filters in memory. The list is cached (see `getStationCache`) so a
+ * sequence of getRadioStation calls — or a play_radio_station that goes
+ * through this — only hits the network once per `config.cacheTtl` window.
+ *
+ * `config` is optional so internal callers without one can fall back to
+ * an uncached fetch (the post-create id-resolution path).
  */
 export async function getRadioStation(
   client: NavidromeClient,
-  args: unknown
+  args: unknown,
+  config?: Config
 ): Promise<RadioStationDTO> {
   try {
-    const params = args as { id: string };
-
-    if (!params.id) {
-      throw new Error('Radio station ID is required');
-    }
+    const params = RadioStationIdSchema.parse(args);
 
     logger.debug('Tool getRadioStation called with args:', params);
 
     // Since Subsonic API doesn't have a get single station endpoint,
-    // we'll get all stations and filter by ID
-    const allStations = await listRadioStations(client, {});
+    // we'll get all stations and filter by ID. listRadioStations handles
+    // the cache lookup when config is provided.
+    const allStations = await listRadioStations(client, {}, config);
     const station = allStations.stations.find(s => s.id === params.id);
 
     if (!station) {
@@ -362,19 +492,15 @@ interface PlayRadioStationResult {
  */
 export async function playRadioStation(
   client: NavidromeClient,
-  args: unknown
+  args: unknown,
+  config?: Config
 ): Promise<PlayRadioStationResult> {
   try {
-    const params = args as { id?: unknown };
-    const id = typeof params.id === 'string' ? params.id : '';
-
-    if (id === '') {
-      throw new Error('Radio station ID is required');
-    }
+    const { id } = RadioStationIdSchema.parse(args);
 
     logger.debug('Tool playRadioStation called with args:', { id });
 
-    const station = await getRadioStation(client, { id });
+    const station = await getRadioStation(client, { id }, config);
 
     if (typeof station.streamUrl !== 'string' || station.streamUrl.trim() === '') {
       throw new Error(`Radio station "${station.name}" has no stream URL`);

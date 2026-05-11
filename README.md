@@ -197,7 +197,7 @@ For development or custom builds:
 
 ```bash
 git clone https://github.com/Blakeem/Navidrome-MCP.git
-cd navidrome-mcp
+cd Navidrome-MCP
 pnpm install
 pnpm build
 ```
@@ -223,8 +223,8 @@ Add the Navidrome MCP server:
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
-        "NAVIDROME_DEFAULT_LIBRARIES": "1,2", // Optional: Set default active libraries (comma-separated IDs)
-        "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
+        "NAVIDROME_DEFAULT_LIBRARIES": "1,2",
+        "LASTFM_API_KEY": "your_api_key",
         "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
         "LRCLIB_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)"
@@ -233,6 +233,12 @@ Add the Navidrome MCP server:
   }
 }
 ```
+
+Optional env vars:
+- `NAVIDROME_DEFAULT_LIBRARIES` — comma-separated library IDs to activate by default (e.g. `"1,2"`). Omit to use all libraries.
+- `LASTFM_API_KEY` — enables music discovery tools. Get a free key at [last.fm/api](https://www.last.fm/api/account/create).
+- `RADIO_BROWSER_USER_AGENT` / `LRCLIB_USER_AGENT` — required for Radio Browser and LRCLIB integrations. Use the string shown above (replace with your own project URL).
+- `LYRICS_PROVIDER` — set to `lrclib` to enable lyrics fetching (free, no key needed).
 
 #### Using Manual Build (Alternative)
 
@@ -241,13 +247,13 @@ Add the Navidrome MCP server:
   "mcpServers": {
     "navidrome": {
       "command": "node",
-      "args": ["/absolute/path/to/navidrome-mcp/dist/index.js"],
+      "args": ["/absolute/path/to/Navidrome-MCP/dist/index.js"],
       "env": {
         "NAVIDROME_URL": "http://your-server:4533",
         "NAVIDROME_USERNAME": "your_username",
         "NAVIDROME_PASSWORD": "your_password",
-        "NAVIDROME_DEFAULT_LIBRARIES": "1,2", // Optional: Set default active libraries (comma-separated IDs)
-        "LASTFM_API_KEY": "your_api_key", // Get your own at https://www.last.fm/api/account/create
+        "NAVIDROME_DEFAULT_LIBRARIES": "1,2",
+        "LASTFM_API_KEY": "your_api_key",
         "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)",
         "LYRICS_PROVIDER": "lrclib",
         "LRCLIB_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)"
@@ -256,6 +262,8 @@ Add the Navidrome MCP server:
   }
 }
 ```
+
+Optional env vars: same as the NPM block above.
 
 **Important**:
 - **NPM method**: Uses `npx navidrome-mcp` which auto-updates on each launch
@@ -272,25 +280,11 @@ Add the Navidrome MCP server:
 
 ### Configure ChatGPT Desktop
 
-#### Using NPM Package (Recommended)
-
-1. Open **ChatGPT Desktop**
-2. Go to **Settings → Connectors**
-3. Click **Create** and add:
-   - **Command**: `npx`
-   - **Args**: `navidrome-mcp`
-   - **Environment variables**: Same as above
-4. Save and restart
-
-#### Using Manual Build (Alternative)
-
-1. Open **ChatGPT Desktop**
-2. Go to **Settings → Connectors**
-3. Click **Create** and add:
-   - **Command**: `node`
-   - **Args**: `/absolute/path/to/navidrome-mcp/dist/index.js`
-   - **Environment variables**: Same as above
-4. Save and restart
+> **ChatGPT Desktop MCP support is not currently compatible with local stdio servers.**
+>
+> ChatGPT's MCP integration requires a hosted HTTPS endpoint, not a local `stdio` command. Navidrome-MCP runs as a local process that communicates over stdio (the same model used by Claude Desktop, Cursor, and other MCP clients). Bridging it to ChatGPT would require running a separate HTTP-to-stdio proxy on a public URL, which is out of scope for this project.
+>
+> Check back once OpenAI adds first-party stdio MCP support. In the meantime, use **Claude Desktop**, **Cursor**, **Continue**, or any other MCP client that supports local stdio servers.
 
 ## Powerful Usage Examples
 
@@ -513,7 +507,7 @@ The playback engine has no MCP-specific assumptions — the same engine could be
 ```bash
 # Clone and setup
 git clone https://github.com/Blakeem/Navidrome-MCP.git
-cd navidrome-mcp
+cd Navidrome-MCP
 cp .env.example .env
 # Edit .env with your credentials
 

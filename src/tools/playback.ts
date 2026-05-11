@@ -32,7 +32,7 @@ import {
 import { searchAlbums, searchSongs } from './search/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
-import { MAX_ALBUM_TRACKS } from '../constants/defaults.js';
+import { MAX_ALBUM_PAGES, MAX_ALBUM_TRACKS } from '../constants/defaults.js';
 
 interface PauseResult {
   success: true;
@@ -497,31 +497,68 @@ export async function playSongsSearch(
  * order (handles multi-disc releases correctly; the default sort is
  * unstable).
  *
+ * Pagination: reads `X-Total-Count` from the first page and follows up with
+ * additional MAX_ALBUM_TRACKS-sized pages until the full track list is
+ * fetched. Boxsets / "complete works" releases easily exceed the per-page
+ * limit; the previous single-page fetch silently truncated them, so a
+ * `play_albums` invocation against a 1500-track Bach collection played
+ * only the first 500 tracks.
+ *
+ * Safety cap: bails out after MAX_ALBUM_PAGES pages (= MAX_ALBUM_TRACKS *
+ * MAX_ALBUM_PAGES tracks total) to bound the worst case if Navidrome ever
+ * returns an inconsistent X-Total-Count.
+ *
  * Returns `[]` for albums with no tracks; callers decide whether that is
  * a hard error or a skip case.
  */
 async function fetchAlbumTrackIds(client: NavidromeClient, albumId: string): Promise<string[]> {
-  const params = new URLSearchParams({
-    album_id: albumId,
-    _start: '0',
-    _end: String(MAX_ALBUM_TRACKS),
-    _sort: 'album',
-    _order: 'ASC',
-  });
-  const endpoint = `/song?${params.toString()}`;
-  const rawTracks = await client.request<unknown>(endpoint);
-
-  if (!Array.isArray(rawTracks)) {
-    throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
-  }
   const ids: string[] = [];
-  for (const track of rawTracks) {
-    if (typeof track === 'object' && track !== null) {
-      const id = (track as Record<string, unknown>)['id'];
-      if (typeof id === 'string' && id !== '') {
-        ids.push(id);
+  let totalReported: number | null = null;
+  for (let page = 0; page < MAX_ALBUM_PAGES; page++) {
+    const start = page * MAX_ALBUM_TRACKS;
+    const params = new URLSearchParams({
+      album_id: albumId,
+      _start: String(start),
+      _end: String(start + MAX_ALBUM_TRACKS),
+      _sort: 'album',
+      _order: 'ASC',
+    });
+    const endpoint = `/song?${params.toString()}`;
+    const { data, total } = await client.requestWithMeta<unknown>(endpoint);
+    if (page === 0) totalReported = total;
+
+    if (!Array.isArray(data)) {
+      throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
+    }
+    for (const track of data) {
+      if (typeof track === 'object' && track !== null) {
+        const id = (track as Record<string, unknown>)['id'];
+        if (typeof id === 'string' && id !== '') {
+          ids.push(id);
+        }
       }
     }
+    // Unconditional break on empty page — protects against a server that
+    // reports a stale/inflated X-Total-Count and returns empty pages forever.
+    if (data.length === 0) break;
+    // Stop early when we know we've covered the full result set. If
+    // X-Total-Count is missing (server quirk), fall back to "stop when the
+    // page came back smaller than requested" — same heuristic the rest of
+    // the codebase uses for paginated reads.
+    const collected = ids.length;
+    if (total !== null) {
+      if (collected >= total) break;
+    } else if (data.length < MAX_ALBUM_TRACKS) {
+      break;
+    }
+  }
+  // If the server told us the album has more tracks than our hard cap, we've
+  // silently truncated. Warn so it's diagnosable in DEBUG logs at least —
+  // realistic albums don't hit 10k tracks but boxsets/complete-works might.
+  if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * MAX_ALBUM_TRACKS) {
+    logger.warn(
+      `Album ${albumId} has ${totalReported} tracks but only the first ${ids.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
+    );
   }
   return ids;
 }
@@ -623,9 +660,11 @@ export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
     if (radioStation !== null) {
       result.isRadio = true;
       result.radioStation = radioStation;
-    } else {
+    } else if (typeof queueLength === 'number' && queueLength > 0) {
       // Fallback: if we attached to a running mpv where the engine flag was
       // lost (different MCP session), still detect radio mode from the queue.
+      // Skip the IPC roundtrip entirely when the cached playlist-count is 0
+      // — there's nothing to inspect, and `now_playing` may be polled often.
       try {
         const playlist = await playbackEngine.getPlaylist();
         const current = playlist.find(e => e.isCurrent);

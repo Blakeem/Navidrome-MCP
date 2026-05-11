@@ -54,7 +54,9 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
     const result = await playRadioStation({ id: stationId });
 
     expect(result.success).toBe(true);
-    expect(result.station.id).toBe(stationId);
+    // Note: response no longer echoes the input `id` on `station.id` — the LLM
+    // already knows what station it asked for. Server-derived `name` and
+    // `streamUrl` are still surfaced because they're new info.
     expect(typeof result.station.name).toBe('string');
     expect(typeof result.station.streamUrl).toBe('string');
 

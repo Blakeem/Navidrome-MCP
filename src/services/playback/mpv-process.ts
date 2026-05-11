@@ -31,6 +31,13 @@ import { logger } from '../../utils/logger.js';
  *
  * Multiple MCP servers for the same user will share the same mpv — which is
  * the right behavior, since otherwise the AIs would fight over audio output.
+ *
+ * On POSIX we prefer `XDG_RUNTIME_DIR` (typically `/run/user/<uid>`, mode 0700
+ * per the XDG spec) so a sibling user on a shared host cannot connect to the
+ * socket and drive mpv. mpv's IPC has no auth — possession of the socket is
+ * full control. We fall back to `/tmp/...` only when XDG_RUNTIME_DIR is unset
+ * or blank (e.g. headless / non-systemd Linux, some BSDs); on a single-user
+ * machine that's the same blast radius the project always had.
  */
 export function getDefaultIpcPath(): string {
   if (process.platform === 'win32') {
@@ -40,6 +47,15 @@ export function getDefaultIpcPath(): string {
   // POSIX: prefer numeric uid for stability; fall back to USER env if unavailable
   const uidFn = (process as unknown as { getuid?: () => number }).getuid;
   const uid = typeof uidFn === 'function' ? uidFn() : (process.env['USER'] ?? 'default');
+
+  const xdgRuntime = process.env['XDG_RUNTIME_DIR'];
+  if (xdgRuntime !== undefined && xdgRuntime.trim() !== '') {
+    // XDG dirs are conventionally mode 0700 — sufficient isolation that we
+    // don't need a username/uid suffix in the filename, but we keep it for
+    // parity with the /tmp path so a misconfigured system that points
+    // XDG_RUNTIME_DIR at a shared dir still doesn't collide between users.
+    return `${xdgRuntime.replace(/\/+$/, '')}/navidrome-mcp-mpv-${uid}.sock`;
+  }
   return `/tmp/navidrome-mcp-mpv-${uid}.sock`;
 }
 
@@ -155,8 +171,18 @@ export function spawnMpv(binaryPath: string, ipcPath: string): ChildProcess {
 }
 
 /**
+ * Hard cap for partial-line buffering on mpv stdio streams. mpv usually emits
+ * short well-formed status lines, but a stuck DNS lookup or pathological
+ * filename could spew a single very long line; without a cap the buffer
+ * grows unbounded for the lifetime of the process. 64KB easily covers any
+ * legitimate single-line metadata payload while bounding the worst case.
+ */
+const MAX_LINE_BUFFER_BYTES = 64 * 1024;
+
+/**
  * Forward each line emitted on a mpv stream to logger.debug under the given
- * prefix. Buffers partial lines across chunks.
+ * prefix. Buffers partial lines across chunks, with a 64KB cap to prevent
+ * unbounded growth on streams that never emit a newline.
  */
 function attachLineLogger(stream: NodeJS.ReadableStream | null, prefix: string): void {
   if (stream === null) return;
@@ -172,6 +198,13 @@ function attachLineLogger(stream: NodeJS.ReadableStream | null, prefix: string):
       if (line !== '') {
         logger.debug(`[${prefix}] ${line}`);
       }
+    }
+    // Cap residual partial line. We've already drained every complete line,
+    // so anything left is a no-newline tail — drop it on overflow with a
+    // single warn so the issue surfaces in logs but the process doesn't OOM.
+    if (buffer.length > MAX_LINE_BUFFER_BYTES) {
+      logger.warn(`[${prefix}] line truncated at ${MAX_LINE_BUFFER_BYTES} bytes; dropping buffer`);
+      buffer = '';
     }
   });
   stream.on('end', () => {

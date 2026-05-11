@@ -64,6 +64,14 @@ interface IpcResponse {
 }
 
 /**
+ * Hard cap for partial-frame buffering on the IPC socket. mpv responses are
+ * newline-delimited JSON and well-formed responses fit in a few KB; anything
+ * larger without a newline indicates the stream is corrupt or mpv is in a
+ * bad state. 64KB matches the stdio line cap in mpv-process.ts.
+ */
+const MAX_IPC_BUFFER_BYTES = 64 * 1024;
+
+/**
  * mpv JSON-IPC client.
  *
  * Wraps a single net socket connection to mpv's `--input-ipc-server` endpoint,
@@ -270,6 +278,17 @@ export class MpvIpc {
       this.buffer = this.buffer.slice(nl + 1);
       if (line === '') continue;
       this.handleLine(line);
+    }
+    // Cap residual partial frame. mpv IPC framing is newline-delimited JSON;
+    // anything still in the buffer with no trailing newline is a partial
+    // response that's grown larger than any legitimate response we expect.
+    // Drop it and tear down: a malformed unbounded frame from mpv means the
+    // stream is corrupted; the next ensureRunning() call re-attaches.
+    if (this.buffer.length > MAX_IPC_BUFFER_BYTES) {
+      const reason = `mpv IPC frame exceeded ${MAX_IPC_BUFFER_BYTES} bytes without a newline; dropping connection`;
+      logger.warn(reason);
+      this.buffer = '';
+      this.handleUnexpectedDisconnect(reason);
     }
   }
 

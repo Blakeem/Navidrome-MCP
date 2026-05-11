@@ -36,6 +36,8 @@ import {
   fetchWithTimeout,
   getExternalApiTimeoutMs,
 } from '../utils/fetch-with-timeout.js';
+import { getRadioBrowserBase, invalidateRadioBrowserBase } from '../utils/radio-browser-resolver.js';
+import { hasRecentlyVoted, hasRecentlyClicked, markVoted, markClicked } from '../utils/radio-browser-rate-limit.js';
 const MAX_LIMIT = 500;
 
 /**
@@ -168,13 +170,39 @@ const VoteStationArgsSchema = z.object({
 });
 
 /**
- * Convert Radio Browser API response to our DTO
+ * Convert Radio Browser API response to our DTO.
+ * Returns null for rows missing required fields (stationuuid, name, or url) —
+ * Radio Browser occasionally serves partially-populated rows and we'd rather
+ * drop them silently than surface a station with no way to identify or play it.
  */
-function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO {
+function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO | null {
+  // Guard required fields. An empty stationuuid means we can't identify the
+  // station later (e.g. for click/vote); an empty name or url means we can't
+  // play or display it. Drop these rows before they reach the LLM.
+  const hasUuid = station.stationuuid !== '' && station.stationuuid !== undefined && station.stationuuid !== null;
+  const hasName = station.name !== '' && station.name !== undefined && station.name !== null;
+  const hasUrl = (station.url !== '' && station.url !== undefined && station.url !== null) ||
+                 (station.url_resolved !== '' && station.url_resolved !== undefined && station.url_resolved !== null);
+  if (!hasUuid || !hasName || !hasUrl) {
+    logger.debug('mapStationToDTO: dropping station with missing required field', {
+      stationuuid: station.stationuuid,
+      name: station.name,
+      url: station.url,
+    });
+    return null;
+  }
+
+  // Prefer url_resolved when it's a non-empty string. `??` would keep an empty
+  // string (falsy but not null/undefined), yielding playUrl=''. The hasUrl
+  // guard above caught the all-empty case but `url_resolved=''` + `url='http://...'`
+  // would slip through without this explicit empty-string check.
+  const playUrl = (station.url_resolved !== undefined && station.url_resolved !== null && station.url_resolved !== '')
+    ? station.url_resolved
+    : station.url;
   const dto: ExternalRadioStationDTO = {
     stationUuid: station.stationuuid,
     name: station.name,
-    playUrl: station.url_resolved ?? station.url,
+    playUrl,
     tags: (station.tags !== null && station.tags !== undefined && station.tags !== '') ? station.tags.split(',').map(t => t.trim()).filter(t => t !== '') : [],
     languageCodes: (station.languagecodes !== null && station.languagecodes !== undefined && station.languagecodes !== '') ? station.languagecodes.split(',').map(l => l.trim()).filter(l => l !== '') : [],
     hls: Boolean(station.hls),
@@ -198,52 +226,57 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
 }
 
 /**
- * Validate discovered radio stations
+ * Validate discovered radio stations.
+ *
+ * Validates the first 8 stations in parallel — each hits a different upstream
+ * host so they're network-independent and serial processing buys nothing except
+ * extra wall-clock time (8 × 2s timeout = 16s). Promise.all gives us ~2s total
+ * for the batch instead of 16s worst-case.
+ *
+ * Why 8: practical cap so we don't fan out to hundreds of hosts for large
+ * result sets; Radio Browser's `hideBroken` filter already pre-screens for
+ * recently-verified stations, so the first 8 are a representative sample.
  */
 async function validateDiscoveredStations(
   client: NavidromeClient,
   stations: ExternalRadioStationDTO[]
 ): Promise<ExternalRadioStationDTO[]> {
-  // Validate up to 8 stations with individual timeouts to handle rate limiting
   const maxValidations = Math.min(stations.length, 8);
   const stationsToValidate = stations.slice(0, maxValidations);
   const remainingStations = stations.slice(maxValidations);
-  
-  // Process validations with individual timeouts, not in parallel to avoid rate limiting
-  const validatedStations: ExternalRadioStationDTO[] = [];
-  
-  for (const station of stationsToValidate) {
-    try {
-      // Each validation gets its own timeout - no overall time limit
-      const validationResult = await validateRadioStream(client, {
-        url: station.playUrl,
-        timeout: DISCOVERY_VALIDATION_TIMEOUT
-      });
-      
-      const validation = {
-        validated: true,
-        isValid: validationResult.success,
-        status: validationResult.success ? 'OK' : 'FAIL',
-        duration: validationResult.testDuration
-      };
-      
-      validatedStations.push({
-        ...station,
-        validation
-      });
-    } catch {
-      // If validation fails, mark as failed but include the station
-      validatedStations.push({
-        ...station,
-        validation: {
-          validated: true,
-          isValid: false,
-          status: 'FAIL',
-        }
-      });
-    }
-  }
-  
+
+  // Validate in parallel — each station hits a different host so there is no
+  // shared rate-limit concern. Individual timeouts inside validateRadioStream
+  // ensure a slow host doesn't delay the whole batch beyond DISCOVERY_VALIDATION_TIMEOUT.
+  const validatedStations = await Promise.all(
+    stationsToValidate.map(async (station): Promise<ExternalRadioStationDTO> => {
+      try {
+        const validationResult = await validateRadioStream(client, {
+          url: station.playUrl,
+          timeout: DISCOVERY_VALIDATION_TIMEOUT,
+        });
+        return {
+          ...station,
+          validation: {
+            validated: true,
+            isValid: validationResult.success,
+            status: validationResult.success ? 'OK' : 'FAIL',
+            duration: validationResult.testDuration,
+          },
+        };
+      } catch {
+        return {
+          ...station,
+          validation: {
+            validated: true,
+            isValid: false,
+            status: 'FAIL',
+          },
+        };
+      }
+    })
+  );
+
   // Add remaining stations without validation
   return [...validatedStations, ...remainingStations];
 }
@@ -260,8 +293,10 @@ export async function discoverRadioStations(
 
   logger.debug('Tool discoverRadioStations called with args:', params);
 
+  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+
   try {
-    const url = new URL('/json/stations/search', config.radioBrowserBase);
+    const url = new URL('/json/stations/search', radioBrowserBase);
     
     // Map parameters to Radio Browser API format
     if (params.query !== null && params.query !== undefined && params.query !== '') url.searchParams.set('name', params.query);
@@ -297,21 +332,41 @@ export async function discoverRadioStations(
     }
 
     const data = await response.json() as RadioBrowserStation[];
-    const stations = data.map(mapStationToDTO);
-    
-    // Automatically validate all discovered stations
+
+    // Filter out rows missing required fields (stationuuid/name/url) before
+    // any further processing. mapStationToDTO returns null for these.
+    const rawStations = data.map(mapStationToDTO).filter((s): s is ExternalRadioStationDTO => s !== null);
+
+    // Dedupe on (name, playUrl): Radio Browser commonly returns multiple rows
+    // for the same logical station (e.g., from different regional mirrors).
+    // Apply dedupe BEFORE validation so we don't waste round-trips probing
+    // the same stream twice. Key on playUrl alone — Radio Browser commonly
+    // returns the same logical station with case/spelling variants of `name`
+    // ("Jazz FM" vs "jazz fm") all pointing at the same playUrl, and the URL
+    // is a stable unique identifier for the stream itself.
+    const seen = new Set<string>();
+    const stations = rawStations.filter(s => {
+      if (seen.has(s.playUrl)) {
+        logger.debug('discoverRadioStations: deduping duplicate station', { name: s.name, playUrl: s.playUrl });
+        return false;
+      }
+      seen.add(s.playUrl);
+      return true;
+    });
+
+    // Automatically validate all discovered stations (parallelized — see below)
     const validatedStations = await validateDiscoveredStations(client, stations);
-    
+
     // Create validation summary
     const validatedCount = validatedStations.filter(s => s.validation?.validated === true).length;
     const workingCount = validatedStations.filter(s => s.validation?.isValid === true).length;
-    
+
     const result: DiscoverRadioStationsResponse = {
       stations: validatedStations,
       source: 'radio-browser',
-      mirrorUsed: config.radioBrowserBase
+      mirrorUsed: radioBrowserBase
     };
-    
+
     if (validatedCount > 0) {
       result.validationSummary = {
         totalStations: stations.length,
@@ -323,6 +378,9 @@ export async function discoverRadioStations(
     
     return result;
   } catch (error) {
+    // Drop the cached mirror so the next call re-resolves SRV. Cheap (one
+    // DNS lookup) and self-heals from a mirror that went down mid-cache-window.
+    invalidateRadioBrowserBase();
     throw new Error(ErrorFormatter.toolExecution('discoverRadioStations', error));
   }
 }
@@ -334,7 +392,9 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
   const params = GetRadioFiltersArgsSchema.parse(args);
   logger.debug('Tool getRadioFilters called with args:', params);
   const result: RadioFiltersResponse = {};
-  
+
+  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+
   try {
     const fetchPromises: Promise<void>[] = [];
 
@@ -350,7 +410,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('tags')) {
       fetchPromises.push((async (): Promise<void> => {
         const res = await fetchWithTimeout(
-          `${config.radioBrowserBase}/json/tags`,
+          `${radioBrowserBase}/json/tags`,
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/tags' },
         );
@@ -364,7 +424,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('countries')) {
       fetchPromises.push((async (): Promise<void> => {
         const res = await fetchWithTimeout(
-          `${config.radioBrowserBase}/json/countries`,
+          `${radioBrowserBase}/json/countries`,
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/countries' },
         );
@@ -382,7 +442,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('languages')) {
       fetchPromises.push((async (): Promise<void> => {
         const res = await fetchWithTimeout(
-          `${config.radioBrowserBase}/json/languages`,
+          `${radioBrowserBase}/json/languages`,
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/languages' },
         );
@@ -400,7 +460,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     if (params.kinds.includes('codecs')) {
       fetchPromises.push((async (): Promise<void> => {
         const res = await fetchWithTimeout(
-          `${config.radioBrowserBase}/json/codecs`,
+          `${radioBrowserBase}/json/codecs`,
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/codecs' },
         );
@@ -417,6 +477,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     await Promise.all(fetchPromises);
     return result;
   } catch (error) {
+    invalidateRadioBrowserBase();
     throw new Error(ErrorFormatter.toolExecution('getRadioFilters', error));
   }
 }
@@ -429,8 +490,10 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
 
   logger.debug('Tool getStationByUuid called with args:', params);
 
+  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+
   try {
-    const url = `${config.radioBrowserBase}/json/stations/byuuid?uuids=${encodeURIComponent(params.stationUuid)}`;
+    const url = `${radioBrowserBase}/json/stations/byuuid?uuids=${encodeURIComponent(params.stationUuid)}`;
 
     const response = await fetchWithTimeout(
       url,
@@ -461,23 +524,45 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
     if (!firstStation) {
       throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
-    
-    return mapStationToDTO(firstStation);
+
+    const dto = mapStationToDTO(firstStation);
+    if (dto === null) {
+      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
+    }
+    return dto;
   } catch (error) {
+    invalidateRadioBrowserBase();
     throw new Error(ErrorFormatter.toolExecution('getStationByUuid', error));
   }
 }
 
 /**
- * Register a play click for a station (helps with popularity metrics)
+ * Register a play click for a station (helps with popularity metrics).
+ *
+ * Per-session dedup: the second call for the same UUID returns a friendly
+ * no-op (success: true, ok: false) instead of hitting Radio Browser. The
+ * upstream tracks clicks per-IP-per-day server-side anyway, so additional
+ * calls would be silently rejected — surfacing this client-side keeps an
+ * LLM from looping and risking a UA ban.
  */
 export async function clickStation(config: Config, args: unknown): Promise<ClickRadioStationResponse> {
   const params = ClickStationArgsSchema.parse(args);
 
   logger.debug('Tool clickStation called with args:', params);
 
+  if (hasRecentlyClicked(params.stationUuid)) {
+    logger.debug(`clickStation: deduped (already clicked ${params.stationUuid} this session)`);
+    return {
+      ok: false,
+      playUrl: '',
+      message: `Already clicked station ${params.stationUuid} this session — Radio Browser counts unique clicks per IP per day, so additional calls would be no-ops anyway.`
+    };
+  }
+
+  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+
   try {
-    const url = `${config.radioBrowserBase}/json/url/${encodeURIComponent(params.stationUuid)}`;
+    const url = `${radioBrowserBase}/json/url/${encodeURIComponent(params.stationUuid)}`;
 
     // No retry: a click registers a popularity-metric event server-side.
     // Retrying on timeout could double-count if the first request landed.
@@ -502,26 +587,48 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
 
     const data = await response.json() as RadioBrowserActionResponse;
 
+    // Mark as clicked only on a successful round-trip — if Radio Browser
+    // rejected the click (data.ok=false), let the caller retry next turn.
+    if (data.ok === true) {
+      markClicked(params.stationUuid);
+    }
+
     return {
       ok: Boolean(data.ok),
       playUrl: data.url ?? '',
       message: data.message ?? 'Click registered successfully'
     };
   } catch (error) {
+    invalidateRadioBrowserBase();
     throw new Error(ErrorFormatter.toolExecution('clickStation', error));
   }
 }
 
 /**
- * Vote for a radio station
+ * Vote for a radio station.
+ *
+ * Per-session dedup: the second call for the same UUID returns a friendly
+ * no-op instead of hitting Radio Browser. Per the upstream docs votes are
+ * dedup'd per-IP-per-day server-side, so an LLM looping would accumulate
+ * rejected requests and risk getting our shared User-Agent banned.
  */
 export async function voteStation(config: Config, args: unknown): Promise<VoteRadioStationResponse> {
   const params = VoteStationArgsSchema.parse(args);
 
   logger.debug('Tool voteStation called with args:', params);
 
+  if (hasRecentlyVoted(params.stationUuid)) {
+    logger.debug(`voteStation: deduped (already voted ${params.stationUuid} this session)`);
+    return {
+      ok: false,
+      message: `Already voted for station ${params.stationUuid} this session — Radio Browser counts unique votes per IP per day, so additional calls would be rejected anyway.`
+    };
+  }
+
+  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+
   try {
-    const url = `${config.radioBrowserBase}/json/vote/${encodeURIComponent(params.stationUuid)}`;
+    const url = `${radioBrowserBase}/json/vote/${encodeURIComponent(params.stationUuid)}`;
 
     // No retry: a vote is recorded server-side. Retrying on timeout risks
     // double-voting if the first request landed but the response was lost.
@@ -543,14 +650,22 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
     if (!response.ok) {
       throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
-    
+
     const data = await response.json() as RadioBrowserActionResponse;
-    
+
+    // Only record the dedup marker on a confirmed-successful vote; if
+    // Radio Browser declined (data.ok=false, e.g. "station not found"),
+    // a retry next session/process is still meaningful.
+    if (data.ok === true) {
+      markVoted(params.stationUuid);
+    }
+
     return {
       ok: Boolean(data.ok),
       message: data.message ?? 'Vote registered successfully'
     };
   } catch (error) {
+    invalidateRadioBrowserBase();
     throw new Error(ErrorFormatter.toolExecution('voteStation', error));
   }
 }

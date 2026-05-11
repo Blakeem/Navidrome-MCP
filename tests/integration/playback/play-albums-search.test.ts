@@ -200,7 +200,8 @@ describePlayback('play_albums_search (live)', () => {
 
     expect(shuffled.success).toBe(true);
     expect(shuffled.matchCount).toBeGreaterThan(0);
-    expect(shuffled.shuffle).toBe('albums');
+    // Note: response no longer echoes the `shuffle` input. Behavior is verified
+    // by comparing the resulting queue order against the baseline below.
     expect(shuffled.trackCount).toBe(baseline.trackCount);
 
     await waitFor(async () => {

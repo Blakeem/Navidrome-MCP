@@ -39,7 +39,6 @@ export type {
 // Export all radio DTOs
 export type {
   RadioStationDTO,
-  CreateRadioStationRequest,
   CreateRadioStationResponse,
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
