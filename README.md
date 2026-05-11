@@ -182,7 +182,7 @@ ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and is 
 
 When local audio playback is active, the MCP server runs a companion web interface that doubles as a now-playing display and a transport-control remote. Open it in any browser on the host (or anywhere on your LAN once exposed) — no extra install, no separate process.
 
-![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)
+[![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)](navidome-mcp-mpv-remote-large.png)
 
 ### What it does
 
