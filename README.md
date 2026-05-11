@@ -180,17 +180,17 @@ ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and is 
 
 ## MPV Remote (Web UI)
 
-When local audio playback is active, the MCP server runs a companion web interface that doubles as a now-playing display and a transport-control remote. Open it in any browser on the host (or anywhere on your LAN once exposed) — no extra install, no separate process.
+When local audio playback is active, the MCP server runs a companion web interface that doubles as a now-playing display and a transport-control remote. Open it in any browser on the host (or anywhere on your LAN once exposed).
 
 [![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)](navidome-mcp-mpv-remote-large.png)
 
 ### What it does
 
-- **Now-playing card** — cover art, title, artist, album, and queue position (e.g. `3 / 15`). A `Live` indicator confirms the SSE stream is healthy.
+- **Now-playing card** — cover art, title, artist, album, and queue position. A `Live` indicator confirms the SSE stream is healthy.
 - **Transport controls** — previous / pause-resume / next, with a seek bar showing current position and remaining time.
-- **Volume slider** — drives mpv's internal volume property (independent of your OS volume).
+- **Volume slider** — drives mpv's internal volume control (independent of your OS volume).
 - **Queue list** — every track in the current mpv queue with title, artist · album, and duration. Click any row to jump to it.
-- **Live state updates** — Server-Sent Events push state changes the instant they happen, throttled to ~1 Hz so the progress bar runs smoothly without flooding the network. Connections auto-reconnect on Wi-Fi blips.
+- **Live state updates** — Server-Sent Events push state changes the instant they happen, throttled to ~1 Hz so the progress bar runs smoothly without flooding the network. Connections auto-reconnect on disconnect.
 
 ### Enabling
 
@@ -218,15 +218,12 @@ When `WEBUI_EXPOSE=true`, the MCP server logs the LAN URLs it's reachable on at 
 3. Trigger any playback (e.g. ask the assistant to *"play all my starred songs"*) — this is what causes the web UI to bind.
 4. Open the LAN URL from the startup log on your phone's browser. Bookmark it for one-tap access — the page is a single static HTML/CSS/JS bundle, no install required.
 
-The page auto-reconnects via SSE (10-second retry interval), so a phone laid on a desk through a brief Wi-Fi drop just resumes when the link comes back.
-
 ### Security note
 
 The web UI has **no authentication** — anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
 
 - On `WEBUI_HOST=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
 - On `WEBUI_EXPOSE=true` it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation.
-- For remote access from outside your network, put it behind a VPN, a reverse proxy with auth (nginx basic auth / Authelia / similar), or a Tailscale-style overlay.
 
 ## Available Tools
 
