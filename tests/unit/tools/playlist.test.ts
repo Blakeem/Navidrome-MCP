@@ -44,17 +44,16 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         // Test with minimal parameters to avoid large responses
         const result = await listPlaylists(liveClient, { limit: 1 });
 
-        // Validate response structure (not specific content)
+        // Validate response structure (not specific content). `offset`/
+        // `limit` are no longer echoed — they are LLM input echoes.
         expect(result).toHaveProperty('playlists');
         expect(result).toHaveProperty('total');
-        expect(result).toHaveProperty('offset');
-        expect(result).toHaveProperty('limit');
+        expect(result).not.toHaveProperty('offset');
+        expect(result).not.toHaveProperty('limit');
 
         // Ensure correct types
         expect(Array.isArray(result.playlists)).toBe(true);
         expect(typeof result.total).toBe('number');
-        expect(typeof result.offset).toBe('number');
-        expect(typeof result.limit).toBe('number');
 
         // If playlists exist, verify structure
         if (result.playlists.length > 0) {
@@ -84,10 +83,8 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           order: 'ASC'
         });
 
-        expect(result.limit).toBe(5);
-        expect(result.offset).toBe(0);
-
-        // Should not return more than requested
+        // offset/limit are no longer echoed — assert just on the items count
+        // and the server-derived total.
         expect(result.playlists.length).toBeLessThanOrEqual(5);
 
         // Pagination correctness: `total` is the server's full match count

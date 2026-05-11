@@ -42,14 +42,18 @@ interface FilterResolutionResult {
 }
 
 /**
- * Resolve text-based filters to IDs using FilterCacheManager
- * Converts user-friendly filter names to internal UUID-based filters
+ * Resolve text-based filters to IDs using FilterCacheManager.
+ * When the filter cache is disabled, re-fetches tag/genre data before resolving
+ * so that newly-added values are immediately visible.
  *
  * @param params - Search parameters containing text-based filters
  * @returns Object containing both resolved filter IDs and applied filter names
  * @throws Error if a filter value is not found, with suggestions for similar values
  */
-export function resolveTextFilters(params: FilterableSearchParams): FilterResolutionResult {
+export async function resolveTextFilters(params: FilterableSearchParams): Promise<FilterResolutionResult> {
+  // Refresh filter data from Navidrome when cache is disabled (no-op when enabled)
+  await filterCacheManager.ensureFresh();
+
   // Data collection - gather filter parameters
   const resolvedFilters: Record<string, string> = {};
   const appliedFilters: Record<string, string> = {};
@@ -160,21 +164,21 @@ interface EnhancedSearchResult {
 }
 
 /**
- * Build enhanced search parameters with resolved filters
- * Combines query parameters, pagination, sorting, and resolved filters into URL parameters
+ * Build enhanced search parameters with resolved filters.
+ * Combines query parameters, pagination, sorting, and resolved filters into URL parameters.
  *
  * @param params - Search parameters including filters and pagination options
  * @param searchField - The field name to search in (e.g., 'title', 'name')
  * @param defaultSort - Default sort field if none specified
  * @returns Object containing URL search parameters string and applied filters
  */
-export function buildEnhancedSearchParams(
+export async function buildEnhancedSearchParams(
   params: SearchParameterInput,
   searchField: string,
   defaultSort: string
-): EnhancedSearchResult {
-  // Process text-based filters first
-  const { resolvedFilters, appliedFilters } = resolveTextFilters(params);
+): Promise<EnhancedSearchResult> {
+  // Process text-based filters first (may refresh from Navidrome when cache is disabled)
+  const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
 
   // Build URLSearchParams for API request
   const searchParams = new URLSearchParams();

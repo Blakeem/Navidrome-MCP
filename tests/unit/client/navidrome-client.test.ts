@@ -8,10 +8,32 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
 import { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import { FetchTimeoutError } from '../../../src/utils/fetch-with-timeout.js';
 import type { Config } from '../../../src/config.js';
 
 const mockFetch = vi.fn() as MockedFunction<typeof fetch>;
 global.fetch = mockFetch;
+
+/**
+ * fetch impl that hangs until the AbortSignal fires — used for timeout tests.
+ * Mirrors how native fetch behaves on a server that accepts the connection
+ * but never replies.
+ */
+function hangingFetchImpl(_url: string, init?: RequestInit): Promise<Response> {
+  return new Promise<Response>((_resolve, reject) => {
+    const signal = init?.signal;
+    if (signal === undefined || signal === null) return;
+    if (signal.aborted) {
+      reject(new Error('aborted')); return;
+    }
+    signal.addEventListener('abort', () => {
+      const reasonName = signal.reason instanceof Error ? signal.reason.name : 'AbortError';
+      const err = new Error('aborted');
+      err.name = reasonName === 'TimeoutError' ? 'TimeoutError' : 'AbortError';
+      reject(err);
+    }, { once: true });
+  });
+}
 
 function makeConfig(): Config {
   return {
@@ -110,6 +132,30 @@ describe('NavidromeClient', () => {
       const client = new NavidromeClient(makeConfig());
       const result = await client.request<{ added: number }>('/playlist/abc/tracks', { method: 'POST' });
       expect(result.added).toBe(3);
+    });
+
+    it('parses array JSON body even when Content-Type is text/plain (getPlaylistTracks shape)', async () => {
+      // Regression lock for the "getPlaylistTracks silent empty tracks" finding.
+      // The endpoint returns a JSON array; if Navidrome ever sends text/plain,
+      // parseResponse must JSON-sniff the array opener '[' and return parsed data
+      // rather than a raw string (which would fail the Array.isArray() guard and
+      // produce tracks: []).
+      const trackArray = [
+        { id: 1, mediaFileId: 'abc', playlistId: 'pl1', title: 'Song A', duration: 180 },
+        { id: 2, mediaFileId: 'def', playlistId: 'pl1', title: 'Song B', duration: 200 },
+      ];
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('t'))
+        .mockResolvedValueOnce(new Response(JSON.stringify(trackArray), {
+          status: 200,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        }));
+
+      const client = new NavidromeClient(makeConfig());
+      const result = await client.request<unknown[]>('/playlist/pl1/tracks?_start=0&_end=2');
+      expect(Array.isArray(result)).toBe(true);
+      expect(result).toHaveLength(2);
+      expect((result[0] as { title: string }).title).toBe('Song A');
     });
 
     it('returns text verbatim when body is not JSON-shaped', async () => {
@@ -270,6 +316,123 @@ describe('NavidromeClient', () => {
 
     it('also guards subsonicRequest', async () => {
       await expect(client.subsonicRequest('/../auth/login')).rejects.toThrow(/path-traversal/);
+    });
+  });
+
+  describe('request() timeout + retry', () => {
+    // The MCP SDK's DEFAULT_REQUEST_TIMEOUT_MSEC is 60s — these tests verify
+    // we surface a clear timeout error well before the SDK envelope fires,
+    // and that GET requests retry once (idempotent) but POST does not
+    // (mutation-safety: a timed-out POST may have been applied server-side).
+
+    beforeEach(() => {
+      delete process.env['NAVIDROME_REQUEST_TIMEOUT_MS'];
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('GET request times out and retries once, then succeeds', async () => {
+      vi.useFakeTimers();
+      // Tighter timeout for fast tests.
+      process.env['NAVIDROME_REQUEST_TIMEOUT_MS'] = '1000';
+
+      // login (1) → first GET hangs (2) → second GET succeeds (3).
+      mockFetch.mockResolvedValueOnce(tokenResponse('t'));
+      mockFetch.mockImplementationOnce(hangingFetchImpl);
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const client = new NavidromeClient(makeConfig());
+      const promise = client.request<{ ok: boolean }>('/album/123');
+
+      // Drive the first GET attempt to timeout (1000ms cap from env above).
+      await vi.advanceTimersByTimeAsync(1001);
+
+      const result = await promise;
+      expect(result).toEqual({ ok: true });
+      // login + GET-hang + GET-success = 3 fetches.
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('GET request times out twice → throws FetchTimeoutError after second attempt', async () => {
+      vi.useFakeTimers();
+      process.env['NAVIDROME_REQUEST_TIMEOUT_MS'] = '1000';
+
+      mockFetch.mockResolvedValueOnce(tokenResponse('t'));
+      mockFetch.mockImplementationOnce(hangingFetchImpl);
+      mockFetch.mockImplementationOnce(hangingFetchImpl);
+
+      const client = new NavidromeClient(makeConfig());
+      const promise = client.request('/album/123');
+      const settled = promise.catch((e: unknown) => e);
+
+      await vi.advanceTimersByTimeAsync(1001);
+      await vi.advanceTimersByTimeAsync(1001);
+
+      const result = await settled;
+      expect(result).toBeInstanceOf(FetchTimeoutError);
+      // login + 2 attempts = 3 fetches total.
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('POST mutation times out → does NOT retry (avoids double-apply)', async () => {
+      vi.useFakeTimers();
+      process.env['NAVIDROME_REQUEST_TIMEOUT_MS'] = '1000';
+
+      mockFetch.mockResolvedValueOnce(tokenResponse('t'));
+      mockFetch.mockImplementationOnce(hangingFetchImpl);
+
+      const client = new NavidromeClient(makeConfig());
+      // Simulating addTracksToPlaylist or createPlaylist: POST that the LLM
+      // can re-invoke via the tool layer if it wants. The wrapper must NOT
+      // silently retry — if Navidrome already applied the mutation just
+      // before the timeout, retry would create a duplicate playlist or
+      // double-add tracks.
+      const promise = client.request('/playlist', {
+        method: 'POST',
+        body: JSON.stringify({ name: 'New Playlist' }),
+      });
+      const settled = promise.catch((e: unknown) => e);
+
+      await vi.advanceTimersByTimeAsync(1001);
+
+      const result = await settled;
+      expect(result).toBeInstanceOf(FetchTimeoutError);
+      expect((result as FetchTimeoutError).attempts).toBe(1);
+      // login + single POST attempt = 2 fetches. No retry.
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('getCurrentToken — public token accessor', () => {
+    // The library-manager fragility fix added this method so callers can
+    // decode user-scoped JWT claims without reaching into the private
+    // `authManager` field via `as unknown as`. It must round-trip whatever
+    // AuthManager has cached and continue to participate in the standard
+    // refresh-on-expiry flow.
+    it('returns the current cached JWT', async () => {
+      mockFetch.mockResolvedValueOnce(tokenResponse('jwt.payload.sig'));
+      const client = new NavidromeClient(makeConfig());
+
+      const token = await client.getCurrentToken();
+      expect(token).toBe('jwt.payload.sig');
+      // No second /auth/login on a follow-up call when the cache is hot.
+      const second = await client.getCurrentToken();
+      expect(second).toBe('jwt.payload.sig');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('triggers /auth/login on first call (lazy auth)', async () => {
+      mockFetch.mockResolvedValueOnce(tokenResponse('lazy-auth-token'));
+      const client = new NavidromeClient(makeConfig());
+
+      const token = await client.getCurrentToken();
+      expect(token).toBe('lazy-auth-token');
+      // First call is the only fetch — no implicit warm-up.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      const [url] = mockFetch.mock.calls[0]!;
+      expect(typeof url === 'string' && url.endsWith('/auth/login')).toBe(true);
     });
   });
 

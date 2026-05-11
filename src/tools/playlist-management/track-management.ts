@@ -30,12 +30,14 @@ import {
   ReorderPlaylistTrackSchema,
 } from '../../schemas/index.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Add tracks to a playlist
  */
 export async function addTracksToPlaylist(client: NavidromeClient, args: unknown): Promise<AddTracksToPlaylistResponse> {
   const params = AddTracksToPlaylistSchema.parse(args);
+  logger.debug('Tool addTracksToPlaylist called with args:', params);
 
   try {
     const requestBody: AddTracksToPlaylistRequest = {};
@@ -70,6 +72,7 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
  */
 export async function removeTracksFromPlaylist(client: NavidromeClient, args: unknown): Promise<RemoveTracksFromPlaylistResponse> {
   const params = RemoveTracksFromPlaylistSchema.parse(args);
+  logger.debug('Tool removeTracksFromPlaylist called with args:', params);
 
   try {
     const queryParams = new URLSearchParams();
@@ -95,6 +98,7 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
  */
 export async function reorderPlaylistTrack(client: NavidromeClient, args: unknown): Promise<ReorderPlaylistTrackResponse> {
   const params = ReorderPlaylistTrackSchema.parse(args);
+  logger.debug('Tool reorderPlaylistTrack called with args:', params);
 
   try {
     const requestBody: ReorderPlaylistTrackRequest = {

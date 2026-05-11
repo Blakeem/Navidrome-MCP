@@ -23,6 +23,7 @@ import type { ToolCategory } from './handlers/registry.js';
 import { getPackageVersion } from '../utils/version.js';
 import { TestConnectionSchema } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { logger } from '../utils/logger.js';
 
 interface TestConnectionResult {
   success: boolean;
@@ -58,6 +59,8 @@ export async function testConnection(
   args: unknown
 ): Promise<TestConnectionResult> {
   const params = TestConnectionSchema.parse(args);
+
+  logger.debug('Tool testConnection called with args:', params);
 
   try {
     // Try to make a simple API call to verify authentication using working /song endpoint

@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
 import { AuthManager } from '../../../src/client/auth-manager.js';
+import { FetchTimeoutError } from '../../../src/utils/fetch-with-timeout.js';
 import type { Config } from '../../../src/config.js';
 
 const mockFetch = vi.fn() as MockedFunction<typeof fetch>;
@@ -123,5 +124,42 @@ describe('AuthManager', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(results.every(r => r.status === 'rejected')).toBe(true);
+  });
+
+  describe('authenticate() timeout', () => {
+    // Auth uses retryPolicy: 'never' — see auth-manager.ts comment for why.
+    // A timed-out /auth/login throws a FetchTimeoutError immediately;
+    // re-running the original tool call will single-flight-dedup retry it.
+
+    afterEach(() => {
+      delete process.env['NAVIDROME_AUTH_TIMEOUT_MS'];
+      vi.useRealTimers();
+    });
+
+    it('throws FetchTimeoutError when /auth/login hangs (no retry)', async () => {
+      vi.useFakeTimers();
+      process.env['NAVIDROME_AUTH_TIMEOUT_MS'] = '1000';
+
+      mockFetch.mockImplementationOnce((_url, init) => {
+        return new Promise<Response>((_res, rej) => {
+          init?.signal?.addEventListener('abort', () => {
+            const err = new Error('aborted');
+            err.name = 'TimeoutError';
+            rej(err);
+          }, { once: true });
+        });
+      });
+
+      const auth = new AuthManager(makeConfig());
+      const promise = auth.authenticate();
+      const settled = promise.catch((e: unknown) => e);
+
+      await vi.advanceTimersByTimeAsync(1001);
+
+      const result = await settled;
+      expect(result).toBeInstanceOf(FetchTimeoutError);
+      // No retry on auth — single attempt only.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
   });
 });

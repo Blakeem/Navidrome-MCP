@@ -56,8 +56,8 @@ describePlayback('play_songs_search (live)', () => {
     expect(typeof result.count).toBe('number');
     expect(result.count).toBeGreaterThan(0);
     expect(result.count).toBeLessThanOrEqual(10);
-    expect(result.mode).toBe('replace');
-    expect(result.shuffled).toBe(false);
+    // `mode` and `shuffled` are no longer echoed (LLM input echoes that
+    // could even lie about silent demotion in radio-loaded queues).
 
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -88,8 +88,8 @@ describePlayback('play_songs_search (live)', () => {
     expect(result.success).toBe(true);
     expect(result.count).toBeGreaterThan(0);
     expect(result.count).toBeLessThanOrEqual(5);
-    expect(result.mode).toBe('replace');
-    expect(result.shuffled).toBe(false);
+    // `mode` and `shuffled` are no longer echoed (LLM input echoes that
+    // could even lie about silent demotion in radio-loaded queues).
 
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -211,7 +211,7 @@ describePlayback('play_songs_search (live)', () => {
       mode: 'append',
     });
     expect(result.success).toBe(true);
-    expect(result.mode).toBe('append');
+    // `mode` is no longer echoed (silent radio-demotion would have lied).
     expect(result.count).toBeGreaterThan(0);
 
     const expectedLength = initialLength + result.count;
@@ -262,10 +262,8 @@ describePlayback('play_songs_search (live)', () => {
     expect(Number.isInteger(result.count)).toBe(true);
     expect(result.count).toBeGreaterThan(0);
 
-    expect(typeof result.mode).toBe('string');
-    expect(['replace', 'append']).toContain(result.mode);
-
-    expect(typeof result.shuffled).toBe('boolean');
+    // `mode` and `shuffled` are no longer in the response — they were LLM
+    // input echoes that wasted context.
 
     // appliedFilters is optional.
     if (result.appliedFilters !== undefined) {

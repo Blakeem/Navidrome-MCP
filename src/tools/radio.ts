@@ -32,7 +32,7 @@ export async function listRadioStations(
   args: unknown
 ): Promise<ListRadioStationsResponse> {
   try {
-    logger.debug('Listing radio stations', args);
+    logger.debug('Tool listRadioStations called with args:', args);
 
     const response = await client.subsonicRequest('/getInternetRadioStations') as InternetRadioStationsResponse;
     const radioStations = response.internetRadioStations?.internetRadioStation ?? [];
@@ -96,7 +96,7 @@ export async function createRadioStation(
     throw new Error('At least one station must be provided in the stations array');
   }
 
-  logger.debug(`Creating ${params.stations.length} radio station(s)`);
+  logger.debug('Tool createRadioStation called with args:', { stationCount: params.stations.length, validateBeforeAdd: params.validateBeforeAdd });
 
   const results: CreateRadioStationResponse[] = [];
   let successCount = 0;
@@ -276,7 +276,9 @@ export async function createRadioStation(
 }
 
 /**
- * Delete a radio station by ID
+ * Delete a radio station by ID. The deleted id is intentionally NOT echoed
+ * back — the LLM just sent it; success: true is sufficient confirmation.
+ * The id surfaces in the DEBUG log line for diagnostics.
  */
 export async function deleteRadioStation(
   client: NavidromeClient,
@@ -289,13 +291,12 @@ export async function deleteRadioStation(
       throw new Error('Radio station ID is required');
     }
 
-    logger.debug('Deleting radio station:', params.id);
+    logger.debug('Tool deleteRadioStation called with args:', params);
 
     await client.subsonicRequest('/deleteInternetRadioStation', { id: params.id });
 
     return {
       success: true,
-      id: params.id,
     };
   } catch (error) {
     logger.error('Error deleting radio station:', error);
@@ -317,7 +318,7 @@ export async function getRadioStation(
       throw new Error('Radio station ID is required');
     }
 
-    logger.debug('Getting radio station:', params.id);
+    logger.debug('Tool getRadioStation called with args:', params);
 
     // Since Subsonic API doesn't have a get single station endpoint,
     // we'll get all stations and filter by ID
@@ -335,10 +336,12 @@ export async function getRadioStation(
   }
 }
 
+// `station.id` is intentionally NOT echoed — the LLM just sent it. `name`
+// and `streamUrl` are server-resolved (the LLM only knew the id) so they
+// stay. Without `id`, the response is purely server-derived metadata.
 interface PlayRadioStationResult {
   success: true;
   station: {
-    id: string;
     name: string;
     streamUrl: string;
   };
@@ -369,7 +372,7 @@ export async function playRadioStation(
       throw new Error('Radio station ID is required');
     }
 
-    logger.debug('Playing radio station:', id);
+    logger.debug('Tool playRadioStation called with args:', { id });
 
     const station = await getRadioStation(client, { id });
 
@@ -382,7 +385,6 @@ export async function playRadioStation(
     return {
       success: true,
       station: {
-        id: station.id,
         name: station.name,
         streamUrl: station.streamUrl,
       },

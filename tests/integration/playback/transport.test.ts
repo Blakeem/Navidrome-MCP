@@ -140,9 +140,9 @@ describePlayback('transport controls (live)', () => {
     // because mpv's property-change events for time-pos can be delayed by
     // HTTP re-buffering after a seek into uncached byte ranges.
     const result = await seek({ seconds: 5, mode: 'relative' });
+    // `seconds` and `mode` are no longer echoed (LLM input echoes); only
+    // `success` survives.
     expect(result.success).toBe(true);
-    expect(result.seconds).toBe(5);
-    expect(result.mode).toBe('relative');
 
     // Best-effort: try to observe the position bump, but don't fail the
     // test if mpv's cache hasn't refreshed within the wait window. We
@@ -189,9 +189,10 @@ describePlayback('transport controls (live)', () => {
     // The contract under test is the seek tool surface itself — that mpv
     // accepts the IPC command and the return shape is correct.
     const result = await seek({ seconds: target, mode: 'absolute' });
+    // `seconds` and `mode` are no longer echoed (LLM input echoes); only
+    // `success` survives.
     expect(result.success).toBe(true);
-    expect(result.seconds).toBe(target);
-    expect(result.mode).toBe('absolute');
+    void target;
 
     // Best-effort verification — mpv's time-pos cache can lag by several
     // seconds after a seek under heavy load. Accept any plausibly post-seek

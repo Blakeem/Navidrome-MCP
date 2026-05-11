@@ -19,6 +19,11 @@
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { safeNumber } from '../utils/safe-number.js';
+import {
+  fetchWithTimeout,
+  getExternalApiTimeoutMs,
+} from '../utils/fetch-with-timeout.js';
 import {
   SimilarArtistsSchema,
   SimilarTracksSchema,
@@ -34,8 +39,11 @@ interface LastFmArtist {
   mbid: string | null;
 }
 
+// Input echoes (artist, originalTrack, type/page/perPage) are intentionally
+// dropped from these Last.fm response shapes — the LLM just sent them. Only
+// server-derived fields (count, items, biography, mbid, etc.) survive. The
+// originals are captured in the DEBUG log line at the top of each function.
 interface SimilarArtistsResult {
-  artist: string;
   count: number;
   similarArtists: LastFmArtist[];
 }
@@ -49,7 +57,6 @@ interface LastFmTrack {
 }
 
 interface SimilarTracksResult {
-  originalTrack: { artist: string; track: string };
   count: number;
   similarTracks: LastFmTrack[];
 }
@@ -80,7 +87,6 @@ interface TopTrackResult {
 }
 
 interface TopTracksByArtistResult {
-  artist: string;
   count: number;
   tracks: TopTrackResult[];
 }
@@ -112,9 +118,6 @@ interface TrendingTagItem {
 }
 
 interface TrendingMusicResult {
-  type: string;
-  page: number;
-  perPage: number;
   count: number;
   items: TrendingArtistItem[] | TrendingTrackItem[] | TrendingTagItem[];
 }
@@ -126,53 +129,66 @@ async function callLastFmApi(method: string, params: Record<string, string>, api
   url.searchParams.append('method', method);
   url.searchParams.append('api_key', apiKey);
   url.searchParams.append('format', 'json');
-  
+
   Object.entries(params).forEach(([key, value]) => {
     url.searchParams.append(key, value);
   });
-  
+
   logger.debug(`Calling Last.fm API: ${method}`, params);
-  
-  const response = await fetch(url.toString());
-  
+
+  // All Last.fm endpoints we call are reads — safe to retry on timeout.
+  const response = await fetchWithTimeout(
+    url.toString(),
+    {},
+    {
+      timeoutMs: getExternalApiTimeoutMs(),
+      retryPolicy: 'safe',
+      operationLabel: `Last.fm ${method}`,
+    },
+  );
+
   if (!response.ok) {
     throw new Error(ErrorFormatter.lastfmApi(response));
   }
-  
+
   const data = await response.json() as Record<string, unknown>;
-  
-  if (data['error'] !== null && data['error'] !== undefined) {
-    throw new Error(ErrorFormatter.lastfmResponse(data['message'] as string));
+
+  // Last.fm uses positive integers as error codes (e.g. 6 = artist not found).
+  // error:0 means no error on some legacy endpoints — do NOT treat it as an error.
+  if (typeof data['error'] === 'number' && data['error'] !== 0) {
+    const message = typeof data['message'] === 'string' ? data['message'] : undefined;
+    throw new Error(ErrorFormatter.lastfmResponse(message));
   }
-  
+
   return data;
 }
 
 export async function getSimilarArtists(config: Config, args: unknown): Promise<SimilarArtistsResult> {
   const { artist, limit = 20 } = SimilarArtistsSchema.parse(args);
-  
+
+  logger.debug('Tool getSimilarArtists called with args:', { artist, limit });
+
   if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
-  
+
   logger.info(`Getting similar artists for: ${artist}`);
-  
+
   const data = await callLastFmApi('artist.getSimilar', {
     artist,
     limit: limit.toString(),
     autocorrect: '1',
   }, config.lastFmApiKey);
-  
+
   const similarArtists = (data['similarartists'] as { artist?: unknown[] })?.artist ?? [];
-  
+
   return {
-    artist,
     count: similarArtists.length,
     similarArtists: similarArtists.map((a: unknown) => {
       const artist = a as Record<string, unknown>;
       return {
         name: String(artist['name'] ?? ''),
-        match: parseFloat(String(artist['match'] ?? 0)),
+        match: safeNumber(artist['match']),
         url: String(artist['url'] ?? ''),
         mbid: (artist['mbid'] as string) ?? null,
       };
@@ -182,24 +198,25 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
 
 export async function getSimilarTracks(config: Config, args: unknown): Promise<SimilarTracksResult> {
   const { artist, track, limit = 20 } = SimilarTracksSchema.parse(args);
-  
+
+  logger.debug('Tool getSimilarTracks called with args:', { artist, track, limit });
+
   if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
-  
+
   logger.info(`Getting similar tracks for: ${artist} - ${track}`);
-  
+
   const data = await callLastFmApi('track.getSimilar', {
     artist,
     track,
     limit: limit.toString(),
     autocorrect: '1',
   }, config.lastFmApiKey);
-  
+
   const similarTracks = (data['similartracks'] as { track?: unknown[] })?.track ?? [];
-  
+
   return {
-    originalTrack: { artist, track },
     count: similarTracks.length,
     similarTracks: similarTracks.map((t: unknown) => {
       const track = t as Record<string, unknown>;
@@ -207,7 +224,7 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
       return {
         name: String(track['name'] ?? ''),
         artist: String(trackArtist?.['name'] ?? trackArtist?.['#text'] ?? 'Unknown'),
-        match: parseFloat(String(track['match'] ?? 0)),
+        match: safeNumber(track['match']),
         url: String(track['url'] ?? ''),
         mbid: (track['mbid'] as string) ?? null,
       };
@@ -217,7 +234,9 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
 
 export async function getArtistInfo(config: Config, args: unknown): Promise<ArtistInfoResult> {
   const { artist, lang = 'en' } = ArtistInfoSchema.parse(args);
-  
+
+  logger.debug('Tool getArtistInfo called with args:', { artist, lang });
+
   if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
@@ -240,8 +259,8 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
     name: String(artistInfo['name'] ?? ''),
     mbid: (artistInfo['mbid'] as string) ?? null,
     url: String(artistInfo['url'] ?? ''),
-    listeners: parseInt(String(stats?.['listeners'] ?? '0'), 10),
-    playcount: parseInt(String(stats?.['playcount'] ?? '0'), 10),
+    listeners: safeNumber(stats?.['listeners']),
+    playcount: safeNumber(stats?.['playcount']),
     biography: bio?.['summary'] !== null && bio?.['summary'] !== undefined ? String(bio['summary']).replace(/<[^>]*>/g, '') : null,
     tags: ((tags?.['tag'] as Record<string, unknown>[]) ?? []).map((t: Record<string, unknown>) => ({
       name: String(t['name'] ?? ''),
@@ -253,29 +272,30 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
 
 export async function getTopTracksByArtist(config: Config, args: unknown): Promise<TopTracksByArtistResult> {
   const { artist, limit = 10 } = TopTracksByArtistSchema.parse(args);
-  
+
+  logger.debug('Tool getTopTracksByArtist called with args:', { artist, limit });
+
   if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
-  
+
   logger.info(`Getting top tracks for artist: ${artist}`);
-  
+
   const data = await callLastFmApi('artist.getTopTracks', {
     artist,
     limit: limit.toString(),
     autocorrect: '1',
   }, config.lastFmApiKey);
-  
+
   const topTracks = (data['toptracks'] as Record<string, unknown>)?.['track'] as Record<string, unknown>[] ?? [];
-  
+
   return {
-    artist,
     count: topTracks.length,
     tracks: topTracks.map((t: Record<string, unknown>, index: number) => ({
       rank: index + 1,
       name: String(t['name'] ?? ''),
-      playcount: parseInt(String(t['playcount'] ?? '0'), 10),
-      listeners: parseInt(String(t['listeners'] ?? '0'), 10),
+      playcount: safeNumber(t['playcount']),
+      listeners: safeNumber(t['listeners']),
       url: String(t['url'] ?? ''),
       mbid: (t['mbid'] as string) ?? null,
     })),
@@ -284,11 +304,13 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
 
 export async function getTrendingMusic(config: Config, args: unknown): Promise<TrendingMusicResult> {
   const { type, limit = 20, page = 1 } = TrendingMusicSchema.parse(args);
-  
+
+  logger.debug('Tool getTrendingMusic called with args:', { type, limit, page });
+
   if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
-  
+
   logger.info(`Getting global ${type} chart`);
   
   const method = type === 'artists' ? 'chart.getTopArtists' : 
@@ -304,16 +326,13 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
     const artists = ((data['artists'] as Record<string, unknown>)?.['artist'] as Record<string, unknown>[] ?? []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
       rank: (page - 1) * limit + index + 1,
       name: String(a['name'] ?? ''),
-      playcount: parseInt(String(a['playcount'] ?? '0'), 10),
-      listeners: parseInt(String(a['listeners'] ?? '0'), 10),
+      playcount: safeNumber(a['playcount']),
+      listeners: safeNumber(a['listeners']),
       url: String(a['url'] ?? ''),
       mbid: (a['mbid'] as string) ?? null,
     }));
-    
+
     return {
-      type,
-      page,
-      perPage: limit,
       count: artists.length,
       items: artists,
     };
@@ -322,16 +341,13 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
       rank: (page - 1) * limit + index + 1,
       name: String(t['name'] ?? ''),
       artist: String(((t['artist'] as Record<string, unknown>)?.['name']) ?? 'Unknown'),
-      playcount: parseInt(String(t['playcount'] ?? '0'), 10),
-      listeners: parseInt(String(t['listeners'] ?? '0'), 10),
+      playcount: safeNumber(t['playcount']),
+      listeners: safeNumber(t['listeners']),
       url: String(t['url'] ?? ''),
       mbid: (t['mbid'] as string) ?? null,
     }));
-    
+
     return {
-      type,
-      page,
-      perPage: limit,
       count: tracks.length,
       items: tracks,
     };
@@ -339,14 +355,11 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
     const tags = ((data['tags'] as Record<string, unknown>)?.['tag'] as Record<string, unknown>[] ?? []).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
       rank: (page - 1) * limit + index + 1,
       name: String(t['name'] ?? ''),
-      count: parseInt(String(t['count'] ?? '0'), 10),
+      count: safeNumber(t['count']),
       url: String(t['url'] ?? ''),
     }));
-    
+
     return {
-      type,
-      page,
-      perPage: limit,
       count: tags.length,
       items: tags,
     };

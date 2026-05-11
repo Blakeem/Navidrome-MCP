@@ -19,6 +19,10 @@
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import {
+  fetchWithTimeout,
+  getNavidromeAuthTimeoutMs,
+} from '../utils/fetch-with-timeout.js';
 
 export class AuthManager {
   private token: string | null = null;
@@ -64,14 +68,28 @@ export class AuthManager {
   }
 
   private async performAuthenticate(): Promise<void> {
-    const response = await fetch(`${this.config.navidromeUrl}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: this.config.navidromeUsername,
-        password: this.config.navidromePassword,
-      }),
-    });
+    // Auth gets no retry: a timed-out /auth/login could mean the server
+    // accepted-but-didn't-respond, in which case retry is harmless, OR it
+    // could mean account-lockout-on-N-failures policies were tripped on a
+    // prior attempt and the server is rate-limiting us. Better to surface
+    // the timeout to the caller — they (or the LLM) can retry the original
+    // tool call, which goes through this single-flight path anyway.
+    const response = await fetchWithTimeout(
+      `${this.config.navidromeUrl}/auth/login`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: this.config.navidromeUsername,
+          password: this.config.navidromePassword,
+        }),
+      },
+      {
+        timeoutMs: getNavidromeAuthTimeoutMs(),
+        retryPolicy: 'never',
+        operationLabel: 'Navidrome /auth/login',
+      },
+    );
 
     if (!response.ok) {
       throw new Error(ErrorFormatter.authentication(`${response.status} ${response.statusText}`));

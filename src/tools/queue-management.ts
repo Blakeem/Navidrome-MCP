@@ -42,7 +42,6 @@ interface SaveQueueResult {
   success: boolean;
   message: string;
   trackCount: number;
-  current: number;
 }
 
 interface ClearSavedQueueResult {
@@ -87,6 +86,7 @@ export async function getSavedQueue(client: NavidromeClient, _args: unknown): Pr
 export async function saveQueue(client: NavidromeClient, args: unknown): Promise<SaveQueueResult> {
   const { songIds, current = 0, position = 0 } = SaveQueueSchema.parse(args);
 
+  logger.debug('Tool saveQueue called with args:', { songIdCount: songIds.length, current, position });
   logger.info(`Saving queue with ${songIds.length} tracks to Navidrome server`);
 
   await client.request('/queue', {
@@ -98,11 +98,13 @@ export async function saveQueue(client: NavidromeClient, args: unknown): Promise
     }),
   });
 
+  // Note: `current` (LLM-supplied) is not echoed back. trackCount is derived
+  // from songIds.length and is genuinely useful confirmation of how many
+  // tracks were sent.
   return {
     success: true,
     message: `Saved queue updated with ${songIds.length} tracks`,
     trackCount: songIds.length,
-    current,
   };
 }
 

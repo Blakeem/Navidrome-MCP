@@ -22,6 +22,10 @@ import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { libraryManager } from '../services/library-manager.js';
 import { buildSubsonicAuthParams } from '../utils/subsonic-auth.js';
+import {
+  fetchWithTimeout,
+  getNavidromeRequestTimeoutMs,
+} from '../utils/fetch-with-timeout.js';
 
 export class NavidromeClient {
   private readonly authManager: AuthManager;
@@ -37,6 +41,19 @@ export class NavidromeClient {
   async initialize(): Promise<void> {
     await this.authManager.authenticate();
     logger.info('Navidrome client initialized');
+  }
+
+  /**
+   * Public accessor for the current (cached or freshly-authenticated) JWT.
+   *
+   * Exposed so services like `LibraryManager` can decode user-scoped claims
+   * (`uid`, etc.) without reaching into the private `authManager` field via
+   * an `as unknown as` cast — that pattern silently breaks when fields are
+   * renamed. Single-flight refresh + retry-on-401 still funnel through
+   * AuthManager, so callers don't need to think about token freshness.
+   */
+  async getCurrentToken(): Promise<string> {
+    return this.authManager.getToken();
   }
 
   /**
@@ -149,14 +166,37 @@ export class NavidromeClient {
       params,
     );
 
+    // Subsonic POST endpoints we use are all idempotent (`/star`, `/unstar`,
+    // `/setRating`, `/scrobble` with `submission=false`, etc.) — re-applying
+    // the same call doesn't double-apply. So they're safe to retry on
+    // timeout, just like GETs. If a future caller adds a non-idempotent
+    // Subsonic POST (none exist in Navidrome's Subsonic surface today),
+    // this needs to be revisited.
+    const timeoutMs = getNavidromeRequestTimeoutMs();
     const url = `${this.baseUrl}/rest${endpoint}`;
     const response = method === 'POST'
-      ? await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: authParams.toString(),
-        })
-      : await fetch(`${url}?${authParams.toString()}`);
+      ? await fetchWithTimeout(
+          url,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: authParams.toString(),
+          },
+          {
+            timeoutMs,
+            retryPolicy: 'safe',
+            operationLabel: `Navidrome Subsonic ${endpoint}`,
+          },
+        )
+      : await fetchWithTimeout(
+          `${url}?${authParams.toString()}`,
+          {},
+          {
+            timeoutMs,
+            retryPolicy: 'safe',
+            operationLabel: `Navidrome Subsonic ${endpoint}`,
+          },
+        );
 
     if (!response.ok) {
       throw new Error(ErrorFormatter.subsonicApi(response));
@@ -198,13 +238,30 @@ export class NavidromeClient {
       defaultHeaders['Content-Type'] = 'application/json';
     }
 
-    return fetch(`${this.baseUrl}/api${endpoint}`, {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...options.headers,
+    // Only retry idempotent methods. POST/PUT/DELETE may have side effects
+    // even on timeout (the server might have applied the mutation just before
+    // the connection dropped) — surfacing the timeout to the LLM is safer
+    // than risking a double-apply (e.g. adding the same tracks to a playlist
+    // twice). GET and HEAD are spec-idempotent; an undefined method defaults
+    // to GET in fetch().
+    const method = options.method ?? 'GET';
+    const isIdempotent = method === 'GET' || method === 'HEAD';
+
+    return fetchWithTimeout(
+      `${this.baseUrl}/api${endpoint}`,
+      {
+        ...options,
+        headers: {
+          ...defaultHeaders,
+          ...options.headers,
+        },
       },
-    });
+      {
+        timeoutMs: getNavidromeRequestTimeoutMs(),
+        retryPolicy: isIdempotent ? 'safe' : 'never',
+        operationLabel: `Navidrome ${method} ${endpoint}`,
+      },
+    );
   }
 
   private async parseResponse<T>(response: Response): Promise<T> {

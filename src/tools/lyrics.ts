@@ -20,6 +20,11 @@ import { z } from 'zod';
 import type { LyricsDTO, LyricsLine } from '../types/index.js';
 import type { Config } from '../config.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { logger } from '../utils/logger.js';
+import {
+  fetchWithTimeout,
+  getExternalApiTimeoutMs,
+} from '../utils/fetch-with-timeout.js';
 import { DEFAULT_USER_AGENT } from '../constants/defaults.js';
 
 /**
@@ -77,117 +82,132 @@ function parseSyncedLyrics(lrcText: string): LyricsLine[] {
 }
 
 /**
- * Try to get lyrics using exact match
+ * Try to get lyrics using exact match.
+ * Returns null only for a genuine 404 (song not in LRCLIB).
+ * All other errors (5xx, 429, network failures) are re-thrown so the caller
+ * can distinguish "service unavailable / misconfigured" from "not found".
  */
 async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>, config: Config): Promise<LRCLIBResponse | null> {
-  try {
-    const url = new URL('/api/get', config.lrclibBase);
-    
-    if (params.id !== null && params.id !== undefined && params.id !== '') {
-      url.searchParams.set('id', params.id);
-    } else {
-      url.searchParams.set('track_name', params.title);
-      url.searchParams.set('artist_name', params.artist);
-      if (params.album !== null && params.album !== undefined && params.album !== '') url.searchParams.set('album_name', params.album);
-      if (params.durationMs !== null && params.durationMs !== undefined) url.searchParams.set('duration', String(Math.round(params.durationMs / 1000)));
-    }
-    
-    const response = await fetch(url.toString(), {
+  const url = new URL('/api/get', config.lrclibBase);
+
+  if (params.id !== null && params.id !== undefined && params.id !== '') {
+    url.searchParams.set('id', params.id);
+  } else {
+    url.searchParams.set('track_name', params.title);
+    url.searchParams.set('artist_name', params.artist);
+    if (params.album !== null && params.album !== undefined && params.album !== '') url.searchParams.set('album_name', params.album);
+    if (params.durationMs !== null && params.durationMs !== undefined) url.searchParams.set('duration', String(Math.round(params.durationMs / 1000)));
+  }
+
+  const response = await fetchWithTimeout(
+    url.toString(),
+    {
       headers: {
         'User-Agent': config.lrclibUserAgent ?? DEFAULT_USER_AGENT,
         'Accept': 'application/json'
       }
-    });
-    
-    if (response.status === 404) {
-      return null;
-    }
-    
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.httpRequest('LRCLIB API', response));
-    }
-    
-    return await response.json() as LRCLIBResponse;
-  } catch {
-    // If exact match fails, return null to try search
+    },
+    {
+      timeoutMs: getExternalApiTimeoutMs(),
+      retryPolicy: 'safe',
+      operationLabel: 'LRCLIB /api/get',
+    },
+  );
+
+  if (response.status === 404) {
     return null;
   }
+
+  if (!response.ok) {
+    // Re-throw transport errors (5xx, 429, etc.) — do NOT swallow as "not found".
+    // A misconfigured User-Agent or a downed LRCLIB instance must surface to the caller.
+    throw new Error(ErrorFormatter.httpRequest('LRCLIB API', response));
+  }
+
+  return await response.json() as LRCLIBResponse;
 }
 
 /**
- * Search for lyrics and find best match
+ * Search for lyrics and find best match.
+ * Re-throws transport errors (5xx, 429, network failures) so the caller can
+ * distinguish "service unavailable" from "no matching lyrics in LRCLIB".
  */
 async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config: Config): Promise<LRCLIBResponse | null> {
-  try {
-    const url = new URL('/api/search', config.lrclibBase);
-    url.searchParams.set('query', `${params.title} ${params.artist}`);
-    if (params.durationMs !== null && params.durationMs !== undefined) {
-      url.searchParams.set('duration', String(Math.round(params.durationMs / 1000)));
-    }
-    
-    const response = await fetch(url.toString(), {
+  const url = new URL('/api/search', config.lrclibBase);
+  url.searchParams.set('query', `${params.title} ${params.artist}`);
+  if (params.durationMs !== null && params.durationMs !== undefined) {
+    url.searchParams.set('duration', String(Math.round(params.durationMs / 1000)));
+  }
+
+  const response = await fetchWithTimeout(
+    url.toString(),
+    {
       headers: {
         'User-Agent': config.lrclibUserAgent ?? DEFAULT_USER_AGENT,
         'Accept': 'application/json'
       }
-    });
-    
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.httpRequest('LRCLIB search API', response));
-    }
-    
-    const results = await response.json() as LRCLIBResponse[];
-    
-    if (results === null || results === undefined || results.length === 0) {
-      return null;
-    }
-    
-    // Find best match
-    // 1. Prefer exact artist and title match
-    // 2. If duration provided, prefer within 3% tolerance
-    const titleLower = params.title.toLowerCase();
-    const artistLower = params.artist.toLowerCase();
-    const durationSec = (params.durationMs !== null && params.durationMs !== undefined) ? params.durationMs / 1000 : null;
-    
-    let bestMatch: LRCLIBResponse | null = null;
-    let bestScore = -1;
-    
-    for (const result of results) {
-      let score = 0;
-      
-      // Check title match
-      if (result.trackName?.toLowerCase() === titleLower) {
-        score += 10;
-      } else if (result.trackName?.toLowerCase()?.includes(titleLower) === true) {
-        score += 5;
-      }
-      
-      // Check artist match
-      if (result.artistName?.toLowerCase() === artistLower) {
-        score += 10;
-      } else if (result.artistName?.toLowerCase()?.includes(artistLower) === true) {
-        score += 5;
-      }
-      
-      // Check duration match (within 3% tolerance)
-      if (durationSec !== null && durationSec !== undefined && result.duration !== null && result.duration !== undefined) {
-        const tolerance = durationSec * 0.03;
-        const diff = Math.abs(result.duration - durationSec);
-        if (diff <= tolerance) {
-          score += 5;
-        }
-      }
-      
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = result;
-      }
-    }
-    
-    return bestMatch;
-  } catch {
+    },
+    {
+      timeoutMs: getExternalApiTimeoutMs(),
+      retryPolicy: 'safe',
+      operationLabel: 'LRCLIB /api/search',
+    },
+  );
+
+  if (!response.ok) {
+    // Re-throw transport errors — do NOT swallow as "not found".
+    throw new Error(ErrorFormatter.httpRequest('LRCLIB search API', response));
+  }
+
+  const results = await response.json() as LRCLIBResponse[];
+
+  if (results === null || results === undefined || results.length === 0) {
     return null;
   }
+
+  // Find best match
+  // 1. Prefer exact artist and title match
+  // 2. If duration provided, prefer within 3% tolerance
+  const titleLower = params.title.toLowerCase();
+  const artistLower = params.artist.toLowerCase();
+  const durationSec = (params.durationMs !== null && params.durationMs !== undefined) ? params.durationMs / 1000 : null;
+
+  let bestMatch: LRCLIBResponse | null = null;
+  let bestScore = -1;
+
+  for (const result of results) {
+    let score = 0;
+
+    // Check title match
+    if (result.trackName?.toLowerCase() === titleLower) {
+      score += 10;
+    } else if (result.trackName?.toLowerCase()?.includes(titleLower) === true) {
+      score += 5;
+    }
+
+    // Check artist match
+    if (result.artistName?.toLowerCase() === artistLower) {
+      score += 10;
+    } else if (result.artistName?.toLowerCase()?.includes(artistLower) === true) {
+      score += 5;
+    }
+
+    // Check duration match (within 3% tolerance)
+    if (durationSec !== null && durationSec !== undefined && result.duration !== null && result.duration !== undefined) {
+      const tolerance = durationSec * 0.03;
+      const diff = Math.abs(result.duration - durationSec);
+      if (diff <= tolerance) {
+        score += 5;
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = result;
+    }
+  }
+
+  return bestMatch;
 }
 
 /**
@@ -195,7 +215,9 @@ async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config:
  */
 export async function getLyrics(config: Config, args: unknown): Promise<LyricsDTO> {
   const params = GetLyricsArgsSchema.parse(args);
-  
+
+  logger.debug('Tool getLyrics called with args:', params);
+
   try {
     // Try exact match first
     let lyricsData = await tryExactMatch(params, config);
@@ -262,6 +284,9 @@ export async function getLyrics(config: Config, args: unknown): Promise<LyricsDT
     
     return result;
   } catch (error) {
+    // Transport errors (5xx, 429, network failures) are re-thrown with context so
+    // callers can distinguish config/network problems from "song not in LRCLIB".
+    logger.warn('getLyrics: LRCLIB request failed (transport/config error, not a missing track):', error instanceof Error ? error.message : String(error));
     throw new Error(ErrorFormatter.toolExecution('getLyrics', error));
   }
 }

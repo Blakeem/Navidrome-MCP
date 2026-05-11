@@ -40,21 +40,20 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
   describeLive('Live Read Operations - API Compatibility', () => {
     describe('listStarredItems', () => {
       it('should return valid starred songs structure from live server', async () => {
-        const result = await listStarredItems(liveClient, { 
+        const result = await listStarredItems(liveClient, {
           type: 'songs',
           limit: 1
         });
 
-        // Validate response structure (not specific content)
-        expect(result).toHaveProperty('type');
+        // Validate response structure (not specific content). `type` is no
+        // longer echoed (LLM input echo), so we don't assert it.
         expect(result).toHaveProperty('count');
         expect(result).toHaveProperty('items');
+        expect(result).not.toHaveProperty('type');
 
         // Ensure correct types
-        expect(typeof result.type).toBe('string');
         expect(typeof result.count).toBe('number');
         expect(Array.isArray(result.items)).toBe(true);
-        expect(result.type).toBe('songs');
 
         // Should not return more than requested (but server may have more starred items)
         // We requested limit: 1, but the implementation might return more due to internal batching
@@ -65,7 +64,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           const item = result.items[0];
           expect(item).toHaveProperty('id');
           expect(typeof item.id).toBe('string');
-          
+
           // For songs, should have title
           if ('title' in item) {
             expect(typeof item.title).toBe('string');
@@ -74,12 +73,11 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should return valid starred albums structure', async () => {
-        const result = await listStarredItems(liveClient, { 
+        const result = await listStarredItems(liveClient, {
           type: 'albums',
           limit: 2
         });
 
-        expect(result.type).toBe('albums');
         expect(Array.isArray(result.items)).toBe(true);
         expect(result.items.length).toBeLessThanOrEqual(2);
 
@@ -91,12 +89,11 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should return valid starred artists structure', async () => {
-        const result = await listStarredItems(liveClient, { 
+        const result = await listStarredItems(liveClient, {
           type: 'artists',
           limit: 2
         });
 
-        expect(result.type).toBe('artists');
         expect(Array.isArray(result.items)).toBe(true);
         expect(result.items.length).toBeLessThanOrEqual(2);
 
@@ -108,7 +105,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle pagination parameters correctly', async () => {
-        const result = await listStarredItems(liveClient, { 
+        const result = await listStarredItems(liveClient, {
           type: 'songs',
           limit: 3,
           offset: 0
@@ -121,20 +118,19 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
     describe('listTopRated', () => {
       it('should return valid top-rated songs structure', async () => {
-        const result = await listTopRated(liveClient, { 
+        const result = await listTopRated(liveClient, {
           type: 'songs',
           minRating: 4,
           limit: 2
         });
 
-        // Validate response structure
-        expect(result).toHaveProperty('type');
-        expect(result).toHaveProperty('minRating');
+        // Validate response structure. `type` and `minRating` are no longer
+        // echoed (LLM input echoes), so we don't assert them.
         expect(result).toHaveProperty('count');
         expect(result).toHaveProperty('items');
+        expect(result).not.toHaveProperty('type');
+        expect(result).not.toHaveProperty('minRating');
 
-        expect(result.type).toBe('songs');
-        expect(result.minRating).toBe(4);
         expect(Array.isArray(result.items)).toBe(true);
         expect(result.items.length).toBeLessThanOrEqual(2);
 
@@ -149,26 +145,22 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should return valid top-rated albums structure', async () => {
-        const result = await listTopRated(liveClient, { 
+        const result = await listTopRated(liveClient, {
           type: 'albums',
           minRating: 3,
           limit: 1
         });
 
-        expect(result.type).toBe('albums');
-        expect(result.minRating).toBe(3);
         expect(Array.isArray(result.items)).toBe(true);
       });
 
       it('should return valid top-rated artists structure', async () => {
-        const result = await listTopRated(liveClient, { 
+        const result = await listTopRated(liveClient, {
           type: 'artists',
           minRating: 5,
           limit: 1
         });
 
-        expect(result.type).toBe('artists');
-        expect(result.minRating).toBe(5);
         expect(Array.isArray(result.items)).toBe(true);
       });
     });
@@ -205,16 +197,14 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        // Verify response structure. `type` is intentionally NOT echoed in
-        // the response (see StarItemResult comment) — schema accepts both
-        // singular and plural and echoing the canonical form would mismatch
-        // the LLM's input. id + message are the round-trip-safe fields.
+        // Verify response structure. `type` AND `id` are intentionally NOT
+        // echoed — they are LLM input echoes and waste context window. The
+        // success+message pair is the round-trip-safe confirmation.
         expect(result).toHaveProperty('success');
         expect(result).toHaveProperty('message');
-        expect(result).toHaveProperty('id');
         expect(result).not.toHaveProperty('type');
+        expect(result).not.toHaveProperty('id');
         expect(result.success).toBe(true);
-        expect(result.id).toBe('song-123');
       });
 
       it('should star an album with correct parameters', async () => {
@@ -224,10 +214,10 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           id: 'album-456',
           type: 'album'
         };
-        
+
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
-        
-        const result = await starItem(mockClient, config, { 
+
+        const result = await starItem(mockClient, config, {
           id: 'album-456',
           type: 'album'
         });
@@ -239,7 +229,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        expect(result.id).toBe('album-456');
+        expect(result.success).toBe(true);
+        expect(result).not.toHaveProperty('id');
       });
 
       it('should star an artist with correct parameters', async () => {
@@ -249,10 +240,10 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           id: 'artist-789',
           type: 'artist'
         };
-        
+
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
-        
-        const result = await starItem(mockClient, config, { 
+
+        const result = await starItem(mockClient, config, {
           id: 'artist-789',
           type: 'artist'
         });
@@ -264,7 +255,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        expect(result.id).toBe('artist-789');
+        expect(result.success).toBe(true);
+        expect(result).not.toHaveProperty('id');
       });
 
       it('accepts the plural form (`type: "songs"`) without throwing', async () => {
@@ -279,7 +271,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         });
 
         expect(result.success).toBe(true);
-        expect(result.id).toBe('song-xyz');
+        expect(result).not.toHaveProperty('id');
         expect(result).not.toHaveProperty('type');
         // The internal singular form drives the message text.
         expect(result.message).toBe('Successfully starred song');
@@ -302,7 +294,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           type: 'song'
         });
 
-        // Verify correct API call was made (DELETE method)
+        // Verify correct API call was made (DELETE method). `id` is no
+        // longer echoed in the response (LLM input echo).
         expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
           '/unstar',
           expect.objectContaining({
@@ -311,7 +304,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         );
 
         expect(result.success).toBe(true);
-        expect(result.id).toBe('song-123');
+        expect(result).not.toHaveProperty('id');
       });
 
       it('should unstar an album correctly', async () => {
@@ -379,7 +372,9 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           rating: 5
         });
 
-        // Verify correct API call was made
+        // Verify correct API call was made. `id`, `type`, and `rating` are
+        // not echoed back — they are LLM input echoes. The success+message
+        // confirms the round trip.
         expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
           '/setRating',
           expect.objectContaining({
@@ -389,9 +384,11 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         );
 
         expect(result).toHaveProperty('success');
-        expect(result).toHaveProperty('rating');
+        expect(result).toHaveProperty('message');
+        expect(result).not.toHaveProperty('rating');
+        expect(result).not.toHaveProperty('id');
         expect(result.success).toBe(true);
-        expect(result.rating).toBe(5);
+        expect(result.message).toContain('5 stars');
       });
 
       it('should set rating for different item types', async () => {
@@ -402,10 +399,10 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           type: 'album',
           rating: 3
         };
-        
+
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
-        
-        const result = await setRating(mockClient, config, { 
+
+        const result = await setRating(mockClient, config, {
           id: 'album-456',
           type: 'album',
           rating: 3
@@ -419,7 +416,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        expect(result.rating).toBe(3);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('3 stars');
       });
 
       it('should remove rating when set to 0', async () => {
@@ -430,10 +428,10 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           type: 'song',
           rating: 0
         };
-        
+
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
-        
-        const result = await setRating(mockClient, config, { 
+
+        const result = await setRating(mockClient, config, {
           id: 'song-123',
           type: 'song',
           rating: 0
@@ -447,7 +445,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        expect(result.rating).toBe(0);
+        expect(result.success).toBe(true);
+        expect(result.message).toMatch(/removed/i);
       });
 
       it('should handle maximum rating value', async () => {
@@ -458,16 +457,17 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           type: 'artist',
           rating: 5
         };
-        
+
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
-        
-        const result = await setRating(mockClient, config, { 
+
+        const result = await setRating(mockClient, config, {
           id: 'artist-789',
           type: 'artist',
           rating: 5
         });
 
-        expect(result.rating).toBe(5);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('5 stars');
       });
     });
   });

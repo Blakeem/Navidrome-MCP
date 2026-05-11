@@ -46,7 +46,6 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
-  query: string;
   totalArtists: number;
   totalAlbums: number;
   totalSongs: number;
@@ -55,10 +54,11 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchAllSchema.parse(args);
+  logger.debug('Tool searchAll called with args:', params);
 
   try {
-    // Processing - resolve text-based filters to IDs
-    const { resolvedFilters, appliedFilters } = resolveTextFilters(params);
+    // Processing - resolve text-based filters to IDs (may refresh from Navidrome when cache is disabled)
+    const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
 
     // Build enhanced query parameters for each content type. Same offset
     // applied to all 3 types — see SearchAllSchema for rationale.
@@ -119,7 +119,7 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
     };
 
     // Output construction - aggregate results from all search types
-    const result = aggregateSearchResults(responses, totals, params.query, appliedFilters);
+    const result = aggregateSearchResults(responses, totals, appliedFilters);
 
     return result;
   } catch (error) {

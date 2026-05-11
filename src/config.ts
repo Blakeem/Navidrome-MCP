@@ -78,6 +78,11 @@ const ConfigSchema = z.object({
   mpvPath: z.string().optional(),
   playbackTranscodeFormat: z.string().default('mp3'),
   playbackTranscodeBitrate: z.string().default('192'),
+
+  // Filter cache — when false, re-fetches tag/genre lists on every filter resolution
+  // instead of using the startup snapshot. Set to false if you curate your library
+  // mid-session and need newly-added genres/labels/moods to be immediately visible.
+  filterCacheEnabled: z.boolean().default(true),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -188,6 +193,9 @@ export async function loadConfig(): Promise<Config> {
     ...(detectedMpvPath !== null ? { mpvPath: detectedMpvPath } : {}),
     playbackTranscodeFormat,
     playbackTranscodeBitrate,
+
+    // Filter cache — disabled when env var is explicitly 'false'
+    filterCacheEnabled: process.env['NAVIDROME_FILTER_CACHE_ENABLED'] !== 'false',
   };
 
   try {

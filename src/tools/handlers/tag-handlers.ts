@@ -125,7 +125,7 @@ export function createTagsToolCategory(client: NavidromeClient, _config: Config)
         case 'get_tag_distribution':
           return await getTagDistribution(client, args);
         case 'get_filter_options':
-          return filterCacheManager.getFilterOptions(args);
+          return await filterCacheManager.getFilterOptions(args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }

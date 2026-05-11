@@ -34,17 +34,19 @@ import {
   PlaylistIdSchema,
 } from '../../schemas/index.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { logger } from '../../utils/logger.js';
 
 /**
- * List all playlists accessible to the user
+ * List all playlists accessible to the user. `offset`/`limit` are NOT echoed
+ * — the LLM just sent them and tracks its own pagination state. `total` is
+ * server-derived (X-Total-Count) so the LLM can plan further pages.
  */
 export async function listPlaylists(client: NavidromeClient, args: unknown): Promise<{
   playlists: PlaylistDTO[];
   total: number;
-  offset: number;
-  limit: number;
 }> {
   const params = PlaylistPaginationSchema.parse(args);
+  logger.debug('Tool listPlaylists called with args:', params);
 
   try {
     const queryParams = new URLSearchParams({
@@ -60,8 +62,6 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
     return {
       playlists,
       total: total ?? playlists.length,
-      offset: params.offset,
-      limit: params.limit,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('list_playlists', error));
@@ -73,6 +73,7 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
  */
 export async function getPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   const params = PlaylistIdSchema.parse(args);
+  logger.debug('Tool getPlaylist called with args:', params);
 
   try {
     const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`);
@@ -87,6 +88,7 @@ export async function getPlaylist(client: NavidromeClient, args: unknown): Promi
  */
 export async function createPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   const params = CreatePlaylistSchema.parse(args);
+  logger.debug('Tool createPlaylist called with args:', params);
 
   try {
     const requestBody: CreatePlaylistRequest = {
@@ -129,6 +131,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
  */
 export async function updatePlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   const params = UpdatePlaylistSchema.parse(args);
+  logger.debug('Tool updatePlaylist called with args:', params);
 
   try {
     const requestBody: UpdatePlaylistRequest = {};
@@ -172,10 +175,14 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
 }
 
 /**
- * Delete a playlist (owner or admin only)
+ * Delete a playlist (owner or admin only). The deleted id is intentionally
+ * NOT echoed in the response — the LLM just sent it. The success flag plus
+ * the message ("Successfully deleted playlist") is enough to confirm the
+ * round trip; the id is captured in the DEBUG log for diagnostics.
  */
-export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; id: string; message: string }> {
+export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; message: string }> {
   const params = PlaylistIdSchema.parse(args);
+  logger.debug('Tool deletePlaylist called with args:', params);
 
   try {
     await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`, {
@@ -184,8 +191,7 @@ export async function deletePlaylist(client: NavidromeClient, args: unknown): Pr
 
     return {
       success: true,
-      id: params.id,
-      message: `Successfully deleted playlist with ID: ${params.id}`,
+      message: 'Successfully deleted playlist',
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('delete_playlist', error));

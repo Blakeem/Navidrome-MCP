@@ -233,7 +233,7 @@ class PlaybackEngine {
    * Caller is responsible for ordering / shuffle of `songIds`. Lazy-spawns
    * mpv on first call.
    */
-  async enqueue(songIds: readonly string[], mode: 'replace' | 'append'): Promise<void> {
+  async enqueue(songIds: readonly string[], mode: 'replace' | 'append'): Promise<{ demoted: boolean }> {
     if (songIds.length === 0) {
       throw new Error('enqueue requires at least one song ID');
     }
@@ -244,11 +244,16 @@ class PlaybackEngine {
       // Radio mutual exclusion: a radio stream and songs cannot coexist in the
       // queue — radio is infinite and breaks queue semantics. If the queue
       // currently holds a radio stream, any append is demoted to replace so
-      // the radio is cleanly evicted before songs load.
+      // the radio is cleanly evicted before songs load. Logged at WARN AND
+      // returned to the caller so the LLM can tell its requested mode wasn't
+      // honored without us echoing the input mode (which would lie when
+      // demotion happens).
       let effectiveMode = mode;
+      let demoted = false;
       if (effectiveMode === 'append' && await this.hasRadioStream()) {
-        logger.debug('enqueue: append demoted to replace because queue contains a radio stream');
+        logger.warn('enqueue: append demoted to replace because queue contains a radio stream');
         effectiveMode = 'replace';
+        demoted = true;
       }
 
       // Loading songs always evicts any radio context; clear the station name
@@ -276,6 +281,8 @@ class PlaybackEngine {
           await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
         }
       }
+
+      return { demoted };
     });
   }
 

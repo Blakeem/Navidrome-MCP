@@ -40,18 +40,16 @@ import { buildEnhancedSearchParams } from './filter-resolver.js';
  */
 export async function searchSongs(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   songs: SongDTO[];
-  query: string;
   total: number;
-  offset: number;
-  limit: number;
   appliedFilters?: Record<string, string>;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchSongsSchema.parse(args);
+  logger.debug('Tool searchSongs called with args:', params);
 
   try {
     // Processing - build enhanced search parameters with filter resolution
-    const { searchParams, appliedFilters } = buildEnhancedSearchParams(params, 'title', 'title');
+    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'title', 'title');
 
     logger.debug('Enhanced song search parameters:', { searchParams, appliedFilters });
 
@@ -64,13 +62,12 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
 
     logger.debug(`Song search completed: ${songs.length} of ${total ?? `${songs.length} (no header)`} results`);
 
-    // Output construction - build result object with conditional applied filters
+    // Output construction - build result object with conditional applied filters.
+    // Note: query/offset/limit are NOT echoed — LLM-supplied input echoes
+    // waste context window and are available in DEBUG logs for diagnostics.
     const result = {
       songs,
-      query: params.query,
       total: total ?? songs.length,
-      offset: params.offset ?? 0,
-      limit: params.limit,
       ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
 
@@ -91,18 +88,16 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
  */
 export async function searchAlbums(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   albums: AlbumDTO[];
-  query: string;
   total: number;
-  offset: number;
-  limit: number;
   appliedFilters?: Record<string, string>;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchAlbumsSchema.parse(args);
+  logger.debug('Tool searchAlbums called with args:', params);
 
   try {
     // Processing - build enhanced search parameters with filter resolution
-    const { searchParams, appliedFilters } = buildEnhancedSearchParams(params, 'name', 'name');
+    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name');
 
     logger.debug('Enhanced album search parameters:', { searchParams, appliedFilters });
 
@@ -114,13 +109,11 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
 
     logger.debug(`Album search completed: ${albums.length} of ${total ?? `${albums.length} (no header)`} results`);
 
-    // Output construction - build result object with conditional applied filters
+    // Output construction - build result object with conditional applied filters.
+    // Input echoes (query/offset/limit) intentionally omitted — see searchSongs.
     const result = {
       albums,
-      query: params.query,
       total: total ?? albums.length,
-      offset: params.offset ?? 0,
-      limit: params.limit,
       ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
 
@@ -142,18 +135,16 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
  */
 export async function searchArtists(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   artists: ArtistDTO[];
-  query: string;
   total: number;
-  offset: number;
-  limit: number;
   appliedFilters?: Record<string, string>;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchArtistsSchema.parse(args);
+  logger.debug('Tool searchArtists called with args:', params);
 
   try {
     // Processing - build enhanced search params with role=maincredit for comprehensive artist listing
-    const { searchParams: baseParams, appliedFilters } = buildEnhancedSearchParams(params, 'name', 'name');
+    const { searchParams: baseParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name');
     const searchParams = `${baseParams}&role=maincredit`;
 
     logger.debug('Enhanced artist search parameters:', { searchParams, appliedFilters });
@@ -166,13 +157,11 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
 
     logger.debug(`Artist search completed: ${artists.length} of ${total ?? `${artists.length} (no header)`} results`);
 
-    // Output construction - build result object with conditional applied filters
+    // Output construction - build result object with conditional applied filters.
+    // Input echoes (query/offset/limit) intentionally omitted — see searchSongs.
     const result = {
       artists,
-      query: params.query,
       total: total ?? artists.length,
-      offset: params.offset ?? 0,
-      limit: params.limit,
       ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
 

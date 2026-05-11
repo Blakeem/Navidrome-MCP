@@ -32,10 +32,12 @@ import {
   GetSongPlaylistsSchema,
 } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { logger } from '../utils/logger.js';
 
 // Get Song by ID
 export async function getSong(client: NavidromeClient, args: unknown): Promise<SongDTO> {
   const params = IdSchema.parse(args);
+  logger.debug('Tool getSong called with args:', params);
 
   try {
     const rawSong = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.id)}`);
@@ -48,6 +50,7 @@ export async function getSong(client: NavidromeClient, args: unknown): Promise<S
 // Get Album by ID
 export async function getAlbum(client: NavidromeClient, args: unknown): Promise<AlbumDTO> {
   const params = IdSchema.parse(args);
+  logger.debug('Tool getAlbum called with args:', params);
 
   try {
     const rawAlbum = await client.requestWithLibraryFilter<unknown>(`/album/${encodeURIComponent(params.id)}`);
@@ -60,6 +63,7 @@ export async function getAlbum(client: NavidromeClient, args: unknown): Promise<
 // Get Artist by ID
 export async function getArtist(client: NavidromeClient, args: unknown): Promise<ArtistDTO> {
   const params = IdSchema.parse(args);
+  logger.debug('Tool getArtist called with args:', params);
 
   try {
     const rawArtist = await client.requestWithLibraryFilter<unknown>(`/artist/${encodeURIComponent(params.id)}`);
@@ -69,12 +73,14 @@ export async function getArtist(client: NavidromeClient, args: unknown): Promise
   }
 }
 
-// Get Playlists containing a song
+// Get Playlists containing a song. `songId` is intentionally NOT echoed back —
+// the LLM just sent it; returning a single string field would only waste
+// context. The DEBUG log captures it for diagnostics.
 export async function getSongPlaylists(client: NavidromeClient, args: unknown): Promise<{
   playlists: PlaylistDTO[];
-  songId: string;
 }> {
   const params = GetSongPlaylistsSchema.parse(args);
+  logger.debug('Tool getSongPlaylists called with args:', params);
 
   try {
     const rawPlaylists = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.songId)}/playlists`);
@@ -82,7 +88,6 @@ export async function getSongPlaylists(client: NavidromeClient, args: unknown): 
 
     return {
       playlists,
-      songId: params.songId,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_song_playlists', error));

@@ -109,3 +109,49 @@ export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
   'loadlist',
   'playlist-load',
 ]);
+
+/**
+ * Outbound HTTP fetch timing constants.
+ *
+ * Without these, a hung Navidrome (or unreachable Last.fm / LRCLIB / Radio
+ * Browser) wedges every MCP tool call until the MCP SDK's own
+ * `DEFAULT_REQUEST_TIMEOUT_MSEC` (60s) fires. The SDK then surfaces a
+ * generic `RequestTimeout` MCP error with no per-tool context.
+ *
+ * Our timeouts MUST be strictly less than 60_000ms even after one retry, so
+ * that we surface a clear "Navidrome did not respond" error to the LLM
+ * before the SDK gives up. Ceiling: 30s wall-clock = (15s timeout + 15s
+ * retry) — leaves ~30s of slack for the SDK envelope and any in-process
+ * post-processing.
+ *
+ * Configurable via `NAVIDROME_REQUEST_TIMEOUT_MS`,
+ * `NAVIDROME_AUTH_TIMEOUT_MS`, and `EXTERNAL_API_TIMEOUT_MS` env vars.
+ * The hard `MAX_FETCH_TIMEOUT_MS` cap prevents misconfiguration from
+ * pushing us past the SDK's 60s envelope.
+ */
+
+/** Default per-request timeout for Navidrome REST + Subsonic fetches.
+ *  15s comfortably covers cold-cache listing endpoints on a healthy server;
+ *  most respond in <1s. With single retry → 30s wall-clock max. */
+export const DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS = 15_000;
+
+/** Default per-request timeout for the `/auth/login` POST. Auth is a single
+ *  round-trip (DB lookup + bcrypt + JWT mint) and should be fast on a healthy
+ *  server. Tighter than the request timeout so a wedged auth fails quickly. */
+export const DEFAULT_NAVIDROME_AUTH_TIMEOUT_MS = 10_000;
+
+/** Default per-request timeout for external APIs (Last.fm, LRCLIB,
+ *  Radio Browser). Slightly more generous than Navidrome because these are
+ *  third-party services with variable latency, but still well under the SDK
+ *  60s envelope after retry. */
+export const DEFAULT_EXTERNAL_API_TIMEOUT_MS = 15_000;
+
+/** Hard upper bound for any fetch timeout — protects against env-var
+ *  misconfiguration that would push wall-clock (timeout + retry) past the
+ *  MCP SDK's 60s `DEFAULT_REQUEST_TIMEOUT_MSEC`. 25s × 2 = 50s, leaving 10s
+ *  of headroom. */
+export const MAX_FETCH_TIMEOUT_MS = 25_000;
+
+/** Hard lower bound — prevents accidental sub-second timeouts that would
+ *  fail-fast on a perfectly healthy but slow connection. */
+export const MIN_FETCH_TIMEOUT_MS = 1_000;

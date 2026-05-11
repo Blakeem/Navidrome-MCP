@@ -27,6 +27,7 @@ import {
   PlaylistTracksPaginationSchema,
 } from '../../schemas/index.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Raw playlist track data from Navidrome API
@@ -92,18 +93,19 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
 }
 
 /**
- * Get all tracks in a playlist
+ * Get all tracks in a playlist. The LLM-supplied `offset`, `limit`,
+ * `playlistId`, and `format` are NOT echoed back — they only consume context
+ * window. The presence of `m3uContent` (vs `tracks`) implicitly signals the
+ * format; `total` (server-derived from X-Total-Count) is what the LLM needs
+ * for further pagination. The original args are captured in the DEBUG log.
  */
 export async function getPlaylistTracks(client: NavidromeClient, args: unknown): Promise<{
   tracks: PlaylistTrackDTO[];
   total: number;
-  offset: number;
-  limit: number;
-  playlistId: string;
-  format: string;
   m3uContent?: string;
 }> {
   const params = PlaylistTracksPaginationSchema.parse(args);
+  logger.debug('Tool getPlaylistTracks called with args:', params);
 
   try {
     const queryParams = new URLSearchParams({
@@ -129,10 +131,6 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
       return {
         tracks: [],
         total: total ?? 0,
-        offset: params.offset,
-        limit: params.limit,
-        playlistId: params.playlistId,
-        format: 'm3u',
         m3uContent: data as string,
       };
     }
@@ -144,10 +142,6 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
     return {
       tracks,
       total: total ?? tracks.length,
-      offset: params.offset,
-      limit: params.limit,
-      playlistId: params.playlistId,
-      format: 'json',
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_playlist_tracks', error));

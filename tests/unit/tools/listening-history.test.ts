@@ -99,7 +99,9 @@ describe('listRecentlyPlayed', () => {
     ]);
     const result = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { timeRange: 'all', limit: 10 });
     expect(result.tracks).toHaveLength(2);
-    expect(result.timeRange).toBe('all');
+    // `timeRange` is no longer echoed (LLM input echo). The server-derived
+    // `tracks` and `count` are what the LLM gets back.
+    expect(result).not.toHaveProperty('timeRange');
   });
 
   it('over-fetches (5x limit, capped at 500) when timeRange !== "all"', async () => {

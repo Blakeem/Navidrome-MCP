@@ -42,7 +42,6 @@ interface RecentlyPlayedTrack {
 }
 
 interface RecentlyPlayedResult {
-  timeRange: string;
   count: number;
   tracks: RecentlyPlayedTrack[];
 }
@@ -59,8 +58,6 @@ interface MostPlayedItem {
 }
 
 interface MostPlayedResult {
-  type: string;
-  minPlayCount: number;
   count: number;
   items: MostPlayedItem[];
 }
@@ -68,6 +65,7 @@ interface MostPlayedResult {
 export async function listRecentlyPlayed(client: NavidromeClient, args: unknown): Promise<RecentlyPlayedResult> {
   const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedPaginationSchema.parse(args);
 
+  logger.debug('Tool listRecentlyPlayed called with args:', { limit, offset, timeRange });
   logger.info(`Getting recently played songs (${timeRange})`);
 
   // Compute the cutoff timestamp for client-side filtering. Navidrome's REST
@@ -124,7 +122,6 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
     });
 
   return {
-    timeRange,
     count: tracks.length,
     tracks,
   };
@@ -132,7 +129,8 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
 
 export async function listMostPlayed(client: NavidromeClient, args: unknown): Promise<MostPlayedResult> {
   const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedPaginationSchema.parse(args);
-  
+
+  logger.debug('Tool listMostPlayed called with args:', { type, limit, offset, minPlayCount });
   logger.info(`Getting most played ${type} with minPlayCount: ${minPlayCount}`);
   
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
@@ -182,8 +180,6 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
     .slice(0, limit);
   
   return {
-    type,
-    minPlayCount,
     count: filteredItems.length,
     items: filteredItems as MostPlayedItem[],
   };

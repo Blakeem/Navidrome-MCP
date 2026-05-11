@@ -45,13 +45,13 @@ export interface ParallelSearchTotals {
  * `totalAlbums`, `totalArtists`) reflect the server's full match count for
  * each type — the LLM uses these to know whether more results exist beyond
  * the current page. `totalResults` is the sum so the LLM has a single number
- * to report.
+ * to report. The original query is intentionally NOT echoed (LLM already
+ * knows what it asked for); it surfaces in DEBUG logs only.
  */
 interface AggregatedSearchResult {
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
-  query: string;
   totalArtists: number;
   totalAlbums: number;
   totalSongs: number;
@@ -65,14 +65,12 @@ interface AggregatedSearchResult {
  *
  * @param responses - Raw responses from parallel API calls
  * @param totals - Per-type totals from X-Total-Count (null falls back to array length)
- * @param query - Original search query string
  * @param appliedFilters - Filters that were successfully applied to the search
  * @returns Aggregated search result with transformed DTOs and metadata
  */
 export function aggregateSearchResults(
   responses: ParallelSearchResponses,
   totals: ParallelSearchTotals,
-  query: string,
   appliedFilters: Record<string, string>
 ): AggregatedSearchResult {
   // Data collection - extract responses
@@ -96,7 +94,6 @@ export function aggregateSearchResults(
     artists,
     albums,
     songs,
-    query,
     totalArtists,
     totalAlbums,
     totalSongs,

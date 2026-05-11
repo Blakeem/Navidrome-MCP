@@ -49,19 +49,29 @@ interface SetVolumeResult {
   volume: number;
 }
 
+// Note: `mode` is intentionally NOT echoed on play_* results. The LLM-supplied
+// mode can also be silently demoted to 'replace' by the engine when a radio
+// stream is loaded (radio/songs mutual exclusion); echoing the requested mode
+// would lie to the LLM about what actually happened. The demotion is logged
+// at WARN in the engine AND surfaced via the optional `demoted` field below
+// so the LLM has a structured signal that `mode: 'append'` was silently
+// promoted to `replace` (e.g. radio queue evicted before song load).
+// Similarly, `shuffled`/`shuffle` are pure echoes of the LLM's input and are
+// dropped.
 interface PlaySongsResult {
   success: true;
   count: number;
-  mode: 'replace' | 'append';
-  shuffled: boolean;
+  /** Set to true ONLY when the request was `mode: 'append'` but a radio
+      stream in the queue forced a clear-and-replace. Omitted in the normal
+      case so its presence is itself the signal. */
+  demoted?: true;
 }
 
 interface PlayAlbumsResult {
   success: true;
   albumCount: number;
   trackCount: number;
-  mode: 'replace' | 'append';
-  shuffle: 'none' | 'albums' | 'songs';
+  demoted?: true;
 }
 
 interface PlayAlbumsSearchResult {
@@ -69,17 +79,15 @@ interface PlayAlbumsSearchResult {
   matchCount: number;
   albumCount: number;
   trackCount: number;
-  mode: 'replace' | 'append';
-  shuffle: 'none' | 'albums' | 'songs';
   appliedFilters?: Record<string, string>;
+  demoted?: true;
 }
 
 interface PlaySongsSearchResult {
   success: true;
   count: number;
-  mode: 'replace' | 'append';
-  shuffled: boolean;
   appliedFilters?: Record<string, string>;
+  demoted?: true;
 }
 
 interface NextResult {
@@ -92,8 +100,6 @@ interface PreviousResult {
 
 interface SeekResult {
   success: true;
-  seconds: number;
-  mode: 'absolute' | 'relative';
 }
 
 interface NowPlayingResult {
@@ -130,14 +136,11 @@ interface ShufflePlayQueueResult {
 
 interface MoveInPlayQueueResult {
   success: true;
-  from?: number;
-  to?: number;
   noop?: true;
 }
 
 interface RemoveFromPlayQueueResult {
   success: true;
-  index: number;
 }
 
 const SetVolumeSchema = z.object({
@@ -268,14 +271,14 @@ export async function playSongs(_client: NavidromeClient, args: unknown): Promis
       logger.debug(`playback: shuffled song order: ${ordered.join(',')}`);
     }
 
-    await playbackEngine.enqueue(ordered, parsed.mode);
+    const { demoted } = await playbackEngine.enqueue(ordered, parsed.mode);
 
-    return {
+    const out: PlaySongsResult = {
       success: true,
       count: ordered.length,
-      mode: parsed.mode,
-      shuffled: parsed.shuffle,
     };
+    if (demoted) out.demoted = true;
+    return out;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_songs', error));
   }
@@ -339,15 +342,15 @@ export async function playAlbums(client: NavidromeClient, args: unknown): Promis
       logger.debug(`playback: play_albums shuffled (${parsed.shuffle}) → ${flat.length} tracks`);
     }
 
-    await playbackEngine.enqueue(flat, parsed.mode);
+    const { demoted } = await playbackEngine.enqueue(flat, parsed.mode);
 
-    return {
+    const out: PlayAlbumsResult = {
       success: true,
       albumCount: albumTracks.length,
       trackCount: flat.length,
-      mode: parsed.mode,
-      shuffle: parsed.shuffle,
     };
+    if (demoted) out.demoted = true;
+    return out;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_albums', error));
   }
@@ -418,19 +421,18 @@ export async function playAlbumsSearch(
       logger.debug(`playback: play_albums_search shuffled (${shuffle}) → ${flat.length} tracks`);
     }
 
-    await playbackEngine.enqueue(flat, mode);
+    const { demoted } = await playbackEngine.enqueue(flat, mode);
 
     const out: PlayAlbumsSearchResult = {
       success: true,
       matchCount: result.albums.length,
       albumCount: albumTracks.length,
       trackCount: flat.length,
-      mode,
-      shuffle,
     };
     if (result.appliedFilters !== undefined) {
       out.appliedFilters = result.appliedFilters;
     }
+    if (demoted) out.demoted = true;
     return out;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_albums_search', error));
@@ -471,17 +473,16 @@ export async function playSongsSearch(
       logger.debug(`playback: play_songs_search shuffled ${songIds.length} songs`);
     }
 
-    await playbackEngine.enqueue(songIds, mode);
+    const { demoted } = await playbackEngine.enqueue(songIds, mode);
 
     const out: PlaySongsSearchResult = {
       success: true,
       count: songIds.length,
-      mode,
-      shuffled: shuffle,
     };
     if (result.appliedFilters !== undefined) {
       out.appliedFilters = result.appliedFilters;
     }
+    if (demoted) out.demoted = true;
     return out;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_songs_search', error));
@@ -565,7 +566,7 @@ export async function seek(args: unknown): Promise<SeekResult> {
   try {
     logger.debug(`playback: seek seconds=${parsed.seconds} mode=${parsed.mode}`);
     await playbackEngine.seek(parsed.seconds, parsed.mode);
-    return { success: true, seconds: parsed.seconds, mode: parsed.mode };
+    return { success: true };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('seek', error));
   }
@@ -722,7 +723,7 @@ export async function moveInPlayQueue(args: unknown): Promise<MoveInPlayQueueRes
   try {
     logger.debug(`playback: move_in_play_queue from=${parsed.from} to=${parsed.to}`);
     await playbackEngine.movePlaylistEntry(parsed.from, parsed.to);
-    return { success: true, from: parsed.from, to: parsed.to };
+    return { success: true };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('move_in_play_queue', error));
   }
@@ -744,7 +745,7 @@ export async function removeFromPlayQueue(args: unknown): Promise<RemoveFromPlay
   try {
     logger.debug(`playback: remove_from_play_queue index=${parsed.index}`);
     await playbackEngine.removePlaylistEntry(parsed.index);
-    return { success: true, index: parsed.index };
+    return { success: true };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('remove_from_play_queue', error));
   }

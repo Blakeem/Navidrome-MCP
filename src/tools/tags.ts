@@ -30,8 +30,6 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 
 interface SearchByTagsResult {
-  tagName: string;
-  tagValue: string | undefined;
   matches: TagDTO[];
   total: number;
 }
@@ -75,6 +73,7 @@ function transformTagsToDTO(rawTags: unknown): TagDTO[] {
  */
 export async function searchByTags(client: NavidromeClient, args: unknown): Promise<SearchByTagsResult> {
   const params = SearchByTagsSchema.parse(args);
+  logger.debug('Tool searchByTags called with args:', params);
 
   try {
     // Build query parameters for server-side filtering
@@ -101,8 +100,6 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
     allTags.sort((a, b) => b.songCount - a.songCount);
 
     return {
-      tagName: params.tagName,
-      tagValue: params.tagValue,
       matches: allTags,
       total: total ?? allTags.length,
     };
@@ -116,6 +113,7 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
  */
 export async function getTagDistribution(client: NavidromeClient, args: unknown): Promise<GetTagDistributionResult> {
   const params = TagDistributionSchema.parse(args);
+  logger.debug('Tool getTagDistribution called with args:', params);
 
   try {
     const distributions: TagDistribution[] = [];

@@ -14,6 +14,7 @@ export interface MockNavidromeClient {
   requestWithLibraryFilter: MockedFunction<NavidromeClient['requestWithLibraryFilter']>;
   requestWithLibraryFilterAndMeta: MockedFunction<NavidromeClient['requestWithLibraryFilterAndMeta']>;
   subsonicRequest: MockedFunction<NavidromeClient['subsonicRequest']>;
+  getCurrentToken: MockedFunction<NavidromeClient['getCurrentToken']>;
   initialize: MockedFunction<() => Promise<void>>;
   getBaseUrl: MockedFunction<() => string>;
   isInitialized: MockedFunction<() => boolean>;
@@ -30,6 +31,7 @@ export function createMockClient(): MockNavidromeClient {
     requestWithLibraryFilter: vi.fn(),
     requestWithLibraryFilterAndMeta: vi.fn(),
     subsonicRequest: vi.fn(),
+    getCurrentToken: vi.fn(),
     initialize: vi.fn().mockResolvedValue(undefined),
     getBaseUrl: vi.fn().mockReturnValue('http://mock-server:4533'),
     isInitialized: vi.fn().mockReturnValue(true),

@@ -32,14 +32,15 @@ import {
   TopRatedItemsPaginationSchema,
 } from '../schemas/index.js';
 
-// `type` is intentionally NOT echoed in the response — the schema accepts both
-// singular ('song') and plural ('songs') forms via runtime normalization, and
-// echoing the canonical form would mismatch what the LLM passed in. The id +
-// message already convey what was acted on.
+// Input echoes (id, type, rating) are intentionally NOT returned. The LLM
+// just sent these values; echoing them back wastes context window and can
+// even mislead (the schema normalizes plural→singular, so echoing the
+// canonical form would mismatch the LLM's input). `success: true` plus a
+// human message are the round-trip-safe fields. The original args are
+// always available in DEBUG=true logs for diagnostics.
 interface StarItemResult {
   success: boolean;
   message: string;
-  id: string;
 }
 
 interface StarredItem {
@@ -56,7 +57,6 @@ interface StarredItem {
 }
 
 interface ListStarredResult {
-  type: string;
   count: number;
   items: StarredItem[];
 }
@@ -75,41 +75,40 @@ interface RatedItem {
 }
 
 interface ListTopRatedResult {
-  type: string;
-  minRating: number;
   count: number;
   items: RatedItem[];
 }
 
-// See StarItemResult for why `type` is omitted.
+// Same rationale as StarItemResult — id/type/rating are LLM-supplied echoes
+// and are dropped. The success+message pair is enough for the LLM to know
+// the action took effect.
 interface SetRatingResult {
   success: boolean;
   message: string;
-  id: string;
-  rating: number;
 }
 
 
 export async function starItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
-  
+
+  logger.debug('Tool starItem called with args:', { id, type });
   logger.info(`Starring ${type}: ${id}`);
-  
+
   // Use Subsonic REST API for starring
   const response = await client.subsonicRequest('/star', { id });
-  
+
   logger.debug('Star response:', response);
-  
+
   return {
     success: true,
     message: `Successfully starred ${type}`,
-    id,
   };
 }
 
 export async function unstarItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
 
+  logger.debug('Tool unstarItem called with args:', { id, type });
   logger.info(`Unstarring ${type}: ${id}`);
 
   // Use Subsonic REST API for unstarring
@@ -120,34 +119,33 @@ export async function unstarItem(client: NavidromeClient, _config: Config, args:
   return {
     success: true,
     message: `Successfully unstarred ${type}`,
-    id,
   };
 }
 
 export async function setRating(client: NavidromeClient, _config: Config, args: unknown): Promise<SetRatingResult> {
   const { id, type, rating } = SetRatingSchema.parse(args);
-  
+
+  logger.debug('Tool setRating called with args:', { id, type, rating });
   logger.info(`Setting rating ${rating} for ${type}: ${id}`);
-  
+
   // Use Subsonic REST API for setting rating
-  const response = await client.subsonicRequest('/setRating', { 
-    id, 
-    rating: rating.toString() 
+  const response = await client.subsonicRequest('/setRating', {
+    id,
+    rating: rating.toString()
   });
-  
+
   logger.debug('Set rating response:', response);
-  
+
   return {
     success: true,
     message: rating > 0 ? `Successfully set rating to ${rating} stars` : 'Successfully removed rating',
-    id,
-    rating,
   };
 }
 
 export async function listStarredItems(client: NavidromeClient, args: unknown): Promise<ListStarredResult> {
   const { type, limit, offset } = StarredItemsPaginationSchema.parse(args);
-  
+
+  logger.debug('Tool listStarredItems called with args:', { type, limit, offset });
   logger.info(`Listing starred ${type}`);
   
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
@@ -210,7 +208,6 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
   }
 
   return {
-    type,
     count: transformedItems.length,
     items: transformedItems,
   };
@@ -218,7 +215,8 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
 
 export async function listTopRated(client: NavidromeClient, args: unknown): Promise<ListTopRatedResult> {
   const { type, minRating, limit, offset } = TopRatedItemsPaginationSchema.parse(args);
-  
+
+  logger.debug('Tool listTopRated called with args:', { type, minRating, limit, offset });
   logger.info(`Listing top rated ${type} (min rating: ${minRating})`);
   
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
@@ -283,8 +281,6 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
   }
   
   return {
-    type,
-    minRating,
     count: transformedItems.length,
     items: transformedItems,
   };

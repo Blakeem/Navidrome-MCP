@@ -49,11 +49,12 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
           songCount: 1
         });
 
-        // Validate response structure (not specific content)
+        // Validate response structure (not specific content). `query` is no
+        // longer echoed (LLM input echo).
         expect(result).toHaveProperty('artists');
         expect(result).toHaveProperty('albums');
         expect(result).toHaveProperty('songs');
-        expect(result).toHaveProperty('query');
+        expect(result).not.toHaveProperty('query');
         expect(result).toHaveProperty('totalResults');
         // Pagination fix: per-type real totals from X-Total-Count.
         expect(result).toHaveProperty('totalArtists');
@@ -64,7 +65,6 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
         expect(Array.isArray(result.artists)).toBe(true);
         expect(Array.isArray(result.albums)).toBe(true);
         expect(Array.isArray(result.songs)).toBe(true);
-        expect(typeof result.query).toBe('string');
         expect(typeof result.totalResults).toBe('number');
         expect(typeof result.totalArtists).toBe('number');
         expect(typeof result.totalAlbums).toBe('number');
@@ -79,8 +79,8 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
         // totalResults is the sum of the three per-type totals.
         expect(result.totalResults).toBe(result.totalArtists + result.totalAlbums + result.totalSongs);
 
-        // Query should match what we searched for
-        expect(result.query).toBe(testQuery);
+        // Suppress unused variable warning — we intentionally don't assert on testQuery anymore.
+        void testQuery;
 
         // Validate artist structure if results exist
         if (result.artists.length > 0) {
@@ -152,20 +152,19 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     describe('searchSongs', () => {
       it('should return valid song search structure', async () => {
-        const result = await searchSongs(liveClient, config, { 
+        const result = await searchSongs(liveClient, config, {
           query: testQuery,
           limit: 2
         });
 
-        // Validate response structure
+        // Validate response structure. `query` is no longer echoed (LLM
+        // input echo).
         expect(result).toHaveProperty('songs');
-        expect(result).toHaveProperty('query');
+        expect(result).not.toHaveProperty('query');
         expect(result).toHaveProperty('total');
 
         expect(Array.isArray(result.songs)).toBe(true);
-        expect(typeof result.query).toBe('string');
         expect(typeof result.total).toBe('number');
-        expect(result.query).toBe(testQuery);
 
         // Should not return more than requested
         expect(result.songs.length).toBeLessThanOrEqual(2);
@@ -207,20 +206,18 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     describe('searchAlbums', () => {
       it('should return valid album search structure', async () => {
-        const result = await searchAlbums(liveClient, config, { 
+        const result = await searchAlbums(liveClient, config, {
           query: testQuery,
           limit: 2
         });
 
-        // Validate response structure
+        // Validate response structure. `query` is no longer echoed.
         expect(result).toHaveProperty('albums');
-        expect(result).toHaveProperty('query');
+        expect(result).not.toHaveProperty('query');
         expect(result).toHaveProperty('total');
 
         expect(Array.isArray(result.albums)).toBe(true);
-        expect(typeof result.query).toBe('string');
         expect(typeof result.total).toBe('number');
-        expect(result.query).toBe(testQuery);
 
         // Should not return more than requested
         expect(result.albums.length).toBeLessThanOrEqual(2);
@@ -266,20 +263,18 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     describe('searchArtists', () => {
       it('should return valid artist search structure', async () => {
-        const result = await searchArtists(liveClient, config, { 
+        const result = await searchArtists(liveClient, config, {
           query: testQuery,
           limit: 2
         });
 
-        // Validate response structure
+        // Validate response structure. `query` is no longer echoed.
         expect(result).toHaveProperty('artists');
-        expect(result).toHaveProperty('query');
+        expect(result).not.toHaveProperty('query');
         expect(result).toHaveProperty('total');
 
         expect(Array.isArray(result.artists)).toBe(true);
-        expect(typeof result.query).toBe('string');
         expect(typeof result.total).toBe('number');
-        expect(result.query).toBe(testQuery);
 
         // Should not return more than requested
         expect(result.artists.length).toBeLessThanOrEqual(2);
@@ -325,10 +320,9 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
         songCount: 1
       });
 
-      // Should not crash and return valid structure with empty query
+      // Should not crash and return valid structure (query no longer echoed)
       expect(result).toHaveProperty('totalResults');
-      expect(result).toHaveProperty('query');
-      expect(result.query).toBe('');
+      expect(result).not.toHaveProperty('query');
       expect(typeof result.totalResults).toBe('number');
     });
 
@@ -399,10 +393,10 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
         songCount: 1
       });
 
-      // searchAll should work without query (returns all results)
+      // searchAll should work without query (returns all results). `query`
+      // is no longer echoed — assert by structure shape only.
       expect(result).toHaveProperty('totalResults');
-      expect(result).toHaveProperty('query');
-      expect(result.query).toBe(''); // Default empty query
+      expect(result).not.toHaveProperty('query');
       expect(typeof result.totalResults).toBe('number');
     });
 
@@ -429,30 +423,30 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchSongs', async () => {
       const result = await searchSongs(liveClient, config, { limit: 1 });
 
-      // searchSongs should work without query (returns all songs)
+      // searchSongs should work without query (returns all songs). `query`
+      // is no longer echoed.
       expect(result).toHaveProperty('songs');
-      expect(result).toHaveProperty('query');
-      expect(result.query).toBe(''); // Default empty query
+      expect(result).not.toHaveProperty('query');
       expect(typeof result.total).toBe('number');
     });
 
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchAlbums', async () => {
       const result = await searchAlbums(liveClient, config, { limit: 1 });
 
-      // searchAlbums should work without query (returns all albums)
+      // searchAlbums should work without query (returns all albums). `query`
+      // is no longer echoed.
       expect(result).toHaveProperty('albums');
-      expect(result).toHaveProperty('query');
-      expect(result.query).toBe(''); // Default empty query
+      expect(result).not.toHaveProperty('query');
       expect(typeof result.total).toBe('number');
     });
 
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchArtists', async () => {
       const result = await searchArtists(liveClient, config, { limit: 1 });
 
-      // searchArtists should work without query (returns all artists)
+      // searchArtists should work without query (returns all artists).
+      // `query` is no longer echoed.
       expect(result).toHaveProperty('artists');
-      expect(result).toHaveProperty('query');
-      expect(result.query).toBe(''); // Default empty query
+      expect(result).not.toHaveProperty('query');
       expect(typeof result.total).toBe('number');
     });
 

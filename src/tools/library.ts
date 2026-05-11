@@ -117,6 +117,8 @@ async function setActiveLibraries(args: unknown): Promise<LibraryManagementRespo
   try {
     const params = SetActiveLibrariesSchema.parse(args);
 
+    logger.debug('Tool setActiveLibraries called with args:', params);
+
     // Set active libraries via LibraryManager
     libraryManager.setActiveLibraries(params.libraryIds);
     

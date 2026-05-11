@@ -30,6 +30,12 @@ import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import { DEFAULT_VALUES, DEFAULT_USER_AGENT } from '../constants/defaults.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { logger } from '../utils/logger.js';
+import { safeNumber } from '../utils/safe-number.js';
+import {
+  fetchWithTimeout,
+  getExternalApiTimeoutMs,
+} from '../utils/fetch-with-timeout.js';
 const MAX_LIMIT = 500;
 
 /**
@@ -172,15 +178,20 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
     tags: (station.tags !== null && station.tags !== undefined && station.tags !== '') ? station.tags.split(',').map(t => t.trim()).filter(t => t !== '') : [],
     languageCodes: (station.languagecodes !== null && station.languagecodes !== undefined && station.languagecodes !== '') ? station.languagecodes.split(',').map(l => l.trim()).filter(l => l !== '') : [],
     hls: Boolean(station.hls),
-    votes: station.votes ?? 0,
-    clickCount: station.clickcount ?? 0
+    // safeNumber guards against Radio Browser sometimes returning numerics
+    // as strings or non-numeric placeholders (matches the Last.fm pattern).
+    votes: safeNumber(station.votes),
+    clickCount: safeNumber(station.clickcount),
   };
-  
+
   // Only include essential fields for cleaner LLM context
   if (station.homepage !== null && station.homepage !== undefined && station.homepage !== '') dto.homepage = station.homepage;
   if (station.countrycode !== null && station.countrycode !== undefined && station.countrycode !== '') dto.countryCode = station.countrycode;
   if (station.codec !== null && station.codec !== undefined && station.codec !== '') dto.codec = station.codec;
-  if (station.bitrate !== undefined) dto.bitrate = station.bitrate;
+  if (station.bitrate !== undefined) {
+    const bitrate = safeNumber(station.bitrate, -1);
+    if (bitrate >= 0) dto.bitrate = bitrate;
+  }
   // Skip favicon and lastCheckTime to reduce context size
   
   return dto;
@@ -246,7 +257,9 @@ export async function discoverRadioStations(
   args: unknown
 ): Promise<DiscoverRadioStationsResponse> {
   const params = DiscoverRadioStationsArgsSchema.parse(args);
-  
+
+  logger.debug('Tool discoverRadioStations called with args:', params);
+
   try {
     const url = new URL('/json/stations/search', config.radioBrowserBase);
     
@@ -264,17 +277,25 @@ export async function discoverRadioStations(
     url.searchParams.set('limit', String(params.limit));
     url.searchParams.set('hidebroken', params.hideBroken ? 'true' : 'false');
     
-    const response = await fetch(url.toString(), {
-      headers: {
-        'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-        'Accept': 'application/json'
-      }
-    });
-    
+    const response = await fetchWithTimeout(
+      url.toString(),
+      {
+        headers: {
+          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
+          'Accept': 'application/json'
+        }
+      },
+      {
+        timeoutMs: getExternalApiTimeoutMs(),
+        retryPolicy: 'safe',
+        operationLabel: 'Radio Browser /json/stations/search',
+      },
+    );
+
     if (!response.ok) {
       throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
-    
+
     const data = await response.json() as RadioBrowserStation[];
     const stations = data.map(mapStationToDTO);
     
@@ -311,16 +332,28 @@ export async function discoverRadioStations(
  */
 export async function getRadioFilters(config: Config, args: unknown): Promise<RadioFiltersResponse> {
   const params = GetRadioFiltersArgsSchema.parse(args);
+  logger.debug('Tool getRadioFilters called with args:', params);
   const result: RadioFiltersResponse = {};
   
   try {
     const fetchPromises: Promise<void>[] = [];
 
+    // All four filter-list endpoints are pure reads — safe to retry on timeout.
+    const filterFetchOptions = {
+      timeoutMs: getExternalApiTimeoutMs(),
+      retryPolicy: 'safe' as const,
+    };
+    const filterHeaders = {
+      headers: { 'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT, 'Accept': 'application/json' }
+    };
+
     if (params.kinds.includes('tags')) {
       fetchPromises.push((async (): Promise<void> => {
-        const res = await fetch(`${config.radioBrowserBase}/json/tags`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT, 'Accept': 'application/json' }
-        });
+        const res = await fetchWithTimeout(
+          `${config.radioBrowserBase}/json/tags`,
+          filterHeaders,
+          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/tags' },
+        );
         const data = await res.json() as RadioBrowserTag[];
         result.tags = data
           .slice(0, 100)
@@ -330,9 +363,11 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
 
     if (params.kinds.includes('countries')) {
       fetchPromises.push((async (): Promise<void> => {
-        const res = await fetch(`${config.radioBrowserBase}/json/countries`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT, 'Accept': 'application/json' }
-        });
+        const res = await fetchWithTimeout(
+          `${config.radioBrowserBase}/json/countries`,
+          filterHeaders,
+          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/countries' },
+        );
         const data = await res.json() as RadioBrowserCountry[];
         result.countries = data
           .slice(0, 100)
@@ -346,9 +381,11 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
 
     if (params.kinds.includes('languages')) {
       fetchPromises.push((async (): Promise<void> => {
-        const res = await fetch(`${config.radioBrowserBase}/json/languages`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT, 'Accept': 'application/json' }
-        });
+        const res = await fetchWithTimeout(
+          `${config.radioBrowserBase}/json/languages`,
+          filterHeaders,
+          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/languages' },
+        );
         const data = await res.json() as RadioBrowserLanguage[];
         result.languages = data
           .slice(0, 100)
@@ -362,9 +399,11 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
 
     if (params.kinds.includes('codecs')) {
       fetchPromises.push((async (): Promise<void> => {
-        const res = await fetch(`${config.radioBrowserBase}/json/codecs`, {
-          headers: { 'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT, 'Accept': 'application/json' }
-        });
+        const res = await fetchWithTimeout(
+          `${config.radioBrowserBase}/json/codecs`,
+          filterHeaders,
+          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/codecs' },
+        );
         const data = await res.json() as RadioBrowserCodec[];
         result.codecs = data
           .slice(0, 50)
@@ -387,23 +426,33 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
  */
 export async function getStationByUuid(config: Config, args: unknown): Promise<ExternalRadioStationDTO> {
   const params = GetStationByUuidArgsSchema.parse(args);
-  
+
+  logger.debug('Tool getStationByUuid called with args:', params);
+
   try {
     const url = `${config.radioBrowserBase}/json/stations/byuuid?uuids=${encodeURIComponent(params.stationUuid)}`;
-    
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-        'Accept': 'application/json'
-      }
-    });
-    
+
+    const response = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
+          'Accept': 'application/json'
+        }
+      },
+      {
+        timeoutMs: getExternalApiTimeoutMs(),
+        retryPolicy: 'safe',
+        operationLabel: 'Radio Browser /json/stations/byuuid',
+      },
+    );
+
     if (!response.ok) {
       throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
-    
+
     const data = await response.json() as RadioBrowserStation[];
-    
+
     if (data === null || data === undefined || data.length === 0) {
       throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
@@ -424,23 +473,35 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
  */
 export async function clickStation(config: Config, args: unknown): Promise<ClickRadioStationResponse> {
   const params = ClickStationArgsSchema.parse(args);
-  
+
+  logger.debug('Tool clickStation called with args:', params);
+
   try {
     const url = `${config.radioBrowserBase}/json/url/${encodeURIComponent(params.stationUuid)}`;
-    
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-        'Accept': 'application/json'
-      }
-    });
-    
+
+    // No retry: a click registers a popularity-metric event server-side.
+    // Retrying on timeout could double-count if the first request landed.
+    const response = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
+          'Accept': 'application/json'
+        }
+      },
+      {
+        timeoutMs: getExternalApiTimeoutMs(),
+        retryPolicy: 'never',
+        operationLabel: 'Radio Browser /json/url (click)',
+      },
+    );
+
     if (!response.ok) {
       throw new Error(ErrorFormatter.radioBrowserApi(response));
     }
-    
+
     const data = await response.json() as RadioBrowserActionResponse;
-    
+
     return {
       ok: Boolean(data.ok),
       playUrl: data.url ?? '',
@@ -456,17 +517,29 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
  */
 export async function voteStation(config: Config, args: unknown): Promise<VoteRadioStationResponse> {
   const params = VoteStationArgsSchema.parse(args);
-  
+
+  logger.debug('Tool voteStation called with args:', params);
+
   try {
     const url = `${config.radioBrowserBase}/json/vote/${encodeURIComponent(params.stationUuid)}`;
-    
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-        'Accept': 'application/json'
-      }
-    });
-    
+
+    // No retry: a vote is recorded server-side. Retrying on timeout risks
+    // double-voting if the first request landed but the response was lost.
+    const response = await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
+          'Accept': 'application/json'
+        }
+      },
+      {
+        timeoutMs: getExternalApiTimeoutMs(),
+        retryPolicy: 'never',
+        operationLabel: 'Radio Browser /json/vote',
+      },
+    );
+
     if (!response.ok) {
       throw new Error(ErrorFormatter.radioBrowserApi(response));
     }

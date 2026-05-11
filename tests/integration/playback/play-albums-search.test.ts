@@ -105,8 +105,7 @@ describePlayback('play_albums_search (live)', () => {
     expect(result.albumCount).toBeGreaterThan(0);
     expect(result.albumCount).toBeLessThanOrEqual(result.matchCount);
     expect(result.trackCount).toBeGreaterThan(0);
-    expect(result.mode).toBe('replace');
-    expect(result.shuffle).toBe('none');
+    // `mode` and `shuffle` are no longer echoed (LLM input echoes).
 
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -143,7 +142,7 @@ describePlayback('play_albums_search (live)', () => {
     expect(result.success).toBe(true);
     expect(result.matchCount).toBeGreaterThan(0);
     expect(result.trackCount).toBeGreaterThan(0);
-    expect(result.mode).toBe('replace');
+    // `mode` is no longer echoed (LLM input echo).
 
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -247,7 +246,7 @@ describePlayback('play_albums_search (live)', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.shuffle).toBe('songs');
+    // `shuffle` is no longer echoed (LLM input echo).
     expect(result.trackCount).toBeGreaterThan(0);
 
     await waitFor(async () => {
@@ -348,7 +347,7 @@ describePlayback('play_albums_search (live)', () => {
       mode: 'append',
     });
     expect(result.success).toBe(true);
-    expect(result.mode).toBe('append');
+    // `mode` is no longer echoed (silent radio-demotion would have lied).
     expect(result.trackCount).toBeGreaterThan(0);
 
     const expectedLength = initialLength + result.trackCount;
@@ -462,11 +461,8 @@ describePlayback('play_albums_search (live)', () => {
     expect(Number.isInteger(result.trackCount)).toBe(true);
     expect(result.trackCount).toBeGreaterThan(0);
 
-    expect(typeof result.mode).toBe('string');
-    expect(['replace', 'append']).toContain(result.mode);
-
-    expect(typeof result.shuffle).toBe('string');
-    expect(['none', 'albums', 'songs']).toContain(result.shuffle);
+    // `mode` and `shuffle` are no longer in the response — they were LLM
+    // input echoes that wasted context window.
 
     // appliedFilters is optional. If present it must be a non-null object.
     if (result.appliedFilters !== undefined) {
