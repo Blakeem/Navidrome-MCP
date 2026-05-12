@@ -49,7 +49,7 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
 
   try {
     // Processing - build enhanced search parameters with filter resolution
-    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'title', 'title');
+    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'title', 'title', 'song');
 
     logger.debug('Enhanced song search parameters:', { searchParams, appliedFilters });
 
@@ -97,7 +97,7 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
 
   try {
     // Processing - build enhanced search parameters with filter resolution
-    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name');
+    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name', 'album');
 
     logger.debug('Enhanced album search parameters:', { searchParams, appliedFilters });
 
@@ -144,7 +144,7 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
 
   try {
     // Processing - build enhanced search params with role=maincredit for comprehensive artist listing
-    const { searchParams: baseParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name');
+    const { searchParams: baseParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name', 'artist');
     const searchParams = `${baseParams}&role=maincredit`;
 
     logger.debug('Enhanced artist search parameters:', { searchParams, appliedFilters });

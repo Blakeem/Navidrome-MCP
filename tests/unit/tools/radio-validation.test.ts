@@ -194,7 +194,7 @@ describe('Radio Stream Validation', () => {
       expect(result.success).toBe(false);
       expect(result.status).toBe('invalid');
       expect(result.httpStatus).toBe(404);
-      expect(result.recommendations).toContain('🔍 Stream URL appears to be offline or moved');
+      expect(result.recommendations).toContain('Stream URL appears to be offline or moved');
     });
 
     it('should detect valid audio content type', async () => {
@@ -245,7 +245,7 @@ describe('Radio Stream Validation', () => {
       expect(result.success).toBe(false);
       expect(result.status).toBe('error');
       expect(result.validation.hasAudioContentType).toBe(false);
-      expect(result.recommendations).toContain('⚠️ Stream validation encountered an error');
+      expect(result.recommendations).toContain('Stream validation encountered an error');
     });
   });
 
@@ -278,8 +278,8 @@ describe('Radio Stream Validation', () => {
       expect(result.streamingHeaders['icy-name']).toBe('Test Radio Station');
       expect(result.streamingHeaders['icy-br']).toBe('128');
       expect(result.streamingHeaders['icy-genre']).toBe('Pop');
-      expect(result.recommendations).toContain('🎵 Station: Test Radio Station');
-      expect(result.recommendations).toContain('📊 Bitrate: 128kbps');
+      expect(result.recommendations).toContain('Station: Test Radio Station');
+      expect(result.recommendations).toContain('Bitrate: 128kbps');
     });
 
     it('should work without streaming headers', async () => {
@@ -358,7 +358,7 @@ describe('Radio Stream Validation', () => {
       expect(result.validation.audioDataDetected).toBe(true);
       expect(result.audioFormat?.format).toBe('mp3');
       expect(result.audioFormat?.mime).toBe('audio/mpeg');
-      expect(result.recommendations).toContain('🎧 Format: MP3');
+      expect(result.recommendations).toContain('Format: MP3');
     });
 
     it('should handle file-type detection failure', async () => {
@@ -552,10 +552,10 @@ describe('Radio Stream Validation', () => {
       // No spurious "Could not sample audio data" warning when sampling was
       // deliberately skipped because headers were conclusive.
       expect(result.warnings).not.toContain('Could not sample audio data from stream');
-      expect(result.recommendations).toContain('✅ Stream validated successfully');
-      expect(result.recommendations).toContain('🎵 Station: Perfect FM');
-      expect(result.recommendations).toContain('📊 Bitrate: 320kbps');
-      expect(result.recommendations).toContain('✨ Ready to add as radio station');
+      expect(result.recommendations).toContain('Stream validated successfully');
+      expect(result.recommendations).toContain('Station: Perfect FM');
+      expect(result.recommendations).toContain('Bitrate: 320kbps');
+      expect(result.recommendations).toContain('Ready to add as radio station');
     });
 
     it('should measure test duration', async () => {
@@ -629,7 +629,7 @@ describe('Radio Stream Validation', () => {
       expect(result.streamingHeaders['icy-genre']).toBe('Synthwave');
       // audioFormat is not set when audio sampling is skipped (no magic-bytes check)
       expect(result.audioFormat).toBeUndefined();
-      expect(result.recommendations).toContain('✅ Stream validated successfully');
+      expect(result.recommendations).toContain('Stream validated successfully');
     });
 
     it('should skip audio sampling when only content-type indicates audio', async () => {

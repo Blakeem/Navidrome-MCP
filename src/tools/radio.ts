@@ -452,6 +452,7 @@ export async function deleteRadioStation(
 
     return {
       success: true,
+      message: 'Successfully deleted radio station',
     };
   } catch (error) {
     logger.error('Error deleting radio station:', error);

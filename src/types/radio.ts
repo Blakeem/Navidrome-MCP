@@ -49,11 +49,14 @@ export interface CreateRadioStationResponse {
 }
 
 /** Response from deleting a radio station. The deleted id is intentionally
- *  not echoed — the LLM just sent it. The success flag is the round-trip
- *  confirmation. */
+ *  not echoed — the LLM just sent it. The success flag plus the human
+ *  message are the round-trip confirmation; matches the shape of
+ *  `delete_playlist` for consistency. */
 export interface DeleteRadioStationResponse {
   /** Success status */
   success: boolean;
+  /** Human-readable confirmation, e.g. "Successfully deleted radio station" */
+  message: string;
   /** Error message if failed */
   error?: string;
 }

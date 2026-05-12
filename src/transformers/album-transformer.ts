@@ -151,16 +151,17 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
     dto.rating = rawAlbum.rating;
   }
 
-  // Starred handling: Navidrome's listing endpoints sometimes return
-  // `starred: null` alongside a populated `starredAt` timestamp (observed in
-  // /api/album?name=...). Treat the presence of `starredAt` as authoritative —
-  // if the server timestamped a star, the boolean must reflect that, otherwise
-  // sorting/filtering UIs would see "starred: null" and skip the album.
-  if (rawAlbum.starredAt !== undefined && rawAlbum.starredAt !== null) {
+  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
+  // as a "last starred at" history field even after unstarring, so a
+  // populated timestamp alone does NOT mean the item is currently starred.
+  // Only echo `starredAt` when the boolean confirms the starred state.
+  if (rawAlbum.starred === true) {
     dto.starred = true;
-    dto.starredAt = rawAlbum.starredAt;
-  } else if (rawAlbum.starred === true || rawAlbum.starred === false) {
-    dto.starred = rawAlbum.starred;
+    if (rawAlbum.starredAt !== undefined && rawAlbum.starredAt !== null) {
+      dto.starredAt = rawAlbum.starredAt;
+    }
+  } else if (rawAlbum.starred === false) {
+    dto.starred = false;
   }
 
   return dto;

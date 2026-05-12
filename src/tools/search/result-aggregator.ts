@@ -19,6 +19,7 @@
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../../types/index.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../../transformers/index.js';
 import { logger } from '../../utils/logger.js';
+import { mapSortField, type SearchEndpoint } from './filter-resolver.js';
 
 /**
  * Raw API response data from parallel search requests
@@ -193,24 +194,34 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
     return searchParams.toString();
   };
 
-  // Determine appropriate sort field for each endpoint
-  const getSortField = (defaultSort: string): string => {
+  // Determine appropriate sort field for each endpoint.
+  // `endpoint` drives endpoint-specific aliases (see `mapSortField`) — e.g.
+  // `_sort=year` is silently ignored by `/api/album`, which has no `year`
+  // column; we map it to `maxYear` so DESC ordering returns newest albums.
+  const getSortField = (defaultSort: string, endpoint: SearchEndpoint): string => {
     const requestedSort = sort ?? defaultSort;
 
     // Map common sort fields to endpoint-specific ones
+    let mapped: string;
     switch (requestedSort) {
-      case 'name': return defaultSort === 'title' ? 'title' : 'name';
-      case 'recently_added': return 'recently_added';
-      case 'starred_at': return 'starred_at';
-      case 'random': return 'random';
-      default: return requestedSort;
+      case 'name':
+        mapped = defaultSort === 'title' ? 'title' : 'name';
+        break;
+      case 'recently_added':
+      case 'starred_at':
+      case 'random':
+        mapped = requestedSort;
+        break;
+      default:
+        mapped = requestedSort;
     }
+    return mapSortField(mapped, endpoint);
   };
 
   // Output construction - build parameters for each endpoint type with appropriate sort fields
-  const songParams = buildParams(songCount, 'title', getSortField('title'));
-  const albumParams = buildParams(albumCount, 'name', getSortField('name'));
-  const artistParams = buildParams(artistCount, 'name', getSortField('name'));
+  const songParams = buildParams(songCount, 'title', getSortField('title', 'song'));
+  const albumParams = buildParams(albumCount, 'name', getSortField('name', 'album'));
+  const artistParams = buildParams(artistCount, 'name', getSortField('name', 'artist'));
 
   return {
     songParams,

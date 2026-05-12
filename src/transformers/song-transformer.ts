@@ -95,14 +95,17 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     dto.rating = rawSong.rating;
   }
 
-  // Treat `starredAt` as authoritative for the starred state — Navidrome
-  // listings sometimes emit `starred: null` alongside a populated timestamp
-  // (observed on /api/album, kept consistent across all DTOs).
-  if (rawSong.starredAt !== undefined && rawSong.starredAt !== null) {
+  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
+  // as a "last starred at" history field even after unstarring, so a
+  // populated timestamp alone does NOT mean the item is currently starred.
+  // Only echo `starredAt` when the boolean confirms the starred state.
+  if (rawSong.starred === true) {
     dto.starred = true;
-    dto.starredAt = rawSong.starredAt;
-  } else if (rawSong.starred === true || rawSong.starred === false) {
-    dto.starred = rawSong.starred;
+    if (rawSong.starredAt !== undefined && rawSong.starredAt !== null) {
+      dto.starredAt = rawSong.starredAt;
+    }
+  } else if (rawSong.starred === false) {
+    dto.starred = false;
   }
 
   if (rawSong.playDate !== undefined) {

@@ -100,7 +100,12 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       requestBody.comment = params.comment;
     }
 
-    const rawPlaylist = await client.request<unknown>('/playlist', {
+    // Navidrome's `POST /playlist` only echoes `{id}` — no metadata. Re-fetch
+    // the playlist by id so callers receive the same DTO shape as
+    // `get_playlist` / `list_playlists` (owner, ownerId, createdAt,
+    // updatedAt, etc.). The transformer's `name`/`comment` fallbacks remain
+    // as defence-in-depth in case the GET also comes back incomplete.
+    const created = await client.request<{ id?: string }>('/playlist', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -108,14 +113,18 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
+    const newId = created?.id;
+    if (typeof newId !== 'string' || newId === '') {
+      throw new Error('Navidrome POST /playlist did not return a playlist id');
+    }
+
+    const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(newId)}`);
     const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
 
-    // Fix the name if it's not properly returned from API
+    // Defence-in-depth fallbacks if the follow-up GET also omits fields.
     if (playlist.name === null || playlist.name === undefined || playlist.name === '' || playlist.name === 'Unknown Playlist') {
       playlist.name = params.name;
     }
-
-    // Fix the comment if it's not properly returned from API
     if (params.comment !== null && params.comment !== undefined && params.comment !== '' && (playlist.comment === null || playlist.comment === undefined || playlist.comment === '')) {
       playlist.comment = params.comment;
     }

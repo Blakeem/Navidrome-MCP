@@ -35,7 +35,7 @@ import {
 const tools: Tool[] = [
   {
     name: 'search_all',
-    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.\n\nNote: `totalArtists`, `totalAlbums`, and `totalSongs` in the response are *match counts* for the current query and filters (how many items in the library would match if you paginated through all of them) — NOT total library size. To see library totals, use get_user_details.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.\n\nNote: `totalArtists`, `totalAlbums`, and `totalSongs` in the response are *match counts* for the current query and filters (how many items in the library would match if you paginated through all of them) — NOT total library size. To see library totals, use get_user_details.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -130,13 +130,13 @@ const tools: Tool[] = [
   },
   {
     name: 'search_songs',
-    description: 'Search for songs by title with advanced filtering and sorting options. Leave query empty to list all songs.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search for songs by title with advanced filtering and sorting options. Leave query empty to list all songs.\n\nNote: the query runs Navidrome\'s full-text match on the song row — it matches title, artist, album AND credited participant names (composer, producer, etc.). Searching "love" can return a song whose composer is named "Rich Love" even if "love" is not in the title.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Search terms to look for in song titles, artists, or albums',
+          description: 'Search terms to look for in song titles, artists, albums, or credited participants (composer, producer, etc.). Navidrome runs a full-text match, so a query like "love" can also match songs by a composer named "Rich Love".',
         },
         limit: {
           type: 'number',
@@ -211,7 +211,7 @@ const tools: Tool[] = [
   },
   {
     name: 'search_albums',
-    description: 'Search for albums by name with advanced filtering and sorting options. Leave query empty to list all albums.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search for albums by name with advanced filtering and sorting options. Leave query empty to list all albums.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -292,7 +292,7 @@ const tools: Tool[] = [
   },
   {
     name: 'search_artists',
-    description: 'Search for artists by name with advanced filtering and sorting options. Leave query empty to list all artists.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search for artists by name with advanced filtering and sorting options. Leave query empty to list all artists.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {

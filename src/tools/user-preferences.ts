@@ -137,32 +137,22 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
 
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
 
-  // Fetch more items to account for client-side filtering
-  const fetchLimit = Math.min(limit * 5, 500); // Fetch 5x requested or max 500
-
+  // Use Navidrome's server-side `starred=true` filter — it returns only
+  // items whose authoritative `starred` boolean is true. Sorting by
+  // `starredAt DESC` would over-include items whose star was cleared but
+  // still carry a leftover timestamp (Navidrome retains `starredAt` as a
+  // "last starred at" history field).
   const response = await client.requestWithLibraryFilter<unknown>(
-    `${endpoint}?_start=${offset}&_end=${offset + fetchLimit}&_sort=starredAt&_order=DESC`
+    `${endpoint}?starred=true&_start=${offset}&_end=${offset + limit}&_sort=starredAt&_order=DESC`
   );
 
-  // Return the full DTOs from the shared transformers so starred items carry
-  // the same field set (durationFormatted, artistId/albumId, genres, year,
-  // albumArtist, rating, …) that every other song/album/artist response
-  // produces. We over-fetched (5x) to compensate for the client-side
-  // `starred === true` filter, then slice back to `limit` so we honour the
-  // caller's pagination request.
   let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
   if (type === 'songs') {
-    items = transformSongsToDTO(response)
-      .filter((song) => song.starred === true)
-      .slice(0, limit);
+    items = transformSongsToDTO(response);
   } else if (type === 'albums') {
-    items = transformAlbumsToDTO(response)
-      .filter((album) => album.starred === true)
-      .slice(0, limit);
+    items = transformAlbumsToDTO(response);
   } else {
-    items = transformArtistsToDTO(response)
-      .filter((artist) => artist.starred === true)
-      .slice(0, limit);
+    items = transformArtistsToDTO(response);
   }
 
   return {

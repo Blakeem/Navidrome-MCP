@@ -181,11 +181,11 @@ const tools: Tool[] = [
         },
         country: {
           type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
         },
         releaseType: {
           type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
         },
         recordLabel: {
           type: 'string',
@@ -276,11 +276,11 @@ const tools: Tool[] = [
         },
         country: {
           type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
         },
         releaseType: {
           type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
         },
         recordLabel: {
           type: 'string',

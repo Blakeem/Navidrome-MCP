@@ -66,15 +66,17 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
     dto.rating = rawArtist.rating;
   }
 
-  // Mirror album-transformer behaviour: starredAt is authoritative for the
-  // starred state. The artist endpoint hasn't been observed to return
-  // `starred: null` in the wild, but the consistency makes the DTOs easier
-  // to reason about and guards us against future inconsistencies.
-  if (rawArtist.starredAt !== undefined && rawArtist.starredAt !== null) {
+  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
+  // as a "last starred at" history field even after unstarring, so a
+  // populated timestamp alone does NOT mean the item is currently starred.
+  // Only echo `starredAt` when the boolean confirms the starred state.
+  if (rawArtist.starred === true) {
     dto.starred = true;
-    dto.starredAt = rawArtist.starredAt;
-  } else if (rawArtist.starred === true || rawArtist.starred === false) {
-    dto.starred = rawArtist.starred;
+    if (rawArtist.starredAt !== undefined && rawArtist.starredAt !== null) {
+      dto.starredAt = rawArtist.starredAt;
+    }
+  } else if (rawArtist.starred === false) {
+    dto.starred = false;
   }
 
   return dto;

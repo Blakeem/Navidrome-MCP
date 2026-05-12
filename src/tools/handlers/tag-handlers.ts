@@ -92,7 +92,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_filter_options',
-    description: 'Discover available filter values for search operations. Use this FIRST to see what genres, media types, countries, etc. are available in your library before using filters in search functions. Returns dynamic values from your actual music collection.\n\n💡 Example workflow:\n1. Call get_filter_options(filterType=\'genres\') to see available genres\n2. Use discovered genres like \'Rock\' or \'R&B\' in search_all, search_songs, etc.\n3. Repeat for other filter types (mediaTypes, countries, releaseTypes, recordLabels, moods)',
+    description: 'Discover available filter values for search operations. Use this FIRST to see what genres, media types, countries, etc. are available in your library before using filters in search functions. Returns dynamic values from your actual music collection.\n\nExample workflow:\n1. Call get_filter_options(filterType=\'genres\') to see available genres\n2. Use discovered genres like \'Rock\' or \'R&B\' in search_all, search_songs, etc.\n3. Repeat for other filter types (mediaTypes, countries, releaseTypes, recordLabels, moods)',
     inputSchema: {
       type: 'object',
       properties: {
