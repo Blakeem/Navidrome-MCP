@@ -358,7 +358,7 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 | `shuffle_play_queue` | Randomize queue order (membership unchanged) |
 | `move_in_play_queue` | Move a queue entry between indices |
 | `remove_from_play_queue` | Remove an entry; mpv auto-advances if the current track is removed |
-| `play_queue_index` | Jump directly to the queue entry at the given index (web-UI click equivalent); does not reorder |
+| `play_queue_index` | Jump directly to the queue entry at the given index; does not reorder |
 
 ## Troubleshooting
 
