@@ -39,11 +39,9 @@ export type {
 // Export all radio DTOs
 export type {
   RadioStationDTO,
-  CreateRadioStationRequest,
   CreateRadioStationResponse,
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
-  RadioPlaybackInfo,
   ExternalRadioStationDTO,
   DiscoverRadioStationsResponse,
   RadioFiltersResponse,
@@ -69,5 +67,4 @@ export type {
   LibraryDTO,
   UserDetailsDTO,
   LibraryManagementResponse,
-  SetActiveLibrariesRequest
 } from './library.js';

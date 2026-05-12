@@ -9,13 +9,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -27,8 +27,15 @@ jobs:
       - name: Build project
         run: pnpm build
 
-      - name: Run tests
-        run: pnpm test
+      - name: Run tests (CI mode - skip live integration tests)
+        run: pnpm test:ci
+        env:
+          SKIP_INTEGRATION_TESTS: true
+          MOCK_ONLY_TESTS: true
+          NAVIDROME_URL: http://ci-dummy-server:4533
+          NAVIDROME_USERNAME: ci-dummy-user
+          NAVIDROME_PASSWORD: ci-dummy-password
+          DEBUG: false
 
       - name: Run lint and typecheck
         run: pnpm lint && pnpm typecheck

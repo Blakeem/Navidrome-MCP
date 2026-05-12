@@ -19,7 +19,10 @@ export default defineConfig({
       ],
     },
     include: ['tests/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
-    exclude: ['node_modules', 'dist', 'coverage'],
+    // Playback integration tests require a live mpv binary and run via
+    // `pnpm test:playback` against vitest.playback.config.ts. Excluded here
+    // so the default `pnpm test:run` stays mpv-free.
+    exclude: ['node_modules', 'dist', 'coverage', 'tests/integration/playback/**'],
     testTimeout: 10000,
     hookTimeout: 10000,
   },

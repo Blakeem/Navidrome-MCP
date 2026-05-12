@@ -16,16 +16,14 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import type { ToolCategory } from './handlers/registry.js';
 import { getPackageVersion } from '../utils/version.js';
-
-const TestConnectionSchema = z.object({
-  includeServerInfo: z.boolean().optional().default(false),
-});
+import { TestConnectionSchema } from '../schemas/index.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
+import { logger } from '../utils/logger.js';
 
 interface TestConnectionResult {
   success: boolean;
@@ -61,6 +59,8 @@ export async function testConnection(
   args: unknown
 ): Promise<TestConnectionResult> {
   const params = TestConnectionSchema.parse(args);
+
+  logger.debug('Tool testConnection called with args:', params);
 
   try {
     // Try to make a simple API call to verify authentication using working /song endpoint
@@ -123,7 +123,7 @@ export async function testConnection(
   } catch (error) {
     return {
       success: false,
-      message: `Connection failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      message: ErrorFormatter.toolExecution('test_connection', error),
     };
   }
 }
@@ -154,7 +154,7 @@ export function createTestToolCategory(client: NavidromeClient, config: Config):
       if (name === 'test_connection') {
         return await testConnection(client, config, args);
       }
-      throw new Error(`Unknown test tool: ${name}`);
+      throw new Error(ErrorFormatter.toolUnknown(name));
     }
   };
 }

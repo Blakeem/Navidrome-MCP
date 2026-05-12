@@ -16,168 +16,138 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/index.js';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
+import {
+  transformSongsToDTO,
+  transformAlbumsToDTO,
+  transformArtistsToDTO,
+} from '../transformers/index.js';
+import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/index.js';
+import {
+  RecentlyPlayedPaginationSchema,
+  MostPlayedPaginationSchema,
+} from '../schemas/index.js';
 
-// Helper function to parse duration from MM:SS format to seconds
-function parseDuration(durationFormatted: string): number {
-  const parts = durationFormatted.split(':');
-  if (parts.length === 2) {
-    const minutes = parseInt(parts[0] ?? '0', 10);
-    const seconds = parseInt(parts[1] ?? '0', 10);
-    return minutes * 60 + seconds;
-  }
-  return 0;
-}
-
-interface RecentlyPlayedTrack {
-  id: string;
-  title: string;
-  artist: string;
-  album: string;
-  playCount: number;
-  lastPlayed?: string; // Optional since real play date data may not be available
-  duration: number;
-}
+/**
+ * Recently-played track shape: the full SongDTO (artist/album IDs, formatted
+ * duration, genres, year, rating, starred state, etc.) plus a convenience
+ * `lastPlayed` mirror of `playDate` so callers don't have to know that the
+ * underlying field is named `playDate`.
+ */
+type RecentlyPlayedTrack = SongDTO & {
+  /** ISO 8601 timestamp of the user's most recent play. Mirror of `playDate`
+      for back-compat — present iff the source row carried a playDate. */
+  lastPlayed?: string;
+};
 
 interface RecentlyPlayedResult {
-  timeRange: string;
   count: number;
   tracks: RecentlyPlayedTrack[];
 }
 
-interface MostPlayedItem {
-  id: string;
-  title?: string;
-  name?: string;
-  artist?: string;
-  album?: string;
-  playCount: number;
-  songCount?: number;
-  albumCount?: number;
-}
-
 interface MostPlayedResult {
-  type: string;
-  minPlayCount: number;
   count: number;
-  items: MostPlayedItem[];
+  items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
 }
-
-const RecentlyPlayedSchema = z.object({
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.RECENTLY_PLAYED_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  timeRange: z.enum(['today', 'week', 'month', 'all']).optional().default('all'),
-});
 
 export async function listRecentlyPlayed(client: NavidromeClient, args: unknown): Promise<RecentlyPlayedResult> {
-  const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedSchema.parse(args);
-  
+  const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedPaginationSchema.parse(args);
+
+  logger.debug('Tool listRecentlyPlayed called with args:', { limit, offset, timeRange });
   logger.info(`Getting recently played songs (${timeRange})`);
-  
-  // For now, we'll get songs sorted by addedDate (when added to library) as a proxy for recently played
-  // The API doesn't appear to support playDate filtering reliably
-  const response = await client.request<unknown>(
-    `/song?_sort=addedDate&_order=DESC&_start=${offset}&_end=${offset + limit}`
+
+  // Compute the cutoff timestamp for client-side filtering. Navidrome's REST
+  // API has no playDate-range filter, so we sort playDate DESC server-side
+  // and apply the cutoff after transforming. `today` rounds down to local
+  // midnight so the user's morning sessions are included; week and month
+  // are 7 / 30 days back from now.
+  const now = new Date();
+  let cutoff: Date | null = null;
+  if (timeRange === 'today') {
+    cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  } else if (timeRange === 'week') {
+    cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  } else if (timeRange === 'month') {
+    cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
+
+  // When filtering by timeRange, over-fetch so the post-filter slice still
+  // has a meaningful page. Cap at 500 (Navidrome's per-page max). Caveat:
+  // for `limit > 100` with a tight timeRange and a sparse listening history,
+  // we may under-deliver because the cap kicks in before 5x. The DESC sort
+  // by playDate makes this rare in practice (recent plays cluster), but if
+  // it bites we'd need cursor-based deepening rather than a single fetch.
+  const fetchLimit = cutoff !== null ? Math.min(limit * 5, 500) : limit;
+
+  const response = await client.requestWithLibraryFilter<unknown>(
+    `/song?_sort=playDate&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
-  
-  // Transform using proper transformer
+
   const songs = transformSongsToDTO(response);
-  
-  // Filter songs that have been played at least once, if available
-  const playedSongs = songs.filter(song => song.playCount === null || song.playCount === undefined || song.playCount > 0);
-  
-  const tracks = playedSongs.slice(0, limit).map((song) => {
-    const track: RecentlyPlayedTrack = {
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      album: song.album,
-      playCount: song.playCount ?? 0,
-      duration: parseDuration(song.durationFormatted),
-      // Note: Real lastPlayed timestamps are not available from the API
-      // Only including lastPlayed if we actually have play date data (which we don't currently)
-    };
-    
-    // Only add lastPlayed if we have actual play date data
-    // Currently, the API doesn't provide reliable play date information
-    // so we omit this field rather than provide misleading data
-    
-    return track;
-  });
-  
+
+  const tracks = songs
+    .filter((song) => {
+      // Drop never-played songs (null/empty playDate sort to the end).
+      if (song.playDate === undefined || song.playDate === '') return false;
+      if (cutoff === null) return true;
+      const played = new Date(song.playDate);
+      return Number.isFinite(played.getTime()) && played >= cutoff;
+    })
+    .slice(0, limit)
+    .map((song): RecentlyPlayedTrack => {
+      // Return the full SongDTO so the LLM gets durationFormatted, artistId,
+      // albumId, genres, year, rating, starred state — everything other song
+      // responses carry. Mirror playDate → lastPlayed for back-compat.
+      const track: RecentlyPlayedTrack = { ...song };
+      if (song.playDate !== undefined && song.playDate !== '') {
+        track.lastPlayed = song.playDate;
+      }
+      return track;
+    });
+
   return {
-    timeRange,
     count: tracks.length,
     tracks,
   };
 }
 
-const MostPlayedSchema = z.object({
-  type: z.enum(['songs', 'albums', 'artists']).optional().default('songs'),
-  limit: z.number().min(1).max(500).optional().default(DEFAULT_VALUES.MOST_PLAYED_LIMIT),
-  offset: z.number().min(0).optional().default(0),
-  minPlayCount: z.number().min(1).optional().default(1),
-});
-
 export async function listMostPlayed(client: NavidromeClient, args: unknown): Promise<MostPlayedResult> {
-  const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedSchema.parse(args);
-  
+  const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedPaginationSchema.parse(args);
+
+  logger.debug('Tool listMostPlayed called with args:', { type, limit, offset, minPlayCount });
   logger.info(`Getting most played ${type} with minPlayCount: ${minPlayCount}`);
-  
+
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
-  
+
   // Fetch more items to account for filtering by minPlayCount
   // We'll fetch 3x the requested amount to ensure we have enough after filtering
   const fetchLimit = limit * 3;
-  
-  const response = await client.request<unknown>(
+
+  const response = await client.requestWithLibraryFilter<unknown>(
     `${endpoint}?_sort=playCount&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
-  
-  // Transform using the appropriate transformer
-  let transformedItems: (MostPlayedItem & { playCount?: number })[];
+
+  // Use the shared transformers so the response carries the same rich fields
+  // (durationFormatted, artistId/albumId, genres, year, rating, starred,
+  // …) that every other song/album/artist tool produces.
+  let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
   if (type === 'songs') {
-    const songs = transformSongsToDTO(response);
-    transformedItems = songs.map(song => ({
-      id: song.id,
-      title: song.title,
-      artist: song.artist,
-      album: song.album,
-      playCount: song.playCount ?? 0
-    }));
+    items = transformSongsToDTO(response)
+      .filter((song) => (song.playCount ?? 0) >= minPlayCount)
+      .slice(0, limit);
   } else if (type === 'albums') {
-    const albums = transformAlbumsToDTO(response);
-    transformedItems = albums.map(album => ({
-      id: album.id,
-      name: album.name,
-      artist: album.artist,
-      songCount: album.songCount,
-      playCount: album.playCount ?? 0
-    }));
+    items = transformAlbumsToDTO(response)
+      .filter((album) => (album.playCount ?? 0) >= minPlayCount)
+      .slice(0, limit);
   } else {
-    const artists = transformArtistsToDTO(response);
-    transformedItems = artists.map(artist => ({
-      id: artist.id,
-      name: artist.name,
-      albumCount: artist.albumCount,
-      songCount: artist.songCount,
-      playCount: artist.playCount ?? 0
-    }));
+    items = transformArtistsToDTO(response)
+      .filter((artist) => (artist.playCount ?? 0) >= minPlayCount)
+      .slice(0, limit);
   }
-  
-  // Filter by minPlayCount and limit results
-  const filteredItems = transformedItems
-    .filter(item => (item.playCount || 0) >= minPlayCount)
-    .slice(0, limit);
-  
+
   return {
-    type,
-    minPlayCount,
-    count: filteredItems.length,
-    items: filteredItems as MostPlayedItem[],
+    count: items.length,
+    items,
   };
 }

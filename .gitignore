@@ -50,8 +50,11 @@ pids
 # Project specific
 # CLAUDE.md
 *.bak
+*.backup
 .tmp/
 temp/
+tat:q
+.serena/
 
 # Debug outputs
 debug/

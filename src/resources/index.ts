@@ -88,6 +88,9 @@ export function registerResources(server: Server, client: NavidromeClient): void
                   server: 'Navidrome',
                   timestamp: new Date().toISOString(),
                   error: 'Failed to connect to Navidrome server',
+                  // Resource handler context (not an MCP tool): keep raw error
+                  // message rather than wrapping with ErrorFormatter.toolExecution,
+                  // which would produce a misleading "Tool '...' failed:" prefix.
                   message: error instanceof Error ? error.message : 'Unknown error',
                 },
                 null,

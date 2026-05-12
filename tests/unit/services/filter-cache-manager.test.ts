@@ -2,7 +2,7 @@
  * Unit tests for FilterCacheManager - Simplified Implementation
  * Tests the improved logic without complex nested iteration
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { filterCacheManager, type FilterType } from '../../../src/services/filter-cache-manager.js';
@@ -244,5 +244,94 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       const similar = filterCacheManager.findSimilar('recordLabels', 'columbia', 3);
       expect(similar).toContain('Columbia Records');
     });
+  });
+});
+
+describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () => {
+  const disabledConfig = { filterCacheEnabled: false } as Config;
+
+  // Initial genre set returned by the first fetch
+  const initialGenres = [{ id: 'genre-1', name: 'Rock' }];
+  // Updated genre set returned after a new genre is added mid-session
+  const updatedGenres = [
+    { id: 'genre-1', name: 'Rock' },
+    { id: 'genre-2', name: 'Shoegaze' },
+  ];
+
+  let fetchCount: number;
+  let returnUpdated: boolean;
+  let mockClient: NavidromeClient;
+
+  beforeEach(() => {
+    filterCacheManager.reset();
+    fetchCount = 0;
+    returnUpdated = false;
+
+    mockClient = {
+      requestWithLibraryFilter: vi.fn().mockImplementation((endpoint: string) => {
+        fetchCount++;
+        if (endpoint === '/genre') {
+          return Promise.resolve(returnUpdated ? updatedGenres : initialGenres);
+        }
+        if (endpoint === '/tag') {
+          return Promise.resolve(mockTags);
+        }
+        return Promise.resolve([]);
+      }),
+    } as unknown as NavidromeClient;
+  });
+
+  afterEach(() => {
+    filterCacheManager.reset();
+  });
+
+  it('initializes successfully and populates cache for the first request', async () => {
+    await filterCacheManager.initialize(mockClient, disabledConfig);
+
+    expect(filterCacheManager.isInitialized()).toBe(true);
+    expect(filterCacheManager.resolve('genres', 'Rock')).toBe('genre-1');
+  });
+
+  it('re-fetches data on ensureFresh() when disabled', async () => {
+    await filterCacheManager.initialize(mockClient, disabledConfig);
+    const fetchesAfterInit = fetchCount;
+
+    // Simulate a new genre being added to the library
+    returnUpdated = true;
+
+    await filterCacheManager.ensureFresh();
+
+    expect(fetchCount).toBeGreaterThan(fetchesAfterInit);
+    expect(filterCacheManager.resolve('genres', 'Shoegaze')).toBe('genre-2');
+  });
+
+  it('does not re-fetch on ensureFresh() when cache is enabled (default)', async () => {
+    const enabledConfig = { filterCacheEnabled: true } as Config;
+    await filterCacheManager.initialize(mockClient, enabledConfig);
+    const fetchesAfterInit = fetchCount;
+
+    await filterCacheManager.ensureFresh();
+
+    // No additional fetches should occur when cache is enabled
+    expect(fetchCount).toBe(fetchesAfterInit);
+  });
+
+  it('getFilterOptions re-fetches when disabled and returns updated values', async () => {
+    await filterCacheManager.initialize(mockClient, disabledConfig);
+
+    // Simulate new genre added
+    returnUpdated = true;
+
+    const result = await filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 50 });
+
+    expect(result.available).toContain('Rock');
+    expect(result.available).toContain('Shoegaze');
+  });
+
+  it('ensureFresh() resolves successfully when disabled and client is stored', async () => {
+    await filterCacheManager.initialize(mockClient, disabledConfig);
+    // After initialization the client reference is stored; ensureFresh() should
+    // complete without error (it re-fetches and resolves).
+    await expect(filterCacheManager.ensureFresh()).resolves.toBeUndefined();
   });
 });

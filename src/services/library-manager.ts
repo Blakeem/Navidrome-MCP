@@ -20,6 +20,7 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { decodeJwtPayload } from '../utils/jwt-decode.js';
 
 interface LibraryInfo {
   id: number;
@@ -76,7 +77,16 @@ class LibraryManager {
   }
 
   /**
-   * Initialize the library manager with user data and default configuration
+   * Initialize the library manager with user data and default configuration.
+   *
+   * Failure modes are split deliberately:
+   *   - JWT decode / `uid` extraction failure: SOFT FAIL. The manager stays
+   *     `initialized = false`; the client falls back to "no library scoping"
+   *     and the rest of the server keeps running. This was the historical
+   *     single point of startup failure flagged in `03-core-infra-deep-review`.
+   *   - `/user/{uid}` HTTP failure: HARD FAIL (rethrown). If we can decode
+   *     `uid` but Navidrome rejects the lookup, something is genuinely wrong
+   *     and surfacing it is more useful than silently proceeding unscoped.
    */
   async initialize(client: NavidromeClient, config: Config): Promise<void> {
     if (this.initialized) {
@@ -85,45 +95,122 @@ class LibraryManager {
     }
 
     try {
-      // Get user info including libraries from authentication
-      await this.loadUserLibraries(client);
-      
-      // Apply default library configuration
+      const loaded = await this.loadUserLibraries(client);
+      if (!loaded) {
+        // JWT decode failed — already logged with diagnostic detail. Stay
+        // uninitialized; library_id filtering is simply absent for this
+        // session. Tools that depend on it (e.g. `set_active_libraries`)
+        // will throw their own clear "not initialized" error if invoked.
+        logger.warn(
+          'LibraryManager: skipping initialization (could not extract user ID from JWT). ' +
+            'Library scoping will be disabled for this session.',
+        );
+        return;
+      }
+
       this.applyDefaultConfiguration(config);
-      
       this.initialized = true;
-      logger.info(`LibraryManager initialized with ${this.userInfo?.libraries.length ?? 0} libraries, ${this.activeLibraryIds.length} active`);
+      logger.info(
+        `LibraryManager initialized with ${this.userInfo?.libraries.length ?? 0} libraries, ${this.activeLibraryIds.length} active`,
+      );
     } catch (error) {
       throw new Error(ErrorFormatter.toolExecution('LibraryManager.initialize', error));
     }
   }
 
   /**
-   * Load user libraries from Navidrome API
+   * Load user libraries from Navidrome API. Returns true on success, false
+   * when the JWT couldn't be decoded into a usable `uid`.
+   *
+   * Token + claims access goes through `client.getCurrentToken()` (public
+   * method) and `decodeJwtPayload` (Buffer-base64url + guarded JSON.parse +
+   * shape check). The previous implementation reached into `client.authManager`
+   * via `as unknown as`, used `atob` (mishandles base64url), and called
+   * `JSON.parse` outside any try/catch — three compounding fragility bugs.
+   *
+   * After the user payload arrives we make a second call to `/api/library`
+   * and merge the per-library stats (`totalSongs`/`totalAlbums`/...) and
+   * timestamps (`createdAt`/`updatedAt`/`lastScanAt`) into the user's library
+   * list. `/api/user/{id}` zeros these out (server-side bug as of 0.55) and
+   * `/api/library` is the only endpoint that returns real values.
    */
-  private async loadUserLibraries(client: NavidromeClient): Promise<void> {
+  private async loadUserLibraries(client: NavidromeClient): Promise<boolean> {
+    const token = await client.getCurrentToken();
+    const claims = decodeJwtPayload(token);
+    if (claims === null) {
+      // decodeJwtPayload already logged the specific failure mode. Caller
+      // (initialize) treats false as "skip, don't crash".
+      return false;
+    }
+
     try {
-      // First authenticate to get user ID
-      const token = await (client as unknown as { authManager: { getToken(): Promise<string> } }).authManager.getToken();
-      
-      // Decode the JWT to get user ID (simple base64 decode)
-      const tokenParts = token.split('.');
-      if (tokenParts.length !== 3 || tokenParts[1] === null || tokenParts[1] === undefined || tokenParts[1] === '') {
-        throw new Error('Invalid JWT token format');
-      }
-      const payload = JSON.parse(atob(tokenParts[1]));
-      const userId = payload.uid;
-
-      if (userId === null || userId === undefined || userId === '') {
-        throw new Error('Unable to extract user ID from token');
-      }
-
-      // Get user info including libraries
-      this.userInfo = await client.request<UserInfo>(`/user/${userId}`);
-      
-      logger.debug(`Loaded ${this.userInfo.libraries.length} libraries for user ${this.userInfo.userName}`);
+      this.userInfo = await client.request<UserInfo>(
+        `/user/${encodeURIComponent(claims.uid)}`,
+      );
     } catch (error) {
+      // /user/{uid} failure is genuinely abnormal — uid was valid in the
+      // JWT but the API rejected it. Bubble up so initialize() can wrap it.
       throw new Error(ErrorFormatter.toolExecution('loadUserLibraries', error));
+    }
+
+    await this.enrichLibraryStats(client);
+
+    logger.debug(
+      `Loaded ${this.userInfo.libraries.length} libraries for user ${this.userInfo.userName}`,
+    );
+    return true;
+  }
+
+  /**
+   * Best-effort enrichment of library stats from `/api/library`. The user
+   * endpoint returns stat fields as zero / Go zero-time; this endpoint
+   * returns the real values. We log + swallow errors here — the rest of the
+   * server can keep running with the unenriched user payload (stats just
+   * show as zero, the existing observed behaviour).
+   */
+  private async enrichLibraryStats(client: NavidromeClient): Promise<void> {
+    if (!this.userInfo) {
+      return;
+    }
+    try {
+      const libraries = await client.request<LibraryInfo[]>('/library');
+      if (!Array.isArray(libraries)) {
+        return;
+      }
+      const byId = new Map<number, LibraryInfo>();
+      for (const lib of libraries) {
+        if (typeof lib?.id === 'number') {
+          byId.set(lib.id, lib);
+        }
+      }
+
+      // Mutate in place so any downstream snapshots stay consistent.
+      this.userInfo.libraries = this.userInfo.libraries.map((userLib) => {
+        const stats = byId.get(userLib.id);
+        if (stats === undefined) {
+          return userLib;
+        }
+        return {
+          ...userLib,
+          totalSongs: stats.totalSongs ?? userLib.totalSongs,
+          totalAlbums: stats.totalAlbums ?? userLib.totalAlbums,
+          totalArtists: stats.totalArtists ?? userLib.totalArtists,
+          totalFolders: stats.totalFolders ?? userLib.totalFolders,
+          totalFiles: stats.totalFiles ?? userLib.totalFiles,
+          totalMissingFiles: stats.totalMissingFiles ?? userLib.totalMissingFiles,
+          totalSize: stats.totalSize ?? userLib.totalSize,
+          totalDuration: stats.totalDuration ?? userLib.totalDuration,
+          lastScanAt: stats.lastScanAt ?? userLib.lastScanAt,
+          lastScanStartedAt: stats.lastScanStartedAt ?? userLib.lastScanStartedAt,
+          fullScanInProgress: stats.fullScanInProgress ?? userLib.fullScanInProgress,
+          createdAt: stats.createdAt ?? userLib.createdAt,
+          updatedAt: stats.updatedAt ?? userLib.updatedAt,
+        };
+      });
+    } catch (error) {
+      logger.warn(
+        `LibraryManager: failed to enrich library stats from /api/library; stats will show as zero: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 

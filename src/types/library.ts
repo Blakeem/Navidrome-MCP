@@ -36,8 +36,12 @@ export interface LibraryDTO {
     lastScanStartedAt: string | null;
     fullScanInProgress: boolean;
   };
-  createdAt: string;
-  updatedAt: string;
+  /** ISO 8601 timestamp when the library was created; `null` if the server
+   * never populated it (Go zero-time sentinel mapped to null). */
+  createdAt: string | null;
+  /** ISO 8601 timestamp when the library was last updated; `null` if the
+   * server never populated it (Go zero-time sentinel mapped to null). */
+  updatedAt: string | null;
 }
 
 /**
@@ -79,9 +83,3 @@ export interface LibraryManagementResponse {
   totalCount: number;
 }
 
-/**
- * Request for setting active libraries
- */
-export interface SetActiveLibrariesRequest {
-  libraryIds: number[];
-}

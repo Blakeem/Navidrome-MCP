@@ -20,7 +20,9 @@
 
 // Shared utilities
 export { formatDuration } from './shared-transformers.js';
-// extractGenre, extractAllGenres, and RawEntityWithGenres are internal utilities
+// extractGenre, extractAllGenres, and RawEntityWithGenres are internal utilities.
+// parseDuration is imported directly from './shared-transformers.js' where needed
+// (currently only playback.ts) — keeping the re-export here would be dead code.
 
 // Song transformers
 export { transformToSongDTO, transformSongsToDTO } from './song-transformer.js';

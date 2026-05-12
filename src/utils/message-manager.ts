@@ -45,28 +45,28 @@ export class MessageManager {
   private initializeMessages(): void {
     // Radio validation reminder
     this.messageTemplates.set('radio.validation_reminder', `
-🎵 STREAM VALIDATION RECOMMENDED
+STREAM VALIDATION RECOMMENDED
    Use 'validate_radio_stream' tool first to test your URL
    Many internet radio URLs change frequently
    Validation checks: accessibility, audio format, streaming headers
-   
-   💡 TIP: Find reliable streams at radio-browser.info or somafm.com`);
+
+   TIP: Find reliable streams at radio-browser.info or somafm.com`);
 
     // Radio list tip
-    this.messageTemplates.set('radio.list_tip', 
-      "💡 TIP: Use 'validate_radio_stream' to test station URLs if playback issues occur");
+    this.messageTemplates.set('radio.list_tip',
+      "TIP: Use 'validate_radio_stream' to test station URLs if playback issues occur");
 
     // Radio creation success
     this.messageTemplates.set('radio.creation_success',
-      "✅ Station created successfully! Remember to validate streams periodically as URLs may change.");
+      "Station created successfully. Remember to validate streams periodically as URLs may change.");
 
     // General validation advice
     this.messageTemplates.set('radio.validation_advice',
-      "🔍 Pro tip: Radio streams can go offline. Validate regularly for best experience.");
+      "Pro tip: Radio streams can go offline. Validate regularly for best experience.");
 
     // Add more message templates as needed
     this.messageTemplates.set('general.welcome',
-      "🎶 Welcome to Navidrome MCP! Type 'test_connection' to verify your setup.");
+      "Welcome to Navidrome MCP. Type 'test_connection' to verify your setup.");
   }
 
   /**

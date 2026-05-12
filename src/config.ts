@@ -22,6 +22,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { ErrorFormatter } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
+import { detectMpvBinary } from './services/playback/mpv-process.js';
 
 // Safely load dotenv - it's optional since environment variables
 // can be provided directly (e.g., by Claude MCP configuration)
@@ -60,20 +61,80 @@ const ConfigSchema = z.object({
     lastfm: z.boolean().default(false),
     radioBrowser: z.boolean().default(false),
     lyrics: z.boolean().default(false),
+    playback: z.boolean().default(false),
   }),
 
   // API Keys and External Service Configuration
   lastFmApiKey: z.string().optional(),
   radioBrowserUserAgent: z.string().optional(),
-  radioBrowserBase: z.string().url().default('https://de1.api.radio-browser.info'),
-  
+  // Set only when the user explicitly provides RADIO_BROWSER_BASE in the
+  // environment — bypasses SRV resolution and pins to the chosen mirror.
+  // Production base resolution flows through `getRadioBrowserBase()` which
+  // does SRV-record lookup + caching, with a hardcoded fallback in
+  // `RADIO_BROWSER_FALLBACK_BASE`.
+  radioBrowserBaseOverride: z.string().url().optional(),
+
   // Lyrics Configuration
   lyricsProvider: z.string().optional(),
   lrclibUserAgent: z.string().optional(),
   lrclibBase: z.string().url().default('https://lrclib.net'),
+
+  // Playback (mpv) Configuration
+  mpvPath: z.string().optional(),
+  playbackTranscodeFormat: z.string().default('mp3'),
+  playbackTranscodeBitrate: z.string().default('192'),
+
+  // Filter cache — when false, re-fetches tag/genre lists on every filter resolution
+  // instead of using the startup snapshot. Set to false if you curate your library
+  // mid-session and need newly-added genres/labels/moods to be immediately visible.
+  filterCacheEnabled: z.boolean().default(true),
+
+  // Web UI Configuration — companion HTTP control panel for mpv playback.
+  // The web UI is implicitly gated by the playback feature: it only ever
+  // initializes when mpv is detected. Even when `enabled` is true, the
+  // server does not bind a port until something has been queued (avoids
+  // leaving a port listening when the user never plays anything in a session).
+  // `host=127.0.0.1` keeps the panel on localhost only. Setting `expose=true`
+  // is a convenience shortcut that forces the bind to `0.0.0.0` so a phone
+  // on the same LAN can reach it; explicit `host` overrides this.
+  webui: z.object({
+    enabled: z.boolean().default(true),
+    host: z.string().default('127.0.0.1'),
+    port: z.number().int().min(1).max(65535).default(8808),
+    expose: z.boolean().default(false),
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+
+interface RawWebUiConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  expose: boolean;
+}
+
+/**
+ * Parse WEBUI_* environment variables into the raw shape ConfigSchema.webui
+ * expects. Extracted so the rawConfig literal in loadConfig stays readable
+ * and so the explicit return type satisfies the project's
+ * `explicit-function-return-type` lint rule.
+ */
+function buildWebUiConfig(): RawWebUiConfig {
+  const rawPort = process.env['WEBUI_PORT'];
+  const parsedPort = (rawPort !== undefined && rawPort !== '') ? parseInt(rawPort, 10) : 8808;
+  const expose = process.env['WEBUI_EXPOSE'] === 'true';
+  const explicitHost = process.env['WEBUI_HOST'];
+  const host = (explicitHost !== undefined && explicitHost !== '')
+    ? explicitHost
+    : (expose ? '0.0.0.0' : '127.0.0.1');
+  return {
+    enabled: process.env['WEBUI_ENABLED'] !== 'false',
+    host,
+    port: Number.isFinite(parsedPort) ? parsedPort : 8808,
+    expose,
+  };
+}
 
 export async function loadConfig(): Promise<Config> {
   // Try to safely load .env file only in development mode
@@ -110,16 +171,34 @@ export async function loadConfig(): Promise<Config> {
   const lyricsProvider = process.env['LYRICS_PROVIDER'] ?? undefined;
   const lrclibUserAgent = process.env['LRCLIB_USER_AGENT'] ?? undefined;
 
+  // mpv binary detection — runtime presence check enables/disables playback feature.
+  // MPV_PATH env var takes precedence; falls back to PATH lookup.
+  const detectedMpvPath = detectMpvBinary();
+  const playbackEnabled = detectedMpvPath !== null;
+  if (playbackEnabled) {
+    logger.info(`Playback feature enabled (mpv detected at ${detectedMpvPath})`);
+  } else {
+    logger.info('Playback feature disabled (mpv not found on PATH; set MPV_PATH or install mpv to enable)');
+  }
+  const playbackTranscodeFormat = process.env['PLAYBACK_TRANSCODE_FORMAT'] ?? 'mp3';
+  const playbackTranscodeBitrate = process.env['PLAYBACK_TRANSCODE_BITRATE'] ?? '192';
+
   // Parse default library IDs from environment
   let defaultLibraryIds: number[] | undefined;
   const defaultLibrariesEnv = process.env['NAVIDROME_DEFAULT_LIBRARIES'];
   if (defaultLibrariesEnv !== null && defaultLibrariesEnv !== undefined && defaultLibrariesEnv.trim() !== '') {
     try {
-      defaultLibraryIds = defaultLibrariesEnv
-        .split(',')
-        .map(id => parseInt(id.trim(), 10))
+      const tokens = defaultLibrariesEnv.split(',').map(t => t.trim());
+      const rejectedTokens = tokens.filter(t => isNaN(parseInt(t, 10)));
+      if (rejectedTokens.length > 0) {
+        logger.warn(
+          `NAVIDROME_DEFAULT_LIBRARIES contains invalid (non-integer) tokens that will be ignored: ${rejectedTokens.join(', ')}`
+        );
+      }
+      defaultLibraryIds = tokens
+        .map(id => parseInt(id, 10))
         .filter(id => !isNaN(id));
-      
+
       if (defaultLibraryIds.length === 0) {
         logger.warn('NAVIDROME_DEFAULT_LIBRARIES contains no valid library IDs');
         defaultLibraryIds = undefined;
@@ -146,17 +225,37 @@ export async function loadConfig(): Promise<Config> {
       lastfm: (lastFmApiKey !== null && lastFmApiKey !== undefined && lastFmApiKey.trim() !== ''),
       radioBrowser: (radioBrowserUserAgent !== null && radioBrowserUserAgent !== undefined && radioBrowserUserAgent.trim() !== ''),
       lyrics: (lyricsProvider !== null && lyricsProvider !== undefined && lyricsProvider.trim() !== '') && (lrclibUserAgent !== null && lrclibUserAgent !== undefined && lrclibUserAgent.trim() !== ''),
+      playback: playbackEnabled,
     },
 
     // API Keys and External Service Configuration
     lastFmApiKey,
     radioBrowserUserAgent,
-    radioBrowserBase: process.env['RADIO_BROWSER_BASE'] ?? 'https://de1.api.radio-browser.info',
-    
+    // Only populated when user explicitly set the env var. Resolver consults
+    // this first; if undefined it falls back to SRV resolution.
+    radioBrowserBaseOverride: (process.env['RADIO_BROWSER_BASE'] !== undefined && process.env['RADIO_BROWSER_BASE'] !== '')
+      ? process.env['RADIO_BROWSER_BASE']
+      : undefined,
+
     // Lyrics Configuration
     lyricsProvider,
     lrclibUserAgent,
     lrclibBase: process.env['LRCLIB_BASE'] ?? 'https://lrclib.net',
+
+    // Playback Configuration
+    ...(detectedMpvPath !== null ? { mpvPath: detectedMpvPath } : {}),
+    playbackTranscodeFormat,
+    playbackTranscodeBitrate,
+
+    // Filter cache — disabled when env var is explicitly 'false'
+    filterCacheEnabled: process.env['NAVIDROME_FILTER_CACHE_ENABLED'] !== 'false',
+
+    // Web UI — see ConfigSchema.webui doc for behavior.
+    // `WEBUI_ENABLED=false` disables it entirely; `WEBUI_EXPOSE=true` flips
+    // the bind host to 0.0.0.0 unless the user also set WEBUI_HOST explicitly
+    // (explicit host always wins). Parsed here once so downstream code never
+    // re-reads process.env for these.
+    webui: buildWebUiConfig(),
   };
 
   try {

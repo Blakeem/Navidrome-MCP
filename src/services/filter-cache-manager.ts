@@ -37,10 +37,14 @@ interface TagResponse {
 /**
  * Singleton service for managing filter option caches for enhanced search functionality.
  * Caches small, well-defined filter sets for text-based filtering.
+ *
+ * When filterCacheEnabled=false the Maps are still used as a working buffer, but
+ * ensureFresh() re-fetches all tag/genre data before every resolve operation so
+ * newly-added values are always visible.
  */
 class FilterCacheManager {
   private static instance: FilterCacheManager | null = null;
-  
+
   private readonly genres = new Map<string, string>();           // "Rock" → "uuid-123"
   private readonly mediaTypes = new Map<string, string>();      // "CD" → "uuid-456"
   private readonly countries = new Map<string, string>();       // "US" → "uuid-789"
@@ -55,8 +59,17 @@ class FilterCacheManager {
   private readonly releaseTypesOriginal = new Map<string, string>();
   private readonly recordLabelsOriginal = new Map<string, string>();
   private readonly moodsOriginal = new Map<string, string>();
-  
+
   private initialized = false;
+  private cacheEnabled = true;
+  private client: NavidromeClient | null = null;
+  // Single-flight de-dup for the cache-disabled refresh path. Without this,
+  // N concurrent searches each trigger their own fanout of /tag and /genre
+  // fetches AND can read from a Map that was just cleared by a peer's
+  // refresh, producing spurious "filter not found" errors. The promise is
+  // shared until settled, then nulled so the next request triggers a fresh
+  // fetch (the whole point of cache-disabled mode is freshness).
+  private refreshPromise: Promise<void> | null = null;
 
   private constructor() {}
 
@@ -69,34 +82,81 @@ class FilterCacheManager {
   }
 
   /**
-   * Initialize the filter cache manager by loading all filter options
+   * Initialize the filter cache manager by loading all filter options.
+   *
+   * When config.filterCacheEnabled is false the client reference is stored for
+   * use by ensureFresh(), which re-fetches all data on every resolve call.
+   * The startup fetch still runs so the first request has data immediately.
    */
-  async initialize(client: NavidromeClient, _config: Config): Promise<void> {
-    if (this.initialized) {
+  async initialize(client: NavidromeClient, config: Config): Promise<void> {
+    // Store the client reference for use by ensureFresh() when cache is disabled.
+    // Default to true (cache enabled) — only explicitly false disables it.
+    this.client = client;
+    this.cacheEnabled = config.filterCacheEnabled !== false;
+
+    if (this.initialized && this.cacheEnabled) {
       logger.debug('FilterCacheManager already initialized');
       return;
     }
 
-    try {
-      await Promise.all([
-        this.loadGenres(client),
-        this.loadTagsByType(client, 'media'),
-        this.loadTagsByType(client, 'releasecountry'),
-        this.loadTagsByType(client, 'releasetype'),
-        this.loadTagsByType(client, 'recordlabel'),
-        this.loadTagsByType(client, 'mood')
-      ]);
-      
-      this.initialized = true;
-      
-      const totalFilters = this.genresOriginal.size + this.mediaTypesOriginal.size + this.countriesOriginal.size +
-                          this.releaseTypesOriginal.size + this.recordLabelsOriginal.size + this.moodsOriginal.size;
+    if (!this.cacheEnabled) {
+      logger.info('FilterCacheManager cache disabled (NAVIDROME_FILTER_CACHE_ENABLED=false) — filter data will be refreshed on every resolve call');
+    }
 
-      logger.info(`FilterCacheManager initialized with ${totalFilters} filter options across 6 types`);
-      logger.debug(`Filter counts: genres=${this.genresOriginal.size}, media=${this.mediaTypesOriginal.size}, countries=${this.countriesOriginal.size}, releaseTypes=${this.releaseTypesOriginal.size}, labels=${this.recordLabelsOriginal.size}, moods=${this.moodsOriginal.size}`);
+    try {
+      await this.fetchAllData(client);
+      this.initialized = true;
     } catch (error) {
       throw new Error(ErrorFormatter.toolExecution('FilterCacheManager.initialize', error));
     }
+  }
+
+  /**
+   * Fetch all filter data from the Navidrome API into the in-memory Maps.
+   * Used by initialize() and ensureFresh().
+   */
+  private async fetchAllData(client: NavidromeClient): Promise<void> {
+    await Promise.all([
+      this.loadGenres(client),
+      this.loadTagsByType(client, 'media'),
+      this.loadTagsByType(client, 'releasecountry'),
+      this.loadTagsByType(client, 'releasetype'),
+      this.loadTagsByType(client, 'recordlabel'),
+      this.loadTagsByType(client, 'mood')
+    ]);
+
+    const totalFilters = this.genresOriginal.size + this.mediaTypesOriginal.size + this.countriesOriginal.size +
+                        this.releaseTypesOriginal.size + this.recordLabelsOriginal.size + this.moodsOriginal.size;
+
+    logger.info(`FilterCacheManager loaded ${totalFilters} filter options across 6 types`);
+    logger.debug(`Filter counts: genres=${this.genresOriginal.size}, media=${this.mediaTypesOriginal.size}, countries=${this.countriesOriginal.size}, releaseTypes=${this.releaseTypesOriginal.size}, labels=${this.recordLabelsOriginal.size}, moods=${this.moodsOriginal.size}`);
+  }
+
+  /**
+   * Re-fetch all filter data if cache is disabled. Called before every resolve operation
+   * when filterCacheEnabled=false so newly-added genres/labels/moods are always visible.
+   * No-op when cache is enabled.
+   *
+   * Concurrent callers share a single in-flight refresh — without this, two
+   * parallel searches would each spawn 6 loaders (5 /tag + 1 /genre) AND
+   * could see torn Map state mid-clear (`resolve()` reading from a
+   * just-`.clear()`ed Map returns null, surfacing a bogus "not found").
+   */
+  async ensureFresh(): Promise<void> {
+    if (this.cacheEnabled) {
+      return;
+    }
+    if (this.client === null) {
+      throw new Error('FilterCacheManager not initialized — call initialize() first');
+    }
+    if (this.refreshPromise !== null) {
+      return this.refreshPromise;
+    }
+    logger.debug('FilterCacheManager cache disabled — refreshing filter data before resolve');
+    this.refreshPromise = this.fetchAllData(this.client).finally(() => {
+      this.refreshPromise = null;
+    });
+    return this.refreshPromise;
   }
 
   /**
@@ -308,15 +368,15 @@ class FilterCacheManager {
   }
 
   /**
-   * Get available filter options for enhanced search functionality
-   * Uses FilterCacheManager to provide text-based filter discovery
+   * Get available filter options for enhanced search functionality.
+   * Uses FilterCacheManager to provide text-based filter discovery.
+   * When cache is disabled, re-fetches data from Navidrome before returning results.
    */
-  getFilterOptions(args: unknown): {
+  async getFilterOptions(args: unknown): Promise<{
     filterType: FilterType;
     available: string[];
     total: number;
-    cacheStats: Record<FilterType, number>;
-  } {
+  }> {
     // Basic validation for required filterType
     if (typeof args !== 'object' || args === null) {
       throw new Error('Invalid arguments: expected object');
@@ -342,20 +402,22 @@ class FilterCacheManager {
         throw new Error('Filter cache manager not initialized. Please wait for server startup to complete.');
       }
 
+      // Re-fetch data from Navidrome if cache is disabled
+      await this.ensureFresh();
+
       // Get available options for the requested filter type
       const allOptions = this.getAvailableOptions(filterType);
       const limitedOptions = allOptions.slice(0, limit);
 
-      // Get cache statistics for debugging
-      const cacheStats = this.getStats();
-
-      logger.debug(`Retrieved ${limitedOptions.length} ${filterType} options (of ${allOptions.length} total)`);
+      // Cache statistics are intentionally NOT included in the LLM-facing
+      // response — they're an internal implementation detail (per-type Map
+      // sizes). The data is still observable via DEBUG logging.
+      logger.debug(`Retrieved ${limitedOptions.length} ${filterType} options (of ${allOptions.length} total); cache stats: ${JSON.stringify(this.getStats())}`);
 
       return {
         filterType,
         available: limitedOptions,
         total: allOptions.length,
-        cacheStats
       };
     } catch (error) {
       throw new Error(ErrorFormatter.toolExecution('getFilterOptions', error));
@@ -381,6 +443,8 @@ class FilterCacheManager {
     this.moodsOriginal.clear();
 
     this.initialized = false;
+    this.cacheEnabled = true;
+    this.client = null;
     FilterCacheManager.instance = null;
   }
 }

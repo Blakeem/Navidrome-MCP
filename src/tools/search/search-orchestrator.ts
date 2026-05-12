@@ -23,7 +23,12 @@ import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { SearchAllSchema } from '../../schemas/index.js';
 import { resolveTextFilters } from './filter-resolver.js';
-import { buildContentTypeParams, aggregateSearchResults, type ParallelSearchResponses } from './result-aggregator.js';
+import {
+  buildContentTypeParams,
+  aggregateSearchResults,
+  type ParallelSearchResponses,
+  type ParallelSearchTotals,
+} from './result-aggregator.js';
 
 /**
  * Search across all content types (artists, albums, songs) with enhanced filtering
@@ -41,29 +46,33 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
-  query: string;
+  totalArtists: number;
+  totalAlbums: number;
+  totalSongs: number;
   totalResults: number;
   appliedFilters?: Record<string, string>;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchAllSchema.parse(args);
+  logger.debug('Tool searchAll called with args:', params);
 
   try {
-    // Processing - resolve text-based filters to IDs
-    const { resolvedFilters, appliedFilters } = resolveTextFilters(params);
+    // Processing - resolve text-based filters to IDs (may refresh from Navidrome when cache is disabled)
+    const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
 
-    // Build enhanced query parameters for each content type
+    // Build enhanced query parameters for each content type. Same offset
+    // applied to all 3 types — see SearchAllSchema for rationale.
     const contentTypeParams = buildContentTypeParams({
       artistCount: params.artistCount,
       albumCount: params.albumCount,
       songCount: params.songCount,
       query: params.query,
+      offset: params.offset,
       sort: params.sort,
       order: params.order,
       randomSeed: params.randomSeed,
       resolvedFilters,
-      yearFrom: params.yearFrom,
-      yearTo: params.yearTo,
+      year: params.year,
       starred: params.starred
     });
 
@@ -71,25 +80,46 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
       songParams: contentTypeParams.songParams,
       albumParams: contentTypeParams.albumParams,
       artistParams: contentTypeParams.artistParams,
+      offset: params.offset,
       appliedFilters,
     });
 
-    // Make parallel requests using the client's library filtering
-    const [songsResponse, albumsResponse, artistsResponse] = await Promise.all([
-      client.requestWithLibraryFilter<unknown[]>(`/song?${contentTypeParams.songParams}`),
-      client.requestWithLibraryFilter<unknown[]>(`/album?${contentTypeParams.albumParams}`),
-      client.requestWithLibraryFilter<unknown[]>(`/artist?${contentTypeParams.artistParams}`),
+    // Make parallel requests using the client's library filtering. The *Meta
+    // variant gives us X-Total-Count for each type so the LLM can tell
+    // "page-of-3 with 200 songs available" from "page-of-3 with 3 total".
+    //
+    // Skip the fetch entirely when a count is 0 — sending `_start=N&_end=N`
+    // (LIMIT 0 OFFSET N) trips a SQL error in Navidrome for offset>0. Saves
+    // a round-trip too: if the LLM didn't ask for artists, we shouldn't
+    // hit /api/artist at all. Each empty placeholder uses a fresh array
+    // so future downstream code can mutate without aliasing across types.
+    const empty = (): { data: unknown[]; total: null } => ({ data: [], total: null });
+    const [songs, albums, artists] = await Promise.all([
+      params.songCount > 0
+        ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/song?${contentTypeParams.songParams}`)
+        : Promise.resolve(empty()),
+      params.albumCount > 0
+        ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${contentTypeParams.albumParams}`)
+        : Promise.resolve(empty()),
+      params.artistCount > 0
+        ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${contentTypeParams.artistParams}`)
+        : Promise.resolve(empty()),
     ]);
 
     // Prepare responses for aggregation
     const responses: ParallelSearchResponses = {
-      songsResponse,
-      albumsResponse,
-      artistsResponse
+      songsResponse: songs.data,
+      albumsResponse: albums.data,
+      artistsResponse: artists.data,
+    };
+    const totals: ParallelSearchTotals = {
+      songsTotal: songs.total,
+      albumsTotal: albums.total,
+      artistsTotal: artists.total,
     };
 
     // Output construction - aggregate results from all search types
-    const result = aggregateSearchResults(responses, params.query, appliedFilters);
+    const result = aggregateSearchResults(responses, totals, appliedFilters);
 
     return result;
   } catch (error) {

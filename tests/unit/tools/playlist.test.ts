@@ -7,10 +7,10 @@
  * HIGHEST RISK: Playlist operations modify server data - extensive mocking required for safety.
  */
 
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { getSharedLiveClient, createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
-import { mockPlaylist, mockSong, mockResponses } from '../../factories/mock-data.js';
+import { mockPlaylist } from '../../factories/mock-data.js';
 import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
 // Import playlist management functions
@@ -44,17 +44,16 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         // Test with minimal parameters to avoid large responses
         const result = await listPlaylists(liveClient, { limit: 1 });
 
-        // Validate response structure (not specific content)
+        // Validate response structure (not specific content). `offset`/
+        // `limit` are no longer echoed — they are LLM input echoes.
         expect(result).toHaveProperty('playlists');
         expect(result).toHaveProperty('total');
-        expect(result).toHaveProperty('offset');
-        expect(result).toHaveProperty('limit');
+        expect(result).not.toHaveProperty('offset');
+        expect(result).not.toHaveProperty('limit');
 
         // Ensure correct types
         expect(Array.isArray(result.playlists)).toBe(true);
         expect(typeof result.total).toBe('number');
-        expect(typeof result.offset).toBe('number');
-        expect(typeof result.limit).toBe('number');
 
         // If playlists exist, verify structure
         if (result.playlists.length > 0) {
@@ -77,18 +76,21 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle pagination parameters correctly', async () => {
-        const result = await listPlaylists(liveClient, { 
-          limit: 5, 
+        const result = await listPlaylists(liveClient, {
+          limit: 5,
           offset: 0,
           sort: 'name',
-          order: 'ASC' 
+          order: 'ASC'
         });
 
-        expect(result.limit).toBe(5);
-        expect(result.offset).toBe(0);
-        
-        // Should not return more than requested
+        // offset/limit are no longer echoed — assert just on the items count
+        // and the server-derived total.
         expect(result.playlists.length).toBeLessThanOrEqual(5);
+
+        // Pagination correctness: `total` is the server's full match count
+        // (from X-Total-Count), never the page size. So total must be at
+        // least as large as the items we got back.
+        expect(result.total).toBeGreaterThanOrEqual(result.playlists.length);
       });
     });
 
@@ -398,8 +400,8 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           artistIds: ['artist-1']
         });
 
-        // Should make efficient API calls
-        expect(mockClient.request).toHaveBeenCalledTimes(3); // Before count, adding tracks, after count
+        // Single POST to /tracks; no before/after pagination
+        expect(mockClient.request).toHaveBeenCalledTimes(1);
         expect(mockClient.request).toHaveBeenCalledWith(
           '/playlist/playlist-123/tracks',
           expect.objectContaining({

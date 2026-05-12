@@ -51,39 +51,39 @@ export function generateRecommendations(
   const recommendations: string[] = [];
 
   if (result.status === 'valid') {
-    recommendations.push('✅ Stream validated successfully');
+    recommendations.push('Stream validated successfully');
 
     if (result.streamingHeaders?.['icy-name'] !== null && result.streamingHeaders?.['icy-name'] !== undefined && result.streamingHeaders?.['icy-name'] !== '') {
-      recommendations.push(`🎵 Station: ${result.streamingHeaders['icy-name']}`);
+      recommendations.push(`Station: ${result.streamingHeaders['icy-name']}`);
     }
 
     if (result.streamingHeaders?.['icy-br'] !== null && result.streamingHeaders?.['icy-br'] !== undefined && result.streamingHeaders?.['icy-br'] !== '') {
-      recommendations.push(`📊 Bitrate: ${result.streamingHeaders['icy-br']}kbps`);
+      recommendations.push(`Bitrate: ${result.streamingHeaders['icy-br']}kbps`);
     }
 
     if (result.audioFormat?.format !== null && result.audioFormat?.format !== undefined && result.audioFormat?.format !== '') {
-      recommendations.push(`🎧 Format: ${result.audioFormat.format.toUpperCase()}`);
+      recommendations.push(`Format: ${result.audioFormat.format.toUpperCase()}`);
     }
 
-    recommendations.push('✨ Ready to add as radio station');
+    recommendations.push('Ready to add as radio station');
   } else if (result.status === 'invalid') {
-    recommendations.push('❌ Stream validation failed');
+    recommendations.push('Stream validation failed');
 
     if (result.httpStatus === 404) {
-      recommendations.push('🔍 Stream URL appears to be offline or moved');
-      recommendations.push('💡 Check the station\'s official website for updated URLs');
+      recommendations.push('Stream URL appears to be offline or moved');
+      recommendations.push('Check the station\'s official website for updated URLs');
     } else if (result.validation?.hasAudioContentType === false) {
-      recommendations.push('⚠️ URL does not serve audio content');
-      recommendations.push('💡 Ensure you\'re using the stream URL, not the website URL');
+      recommendations.push('URL does not serve audio content');
+      recommendations.push('Ensure you\'re using the stream URL, not the website URL');
     } else if (result.validation?.audioDataDetected === false) {
-      recommendations.push('⚠️ Could not detect valid audio data');
-      recommendations.push('💡 The stream may be geo-restricted or require authentication');
+      recommendations.push('Could not detect valid audio data');
+      recommendations.push('The stream may be geo-restricted or require authentication');
     }
 
-    recommendations.push('🌐 Try finding alternative streams at radio-browser.info');
+    recommendations.push('Try finding alternative streams at radio-browser.info');
   } else {
-    recommendations.push('⚠️ Stream validation encountered an error');
-    recommendations.push('🔄 Try again later or check your network connection');
+    recommendations.push('Stream validation encountered an error');
+    recommendations.push('Try again later or check your network connection');
   }
 
   return recommendations;

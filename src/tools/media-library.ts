@@ -17,7 +17,6 @@
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
-import { logger } from '../utils/logger.js';
 import {
   transformPlaylistsToDTO,
   transformToSongDTO,
@@ -32,80 +31,65 @@ import {
   IdSchema,
   GetSongPlaylistsSchema,
 } from '../schemas/index.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
+import { logger } from '../utils/logger.js';
 
 // Get Song by ID
 export async function getSong(client: NavidromeClient, args: unknown): Promise<SongDTO> {
   const params = IdSchema.parse(args);
+  logger.debug('Tool getSong called with args:', params);
 
   try {
-    const rawSong = await client.request<unknown>(`/song/${params.id}`);
+    const rawSong = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.id)}`);
     return transformToSongDTO(rawSong as RawSong);
   } catch (error) {
-    throw new Error(
-      `Failed to fetch song: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_song', error));
   }
 }
 
 // Get Album by ID
 export async function getAlbum(client: NavidromeClient, args: unknown): Promise<AlbumDTO> {
   const params = IdSchema.parse(args);
+  logger.debug('Tool getAlbum called with args:', params);
 
   try {
-    const rawAlbum = await client.request<unknown>(`/album/${params.id}`);
+    const rawAlbum = await client.requestWithLibraryFilter<unknown>(`/album/${encodeURIComponent(params.id)}`);
     return transformToAlbumDTO(rawAlbum as RawAlbum);
   } catch (error) {
-    throw new Error(
-      `Failed to fetch album: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_album', error));
   }
 }
 
 // Get Artist by ID
 export async function getArtist(client: NavidromeClient, args: unknown): Promise<ArtistDTO> {
   const params = IdSchema.parse(args);
+  logger.debug('Tool getArtist called with args:', params);
 
   try {
-    const rawArtist = await client.request<unknown>(`/artist/${params.id}`);
+    const rawArtist = await client.requestWithLibraryFilter<unknown>(`/artist/${encodeURIComponent(params.id)}`);
     return transformToArtistDTO(rawArtist as RawArtist);
   } catch (error) {
-    throw new Error(
-      `Failed to fetch artist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_artist', error));
   }
 }
 
-// Get Playlists containing a song
+// Get Playlists containing a song. `songId` is intentionally NOT echoed back —
+// the LLM just sent it; returning a single string field would only waste
+// context. The DEBUG log captures it for diagnostics.
 export async function getSongPlaylists(client: NavidromeClient, args: unknown): Promise<{
   playlists: PlaylistDTO[];
-  songId: string;
 }> {
   const params = GetSongPlaylistsSchema.parse(args);
+  logger.debug('Tool getSongPlaylists called with args:', params);
 
   try {
-    const rawPlaylists = await client.request<unknown>(`/song/${params.songId}/playlists`);
-    
-    // Workaround: This specific endpoint returns JSON data but with text/plain content-type
-    // So we need to parse it manually if it's a string
-    let playlistData = rawPlaylists;
-    if (typeof rawPlaylists === 'string') {
-      try {
-        playlistData = JSON.parse(rawPlaylists);
-      } catch (parseError) {
-        logger.error('Failed to parse playlist data:', parseError);
-        playlistData = [];
-      }
-    }
-    
-    const playlists = transformPlaylistsToDTO(playlistData);
+    const rawPlaylists = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.songId)}/playlists`);
+    const playlists = transformPlaylistsToDTO(rawPlaylists);
 
     return {
       playlists,
-      songId: params.songId,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to fetch song playlists: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_song_playlists', error));
   }
 }

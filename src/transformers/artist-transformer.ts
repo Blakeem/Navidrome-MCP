@@ -30,7 +30,8 @@ export interface RawArtist {
   biography?: string;
   playCount?: number;
   rating?: number;
-  starred?: boolean;
+  starred?: boolean | null;
+  starredAt?: string;
   [key: string]: unknown;
 }
 
@@ -45,6 +46,12 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
     name: rawArtist.name || '',
     albumCount: rawArtist.albumCount || 0,
     songCount: rawArtist.songCount || 0,
+    // Default to 0 explicitly. Navidrome omits `playCount` entirely for
+    // never-played artists (only emits the field for playCount > 0), which
+    // made sort=playCount results ambiguous: an LLM couldn't distinguish
+    // "never played" from "field unavailable". An explicit zero is the
+    // unambiguous representation.
+    playCount: rawArtist.playCount ?? 0,
   };
 
   if (rawArtist.genres !== undefined) {
@@ -55,16 +62,21 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
     dto.biography = rawArtist.biography;
   }
 
-  if (rawArtist.playCount !== undefined) {
-    dto.playCount = rawArtist.playCount;
-  }
-
   if (rawArtist.rating !== undefined) {
     dto.rating = rawArtist.rating;
   }
 
-  if (rawArtist.starred !== undefined) {
-    dto.starred = rawArtist.starred;
+  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
+  // as a "last starred at" history field even after unstarring, so a
+  // populated timestamp alone does NOT mean the item is currently starred.
+  // Only echo `starredAt` when the boolean confirms the starred state.
+  if (rawArtist.starred === true) {
+    dto.starred = true;
+    if (rawArtist.starredAt !== undefined && rawArtist.starredAt !== null) {
+      dto.starredAt = rawArtist.starredAt;
+    }
+  } else if (rawArtist.starred === false) {
+    dto.starred = false;
   }
 
   return dto;

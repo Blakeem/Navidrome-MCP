@@ -1,8 +1,27 @@
+/**
+ * Navidrome MCP Server - Search Tool Handlers
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { DEFAULT_VALUES } from '../../constants/defaults.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
@@ -10,13 +29,13 @@ import {
   searchSongs,
   searchAlbums,
   searchArtists,
-} from '../search.js';
+} from '../search/index.js';
 
 // Tool definitions for search category
 const tools: Tool[] = [
   {
     name: 'search_all',
-    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.\n\nNote: `totalArtists`, `totalAlbums`, and `totalSongs` in the response are *match counts* for the current query and filters (how many items in the library would match if you paginated through all of them) — NOT total library size. To see library totals, use get_user_details.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -45,6 +64,12 @@ const tools: Tool[] = [
           maximum: 100,
           default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
         },
+        offset: {
+          type: 'number',
+          description: 'Number of items to skip per type for pagination. The same offset is applied to all three sub-fetches (songs/albums/artists), so a single value pages forward across all types together. For deep single-type pagination, use search_songs/search_albums/search_artists.',
+          minimum: 0,
+          default: 0,
+        },
         // Text-based filters - resolved to IDs internally
         genre: {
           type: 'string',
@@ -56,11 +81,11 @@ const tools: Tool[] = [
         },
         country: {
           type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
         },
         releaseType: {
           type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
         },
         recordLabel: {
           type: 'string',
@@ -87,18 +112,12 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
+        // Single-year filter. Navidrome's REST API has no range filter — for
+        // multi-year queries, call the tool once per year and merge client-side.
+        year: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results up to this year',
+          description: 'Filter to a single year. For albums, matches anything whose [minYear, maxYear] contains this year. For songs, matches the exact year. (No effect on artists — Navidrome does not store year on artists.)',
         },
         // Boolean filters
         starred: {
@@ -111,13 +130,13 @@ const tools: Tool[] = [
   },
   {
     name: 'search_songs',
-    description: 'Search for songs by title with advanced filtering and sorting options. Leave query empty to list all songs.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search for songs by title with advanced filtering and sorting options. Leave query empty to list all songs.\n\nNote: the query runs Navidrome\'s full-text match on the song row — it matches title, artist, album AND credited participant names (composer, producer, etc.). Searching "love" can return a song whose composer is named "Rich Love" even if "love" is not in the title.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Search terms to look for in song titles, artists, or albums',
+          description: 'Search terms to look for in song titles, artists, albums, or credited participants (composer, producer, etc.). Navidrome runs a full-text match, so a query like "love" can also match songs by a composer named "Rich Love".',
         },
         limit: {
           type: 'number',
@@ -143,11 +162,11 @@ const tools: Tool[] = [
         },
         country: {
           type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
         },
         releaseType: {
           type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
         },
         recordLabel: {
           type: 'string',
@@ -174,18 +193,12 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
+        // Single-year filter. Navidrome's REST API has no range filter — for
+        // multi-year queries, call the tool once per year and merge client-side.
+        year: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results up to this year',
+          description: 'Filter to a single year. For albums, matches anything whose [minYear, maxYear] contains this year. For songs, matches the exact year. (No effect on artists — Navidrome does not store year on artists.)',
         },
         // Boolean filters
         starred: {
@@ -198,7 +211,7 @@ const tools: Tool[] = [
   },
   {
     name: 'search_albums',
-    description: 'Search for albums by name with advanced filtering and sorting options. Leave query empty to list all albums.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search for albums by name with advanced filtering and sorting options. Leave query empty to list all albums.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -230,11 +243,11 @@ const tools: Tool[] = [
         },
         country: {
           type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
         },
         releaseType: {
           type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
         },
         recordLabel: {
           type: 'string',
@@ -261,18 +274,12 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
+        // Single-year filter. Navidrome's REST API has no range filter — for
+        // multi-year queries, call the tool once per year and merge client-side.
+        year: {
           type: 'number',
           minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results up to this year',
+          description: 'Filter to a single year. For albums, matches anything whose [minYear, maxYear] contains this year. For songs, matches the exact year. (No effect on artists — Navidrome does not store year on artists.)',
         },
         // Boolean filters
         starred: {
@@ -285,7 +292,7 @@ const tools: Tool[] = [
   },
   {
     name: 'search_artists',
-    description: 'Search for artists by name with advanced filtering and sorting options. Leave query empty to list all artists.\n\n💡 TIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
+    description: 'Search for artists by name with advanced filtering and sorting options. Leave query empty to list all artists.\n\nTIP: Use \'get_filter_options\' to discover available values for genre, mediaType, country, releaseType, recordLabel, and mood filters in your library',
     inputSchema: {
       type: 'object',
       properties: {
@@ -317,11 +324,11 @@ const tools: Tool[] = [
         },
         country: {
           type: 'string',
-          description: 'Filter by release country (e.g., "US", "UK", "Germany")',
+          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
         },
         releaseType: {
           type: 'string',
-          description: 'Filter by release type (e.g., "Album", "EP", "Single")',
+          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
         },
         recordLabel: {
           type: 'string',
@@ -348,19 +355,8 @@ const tools: Tool[] = [
           type: 'number',
           description: 'Seed for consistent random ordering (use with sort=random)',
         },
-        // Year filtering
-        yearFrom: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results from this year onwards',
-        },
-        yearTo: {
-          type: 'number',
-          minimum: 1900,
-          maximum: new Date().getFullYear(),
-          description: 'Filter results up to this year',
-        },
+        // No `year` field on search_artists — Navidrome stores no year column
+        // on artists, so the filter would be silently ignored.
         // Boolean filters
         starred: {
           type: 'boolean',
@@ -372,7 +368,7 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating search tool category with dependencies  
+// Factory function for creating search tool category with dependencies
 export function createSearchToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,
@@ -387,7 +383,7 @@ export function createSearchToolCategory(client: NavidromeClient, config: Config
         case 'search_artists':
           return await searchArtists(client, config, args);
         default:
-          throw new Error(`Unknown search tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

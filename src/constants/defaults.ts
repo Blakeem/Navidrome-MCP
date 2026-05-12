@@ -42,3 +42,38 @@ export const DEFAULT_VALUES = {
   // Radio discovery
   RADIO_DISCOVERY_LIMIT: 15, // optimal for discovery without overwhelming
 } as const;
+
+/**
+ * Subsonic API protocol version we report when calling Subsonic-compatible endpoints.
+ * Bump together across every Subsonic call site by editing this single constant.
+ */
+export const SUBSONIC_API_VERSION = '1.16.1';
+
+/**
+ * Subsonic API client identifier (the `c` parameter). Servers and access logs
+ * use this to attribute traffic; keep it stable across releases.
+ */
+export const SUBSONIC_CLIENT_NAME = 'navidrome-mcp';
+
+/**
+ * Default User-Agent string used for outbound HTTP calls when no
+ * service-specific override is configured (Radio Browser, LRCLIB, etc.).
+ */
+export const DEFAULT_USER_AGENT = 'Navidrome-MCP/1.0';
+
+/**
+ * Per-page size when expanding `play_albums` / `play_albums_search` requests.
+ * `fetchAlbumTrackIds` paginates with this page size and follows X-Total-Count
+ * until the full track list is fetched, so multi-disc boxsets play through
+ * completely instead of truncating at the first 500 tracks.
+ */
+export const MAX_ALBUM_TRACKS = 500;
+
+/**
+ * Safety cap on the number of pages `fetchAlbumTrackIds` will follow before
+ * giving up and returning what it has. Protects against an inconsistent
+ * X-Total-Count loop. 20 × 500 = 10000 tracks per album is well past any
+ * realistic release, including the "complete works" boxsets the original
+ * 500-track ceiling used to silently truncate.
+ */
+export const MAX_ALBUM_PAGES = 20;

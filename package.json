@@ -1,15 +1,16 @@
 {
   "name": "navidrome-mcp",
-  "version": "1.1.2",
+  "version": "2.0.0",
   "description": "MCP server for interacting with Navidrome music server",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/build-webui.mjs",
     "start": "node dist/index.js",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:playback": "vitest run --config vitest.playback.config.ts",
     "test:ci": "SKIP_INTEGRATION_TESTS=true MOCK_ONLY_TESTS=true NAVIDROME_URL=http://ci-dummy:4533 NAVIDROME_USERNAME=ci-user NAVIDROME_PASSWORD=ci-pass vitest run",
     "test:all": "pnpm test:run && pnpm check:all",
     "test:ui": "vitest --ui",
@@ -57,7 +58,7 @@
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.3.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",

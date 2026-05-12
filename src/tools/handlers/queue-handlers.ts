@@ -1,3 +1,21 @@
+/**
+ * Navidrome MCP Server - Queue Tool Handlers
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
@@ -6,9 +24,9 @@ import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
-  getQueue,
-  setQueue,
-  clearQueue,
+  getSavedQueue,
+  saveQueue,
+  clearSavedQueue,
 } from '../queue-management.js';
 import {
   listRecentlyPlayed,
@@ -18,23 +36,23 @@ import {
 // Tool definitions for queue management and listening history categories
 const tools: Tool[] = [
   {
-    name: 'get_queue',
-    description: 'Get the current playback queue',
+    name: 'get_saved_queue',
+    description: 'Read the saved playback queue stored on the Navidrome server. This is the queue shown in the web interface and synced across Navidrome clients — it is not live playback state and reading it does not affect any audio.',
     inputSchema: {
       type: 'object',
       properties: {},
     },
   },
   {
-    name: 'set_queue',
-    description: 'Set the playback queue with specified songs',
+    name: 'save_queue',
+    description: 'Save a playback queue to the Navidrome server so it appears in the web interface and syncs to other Navidrome clients. Does not start playback.',
     inputSchema: {
       type: 'object',
       properties: {
         songIds: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of song IDs to add to queue',
+          description: 'Array of song IDs to save into the queue',
         },
         current: {
           type: 'number',
@@ -53,8 +71,8 @@ const tools: Tool[] = [
     },
   },
   {
-    name: 'clear_queue',
-    description: 'Clear the playback queue',
+    name: 'clear_saved_queue',
+    description: 'Clear the saved playback queue stored on the Navidrome server (the queue shown in the web interface). Does not affect live playback.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -130,12 +148,12 @@ export function createQueueToolCategory(client: NavidromeClient, _config: Config
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
-        case 'get_queue':
-          return await getQueue(client, args);
-        case 'set_queue':
-          return await setQueue(client, args);
-        case 'clear_queue':
-          return await clearQueue(client, args);
+        case 'get_saved_queue':
+          return await getSavedQueue(client, args);
+        case 'save_queue':
+          return await saveQueue(client, args);
+        case 'clear_saved_queue':
+          return await clearSavedQueue(client, args);
         case 'list_recently_played':
           return await listRecentlyPlayed(client, args);
         case 'list_most_played':

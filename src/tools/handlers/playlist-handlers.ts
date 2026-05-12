@@ -1,3 +1,21 @@
+/**
+ * Navidrome MCP Server - Playlist Tool Handlers
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
@@ -131,7 +149,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_playlist_tracks',
-    description: 'Get all tracks in a playlist (supports JSON or M3U export). Returns tracks with two IDs: \'id\' (playlist position ID for reordering/removing) and \'mediaFileId\' (actual song ID for playback/metadata operations).',
+    description: 'Get all tracks in a playlist (supports JSON or M3U export). Response shape is discriminated by `format`: JSON mode returns `{ format: "json", tracks, total }` with each track exposing both an `id` (1-based playlist position used for reordering/removing) and a `mediaFileId` (actual song ID for playback/metadata). M3U mode returns `{ format: "m3u", m3uContent }` — the raw .m3u text payload (no tracks/total arrays, since they would be redundant with the playlist body).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -225,7 +243,7 @@ const tools: Tool[] = [
   },
   {
     name: 'reorder_playlist_track',
-    description: 'Reorder a track within a playlist to a new position',
+    description: 'Reorder a track within a playlist to a new position. Positions are 1-based and match the `id` field returned by get_playlist_tracks. Use insert_before=1 to move a track to the first slot; insert_before=N+1 to send it to the end of an N-track playlist.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -235,12 +253,12 @@ const tools: Tool[] = [
         },
         trackId: {
           type: 'string',
-          description: 'The track position ID to move',
+          description: 'The current 1-based track position ID to move (matches the `id` field from get_playlist_tracks)',
         },
         insert_before: {
           type: 'number',
-          description: 'New position (0-based index) to insert the track before',
-          minimum: 0,
+          description: 'Target 1-based position to insert the track before. 1 = first slot, N+1 = append to an N-track playlist.',
+          minimum: 1,
         },
       },
       required: ['playlistId', 'trackId', 'insert_before'],

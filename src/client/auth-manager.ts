@@ -19,34 +19,40 @@
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import {
+  fetchWithTimeout,
+  getNavidromeAuthTimeoutMs,
+} from '../utils/fetch-with-timeout.js';
 
 export class AuthManager {
   private token: string | null = null;
   private tokenExpiry: Date | null = null;
   private readonly config: Config;
+  // Single-flight refresh: if N concurrent callers all hit getToken() with
+  // an expired/invalidated token, only ONE actually POSTs /auth/login; the
+  // rest await the same promise. Cleared on settle so failure can be retried.
+  private refreshPromise: Promise<void> | null = null;
 
   constructor(config: Config) {
     this.config = config;
   }
 
   async authenticate(): Promise<void> {
-    const response = await fetch(`${this.config.navidromeUrl}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: this.config.navidromeUsername,
-        password: this.config.navidromePassword,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.authentication(`${response.status} ${response.statusText}`));
+    this.refreshPromise ??= this.performAuthenticate();
+    try {
+      await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
     }
+  }
 
-    const data = (await response.json()) as { token: string };
-    this.token = data.token;
-    this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
-    logger.debug('Authentication successful');
+  /**
+   * Discard the cached token so the next getToken() call re-authenticates.
+   * Used by NavidromeClient on 401 responses (server-rotated token, etc.).
+   */
+  invalidate(): void {
+    this.token = null;
+    this.tokenExpiry = null;
   }
 
   async getToken(): Promise<string> {
@@ -59,5 +65,39 @@ export class AuthManager {
     }
 
     return this.token;
+  }
+
+  private async performAuthenticate(): Promise<void> {
+    // Auth gets no retry: a timed-out /auth/login could mean the server
+    // accepted-but-didn't-respond, in which case retry is harmless, OR it
+    // could mean account-lockout-on-N-failures policies were tripped on a
+    // prior attempt and the server is rate-limiting us. Better to surface
+    // the timeout to the caller — they (or the LLM) can retry the original
+    // tool call, which goes through this single-flight path anyway.
+    const response = await fetchWithTimeout(
+      `${this.config.navidromeUrl}/auth/login`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: this.config.navidromeUsername,
+          password: this.config.navidromePassword,
+        }),
+      },
+      {
+        timeoutMs: getNavidromeAuthTimeoutMs(),
+        retryPolicy: 'never',
+        operationLabel: 'Navidrome /auth/login',
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(ErrorFormatter.authentication(`${response.status} ${response.statusText}`));
+    }
+
+    const data = (await response.json()) as { token: string };
+    this.token = data.token;
+    this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
+    logger.debug('Authentication successful');
   }
 }

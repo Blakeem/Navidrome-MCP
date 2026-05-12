@@ -17,6 +17,7 @@
  */
 
 import { fileTypeFromBuffer } from 'file-type';
+import { stripHtml } from '../../utils/strip-html.js';
 
 // Audio format detection result
 export interface AudioDetectionResult {
@@ -66,7 +67,14 @@ export function isAudioContentType(contentType: string | null): boolean {
 }
 
 /**
- * Extract streaming headers from response
+ * Extract streaming headers from response.
+ *
+ * Header values pass through `stripHtml` because some SHOUTcast/Icecast
+ * servers ship ICY notice fields with embedded markup (e.g.
+ * `icy-notice2: <BR>This stream requires <a href="...">Winamp</a><BR>`).
+ * Raw HTML in LLM-facing output reads like a bug and breaks markdown
+ * rendering in clients; the strip is a tag-only pass so legitimate text
+ * inside the tags survives.
  */
 export function extractStreamingHeaders(headers: Headers): Record<string, string> {
   const streamHeaders: Record<string, string> = {};
@@ -74,7 +82,7 @@ export function extractStreamingHeaders(headers: Headers): Record<string, string
   headers.forEach((value, key) => {
     const lowerKey = key.toLowerCase();
     if (STREAMING_HEADERS.includes(lowerKey) || lowerKey.startsWith('icy-')) {
-      streamHeaders[lowerKey] = value;
+      streamHeaders[lowerKey] = stripHtml(value);
     }
   });
 

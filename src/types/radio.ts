@@ -32,16 +32,6 @@ export interface RadioStationDTO {
   updatedAt: string;
 }
 
-/** Request to create a new radio station */
-export interface CreateRadioStationRequest {
-  /** Station name (required) */
-  name: string;
-  /** Stream URL (required) */
-  streamUrl: string;
-  /** Optional homepage URL */
-  homePageUrl?: string;
-}
-
 /** Response from creating a radio station */
 export interface CreateRadioStationResponse {
   /** Success status */
@@ -50,16 +40,23 @@ export interface CreateRadioStationResponse {
   station?: RadioStationDTO;
   /** Error message if failed */
   error?: string;
+  /** Non-fatal warning attached to a successful create — e.g. "station was
+      created but its id couldn't be resolved; call list_radio_stations to
+      find it". Present only on partial-failure success paths. */
+  note?: string;
   /** One-time validation reminder message */
   validation_reminder?: string;
 }
 
-/** Response from deleting a radio station */
+/** Response from deleting a radio station. The deleted id is intentionally
+ *  not echoed — the LLM just sent it. The success flag plus the human
+ *  message are the round-trip confirmation; matches the shape of
+ *  `delete_playlist` for consistency. */
 export interface DeleteRadioStationResponse {
   /** Success status */
   success: boolean;
-  /** ID of deleted station */
-  id?: string;
+  /** Human-readable confirmation, e.g. "Successfully deleted radio station" */
+  message: string;
   /** Error message if failed */
   error?: string;
 }
@@ -72,23 +69,6 @@ export interface ListRadioStationsResponse {
   total: number;
   /** One-time tip message */
   tip?: string;
-}
-
-/** Radio playback status information */
-export interface RadioPlaybackInfo {
-  /** Whether radio is currently playing */
-  playing: boolean;
-  /** Current radio station info if playing */
-  currentStation?: RadioStationDTO;
-  /** Current stream metadata if available */
-  metadata?: {
-    /** Current track/show title */
-    title?: string;
-    /** Current artist/host */
-    artist?: string;
-    /** Station description */
-    description?: string;
-  };
 }
 
 /**

@@ -26,6 +26,8 @@ import type {
 import {
   PlaylistTracksPaginationSchema,
 } from '../../schemas/index.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Raw playlist track data from Navidrome API
@@ -91,18 +93,40 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
 }
 
 /**
- * Get all tracks in a playlist
+ * JSON-mode response: structured track DTOs plus the paginated total.
  */
-export async function getPlaylistTracks(client: NavidromeClient, args: unknown): Promise<{
+interface GetPlaylistTracksJsonResponse {
+  format: 'json';
   tracks: PlaylistTrackDTO[];
   total: number;
-  offset: number;
-  limit: number;
-  playlistId: string;
-  format: string;
-  m3uContent?: string;
-}> {
+}
+
+/**
+ * M3U-mode response: only the raw m3u payload. We intentionally omit
+ * `tracks`/`total` here (Batch 2 #4) — the previous shape returned
+ * `tracks: []` and `total: 0` even when `m3uContent` was fully populated,
+ * which was misleading. The track count is implicit in the m3u body and is
+ * also available via `get_playlist`.songCount.
+ */
+interface GetPlaylistTracksM3UResponse {
+  format: 'm3u';
+  m3uContent: string;
+}
+
+type GetPlaylistTracksResponse =
+  | GetPlaylistTracksJsonResponse
+  | GetPlaylistTracksM3UResponse;
+
+/**
+ * Get all tracks in a playlist. The LLM-supplied `offset`, `limit`, and
+ * `playlistId` are NOT echoed back — they only consume context window. The
+ * response shape is discriminated by `format`: JSON mode returns `tracks` and
+ * `total` (server-derived from X-Total-Count); M3U mode returns only
+ * `m3uContent`. The original args are captured in the DEBUG log.
+ */
+export async function getPlaylistTracks(client: NavidromeClient, args: unknown): Promise<GetPlaylistTracksResponse> {
   const params = PlaylistTracksPaginationSchema.parse(args);
+  logger.debug('Tool getPlaylistTracks called with args:', params);
 
   try {
     const queryParams = new URLSearchParams({
@@ -115,38 +139,28 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
       headers['Accept'] = 'audio/x-mpegurl';
     }
 
-    const response = await client.request<unknown>(`/playlist/${params.playlistId}/tracks?${queryParams.toString()}`, {
-      method: 'GET',
-      headers,
-    });
+    const { data, total } = await client.requestWithMeta<unknown>(
+      `/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`,
+      { method: 'GET', headers },
+    );
 
     if (params.format === 'm3u') {
       return {
-        tracks: [],
-        total: 0,
-        offset: params.offset,
-        limit: params.limit,
-        playlistId: params.playlistId,
         format: 'm3u',
-        m3uContent: response as string,
+        m3uContent: typeof data === 'string' ? data : String(data ?? ''),
       };
     }
 
-    const tracks = Array.isArray(response)
-      ? response.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack))
+    const tracks = Array.isArray(data)
+      ? data.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack))
       : [];
 
     return {
-      tracks,
-      total: tracks.length,
-      offset: params.offset,
-      limit: params.limit,
-      playlistId: params.playlistId,
       format: 'json',
+      tracks,
+      total: total ?? tracks.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to fetch playlist tracks: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_playlist_tracks', error));
   }
 }

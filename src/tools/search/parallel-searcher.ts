@@ -40,43 +40,36 @@ import { buildEnhancedSearchParams } from './filter-resolver.js';
  */
 export async function searchSongs(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   songs: SongDTO[];
-  query: string;
   total: number;
-  offset: number;
-  limit: number;
   appliedFilters?: Record<string, string>;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchSongsSchema.parse(args);
+  logger.debug('Tool searchSongs called with args:', params);
 
   try {
     // Processing - build enhanced search parameters with filter resolution
-    const { searchParams, appliedFilters } = buildEnhancedSearchParams(params, 'title', 'title');
+    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'title', 'title', 'song');
 
     logger.debug('Enhanced song search parameters:', { searchParams, appliedFilters });
 
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/song?${searchParams}`);
+    // Make request with library filtering; capture X-Total-Count so the
+    // LLM sees the real match count, not just the page size.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/song?${searchParams}`);
 
     // Transform response to DTOs
-    const songs = transformSongsToDTO(response);
+    const songs = transformSongsToDTO(data);
 
-    logger.debug(`Song search completed: ${songs.length} results`);
+    logger.debug(`Song search completed: ${songs.length} of ${total ?? `${songs.length} (no header)`} results`);
 
-    // Output construction - build result object with conditional applied filters
+    // Output construction - build result object with conditional applied filters.
+    // Note: query/offset/limit are NOT echoed — LLM-supplied input echoes
+    // waste context window and are available in DEBUG logs for diagnostics.
     const result = {
       songs,
-      query: params.query,
-      total: songs.length,
-      offset: params.offset ?? 0,
-      limit: params.limit,
+      total: total ?? songs.length,
+      ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
 
     return result;
   } catch (error) {
@@ -95,43 +88,34 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
  */
 export async function searchAlbums(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   albums: AlbumDTO[];
-  query: string;
   total: number;
-  offset: number;
-  limit: number;
   appliedFilters?: Record<string, string>;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchAlbumsSchema.parse(args);
+  logger.debug('Tool searchAlbums called with args:', params);
 
   try {
     // Processing - build enhanced search parameters with filter resolution
-    const { searchParams, appliedFilters } = buildEnhancedSearchParams(params, 'name', 'name');
+    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name', 'album');
 
     logger.debug('Enhanced album search parameters:', { searchParams, appliedFilters });
 
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/album?${searchParams}`);
+    // Make request with library filtering; capture X-Total-Count for real total.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${searchParams}`);
 
     // Transform response to DTOs
-    const albums = transformAlbumsToDTO(response);
+    const albums = transformAlbumsToDTO(data);
 
-    logger.debug(`Album search completed: ${albums.length} results`);
+    logger.debug(`Album search completed: ${albums.length} of ${total ?? `${albums.length} (no header)`} results`);
 
-    // Output construction - build result object with conditional applied filters
+    // Output construction - build result object with conditional applied filters.
+    // Input echoes (query/offset/limit) intentionally omitted — see searchSongs.
     const result = {
       albums,
-      query: params.query,
-      total: albums.length,
-      offset: params.offset ?? 0,
-      limit: params.limit,
+      total: total ?? albums.length,
+      ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
 
     return result;
   } catch (error) {
@@ -151,44 +135,35 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
  */
 export async function searchArtists(client: NavidromeClient, _config: Config, args: unknown): Promise<{
   artists: ArtistDTO[];
-  query: string;
   total: number;
-  offset: number;
-  limit: number;
   appliedFilters?: Record<string, string>;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchArtistsSchema.parse(args);
+  logger.debug('Tool searchArtists called with args:', params);
 
   try {
     // Processing - build enhanced search params with role=maincredit for comprehensive artist listing
-    const { searchParams: baseParams, appliedFilters } = buildEnhancedSearchParams(params, 'name', 'name');
+    const { searchParams: baseParams, appliedFilters } = await buildEnhancedSearchParams(params, 'name', 'name', 'artist');
     const searchParams = `${baseParams}&role=maincredit`;
 
     logger.debug('Enhanced artist search parameters:', { searchParams, appliedFilters });
 
-    // Make request using the client with library filtering
-    const response = await client.requestWithLibraryFilter<unknown[]>(`/artist?${searchParams}`);
+    // Make request with library filtering; capture X-Total-Count for real total.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${searchParams}`);
 
     // Transform response to DTOs
-    const artists = transformArtistsToDTO(response);
+    const artists = transformArtistsToDTO(data);
 
-    logger.debug(`Artist search completed: ${artists.length} results`);
+    logger.debug(`Artist search completed: ${artists.length} of ${total ?? `${artists.length} (no header)`} results`);
 
-    // Output construction - build result object with conditional applied filters
+    // Output construction - build result object with conditional applied filters.
+    // Input echoes (query/offset/limit) intentionally omitted — see searchSongs.
     const result = {
       artists,
-      query: params.query,
-      total: artists.length,
-      offset: params.offset ?? 0,
-      limit: params.limit,
+      total: total ?? artists.length,
+      ...(Object.keys(appliedFilters).length > 0 ? { appliedFilters } : {}),
     };
-
-    // Only include appliedFilters if any filters were applied
-    if (Object.keys(appliedFilters).length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (result as any).appliedFilters = appliedFilters;
-    }
 
     return result;
   } catch (error) {

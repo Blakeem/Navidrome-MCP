@@ -1,9 +1,28 @@
+/**
+ * Navidrome MCP Server - Tool Handler Registry
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Tool category interfaces
 export interface ToolCategory {
@@ -33,7 +52,7 @@ export class ToolRegistry {
         return category.handleToolCall(name, args);
       }
     }
-    throw new Error(`Unknown tool: ${name}`);
+    throw new Error(ErrorFormatter.toolUnknown(name));
   }
 }
 
@@ -60,6 +79,8 @@ import { createRadioToolCategory } from './radio-handlers.js';
 import { createLastFmToolCategory } from './lastfm-handlers.js';
 import { createLyricsToolCategory } from './lyrics-handlers.js';
 import { createTagsToolCategory } from './tag-handlers.js';
+import { createPlaybackToolCategory } from './playback-handlers.js';
+import { playbackEngine } from '../../services/playback/playback-engine.js';
 
 // Main registration function
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
@@ -68,6 +89,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
   // Use feature flags from config for conditional tools
   const hasLastFm = config.features.lastfm;
   const hasLyrics = config.features.lyrics;
+  const hasPlayback = config.features.playback;
 
   // Register all tool categories
   registry.register('test', createTestToolCategory(client, config));
@@ -86,6 +108,13 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
   if (hasLyrics) {
     registry.register('lyrics', createLyricsToolCategory(client, config));
+  }
+
+  if (hasPlayback) {
+    // Configure the singleton engine with the loaded config so tools can
+    // lazy-spawn mpv on first invocation.
+    playbackEngine.configure(config);
+    registry.register('playback', createPlaybackToolCategory(client, config));
   }
 
   // Register MCP handlers

@@ -28,8 +28,8 @@ interface FilterableSearchParams {
   releaseType?: string | undefined;
   recordLabel?: string | undefined;
   mood?: string | undefined;
-  yearFrom?: number | undefined;
-  yearTo?: number | undefined;
+  // Single-year filter — Navidrome's REST API has no range filter.
+  year?: number | undefined;
   starred?: boolean | undefined;
 }
 
@@ -42,14 +42,18 @@ interface FilterResolutionResult {
 }
 
 /**
- * Resolve text-based filters to IDs using FilterCacheManager
- * Converts user-friendly filter names to internal UUID-based filters
+ * Resolve text-based filters to IDs using FilterCacheManager.
+ * When the filter cache is disabled, re-fetches tag/genre data before resolving
+ * so that newly-added values are immediately visible.
  *
  * @param params - Search parameters containing text-based filters
  * @returns Object containing both resolved filter IDs and applied filter names
  * @throws Error if a filter value is not found, with suggestions for similar values
  */
-export function resolveTextFilters(params: FilterableSearchParams): FilterResolutionResult {
+export async function resolveTextFilters(params: FilterableSearchParams): Promise<FilterResolutionResult> {
+  // Refresh filter data from Navidrome when cache is disabled (no-op when enabled)
+  await filterCacheManager.ensureFresh();
+
   // Data collection - gather filter parameters
   const resolvedFilters: Record<string, string> = {};
   const appliedFilters: Record<string, string> = {};
@@ -160,21 +164,40 @@ interface EnhancedSearchResult {
 }
 
 /**
- * Build enhanced search parameters with resolved filters
- * Combines query parameters, pagination, sorting, and resolved filters into URL parameters
+ * Which Navidrome endpoint we're building params for. Used to apply
+ * endpoint-specific sort-field aliases.
+ */
+export type SearchEndpoint = 'song' | 'album' | 'artist';
+
+/**
+ * Map a user-facing sort key to the column name Navidrome actually
+ * sorts on for the given endpoint. Navidrome's `/api/album` does not
+ * have a `year` column (it has `maxYear`/`minYear`), so `_sort=year`
+ * is silently ignored there; map it to `maxYear` instead.
+ */
+export function mapSortField(sort: string, endpoint: SearchEndpoint): string {
+  if (endpoint === 'album' && sort === 'year') return 'maxYear';
+  return sort;
+}
+
+/**
+ * Build enhanced search parameters with resolved filters.
+ * Combines query parameters, pagination, sorting, and resolved filters into URL parameters.
  *
  * @param params - Search parameters including filters and pagination options
  * @param searchField - The field name to search in (e.g., 'title', 'name')
  * @param defaultSort - Default sort field if none specified
+ * @param endpoint - Target Navidrome endpoint (drives sort-field aliasing)
  * @returns Object containing URL search parameters string and applied filters
  */
-export function buildEnhancedSearchParams(
+export async function buildEnhancedSearchParams(
   params: SearchParameterInput,
   searchField: string,
-  defaultSort: string
-): EnhancedSearchResult {
-  // Process text-based filters first
-  const { resolvedFilters, appliedFilters } = resolveTextFilters(params);
+  defaultSort: string,
+  endpoint: SearchEndpoint
+): Promise<EnhancedSearchResult> {
+  // Process text-based filters first (may refresh from Navidrome when cache is disabled)
+  const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
 
   // Build URLSearchParams for API request
   const searchParams = new URLSearchParams();
@@ -190,7 +213,7 @@ export function buildEnhancedSearchParams(
   }
 
   // Add sorting parameters
-  const sortField = params.sort ?? defaultSort;
+  const sortField = mapSortField(params.sort ?? defaultSort, endpoint);
   searchParams.set('_sort', sortField);
   searchParams.set('_order', params.order ?? 'ASC');
 
@@ -209,12 +232,11 @@ export function buildEnhancedSearchParams(
     searchParams.set('starred', params.starred.toString());
   }
 
-  // Add year filtering for time-based searches
-  if (params.yearFrom !== undefined) {
-    searchParams.set('year_from', params.yearFrom.toString());
-  }
-  if (params.yearTo !== undefined) {
-    searchParams.set('year_to', params.yearTo.toString());
+  // Single-year filter. Navidrome's /api/album?year=N matches albums whose
+  // [minYear, maxYear] contains N; /api/song?year=N matches the exact year
+  // column; /api/artist silently ignores it.
+  if (params.year !== undefined) {
+    searchParams.set('year', params.year.toString());
   }
 
   return {

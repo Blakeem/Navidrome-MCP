@@ -19,7 +19,8 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
-import type { UserDetailsDTO, LibraryDTO, LibraryManagementResponse, SetActiveLibrariesRequest } from '../types/index.js';
+import type { UserDetailsDTO, LibraryDTO, LibraryManagementResponse } from '../types/index.js';
+import { SetActiveLibrariesSchema } from '../schemas/index.js';
 import type { ToolCategory } from './handlers/registry.js';
 import {
   getSong,
@@ -30,6 +31,7 @@ import {
 import { libraryManager } from '../services/library-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { nullIfGoZeroTime } from '../utils/go-time.js';
 
 /**
  * Get user details including library information with active status
@@ -48,7 +50,12 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
     const librariesWithStatus = libraryManager.getLibrariesWithActiveStatus();
     const activeLibraries = librariesWithStatus.filter(lib => lib.isActive);
 
-    // Transform to clean DTO format
+    // Transform to clean DTO format. Map Go's zero-time sentinel (the
+    // server's "never set" value) to null across every timestamp field, not
+    // just `scanInfo` — when the user endpoint never populated createdAt /
+    // updatedAt and the /library enrichment couldn't reach it either, the
+    // sentinel should not be surfaced to LLM consumers as if it were a real
+    // 1-Jan-0001 timestamp.
     const libraryDTOs: LibraryDTO[] = librariesWithStatus.map(lib => ({
       id: lib.id,
       name: lib.name,
@@ -62,12 +69,12 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
         totalDuration: lib.totalDuration,
       },
       scanInfo: {
-        lastScanAt: lib.lastScanAt === '0001-01-01T00:00:00Z' ? null : lib.lastScanAt,
-        lastScanStartedAt: lib.lastScanStartedAt === '0001-01-01T00:00:00Z' ? null : lib.lastScanStartedAt,
+        lastScanAt: nullIfGoZeroTime(lib.lastScanAt),
+        lastScanStartedAt: nullIfGoZeroTime(lib.lastScanStartedAt),
         fullScanInProgress: lib.fullScanInProgress,
       },
-      createdAt: lib.createdAt,
-      updatedAt: lib.updatedAt,
+      createdAt: nullIfGoZeroTime(lib.createdAt),
+      updatedAt: nullIfGoZeroTime(lib.updatedAt),
     }));
 
     // Calculate summary statistics
@@ -111,22 +118,9 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
  */
 async function setActiveLibraries(args: unknown): Promise<LibraryManagementResponse> {
   try {
-    const params = args as SetActiveLibrariesRequest;
-    
-    if (!Array.isArray(params.libraryIds)) {
-      throw new Error('libraryIds must be an array of numbers');
-    }
+    const params = SetActiveLibrariesSchema.parse(args);
 
-    if (params.libraryIds.length === 0) {
-      throw new Error('At least one library ID must be provided');
-    }
-
-    // Validate all IDs are numbers
-    for (const id of params.libraryIds) {
-      if (typeof id !== 'number' || isNaN(id)) {
-        throw new Error(`Invalid library ID: ${id}. Must be a number.`);
-      }
-    }
+    logger.debug('Tool setActiveLibraries called with args:', params);
 
     // Set active libraries via LibraryManager
     libraryManager.setActiveLibraries(params.libraryIds);
@@ -148,12 +142,12 @@ async function setActiveLibraries(args: unknown): Promise<LibraryManagementRespo
     logger.info(`Set active libraries: ${activeLibraries.map(lib => `${lib.name} (${lib.id})`).join(', ')}`);
     return result;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    logger.error('Failed to set active libraries:', errorMessage);
-    
+    const message = ErrorFormatter.toolExecution('set_active_libraries', error);
+    logger.error(message);
+
     return {
       success: false,
-      message: `Failed to set active libraries: ${errorMessage}`,
+      message,
       activeLibraries: [],
       totalCount: 0,
     };
@@ -164,7 +158,7 @@ async function setActiveLibraries(args: unknown): Promise<LibraryManagementRespo
 const tools: Tool[] = [
   {
     name: 'get_song',
-    description: 'Get detailed information about a specific song by ID',
+    description: 'Returns the full record for a single song by ID. Same fields as search_songs results — use this when you already have the song ID and want the canonical SongDTO without searching. To list a song\'s containing playlists, use get_song_playlists.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -178,7 +172,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_album',
-    description: 'Get detailed information about a specific album by ID',
+    description: 'Returns the full record for a single album by ID. Same fields as search_albums results — use this when you already have the album ID. Does NOT include the album\'s tracks; call search_songs with the album ID (or list_recently_played / playlist tools) to enumerate tracks.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -192,7 +186,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_artist',
-    description: 'Get detailed information about a specific artist by ID',
+    description: 'Returns the full record for a single artist by ID. Same fields as search_artists results (id, name, albumCount, songCount, plus optional playCount/rating/starred). For biography, similar artists, and top tracks, use the Last.fm tools (get_artist_info, get_similar_artists, get_top_tracks_by_artist).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -265,7 +259,7 @@ export function createLibraryToolCategory(client: NavidromeClient, _config: Conf
         case 'set_active_libraries':
           return await setActiveLibraries(args);
         default:
-          throw new Error(`Unknown library tool: ${name}`);
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

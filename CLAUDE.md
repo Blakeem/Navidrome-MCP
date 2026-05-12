@@ -1,245 +1,150 @@
 # CLAUDE.md - Development Guidelines for Navidrome MCP Server
 
-> **Note**: This file covers general development patterns and quality requirements.
+MCP (Model Context Protocol) server exposing AI-assistant tools that talk to a
+Navidrome music server (plus optional Last.fm, LRCLIB, Radio Browser, mpv).
 
-## Project Overview
+**Stack:** TypeScript (ultra-strict), Node.js ESM, **pnpm** (not npm/yarn).
 
-This is an MCP (Model Context Protocol) server that provides AI assistants with tools to interact with a Navidrome music server and various other APIs.
+---
 
-**Package Manager**: pnpm (NOT npm or yarn)
-**Language**: TypeScript with strict mode enabled
-**Runtime**: Node.js with ES modules
+## Quality gates (CI-enforced)
 
-## CRITICAL CODE QUALITY REQUIREMENTS
-
-### Quality Gates (ALL must pass)
-**AFTER EVERY CODE CHANGE:**
-1. Run `pnpm test:run` - ALL tests must pass (160+ tests)
-2. Run `pnpm lint` - ZERO errors and warnings allowed
-3. Run `pnpm typecheck` - ZERO type errors allowed
-4. Run `pnpm check:dead-code` - ZERO unused exports allowed
-5. Run `pnpm check:all` - Combined quality validation (recommended)
-
-### Dead Code Detection (MANDATORY)
-```bash
-# Individual checks
-pnpm check:dead-code     # Must show "0 modules with unused exports"
-
-# Comprehensive check (runs all quality gates)
-pnpm check:all           # Lint + TypeCheck + Dead Code
-```
-
-### Test Commands
-- `pnpm test:run` - Run tests once and exit (for CI/validation)
-- `pnpm test` - Watch mode for development (stays running)
-- `pnpm test:coverage` - Run with coverage report
-- **Unit Testing**: See `tests/CLAUDE.md` for comprehensive testing strategy
-
-## Established Architecture - USE THESE
-
-### Schema System (NEW - Use This!)
-```typescript
-// Import from shared schemas instead of duplicating
-import { 
-  SongPaginationSchema,
-  PlaylistPaginationSchema, 
-  SearchAllSchema,
-  StarItemSchema 
-} from '../schemas/index.js';
-
-// Schemas are organized by purpose:
-// - src/schemas/common.ts - Reusable patterns
-// - src/schemas/pagination.ts - All pagination schemas  
-// - src/schemas/validation.ts - Input validation schemas
-```
-
-### Error Handling - USE ErrorFormatter
-```typescript
-import { ErrorFormatter } from '../utils/error-formatter.js';
-
-// Standardized error messages
-throw new Error(ErrorFormatter.toolExecution('myTool', error));
-throw new Error(ErrorFormatter.httpRequest('Navidrome API', response));
-throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
-```
-
-### Logging - USE Logger Utility
-```typescript
-import { logger } from '../utils/logger.js';
-
-logger.debug('Starting operation...');  // Only when debug enabled
-logger.info('Operation completed successfully');
-logger.error('Operation failed:', error);
-// NEVER use console.log (breaks MCP protocol)
-```
-
-### Tool Organization (CURRENT STRUCTURE)
-```typescript
-// Tools are organized by category in src/tools/handlers/
-// - playlist-handlers.ts - Playlist operations
-// - search-handlers.ts - Search operations  
-// - user-preferences-handlers.ts - Stars/ratings
-// - queue-handlers.ts - Queue management
-// - radio-handlers.ts - Radio stations
-// - lastfm-handlers.ts - Last.fm integration (conditional)
-// - lyrics-handlers.ts - Lyrics (conditional)
-// - tag-handlers.ts - Tag management
-
-// Main registry coordinates all tools
-import { registerTools } from './handlers/registry.js';
-```
-
-
-## Development Workflow
-
-### Adding New Tools
-1. **Study existing patterns** - Look at similar tools in `src/tools/handlers/`
-2. **Use shared schemas** - Import from `src/schemas/` instead of duplicating
-3. **Follow naming patterns** - Use existing DTO types from `src/types/`
-4. **Add unit tests** - Required (see `tests/CLAUDE.md` for testing strategy)
-5. **Run quality gates** - `pnpm check:all` must pass with zero issues
-
-### Tool Registration Pattern
-```typescript
-// Add to appropriate handler file (e.g., playlist-handlers.ts)
-export function createPlaylistToolCategory(client: NavidromeClient, config: Config): ToolCategory {
-  return {
-    tools: [
-      {
-        name: 'your_new_tool',
-        description: 'Clear description for AI usage',
-        inputSchema: YourToolSchema.schema, // Use shared schema
-      },
-    ],
-    async handleToolCall(name: string, args: unknown) {
-      if (name === 'your_new_tool') {
-        return yourNewTool(client, config, args);
-      }
-      throw new Error(ErrorFormatter.toolUnknown(name));
-    },
-  };
-}
-```
-
-## TypeScript Strict Mode (Enforced)
-
-**Ultra-strict settings require careful type management:**
-
-```typescript
-// ✅ DO: Define interfaces first
-export interface YourToolResult {
-  success: boolean;
-  data: YourDataType[];
-}
-
-// ✅ DO: Use existing DTO types  
-import type { SongDTO, AlbumDTO } from '../types/index.js';
-
-// ✅ DO: Type guards for external APIs
-function isValidResponse(data: unknown): data is ExpectedType {
-  return typeof data === 'object' && data !== null && 'field' in data;
-}
-
-// Run frequently during development
-pnpm typecheck
-```
-
-## Environment Configuration
-
-**Required:**
-- `NAVIDROME_URL`: Server URL (e.g., http://192.168.86.100:4533)
-- `NAVIDROME_USERNAME`: Username  
-- `NAVIDROME_PASSWORD`: Password
-
-**Optional (enable features):**
-- `LASTFM_API_KEY`: Last.fm integration (enables music discovery features)
-- `RADIO_BROWSER_USER_AGENT`: Radio discovery
-- `LYRICS_PROVIDER=lrclib`: Lyrics support (enables song lyrics features)
-- `DEBUG=true`: Enable debug logging
-
-### For Testing and Development
-
-**Server credentials and configuration are in `.env` files:**
-- Check `.env` for main configuration
-- Check `.env.test` for test environment settings
-- Copy `.env.example` if needed to create your local `.env`
-
-**Example .env setup:**
-```bash
-NAVIDROME_URL=http://your-server:4533
-NAVIDROME_USERNAME=your-username
-NAVIDROME_PASSWORD=your-password
-DEBUG=true
-```
-
-## Testing with MCP Inspector
+Run after every change. Must all be zero issues:
 
 ```bash
-# Build first
-pnpm build
-
-# List tools (count varies based on enabled features)
-npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
-
-# Test specific tool
-npx @modelcontextprotocol/inspector --cli node dist/index.js \
-  --method tools/call \
-  --tool-name test_connection \
-  --tool-arg includeServerInfo=true
-
-# Web UI
-npx @modelcontextprotocol/inspector node dist/index.js
+pnpm check:all      # lint + typecheck + dead-code (the usual one)
+pnpm test:run       # unit tests
+pnpm test:playback  # live-mpv integration suite (separate; needs mpv + Navidrome)
+pnpm build          # production bundle
 ```
 
-## Testing Navidrome API with curl
+Dead-code (`ts-unused-exports`) blocks PRs — when you delete or refactor
+a function, remove its exports too. Tests under `tests/` are part of the
+analysis, so tests importing a symbol keep it alive.
 
-**IMPORTANT: Use `/auth/login` endpoint (NOT `/auth` or `/api/login`)**
+`pnpm test` is watch-mode for development; use `pnpm test:run` for one-shot.
+
+See `tests/CLAUDE.md` for the testing strategy (live reads / mocked writes /
+mocked external APIs).
+
+---
+
+## Application structure
+
+Layout you'll need to navigate. Most tasks touch 1-2 of these.
+
+| Path | Purpose |
+|---|---|
+| `src/client/` | `NavidromeClient` (REST + Subsonic, single-flight auth, retry-on-401, JSON-sniff for `text/plain` bodies), `AuthManager` (JWT) |
+| `src/tools/` | Tool implementations grouped by surface (`media-library.ts`, `playlist-management/`, `radio.ts`, `radio-validation/`, `user-preferences.ts`, `lastfm-discovery.ts`, `lyrics.ts`, `tags.ts`, `library.ts`, `search/`, `test.ts`) |
+| `src/tools/handlers/` | MCP tool category factories — wire impl functions into `name` + `inputSchema` + `handleToolCall`. `registry.ts` composes all categories. |
+| `src/schemas/` | `common.ts` (reusable patterns + `IdSchema`/`createIdSchema` with `[A-Za-z0-9_-]+` regex), `pagination.ts`, `validation.ts` (input schemas, e.g. `SetActiveLibrariesSchema`, `StarItemSchema`) |
+| `src/transformers/` | Raw Navidrome API rows → DTOs (`song`, `album`, `artist`, `playlist`, `shared-transformers`) |
+| `src/types/` | DTO + request/response interfaces (`core.ts` for `SongDTO`/`AlbumDTO`/`ArtistDTO`, others by surface) |
+| `src/services/` | `playback/` (mpv IPC + engine), `library-manager.ts`, `filter-cache-manager.ts` |
+| `src/utils/` | `error-formatter`, `logger`, `subsonic-auth` (salted-MD5), `sanitize-url` (strips creds before LLM exposure), `network-safety` (private-IP block for redirect targets), `cache`, `version` |
+| `src/constants/` | `defaults.ts`, `timeouts.ts` |
+| `src/resources/` | MCP resource handlers |
+
+---
+
+## Established patterns — use these, don't reinvent
+
+- **Schemas:** import from `src/schemas/index.js`. Don't redefine inline. Add new ones to `validation.ts` and they auto-export.
+- **Errors:** `throw new Error(ErrorFormatter.toolExecution('tool_name', error))`. Other helpers: `httpRequest`, `configMissing`, `toolUnknown`, `subsonicApi`, `subsonicResponse`.
+- **Logging:** `import { logger }` from `utils/logger.js`. **Never `console.log`** — it breaks MCP stdio.
+- **Path-segment IDs:** wrap with `encodeURIComponent` at every URL interpolation site. The `IdSchema` regex catches obvious abuse, but the encode is defense-in-depth.
+- **Subsonic auth:** `client.subsonicRequest()` — POST + salted-MD5 by default. Don't hand-roll Subsonic fetches.
+- **Stream URLs to mpv:** `buildSubsonicAuthParams()` from `utils/subsonic-auth.ts`. Anything user-facing that may contain a URL goes through `sanitizeFilename()` first.
+- **Raw responses with `text/plain`:** the client now JSON-sniffs the body, so callers can `await client.request<T>(...)` and just read `response.field` directly. No per-call workarounds needed.
+
+---
+
+## Environment
+
+Required env vars: `NAVIDROME_URL`, `NAVIDROME_USERNAME`, `NAVIDROME_PASSWORD`.
+Feature-gated: `LASTFM_API_KEY` (Last.fm tools), `RADIO_BROWSER_USER_AGENT`
+(radio discovery), `LYRICS_PROVIDER=lrclib` (lyrics), `MPV_PATH` /
+auto-detected (playback). `DEBUG=true` for verbose logging.
+
+Local config lives in `.env` (main) and `.env.test` (test runs). **Both files
+are populated and ready to use** — no need to ask the user for credentials.
+Pull values directly with `grep` (see curl recipe below) rather than
+`source .env`, because the file contains values with shell-special chars
+(parens in `RADIO_BROWSER_USER_AGENT`) that break `set -a; source`.
+
+---
+
+## What's running where (live vs stale)
+
+- **Navidrome server:** running, reachable at `$NAVIDROME_URL`. Use curl
+  freely for verifying API behavior, schema assumptions, sort orders, etc.
+- **mpv:** installed and reachable. Use `pnpm test:playback` for the live
+  integration suite when you've changed playback subsystem code.
+- **The MCP server itself (`mcp__navidrome__*` tools in your tool list):** is
+  whatever build the user's client started with. **It does NOT auto-reload
+  when you change source files.** Treat the live `mcp__navidrome__*` tool
+  responses as evidence about the *previous* build, not the current code on
+  disk. Ask the user to restart their MCP client when you need end-to-end
+  verification of changes you just made.
+
+---
+
+## Testing Navidrome via curl (debugging)
+
+The auth endpoint is `/auth/login` (NOT `/auth` or `/api/login`). The
+authenticated `/api/*` calls use the `X-ND-Authorization: Bearer <token>`
+header (NOT `Authorization`).
+
+Pull credentials from `.env` per-variable (avoids the `source .env` parse
+break on parens in `RADIO_BROWSER_USER_AGENT`):
 
 ```bash
-# 1. Get authentication token
-TOKEN=$(curl -s -X POST http://192.168.86.100:4533/auth/login \
+export NAVIDROME_URL=$(grep '^NAVIDROME_URL=' .env | cut -d= -f2-)
+export NAVIDROME_USERNAME=$(grep '^NAVIDROME_USERNAME=' .env | cut -d= -f2-)
+export NAVIDROME_PASSWORD=$(grep '^NAVIDROME_PASSWORD=' .env | cut -d= -f2-)
+
+TOKEN=$(curl -s -X POST "$NAVIDROME_URL/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"claude","password":"AnthropicClaudius"}' | jq -r '.token')
+  -d "{\"username\":\"$NAVIDROME_USERNAME\",\"password\":\"$NAVIDROME_PASSWORD\"}" | jq -r '.token')
 
-# 2. Use token with X-ND-Authorization header
-curl -s "http://192.168.86.100:4533/api/album?_start=0&_end=5&library_id=1" \
+# Listing endpoint (X-Total-Count comes back in headers; -i to see)
+curl -si "$NAVIDROME_URL/api/album?_start=0&_end=5&library_id=1" \
+  -H "X-ND-Authorization: Bearer $TOKEN" | head -20
+
+# Filter by tag UUID (use {tag_name}_id, e.g. genre_id, mood_id)
+curl -s "$NAVIDROME_URL/api/album?genre_id=UUID&library_id=1" \
   -H "X-ND-Authorization: Bearer $TOKEN" | jq '.'
 
-# 3. Test filters (use {type}_id parameters)
-curl -s "http://192.168.86.100:4533/api/album?genre_id=UUID&library_id=1" \
-  -H "X-ND-Authorization: Bearer $TOKEN" | jq '.'
-
-# 4. Test tag endpoint (for discovering filter values)
-curl -s "http://192.168.86.100:4533/api/tag?tag_name=genre&library_id=1" \
+# Discover tag values + their UUIDs
+curl -s "$NAVIDROME_URL/api/tag?tag_name=genre&library_id=1" \
   -H "X-ND-Authorization: Bearer $TOKEN" | jq '.[] | {id, tagValue}'
 ```
 
-## Dead Code Prevention (MANDATORY)
+**Quirks worth knowing:** Navidrome returns several JSON endpoints with
+`Content-Type: text/plain` (e.g. `POST /playlist/{id}/tracks`,
+`GET /song/{id}/playlists`). The client handles this transparently, but
+if you're curl-debugging directly, expect text/plain on JSON bodies.
 
-**Quality Gate Requirements:**
+---
+
+## Testing via MCP Inspector
+
 ```bash
-# MUST pass before completion
-pnpm check:dead-code     # Expected: "0 modules with unused exports"
-pnpm check:all          # Runs all checks: lint + typecheck + dead-code
+pnpm build
+
+# List all registered tools (count varies with feature flags)
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+
+# Call a specific tool
+npx @modelcontextprotocol/inspector --cli node dist/index.js \
+  --method tools/call --tool-name test_connection \
+  --tool-arg includeServerInfo=true
+
+# Web UI for interactive exploration
+npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
-**Automated Detection:**
-- `tests/meta/dead-code-detection.test.ts` - Validates critical patterns in test suite
-- GitHub Actions CI - Blocks PRs with dead code
-- Always run `pnpm check:all` before considering work complete
-
-**Prevention Guidelines:**
-- Remove unused exports IMMEDIATELY after refactoring
-- Delete helper functions when no longer needed
-- Clean up old implementations after consolidation
-- Verify all imports are actually used in the file
-
-## Key Principles
-
-1. **Follow Established Patterns** - The codebase has mature patterns, use them
-2. **Schema Reuse** - Import from `src/schemas/` instead of duplicating
-3. **Test Everything** - See `tests/CLAUDE.md` for testing requirements
-4. **Quality Gates** - `pnpm check:all` MUST show zero issues
-5. **No Dead Code** - Zero unused exports allowed (enforced by CI)
-6. **MCP Compliance** - Use logger utility, never console.log
-7. **Production Ready** - Every change must pass ALL quality gates
+For end-to-end LLM-facing verification, ask the user to restart the MCP
+server and use the actual `mcp__navidrome__*` tools — `add_tracks_to_playlist`
+behavior, for example, can only be confirmed in the live path.

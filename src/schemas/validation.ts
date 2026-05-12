@@ -73,26 +73,37 @@ export const RemoveTracksFromPlaylistSchema = z.object({
   trackIds: NonEmptyStringArraySchema,
 });
 
+// Navidrome's reorder endpoint uses 1-based position IDs (the same IDs returned
+// by `get_playlist_tracks`). `insert_before=1` puts the track in the first slot
+// (before the current position-1 row); `insert_before=N+1` appends. Passing 0
+// returns 500 from Navidrome, so the schema enforces >= 1 with a friendly message
+// (see Batch 2 #1 fix).
 export const ReorderPlaylistTrackSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required'),
   trackId: z.string().min(1, 'Track ID is required'),
-  insert_before: z.number().min(0, 'Insert position must be non-negative'),
+  insert_before: z.number().int().min(1, 'insert_before must be a 1-based position (use 1 for the first slot)'),
 });
 
-// Queue management validation
-export const SetQueueSchema = z.object({
+// Saved queue (Navidrome cross-device sync) validation
+export const SaveQueueSchema = z.object({
   songIds: StringArraySchema,
   current: z.number().min(0).optional().default(0),
   position: z.number().min(0).optional().default(0),
 });
 
 // Search validation schemas - import enhanced schemas from common.js
-// SearchAll has optional query to allow listing all content with filters
+// SearchAll has optional query to allow listing all content with filters.
+// Single `offset` is applied to all three sub-fetches — paginating searchAll
+// means "the same page across each type". Per-type offsets aren't worth the
+// complexity for the LLM use case (and the per-type counts already let the
+// LLM drop down to single-type search_* tools when it needs to deep-paginate
+// just one type).
 export const SearchAllSchema = EnhancedSearchSchema.extend({
-  query: z.string().optional().default(''), // Override required query to be optional
+  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
   artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  offset: z.number().int().min(0).optional().default(0),
 });
 
 // These are now imported from common.js to avoid duplication
@@ -105,6 +116,7 @@ export const SearchByTagsSchema = z.object({
   tagName: z.string().min(1).optional().default('genre'),
   tagValue: z.string().optional(),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.TAG_SEARCH_LIMIT),
+  offset: z.number().int().nonnegative().default(0),
 });
 
 export const TagDistributionSchema = z.object({
@@ -127,23 +139,23 @@ export const ValidateRadioStreamSchema = z.object({
 
 // Last.fm validation schemas
 export const SimilarArtistsSchema = z.object({
-  artist: z.string(),
+  artist: z.string().min(1),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.SIMILAR_ARTISTS_LIMIT),
 });
 
 export const SimilarTracksSchema = z.object({
-  artist: z.string(),
-  track: z.string(),
+  artist: z.string().min(1),
+  track: z.string().min(1),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.SIMILAR_TRACKS_LIMIT),
 });
 
 export const ArtistInfoSchema = z.object({
-  artist: z.string(),
+  artist: z.string().min(1),
   lang: z.string().optional().default('en'),
 });
 
 export const TopTracksByArtistSchema = z.object({
-  artist: z.string(),
+  artist: z.string().min(1),
   limit: createLimitSchema(1, 50, DEFAULT_VALUES.TOP_TRACKS_BY_ARTIST_LIMIT),
 });
 
@@ -166,6 +178,13 @@ export const GetLyricsSchema = z.object({
 export const TestConnectionSchema = z.object({
   includeServerInfo: OptionalBooleanSchema.default(false),
 });
+
+// Library management validation
+export const SetActiveLibrariesSchema = z.object({
+  libraryIds: z.array(z.number().int().positive().finite())
+    .min(1, 'At least one library ID must be provided')
+    .transform((ids) => Array.from(new Set(ids))),
+}).strict();
 
 // Song playlists schema
 export const GetSongPlaylistsSchema = z.object({

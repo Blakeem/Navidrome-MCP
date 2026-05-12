@@ -19,6 +19,7 @@
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../../types/index.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../../transformers/index.js';
 import { logger } from '../../utils/logger.js';
+import { mapSortField, type SearchEndpoint } from './filter-resolver.js';
 
 /**
  * Raw API response data from parallel search requests
@@ -30,13 +31,31 @@ export interface ParallelSearchResponses {
 }
 
 /**
- * Aggregated search results with metadata
+ * Per-type total counts captured from each sub-fetch's X-Total-Count header.
+ * `null` means the header was absent or unparseable; aggregator falls back
+ * to the array length at the call site.
+ */
+export interface ParallelSearchTotals {
+  songsTotal: number | null;
+  albumsTotal: number | null;
+  artistsTotal: number | null;
+}
+
+/**
+ * Aggregated search results with metadata. The per-type totals (`totalSongs`,
+ * `totalAlbums`, `totalArtists`) reflect the server's full match count for
+ * each type — the LLM uses these to know whether more results exist beyond
+ * the current page. `totalResults` is the sum so the LLM has a single number
+ * to report. The original query is intentionally NOT echoed (LLM already
+ * knows what it asked for); it surfaces in DEBUG logs only.
  */
 interface AggregatedSearchResult {
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
-  query: string;
+  totalArtists: number;
+  totalAlbums: number;
+  totalSongs: number;
   totalResults: number;
   appliedFilters?: Record<string, string>;
 }
@@ -46,13 +65,13 @@ interface AggregatedSearchResult {
  * Handles the transformation of raw API responses to DTOs and combines them with metadata
  *
  * @param responses - Raw responses from parallel API calls
- * @param query - Original search query string
+ * @param totals - Per-type totals from X-Total-Count (null falls back to array length)
  * @param appliedFilters - Filters that were successfully applied to the search
  * @returns Aggregated search result with transformed DTOs and metadata
  */
 export function aggregateSearchResults(
   responses: ParallelSearchResponses,
-  query: string,
+  totals: ParallelSearchTotals,
   appliedFilters: Record<string, string>
 ): AggregatedSearchResult {
   // Data collection - extract responses
@@ -63,17 +82,22 @@ export function aggregateSearchResults(
   const albums = transformAlbumsToDTO(albumsResponse);
   const artists = transformArtistsToDTO(artistsResponse);
 
-  // Calculate total results across all content types
-  const totalResults = songs.length + albums.length + artists.length;
+  // Resolve per-type totals — header value if available, else page size.
+  const totalSongs = totals.songsTotal ?? songs.length;
+  const totalAlbums = totals.albumsTotal ?? albums.length;
+  const totalArtists = totals.artistsTotal ?? artists.length;
+  const totalResults = totalSongs + totalAlbums + totalArtists;
 
-  logger.debug(`Enhanced search completed: ${totalResults} total results (${songs.length} songs, ${albums.length} albums, ${artists.length} artists)`);
+  logger.debug(`Enhanced search completed: ${totalResults} total (${totalSongs} songs / ${totalAlbums} albums / ${totalArtists} artists), returned ${songs.length}/${albums.length}/${artists.length}`);
 
   // Output construction - build aggregated result
   const result: AggregatedSearchResult = {
     artists,
     albums,
     songs,
-    query,
+    totalArtists,
+    totalAlbums,
+    totalSongs,
     totalResults,
   };
 
@@ -93,12 +117,15 @@ interface SearchParamsConfig {
   albumCount: number;
   songCount: number;
   query: string;
+  // Same offset applied to all 3 sub-fetches — see SearchAllSchema for why.
+  offset: number;
   sort?: string | undefined;
   order?: 'ASC' | 'DESC' | undefined;
   randomSeed?: number | undefined;
   resolvedFilters: Record<string, string>;
-  yearFrom?: number | undefined;
-  yearTo?: number | undefined;
+  // Single-year filter only. Navidrome has no year-range filter — see
+  // filter-resolver.ts for the per-endpoint semantics.
+  year?: number | undefined;
   starred?: boolean | undefined;
 }
 
@@ -120,7 +147,7 @@ interface ContentTypeParams {
  */
 export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeParams {
   // Data collection - extract configuration values
-  const { artistCount, albumCount, songCount, query, sort, order, randomSeed, resolvedFilters, yearFrom, yearTo, starred } = config;
+  const { artistCount, albumCount, songCount, query, offset, sort, order, randomSeed, resolvedFilters, year, starred } = config;
 
   // Processing - create parameter building function
   const buildParams = (
@@ -131,8 +158,8 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
     const searchParams = new URLSearchParams();
 
     // Add pagination
-    searchParams.set('_start', '0');
-    searchParams.set('_end', limit.toString());
+    searchParams.set('_start', offset.toString());
+    searchParams.set('_end', (offset + limit).toString());
 
     // Add search term as direct parameter (only if not empty)
     if (query !== '' && query.trim() !== '') {
@@ -158,35 +185,43 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
       searchParams.set('starred', starred.toString());
     }
 
-    // Add year filtering (for albums and songs)
-    if (yearFrom !== undefined) {
-      searchParams.set('year_from', yearFrom.toString());
-    }
-    if (yearTo !== undefined) {
-      searchParams.set('year_to', yearTo.toString());
+    // Single-year filter — albums match by [minYear, maxYear] containing N,
+    // songs match the year column exactly, artists ignore it (no column).
+    if (year !== undefined) {
+      searchParams.set('year', year.toString());
     }
 
     return searchParams.toString();
   };
 
-  // Determine appropriate sort field for each endpoint
-  const getSortField = (defaultSort: string): string => {
+  // Determine appropriate sort field for each endpoint.
+  // `endpoint` drives endpoint-specific aliases (see `mapSortField`) — e.g.
+  // `_sort=year` is silently ignored by `/api/album`, which has no `year`
+  // column; we map it to `maxYear` so DESC ordering returns newest albums.
+  const getSortField = (defaultSort: string, endpoint: SearchEndpoint): string => {
     const requestedSort = sort ?? defaultSort;
 
     // Map common sort fields to endpoint-specific ones
+    let mapped: string;
     switch (requestedSort) {
-      case 'name': return defaultSort === 'title' ? 'title' : 'name';
-      case 'recently_added': return 'recently_added';
-      case 'starred_at': return 'starred_at';
-      case 'random': return 'random';
-      default: return requestedSort;
+      case 'name':
+        mapped = defaultSort === 'title' ? 'title' : 'name';
+        break;
+      case 'recently_added':
+      case 'starred_at':
+      case 'random':
+        mapped = requestedSort;
+        break;
+      default:
+        mapped = requestedSort;
     }
+    return mapSortField(mapped, endpoint);
   };
 
   // Output construction - build parameters for each endpoint type with appropriate sort fields
-  const songParams = buildParams(songCount, 'title', getSortField('title'));
-  const albumParams = buildParams(albumCount, 'name', getSortField('name'));
-  const artistParams = buildParams(artistCount, 'name', getSortField('name'));
+  const songParams = buildParams(songCount, 'title', getSortField('title', 'song'));
+  const albumParams = buildParams(albumCount, 'name', getSortField('name', 'album'));
+  const artistParams = buildParams(artistCount, 'name', getSortField('name', 'artist'));
 
   return {
     songParams,

@@ -5,11 +5,11 @@
  * no tools go missing and all expected tools are registered.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
-import { getSharedLiveClient } from '../../factories/mock-client.js';
 import { loadConfig } from '../../../src/config.js';
+import { logger } from '../../../src/utils/logger.js';
 import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
 import { shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
@@ -24,6 +24,7 @@ import { createRadioToolCategory } from '../../../src/tools/handlers/radio-handl
 import { createLastFmToolCategory } from '../../../src/tools/handlers/lastfm-handlers.js';
 import { createLyricsToolCategory } from '../../../src/tools/handlers/lyrics-handlers.js';
 import { createTagsToolCategory } from '../../../src/tools/handlers/tag-handlers.js';
+import { createPlaybackToolCategory } from '../../../src/tools/handlers/playback-handlers.js';
 
 // COMPREHENSIVE EXPECTED TOOL LIST - Update this when adding/removing tools
 // This replaces count-based testing with explicit validation
@@ -65,20 +66,19 @@ const EXPECTED_CORE_TOOLS = [
   'list_starred_items',
   'list_top_rated',
 
-  // Queue category
-  'get_queue',
-  'set_queue',
-  'clear_queue',
+  // Queue category (saved queue = Navidrome cross-device sync)
+  'get_saved_queue',
+  'save_queue',
+  'clear_saved_queue',
   'list_recently_played',
   'list_most_played',
 
   // Radio category (core radio management) - UPDATED: removed batch_create_radio_stations after consolidation
+  // play_radio_station is gated on playback (mpv) feature — see EXPECTED_PLAYBACK_TOOLS
   'list_radio_stations',
   'create_radio_station',
   'delete_radio_station',
   'get_radio_station',
-  'play_radio_station',
-  'get_current_radio_info',
   'validate_radio_stream',
 
   // Tags category
@@ -108,41 +108,60 @@ const EXPECTED_RADIO_BROWSER_TOOLS = [
   'vote_station',
 ];
 
+const EXPECTED_PLAYBACK_TOOLS = [
+  'pause',
+  'resume',
+  'set_volume',
+  'playback_status',
+  'play_songs',
+  'play_albums',
+  'play_albums_search',
+  'play_songs_search',
+  'play_radio_station',
+  'next',
+  'previous',
+  'seek',
+  'now_playing',
+  'get_play_queue',
+  'clear_play_queue',
+  'shuffle_play_queue',
+  'move_in_play_queue',
+  'remove_from_play_queue',
+];
+
 describe('Tools Registry - Tool Count Verification', () => {
   let liveClient: NavidromeClient;
   let config: Config;
 
   beforeAll(async () => {
-    // For deterministic testing, always use a consistent configuration
-    // This ensures we get consistent tool registration regardless of environment
-    const originalEnv = { ...process.env };
-    
-    // Set deterministic environment for tool registry testing
-    process.env.NAVIDROME_URL = 'http://deterministic-test:4533';
-    process.env.NAVIDROME_USERNAME = 'test-user';
-    process.env.NAVIDROME_PASSWORD = 'test-password';
-    process.env.LASTFM_API_KEY = 'test-lastfm-key';
-    process.env.RADIO_BROWSER_USER_AGENT = 'Test-Agent/1.0';
-    process.env.LYRICS_PROVIDER = 'lrclib';
-    
-    try {
-      // Load config with deterministic environment
-      config = await loadConfig();
-      
-      // Always use mock client for deterministic tool registry testing
-      // since we're using a fake URL for consistency
-      const { createMockClient } = await import('../../factories/mock-client.js');
-      liveClient = createMockClient() as any; // Tool registry only needs client interface for creation
-      
-      console.log(`Using deterministic configuration - Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
-    } finally {
-      // Restore original environment (except for variables we want to keep for consistency)
-      Object.keys(originalEnv).forEach(key => {
-        if (!['NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD', 'LASTFM_API_KEY', 'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER'].includes(key)) {
-          process.env[key] = originalEnv[key];
-        }
-      });
-    }
+    // For deterministic testing, always use a consistent configuration.
+    // vi.stubEnv records the original value and restores it on vi.unstubAllEnvs()
+    // (called in afterAll), so no subsequent test sees these fabricated values.
+    vi.stubEnv('NAVIDROME_URL', 'http://deterministic-test:4533');
+    vi.stubEnv('NAVIDROME_USERNAME', 'test-user');
+    vi.stubEnv('NAVIDROME_PASSWORD', 'test-password');
+    vi.stubEnv('LASTFM_API_KEY', 'test-lastfm-key');
+    vi.stubEnv('RADIO_BROWSER_USER_AGENT', 'Test-Agent/1.0');
+    vi.stubEnv('LYRICS_PROVIDER', 'lrclib');
+    // Force mpv detection to fail so the playback feature is deterministically
+    // disabled regardless of whether mpv is installed on the host machine.
+    vi.stubEnv('MPV_PATH', '/nonexistent/path/to/mpv');
+
+    // Load config with deterministic environment
+    config = await loadConfig();
+
+    // Always use mock client for deterministic tool registry testing
+    // since we're using a fake URL for consistency
+    const { createMockClient } = await import('../../factories/mock-client.js');
+    liveClient = createMockClient() as any; // Tool registry only needs client interface for creation
+
+    logger.debug(`Using deterministic configuration - Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}, playback=${config.features.playback}`);
+  });
+
+  afterAll(() => {
+    // Restore all env vars stubbed in beforeAll so downstream tests in the
+    // same worker see their real environment (not the fabricated test values).
+    vi.unstubAllEnvs();
   });
 
   // Helper function to build expected tool list based on feature configuration
@@ -159,6 +178,10 @@ describe('Tools Registry - Tool Count Verification', () => {
 
     if (config.features.radioBrowser) {
       expectedTools.push(...EXPECTED_RADIO_BROWSER_TOOLS);
+    }
+
+    if (config.features.playback) {
+      expectedTools.push(...EXPECTED_PLAYBACK_TOOLS);
     }
 
     return expectedTools.sort();
@@ -186,6 +209,10 @@ describe('Tools Registry - Tool Count Verification', () => {
 
       if (config.features.lyrics) {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
+      }
+
+      if (config.features.playback) {
+        registry.register('playback', createPlaybackToolCategory(liveClient, config));
       }
 
       const allTools = registry.getAllTools();
@@ -310,6 +337,10 @@ describe('Tools Registry - Tool Count Verification', () => {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
       }
 
+      if (config.features.playback) {
+        registry.register('playback', createPlaybackToolCategory(liveClient, config));
+      }
+
       const allTools = registry.getAllTools();
       const actualToolNames = allTools.map(tool => tool.name);
 
@@ -346,6 +377,10 @@ describe('Tools Registry - Tool Count Verification', () => {
         registry.register('lyrics', createLyricsToolCategory(liveClient, config));
       }
 
+      if (config.features.playback) {
+        registry.register('playback', createPlaybackToolCategory(liveClient, config));
+      }
+
       const allTools = registry.getAllTools();
       const actualToolNames = allTools.map(tool => tool.name);
       const uniqueNames = new Set(actualToolNames);
@@ -358,46 +393,5 @@ describe('Tools Registry - Tool Count Verification', () => {
       expect(actualToolNames.sort()).toEqual(expectedToolNames);
     });
 
-    it('should report configuration state for debugging', async () => {
-      // This test helps with debugging when tool registration doesn't match expectations
-      console.log('Current feature configuration:');
-      console.log(`- Last.fm enabled: ${config.features.lastfm}`);
-      console.log(`- Radio Browser enabled: ${config.features.radioBrowser}`);
-      console.log(`- Lyrics enabled: ${config.features.lyrics}`);
-
-      const registry = new ToolRegistry();
-
-      // Register all categories
-      registry.register('test', createTestToolCategory(liveClient, config));
-      registry.register('library', createLibraryToolCategory(liveClient, config));
-      registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
-      registry.register('search', createSearchToolCategory(liveClient, config));
-      registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
-      registry.register('queue-management', createQueueToolCategory(liveClient, config));
-      registry.register('radio', createRadioToolCategory(liveClient, config));
-      registry.register('tags', createTagsToolCategory(liveClient, config));
-
-      if (config.features.lastfm) {
-        registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
-      }
-
-      if (config.features.lyrics) {
-        registry.register('lyrics', createLyricsToolCategory(liveClient, config));
-      }
-
-      const allTools = registry.getAllTools();
-      const expectedTools = getExpectedToolList(config);
-
-      console.log(`Total tools registered: ${allTools.length}`);
-      console.log(`Expected tools: ${expectedTools.length}`);
-      console.log(`Core tools: ${EXPECTED_CORE_TOOLS.length}`);
-      console.log(`Last.fm tools: ${config.features.lastfm ? EXPECTED_LASTFM_TOOLS.length : 0}`);
-      console.log(`Lyrics tools: ${config.features.lyrics ? EXPECTED_LYRICS_TOOLS.length : 0}`);
-      console.log(`Radio Browser tools: ${config.features.radioBrowser ? EXPECTED_RADIO_BROWSER_TOOLS.length : 0}`);
-
-      // This test always passes - it's for informational purposes
-      expect(allTools.length).toBeGreaterThan(0);
-      expect(expectedTools.length).toBeGreaterThan(0);
-    });
   });
 });

@@ -28,6 +28,15 @@ import { filterCacheManager } from './services/filter-cache-manager.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
+import { WebUIServer } from './webui/index.js';
+
+// Belt-and-suspenders against any unhandled rejection escaping the system —
+// without this, Node 20+ terminates the process by default. The mpv IPC layer
+// has its own settled-sentinel safety, but a single regression in tool code
+// shouldn't crash the whole MCP server.
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandledRejection:', reason);
+});
 
 async function main(): Promise<void> {
   try {
@@ -65,6 +74,27 @@ async function main(): Promise<void> {
 
     registerTools(server, client, config);
     registerResources(server, client);
+
+    // Companion web UI for mpv playback control. Only initialized when the
+    // playback feature itself is enabled (mpv detected) and the user hasn't
+    // disabled the panel via WEBUI_ENABLED=false. `init()` doesn't bind a
+    // port unless something is already queued — first-play in the current
+    // session triggers the bind lazily via the engine state stream. Errors
+    // here are non-fatal: the MCP server stays up even if the panel can't
+    // start (e.g. port collision).
+    if (config.features.playback && config.webui.enabled) {
+      const webui = new WebUIServer(config, client);
+      try {
+        await webui.init();
+      } catch (err) {
+        logger.warn('Web UI init failed (continuing without panel):', err);
+      }
+      const stopWebUI = (): void => {
+        void webui.stop();
+      };
+      process.once('SIGINT', stopWebUI);
+      process.once('SIGTERM', stopWebUI);
+    }
 
     const transport = new StdioServerTransport();
     await server.connect(transport);

@@ -33,17 +33,20 @@ import {
   UpdatePlaylistSchema,
   PlaylistIdSchema,
 } from '../../schemas/index.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { logger } from '../../utils/logger.js';
 
 /**
- * List all playlists accessible to the user
+ * List all playlists accessible to the user. `offset`/`limit` are NOT echoed
+ * — the LLM just sent them and tracks its own pagination state. `total` is
+ * server-derived (X-Total-Count) so the LLM can plan further pages.
  */
 export async function listPlaylists(client: NavidromeClient, args: unknown): Promise<{
   playlists: PlaylistDTO[];
   total: number;
-  offset: number;
-  limit: number;
 }> {
   const params = PlaylistPaginationSchema.parse(args);
+  logger.debug('Tool listPlaylists called with args:', params);
 
   try {
     const queryParams = new URLSearchParams({
@@ -53,19 +56,15 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
       _order: params.order,
     });
 
-    const rawPlaylists = await client.request<unknown>(`/playlist?${queryParams.toString()}`);
-    const playlists = transformPlaylistsToDTO(rawPlaylists);
+    const { data, total } = await client.requestWithMeta<unknown>(`/playlist?${queryParams.toString()}`);
+    const playlists = transformPlaylistsToDTO(data);
 
     return {
       playlists,
-      total: playlists.length,
-      offset: params.offset,
-      limit: params.limit,
+      total: total ?? playlists.length,
     };
   } catch (error) {
-    throw new Error(
-      `Failed to fetch playlists: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('list_playlists', error));
   }
 }
 
@@ -74,14 +73,13 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
  */
 export async function getPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   const params = PlaylistIdSchema.parse(args);
+  logger.debug('Tool getPlaylist called with args:', params);
 
   try {
-    const rawPlaylist = await client.request<unknown>(`/playlist/${params.id}`);
+    const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`);
     return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
   } catch (error) {
-    throw new Error(
-      `Failed to fetch playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('get_playlist', error));
   }
 }
 
@@ -90,6 +88,7 @@ export async function getPlaylist(client: NavidromeClient, args: unknown): Promi
  */
 export async function createPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   const params = CreatePlaylistSchema.parse(args);
+  logger.debug('Tool createPlaylist called with args:', params);
 
   try {
     const requestBody: CreatePlaylistRequest = {
@@ -101,7 +100,12 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       requestBody.comment = params.comment;
     }
 
-    const rawPlaylist = await client.request<unknown>('/playlist', {
+    // Navidrome's `POST /playlist` only echoes `{id}` — no metadata. Re-fetch
+    // the playlist by id so callers receive the same DTO shape as
+    // `get_playlist` / `list_playlists` (owner, ownerId, createdAt,
+    // updatedAt, etc.). The transformer's `name`/`comment` fallbacks remain
+    // as defence-in-depth in case the GET also comes back incomplete.
+    const created = await client.request<{ id?: string }>('/playlist', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -109,23 +113,25 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
+    const newId = created?.id;
+    if (typeof newId !== 'string' || newId === '') {
+      throw new Error('Navidrome POST /playlist did not return a playlist id');
+    }
+
+    const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(newId)}`);
     const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
 
-    // Fix the name if it's not properly returned from API
+    // Defence-in-depth fallbacks if the follow-up GET also omits fields.
     if (playlist.name === null || playlist.name === undefined || playlist.name === '' || playlist.name === 'Unknown Playlist') {
       playlist.name = params.name;
     }
-
-    // Fix the comment if it's not properly returned from API
     if (params.comment !== null && params.comment !== undefined && params.comment !== '' && (playlist.comment === null || playlist.comment === undefined || playlist.comment === '')) {
       playlist.comment = params.comment;
     }
 
     return playlist;
   } catch (error) {
-    throw new Error(
-      `Failed to create playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('create_playlist', error));
   }
 }
 
@@ -134,6 +140,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
  */
 export async function updatePlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   const params = UpdatePlaylistSchema.parse(args);
+  logger.debug('Tool updatePlaylist called with args:', params);
 
   try {
     const requestBody: UpdatePlaylistRequest = {};
@@ -150,7 +157,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
       requestBody.public = params.public;
     }
 
-    const rawPlaylist = await client.request<unknown>(`/playlist/${params.id}`, {
+    const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -172,31 +179,30 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
 
     return playlist;
   } catch (error) {
-    throw new Error(
-      `Failed to update playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('update_playlist', error));
   }
 }
 
 /**
- * Delete a playlist (owner or admin only)
+ * Delete a playlist (owner or admin only). The deleted id is intentionally
+ * NOT echoed in the response — the LLM just sent it. The success flag plus
+ * the message ("Successfully deleted playlist") is enough to confirm the
+ * round trip; the id is captured in the DEBUG log for diagnostics.
  */
-export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; id: string; message: string }> {
+export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; message: string }> {
   const params = PlaylistIdSchema.parse(args);
+  logger.debug('Tool deletePlaylist called with args:', params);
 
   try {
-    await client.request<unknown>(`/playlist/${params.id}`, {
+    await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`, {
       method: 'DELETE',
     });
 
     return {
       success: true,
-      id: params.id,
-      message: `Successfully deleted playlist with ID: ${params.id}`,
+      message: 'Successfully deleted playlist',
     };
   } catch (error) {
-    throw new Error(
-      `Failed to delete playlist: ${error instanceof Error ? error.message : 'Unknown error'}`
-    );
+    throw new Error(ErrorFormatter.toolExecution('delete_playlist', error));
   }
 }

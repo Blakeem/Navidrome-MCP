@@ -38,7 +38,9 @@ export interface RawSong {
   trackNumber?: number;
   playCount?: number;
   rating?: number;
-  starred?: boolean;
+  starred?: boolean | null;
+  starredAt?: string;
+  playDate?: string;
   createdAt?: string;
   path?: string;
   [key: string]: unknown; // Allow other fields we don't use
@@ -93,8 +95,21 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     dto.rating = rawSong.rating;
   }
 
-  if (rawSong.starred !== undefined) {
-    dto.starred = rawSong.starred;
+  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
+  // as a "last starred at" history field even after unstarring, so a
+  // populated timestamp alone does NOT mean the item is currently starred.
+  // Only echo `starredAt` when the boolean confirms the starred state.
+  if (rawSong.starred === true) {
+    dto.starred = true;
+    if (rawSong.starredAt !== undefined && rawSong.starredAt !== null) {
+      dto.starredAt = rawSong.starredAt;
+    }
+  } else if (rawSong.starred === false) {
+    dto.starred = false;
+  }
+
+  if (rawSong.playDate !== undefined) {
+    dto.playDate = rawSong.playDate;
   }
 
   return dto;

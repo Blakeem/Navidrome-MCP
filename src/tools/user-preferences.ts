@@ -19,7 +19,12 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import type { Config } from '../config.js';
-import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../transformers/index.js';
+import {
+  transformSongsToDTO,
+  transformAlbumsToDTO,
+  transformArtistsToDTO,
+} from '../transformers/index.js';
+import type { SongDTO, AlbumDTO, ArtistDTO } from '../types/index.js';
 import {
   StarItemSchema,
   SetRatingSchema,
@@ -27,52 +32,20 @@ import {
   TopRatedItemsPaginationSchema,
 } from '../schemas/index.js';
 
-// Helper function to parse duration from MM:SS format to seconds
-function parseDuration(durationFormatted: string): number {
-  const parts = durationFormatted.split(':');
-  if (parts.length === 2) {
-    const minutes = parseInt(parts[0] ?? '0', 10);
-    const seconds = parseInt(parts[1] ?? '0', 10);
-    return minutes * 60 + seconds;
-  }
-  return 0;
-}
-
-// Helper function to extract starredAt timestamp from raw data
-function extractStarredAt(item: unknown): string | undefined {
-  // The transformers don't currently include starredAt, so we need to check the raw data
-  // This is a limitation that should be addressed in the transformers later
-  if (typeof item === 'object' && item !== null && 'starredAt' in item) {
-    const starredAt = (item as { starredAt?: unknown }).starredAt;
-    return typeof starredAt === 'string' ? starredAt : undefined;
-  }
-  return undefined;
-}
-
+// Input echoes (id, type, rating) are intentionally NOT returned. The LLM
+// just sent these values; echoing them back wastes context window and can
+// even mislead (the schema normalizes plural→singular, so echoing the
+// canonical form would mismatch the LLM's input). `success: true` plus a
+// human message are the round-trip-safe fields. The original args are
+// always available in DEBUG=true logs for diagnostics.
 interface StarItemResult {
   success: boolean;
   message: string;
-  id: string;
-  type: string;
-}
-
-interface StarredItem {
-  id: string;
-  title?: string;
-  name?: string;
-  artist?: string;
-  album?: string;
-  year?: number;
-  duration?: number;
-  albumCount?: number;
-  songCount?: number;
-  starredAt?: string;
 }
 
 interface ListStarredResult {
-  type: string;
   count: number;
-  items: StarredItem[];
+  items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
 }
 
 interface RatedItem {
@@ -89,150 +62,109 @@ interface RatedItem {
 }
 
 interface ListTopRatedResult {
-  type: string;
-  minRating: number;
   count: number;
   items: RatedItem[];
 }
 
+// Same rationale as StarItemResult — id/type/rating are LLM-supplied echoes
+// and are dropped. The success+message pair is enough for the LLM to know
+// the action took effect.
 interface SetRatingResult {
   success: boolean;
   message: string;
-  id: string;
-  type: string;
-  rating: number;
 }
 
 
 export async function starItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
-  
+
+  logger.debug('Tool starItem called with args:', { id, type });
   logger.info(`Starring ${type}: ${id}`);
-  
+
   // Use Subsonic REST API for starring
   const response = await client.subsonicRequest('/star', { id });
-  
+
   logger.debug('Star response:', response);
-  
+
   return {
     success: true,
     message: `Successfully starred ${type}`,
-    id,
-    type,
   };
 }
 
 export async function unstarItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   const { id, type } = StarItemSchema.parse(args);
-  
+
+  logger.debug('Tool unstarItem called with args:', { id, type });
   logger.info(`Unstarring ${type}: ${id}`);
-  
-  // Use Subsonic REST API for unstarring  
+
+  // Use Subsonic REST API for unstarring
   const response = await client.subsonicRequest('/unstar', { id });
-  
+
   logger.debug('Unstar response:', response);
-  
+
   return {
     success: true,
     message: `Successfully unstarred ${type}`,
-    id,
-    type,
   };
 }
 
 export async function setRating(client: NavidromeClient, _config: Config, args: unknown): Promise<SetRatingResult> {
   const { id, type, rating } = SetRatingSchema.parse(args);
-  
+
+  logger.debug('Tool setRating called with args:', { id, type, rating });
   logger.info(`Setting rating ${rating} for ${type}: ${id}`);
-  
+
   // Use Subsonic REST API for setting rating
-  const response = await client.subsonicRequest('/setRating', { 
-    id, 
-    rating: rating.toString() 
+  const response = await client.subsonicRequest('/setRating', {
+    id,
+    rating: rating.toString()
   });
-  
+
   logger.debug('Set rating response:', response);
-  
+
   return {
     success: true,
     message: rating > 0 ? `Successfully set rating to ${rating} stars` : 'Successfully removed rating',
-    id,
-    type,
-    rating,
   };
 }
 
 export async function listStarredItems(client: NavidromeClient, args: unknown): Promise<ListStarredResult> {
   const { type, limit, offset } = StarredItemsPaginationSchema.parse(args);
-  
+
+  logger.debug('Tool listStarredItems called with args:', { type, limit, offset });
   logger.info(`Listing starred ${type}`);
-  
+
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
-  
-  // Fetch more items to account for client-side filtering
-  const fetchLimit = Math.min(limit * 5, 500); // Fetch 5x requested or max 500
-  
-  const response = await client.request<unknown>(
-    `${endpoint}?_start=${offset}&_end=${offset + fetchLimit}&_sort=starredAt&_order=DESC`
+
+  // Use Navidrome's server-side `starred=true` filter — it returns only
+  // items whose authoritative `starred` boolean is true. Sorting by
+  // `starredAt DESC` would over-include items whose star was cleared but
+  // still carry a leftover timestamp (Navidrome retains `starredAt` as a
+  // "last starred at" history field).
+  const response = await client.requestWithLibraryFilter<unknown>(
+    `${endpoint}?starred=true&_start=${offset}&_end=${offset + limit}&_sort=starredAt&_order=DESC`
   );
-  
-  // Transform using the appropriate transformer
-  let transformedItems: StarredItem[];
+
+  let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
   if (type === 'songs') {
-    const songs = transformSongsToDTO(response);
-    transformedItems = songs
-      .filter(song => song.starred === true) // Filter on client side to ensure we only get starred items
-      .map(song => {
-        const item: StarredItem = { id: song.id };
-        if (song.title !== null && song.title !== undefined && song.title !== '') item.title = song.title;
-        if (song.artist !== null && song.artist !== undefined && song.artist !== '') item.artist = song.artist;
-        if (song.album !== null && song.album !== undefined && song.album !== '') item.album = song.album;
-        if (song.durationFormatted !== null && song.durationFormatted !== undefined && song.durationFormatted !== '') {
-          item.duration = parseDuration(song.durationFormatted);
-        }
-        const starredAt = extractStarredAt(song);
-        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
-        return item;
-      });
+    items = transformSongsToDTO(response);
   } else if (type === 'albums') {
-    const albums = transformAlbumsToDTO(response);
-    transformedItems = albums
-      .filter(album => album.starred === true)
-      .map(album => {
-        const item: StarredItem = { id: album.id };
-        if (album.name !== null && album.name !== undefined && album.name !== '') item.name = album.name;
-        if (album.artist !== null && album.artist !== undefined && album.artist !== '') item.artist = album.artist;
-        if (album.releaseYear !== null && album.releaseYear !== undefined) item.year = album.releaseYear;
-        item.songCount = album.songCount; // Always present in albums
-        const starredAt = extractStarredAt(album);
-        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
-        return item;
-      });
+    items = transformAlbumsToDTO(response);
   } else {
-    const artists = transformArtistsToDTO(response);
-    transformedItems = artists
-      .filter(artist => artist.starred === true)
-      .map(artist => {
-        const item: StarredItem = { id: artist.id };
-        if (artist.name !== null && artist.name !== undefined && artist.name !== '') item.name = artist.name;
-        item.albumCount = artist.albumCount; // Always present
-        item.songCount = artist.songCount; // Always present
-        const starredAt = extractStarredAt(artist);
-        if (starredAt !== null && starredAt !== undefined && starredAt !== '') item.starredAt = starredAt;
-        return item;
-      });
+    items = transformArtistsToDTO(response);
   }
-  
+
   return {
-    type,
-    count: transformedItems.length,
-    items: transformedItems,
+    count: items.length,
+    items,
   };
 }
 
 export async function listTopRated(client: NavidromeClient, args: unknown): Promise<ListTopRatedResult> {
   const { type, minRating, limit, offset } = TopRatedItemsPaginationSchema.parse(args);
-  
+
+  logger.debug('Tool listTopRated called with args:', { type, minRating, limit, offset });
   logger.info(`Listing top rated ${type} (min rating: ${minRating})`);
   
   const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
@@ -241,7 +173,7 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
   // We'll fetch 3x the requested amount to ensure we have enough after filtering
   const fetchLimit = limit * 3;
   
-  const response = await client.request<unknown>(
+  const response = await client.requestWithLibraryFilter<unknown>(
     `${endpoint}?_sort=rating&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
   );
   
@@ -297,8 +229,6 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
   }
   
   return {
-    type,
-    minRating,
     count: transformedItems.length,
     items: transformedItems,
   };
