@@ -31,6 +31,7 @@ import {
   playAlbums,
   playAlbumsSearch,
   playSongsSearch,
+  playPlaylist,
   next,
   previous,
   seek,
@@ -43,7 +44,7 @@ import {
   playQueueIndex,
 } from '../playback.js';
 
-// Tool definitions for the playback category (Stage 2 + Stage 3 + Stage 4 — 17 tools).
+// Tool definitions for the playback category (Stage 2 + Stage 3 + Stage 4 — 18 tools).
 const tools: Tool[] = [
   {
     name: 'pause',
@@ -336,6 +337,33 @@ const tools: Tool[] = [
     },
   },
   {
+    name: 'play_playlist',
+    description: "ONE-SHOT load a Navidrome playlist into the local mpv queue — fetches every track in the playlist AND enqueues them in a single call. PREFER THIS over the two-step pattern (`get_playlist_tracks` → `play_songs`); passing every `mediaFileId` back through the LLM wastes context tokens, especially for long playlists. Common intents → invocation: 'play my Workout playlist' → `{playlistId: '<id>'}`; 'shuffle my Roadtrip playlist' → `{playlistId: '<id>', shuffle: true}`; 'queue my Cooldown after this' → `{playlistId: '<id>', mode: 'append'}`. Use `list_playlists` to find the playlist ID. `mode: 'replace'` (default) clears the queue and starts playback; `mode: 'append'` adds to the end without clearing or unpausing. `shuffle: true` Fisher-Yates the playlist's tracks before queueing. Throws if the playlist has no tracks.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        playlistId: {
+          type: 'string',
+          minLength: 1,
+          description: 'Navidrome playlist ID (UUID). Use `list_playlists` to discover.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['replace', 'append'],
+          description: "'replace' clears the queue and starts playback; 'append' adds to the end without clearing or unpausing. Defaults to 'replace'.",
+          default: 'replace',
+        },
+        shuffle: {
+          type: 'boolean',
+          description: "When true, randomize the playlist's tracks with Fisher-Yates before queueing. Defaults to false.",
+          default: false,
+        },
+      },
+      required: ['playlistId'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'next',
     description: 'Skip to the next track in the local mpv playlist.',
     inputSchema: {
@@ -449,7 +477,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_queue_index',
-    description: 'Start playing the existing play-queue entry at the given index (jumps the play head without changing queue contents). Unpauses if paused. Use this to skip to a non-adjacent track; for adjacent moves prefer `next`/`previous`.',
+    description: "Jump directly to the play-queue entry at the given index — equivalent to clicking a track row in the web UI. Does NOT reorder the queue, only moves the play head. Unpauses if paused. Discovery flow: call `get_play_queue` first to find the index of the target track. For adjacent moves prefer `next`/`previous`.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -492,6 +520,8 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
           return playAlbumsSearch(client, config, args);
         case 'play_songs_search':
           return playSongsSearch(client, config, args);
+        case 'play_playlist':
+          return playPlaylist(client, args);
         case 'next':
           return next(args);
         case 'previous':

@@ -343,6 +343,7 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 | `play_albums` | Play one or many albums; `mode` plus `shuffle: 'none' \| 'albums' \| 'songs'` (preserve, randomize album order, or fully interleave) |
 | `play_albums_search` | One-shot filter-driven album playback; accepts all `search_albums` filters plus `mode`/`shuffle` |
 | `play_songs_search` | One-shot filter-driven song playback; accepts all `search_songs` filters plus `mode`/`shuffle` |
+| `play_playlist` | One-shot load every track of a Navidrome playlist into the queue by `playlistId`; supports `mode` and `shuffle` |
 | `play_radio_station` | Play a saved Navidrome radio station; replaces the queue (mutually exclusive with songs/albums) |
 | `pause` | Pause playback (position preserved) |
 | `resume` | Resume playback |
@@ -357,6 +358,7 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 | `shuffle_play_queue` | Randomize queue order (membership unchanged) |
 | `move_in_play_queue` | Move a queue entry between indices |
 | `remove_from_play_queue` | Remove an entry; mpv auto-advances if the current track is removed |
+| `play_queue_index` | Jump directly to the queue entry at the given index (web-UI click equivalent); does not reorder |
 
 ## Troubleshooting
 

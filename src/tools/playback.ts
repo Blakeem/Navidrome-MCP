@@ -92,6 +92,12 @@ interface PlaySongsSearchResult {
   demoted?: true;
 }
 
+interface PlayPlaylistResult {
+  success: true;
+  count: number;
+  demoted?: true;
+}
+
 interface NextResult {
   success: true;
 }
@@ -193,6 +199,12 @@ const PlayAlbumsSearchSchema = SearchAlbumsSchema.extend({
 });
 
 const PlaySongsSearchSchema = SearchSongsSchema.extend({
+  mode: QueueModeSchema,
+  shuffle: z.boolean().default(false),
+});
+
+const PlayPlaylistSchema = z.object({
+  playlistId: z.string().min(1, 'Playlist ID is required'),
   mode: QueueModeSchema,
   shuffle: z.boolean().default(false),
 });
@@ -552,6 +564,55 @@ export async function playSongsSearch(
 }
 
 /**
+ * Load every track of a Navidrome playlist into the live mpv queue in a
+ * single call — the playlist counterpart to `play_albums` / `play_songs`.
+ * Avoids the two-step `get_playlist_tracks` → `play_songs` pattern, which
+ * round-trips every `mediaFileId` through the LLM and wastes context tokens
+ * for large playlists.
+ *
+ * Tracks are loaded in the playlist's saved order; `shuffle: true` applies
+ * Fisher-Yates to the flat ID list before enqueue. `mode: 'append'` adds to
+ * the existing queue without clearing or unpausing (same semantics as the
+ * sibling tools). Empty playlists raise `'Playlist has no tracks'`.
+ */
+export async function playPlaylist(client: NavidromeClient, args: unknown): Promise<PlayPlaylistResult> {
+  let parsed: z.infer<typeof PlayPlaylistSchema>;
+  try {
+    parsed = PlayPlaylistSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_playlist', error));
+  }
+
+  try {
+    logger.debug(`playback: play_playlist id=${parsed.playlistId} mode=${parsed.mode} shuffle=${parsed.shuffle}`);
+
+    const { ids, metadata } = await fetchPlaylistTrackIds(client, parsed.playlistId);
+    if (ids.length === 0) {
+      throw new Error('Playlist has no tracks');
+    }
+
+    const ordered = parsed.shuffle ? fisherYatesShuffle(ids) : ids;
+    if (parsed.shuffle) {
+      logger.debug(`playback: play_playlist shuffled ${ordered.length} tracks`);
+    }
+
+    // Metadata is indexed by songId in the engine cache, not by queue
+    // position (see playback-engine.ts:metadataCache), so the unshuffled
+    // metadata array stays valid even when `ordered` is permuted.
+    const { demoted } = await playbackEngine.enqueue(ordered, parsed.mode, metadata);
+
+    const out: PlayPlaylistResult = {
+      success: true,
+      count: ordered.length,
+    };
+    if (demoted) out.demoted = true;
+    return out;
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('play_playlist', error));
+  }
+}
+
+/**
  * Fetch the ordered track ID list for a single album from Navidrome.
  *
  * Uses `album_id` (snake_case) for the filter — Navidrome's REST API
@@ -634,6 +695,78 @@ async function fetchAlbumTrackIds(
   if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * MAX_ALBUM_TRACKS) {
     logger.warn(
       `Album ${albumId} has ${totalReported} tracks but only the first ${ids.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
+    );
+  }
+  return { ids, metadata };
+}
+
+/**
+ * Fetch every track ID + queue metadata for a playlist. Paginated reads
+ * of `/playlist/{id}/tracks` follow X-Total-Count just like
+ * `fetchAlbumTrackIds` so playlists longer than one page load completely.
+ * The MAX_ALBUM_* caps are reused as a generic per-page / max-pages bound
+ * — Navidrome's pagination cap is the same for every paginated read,
+ * regardless of which collection is being walked.
+ *
+ * Returns `[]` for empty playlists; callers decide whether to treat that
+ * as a hard error.
+ */
+async function fetchPlaylistTrackIds(
+  client: NavidromeClient,
+  playlistId: string,
+): Promise<{ ids: string[]; metadata: QueueTrackMetadata[] }> {
+  const ids: string[] = [];
+  const metadata: QueueTrackMetadata[] = [];
+  let totalReported: number | null = null;
+  for (let page = 0; page < MAX_ALBUM_PAGES; page++) {
+    const start = page * MAX_ALBUM_TRACKS;
+    const params = new URLSearchParams({
+      _start: String(start),
+      _end: String(start + MAX_ALBUM_TRACKS),
+    });
+    const endpoint = `/playlist/${encodeURIComponent(playlistId)}/tracks?${params.toString()}`;
+    const { data, total } = await client.requestWithMeta<unknown>(endpoint);
+    if (page === 0) totalReported = total;
+
+    if (!Array.isArray(data)) {
+      throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
+    }
+    for (const track of data) {
+      if (typeof track !== 'object' || track === null) continue;
+      const record = track as Record<string, unknown>;
+      // Playlist rows carry the play-target as `mediaFileId`; the row's
+      // own `id` is the playlist-position record, not the song. Fall back
+      // to `id` (stringified if numeric) only if `mediaFileId` is missing,
+      // matching the transformer in playlist-export.ts.
+      const rawMediaFileId = record['mediaFileId'];
+      const rawId = record['id'];
+      let songId = '';
+      if (typeof rawMediaFileId === 'string' && rawMediaFileId !== '') {
+        songId = rawMediaFileId;
+      } else if (typeof rawId === 'string' && rawId !== '') {
+        songId = rawId;
+      } else if (typeof rawId === 'number') {
+        songId = String(rawId);
+      }
+      if (songId === '') continue;
+      ids.push(songId);
+      const entry: QueueTrackMetadata = { songId };
+      if (typeof record['title'] === 'string') entry.title = record['title'];
+      if (typeof record['artist'] === 'string') entry.artist = record['artist'];
+      if (typeof record['album'] === 'string') entry.album = record['album'];
+      if (typeof record['duration'] === 'number') entry.duration = record['duration'];
+      metadata.push(entry);
+    }
+    if (data.length === 0) break;
+    if (total !== null) {
+      if (ids.length >= total) break;
+    } else if (data.length < MAX_ALBUM_TRACKS) {
+      break;
+    }
+  }
+  if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * MAX_ALBUM_TRACKS) {
+    logger.warn(
+      `Playlist ${playlistId} has ${totalReported} tracks but only the first ${ids.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
     );
   }
   return { ids, metadata };
