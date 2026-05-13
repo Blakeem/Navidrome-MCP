@@ -81,6 +81,7 @@ import { createLyricsToolCategory } from './lyrics-handlers.js';
 import { createTagsToolCategory } from './tag-handlers.js';
 import { createPlaybackToolCategory } from './playback-handlers.js';
 import { playbackEngine } from '../../services/playback/playback-engine.js';
+import { ScrobbleTracker } from '../../services/playback/scrobble-tracker.js';
 
 // Main registration function
 export function registerTools(server: Server, client: NavidromeClient, config: Config): void {
@@ -114,6 +115,15 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
     // Configure the singleton engine with the loaded config so tools can
     // lazy-spawn mpv on first invocation.
     playbackEngine.configure(config);
+    // Auto-scrobble plays to Navidrome (Last.fm rules: now-playing on start,
+    // submission past 50% of duration or 4 min, whichever first; ≥30s
+    // tracks only). The tracker is constructed once and attached for the
+    // rest of the process lifetime — there is no explicit shutdown. On
+    // SIGINT/SIGTERM the engine closes its IPC socket (mpv keeps running,
+    // detached) and the tracker is torn down with the process; any
+    // in-flight /scrobble request is abandoned, which is acceptable per
+    // Last.fm best-effort semantics.
+    new ScrobbleTracker(client, playbackEngine).attach();
     registry.register('playback', createPlaybackToolCategory(client, config));
   }
 
