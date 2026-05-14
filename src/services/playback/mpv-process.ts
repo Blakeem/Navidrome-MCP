@@ -122,6 +122,14 @@ function buildMpvArgs(ipcPath: string): string[] {
     '--load-scripts=no',
     '--gapless-audio=weak',
     '--prefetch-playlist=yes',
+    // Network cache. mpv defaults (--cache-secs=1.0, --demuxer-readahead-secs=1.0)
+    // are tuned for local files; on a streamed HTTP source they leave a ~1s budget
+    // that any network jitter at track-change time blows through, causing the
+    // decoder to underrun and stop after a second of playback. Audio bitrates
+    // are tiny (30s of FLAC ≈ 6MB, MP3 ≈ 1.2MB), so a generous prebuffer is free.
+    '--cache=yes',
+    '--cache-secs=30',
+    '--demuxer-readahead-secs=20',
     `--input-ipc-server=${ipcPath}`,
     '--volume=80',
     '--audio-display=no',

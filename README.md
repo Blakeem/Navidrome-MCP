@@ -24,7 +24,7 @@ Browse and search songs, albums, artists, genres, and tags with rich filtering: 
 
 Audio plays through your machine's speakers, no browser or Navidrome web UI needed. Search and play in a single step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, *"add 10 random rock songs to whatever's already playing, shuffled"*. Three shuffle modes for albums (keep order, randomize album order, fully interleave tracks).
 
-The live queue is actively manipulable: move a track to the front and it starts playing, shuffle and the new top plays, remove the current track and the next one auto-advances. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
+The live queue is actively manipulable: move a track to the front and it starts playing, shuffle and the new top plays, remove the current track and the next one auto-advances. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. Plays scrobble back to Navidrome so your recently-played and play counts stay in sync with what you actually listen to through mpv. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
 
 This design is built for conversational control and pairs cleanly with voice transports (Whisper STT + TTS) to build a hands-free music device on a Raspberry Pi or always-on machine.
 
@@ -380,7 +380,6 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 - **No audio without mpv.** When mpv isn't installed the library and saved-queue tools still work, but audio playback isn't available; use the Navidrome web UI or a Subsonic client.
 - **Recently-played has no timestamps.** Navidrome exposes play counts and completion status, not last-played times.
 - **Saved queue ≠ live queue.** The `*_saved_queue` tools operate on Navidrome's server-side advisory queue (web UI sync). The `*_play_queue` tools operate on the local mpv playlist. They are independent.
-- **Scrobbling for local playback isn't wired up yet.** Listens through mpv don't currently feed back into Navidrome's play counts. Planned.
 
 ## Development
 
