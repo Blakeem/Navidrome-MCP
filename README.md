@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/blakeem-navidrome-mcp-badge.png)](https://mseep.ai/app/blakeem-navidrome-mcp)
+
 # Navidrome MCP Server
 
 Turn your Navidrome music server into a conversational music assistant. This MCP (Model Context Protocol) server lets Claude Desktop, Claude Code, Cursor, and other MCP-compatible clients browse and curate your library, build playlists, discover new music, and play audio directly through your machine's speakers.
