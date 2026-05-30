@@ -33,6 +33,7 @@ import { handleHealth } from './routes/health.js';
 import { handleNetworkInfo } from './routes/network-info.js';
 import { handleListPlaylists, handlePlayPlaylist } from './routes/playlists.js';
 import {
+  handleClear,
   handleNext,
   handlePause,
   handlePlayQueueIndex,
@@ -41,6 +42,12 @@ import {
   handleSeek,
   handleVolume,
 } from './routes/controls.js';
+import {
+  handleGetPlayerSettings,
+  handlePlayerState,
+  handleSetPlayerSettings,
+  handleShutdown,
+} from './routes/player.js';
 import { handleNowPlaying, handleQueue } from './routes/snapshot.js';
 import { handleStatic } from './routes/static-files.js';
 
@@ -48,6 +55,8 @@ interface ServerDeps {
   config: Config;
   client: NavidromeClient;
   broadcaster: SseBroadcaster;
+  /** Tear down the player (stop mpv + exit) — invoked by POST /api/shutdown. */
+  shutdown: () => void;
 }
 
 /**
@@ -121,6 +130,7 @@ async function handleRequest(
   if (method === 'POST' && path === '/api/controls/seek')       return handleSeek(req, res);
   if (method === 'POST' && path === '/api/controls/volume')     return handleVolume(req, res);
   if (method === 'POST' && path === '/api/controls/play-index') return handlePlayQueueIndex(req, res);
+  if (method === 'POST' && path === '/api/controls/clear')      return handleClear(res);
 
   // --- API: network info ---
   if (method === 'GET' && path === '/api/network-info') {
@@ -131,6 +141,12 @@ async function handleRequest(
   // --- API: playlists ---
   if (method === 'GET'  && path === '/api/playlists')      return handleListPlaylists(res, deps.client);
   if (method === 'POST' && path === '/api/playlists/play') return handlePlayPlaylist(req, res, deps.client);
+
+  // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
+  if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res); return; }
+  if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res); return; }
+  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res);
+  if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
 
   // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {

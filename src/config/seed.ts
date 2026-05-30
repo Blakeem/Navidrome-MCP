@@ -91,6 +91,7 @@ function importFromLegacyEnv(): SettingsFile {
       host: get('WEBUI_HOST') ?? null,
       expose: get('WEBUI_EXPOSE') === 'true',
       autoOpenBrowser: get('WEBUI_AUTO_OPEN_BROWSER') === 'true',
+      persistAfterMcpExit: get('WEBUI_PERSIST_AFTER_MCP_EXIT') === 'true',
     },
     advanced: {
       debug: get('DEBUG') === 'true',

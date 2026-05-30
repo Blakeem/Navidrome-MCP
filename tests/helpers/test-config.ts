@@ -35,6 +35,7 @@ const BASE: Config = {
     port: 8808,
     expose: false,
     autoOpenBrowser: false,
+    persistAfterMcpExit: false,
   },
 };
 

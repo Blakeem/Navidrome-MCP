@@ -92,6 +92,12 @@ export const ConfigSchema = z.object({
     // the user ran it explicitly). Default false to avoid popping a tab on every
     // headless Claude Desktop launch.
     autoOpenBrowser: z.boolean().default(false),
+    // When true, a player spawned by the MCP server keeps running (and mpv keeps
+    // playing) after the MCP server closes/restarts. Default false: the spawned
+    // player and mpv stop with the MCP server, so nothing lingers. A player you
+    // launch yourself (`navidrome-web`) always persists regardless. Can be
+    // toggled live in the player's loopback-only settings modal.
+    persistAfterMcpExit: z.boolean().default(false),
   }),
 });
 

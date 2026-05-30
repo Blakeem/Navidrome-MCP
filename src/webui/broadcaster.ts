@@ -23,6 +23,7 @@ import {
   type StateChangeEvent,
 } from '../services/playback/playback-engine.js';
 import { getPlayQueue, nowPlaying, playbackStatus } from '../tools/playback.js';
+import { getPersist, hasLiveParent } from '../web/player-runtime.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -222,7 +223,12 @@ export class SseBroadcaster {
       return null;
     }
 
-    return JSON.stringify({ nowPlaying: np, queue, status });
+    // `player` carries process-global lifecycle state so the frontend can
+    // recompute the power-button visibility live (it flips the instant MCP
+    // disconnects or persist is toggled). It is NOT per-peer — the client
+    // combines this with its own `isLocal` (one-time /api/player-state fetch).
+    const player = { hasLiveParent: hasLiveParent(), persist: getPersist() };
+    return JSON.stringify({ nowPlaying: np, queue, status, player });
   }
 }
 

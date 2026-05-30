@@ -189,9 +189,9 @@ export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
 /**
  * Optional alternate output. When set, formatted+redacted log records go here
- * instead of `console.error`. Used by the detached `navidrome-web` process,
- * which is spawned with `stdio:'ignore'` and must log to a file rather than the
- * (closed) stderr. The args passed are ALREADY redacted.
+ * instead of `console.error`. Used by the `navidrome-web` process, which (when
+ * spawned by MCP) has its stdio ignored and must log to a file rather than the
+ * (unavailable) stderr. The args passed are ALREADY redacted.
  */
 type LogSink = (level: LogLevel, args: unknown[]) => void;
 

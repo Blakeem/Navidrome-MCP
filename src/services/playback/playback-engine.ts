@@ -241,9 +241,10 @@ class PlaybackEngine {
 
   /**
    * Whether mpv is actively playing audio, derived purely from the cached
-   * observed properties (no IPC round-trip, no lazy spawn). Used only by the
-   * web port owner's shutdown decision and the idle reaper (standalone-web
-   * spec §8) — it is NOT a general truth source for other features.
+   * observed properties (no IPC round-trip, no lazy spawn). A best-effort
+   * snapshot biased toward "playing" — NOT a general truth source for other
+   * features. (Formerly fed the idle reaper, which has since been removed; the
+   * web owner now unconditionally quits mpv on shutdown — spec §B.1.)
    *
    * Predicate: a live IPC connection AND `playlist-count > 0` AND
    * `pause === false` AND `idle-active !== true` AND not end-of-file.
@@ -1196,21 +1197,19 @@ class PlaybackEngine {
    */
   /**
    * Quit the mpv PROCESS itself (not just our IPC socket), then tear down our
-   * IPC state. Used ONLY by the web port owner's shutdown decision and the idle
-   * reaper (standalone-web spec §8). This is deliberately distinct from
-   * `shutdown()`, which closes our connection but leaves mpv running (the
-   * "survives parent" design) — here we WANT mpv gone. Sending `quit` over IPC
-   * terminates mpv; the socket then closes and we clean up local state.
+   * IPC state. Used by the web port owner's shutdown and the MCP-only exit path
+   * (standalone-web spec §B.1). Distinct from `shutdown()`, which closes our
+   * connection but leaves mpv running — here we WANT mpv gone.
+   *
+   * Sends `quit` over a **one-shot connection** to the well-known socket rather
+   * than reusing `this.ipc`. mpv accepts multiple concurrent IPC clients, and
+   * critically this still works when our live connection was already torn down
+   * by the engine's own release-on-signal handler (which can run before us when
+   * both fire on the same SIGINT/SIGTERM). Bounded + best-effort: a no-op if
+   * nothing is listening (mpv already gone / never started).
    */
   async quitMpv(): Promise<void> {
-    const ipc = this.ipc;
-    if (ipc?.isConnected() === true) {
-      try {
-        await ipc.command('quit');
-      } catch {
-        // mpv may already be exiting; fall through to local cleanup.
-      }
-    }
+    await quitMpvViaSocket(this.ipcPath);
     await this.shutdown();
   }
 
@@ -1237,6 +1236,44 @@ class PlaybackEngine {
     // Allow restarting after an explicit shutdown
     this.shuttingDown = false;
   }
+}
+
+/**
+ * Send mpv `quit` over a one-shot connection to its IPC socket, independent of
+ * the engine's own (possibly already-closed) connection. mpv accepts multiple
+ * concurrent IPC clients, so this works alongside a live engine connection and
+ * still delivers when that connection was torn down by the release-on-signal
+ * handler. Bounded (~1s) and best-effort: resolves quietly when nothing is
+ * listening (mpv already gone / never started). Works for both the unix socket
+ * (POSIX) and the named pipe (Windows) that `getDefaultIpcPath()` returns.
+ */
+function quitMpvViaSocket(path: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const done = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    let sock: ReturnType<typeof createConnection>;
+    try {
+      sock = createConnection({ path });
+    } catch {
+      done();
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { sock.destroy(); } catch { /* noop */ }
+      done();
+    }, 1000);
+    timer.unref();
+    sock.once('error', () => { clearTimeout(timer); done(); });
+    sock.once('close', () => { clearTimeout(timer); done(); });
+    sock.once('connect', () => {
+      // `end()` flushes the command then half-closes; mpv reads `quit` and exits.
+      try { sock.end('{ "command": ["quit"] }\n'); } catch { /* noop */ }
+    });
+  });
 }
 
 /**

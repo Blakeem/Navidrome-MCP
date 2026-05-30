@@ -27,6 +27,7 @@ const FIELDS = [
   ['webui.host', 'webuiHost', 'stringOrNull'],
   ['webui.expose', 'webuiExpose', 'bool', false],
   ['webui.autoOpenBrowser', 'webuiAutoOpen', 'bool', false],
+  ['webui.persistAfterMcpExit', 'webuiPersist', 'bool', false],
   ['advanced.debug', 'debug', 'bool', false],
   ['advanced.cacheTtl', 'cacheTtl', 'int', 300],
   ['advanced.tokenExpiry', 'tokenExpiry', 'int', 86400],

@@ -31,10 +31,32 @@ centralized GUI-managed settings.
 >   its own, and motivated the switch from lazy-bind to **eager bind at startup**.
 >
 > One refinement to §6.4's "config-static" scrobbler election emerged in review:
-> the election can't be *purely* config-static, because the detached spawn can fail
+> the election can't be *purely* config-static, because the spawn can fail
 > (foreign port, spawn error). `ensureWebServerRunning` now returns a status, and
-> MCP falls back to being the active scrobble/reaper host when **no** web owner can
+> MCP falls back to being the active scrobble host when **no** web owner can
 > be brought up — so plays are never silently dropped. See §6.4.
+>
+> **Phase B.1 update (2026-05-30) — deterministic lifecycle + in-UI controls.**
+> Real-world use showed the player needed an off switch, and that "always survives
+> + idle reaper" was the wrong model. Changes that supersede parts of §8 below:
+> - **The idle reaper is REMOVED.** mpv is owned by the web server: it stops mpv
+>   exactly when the web server stops. No timer-based reaping.
+> - **The MCP-spawned player is an IPC child, not a bare detached process.** It
+>   watches `process.on('disconnect')` to learn when its MCP exits and, by default,
+>   stops with it (no orphan). New setting **`webui.persistAfterMcpExit`** (default
+>   `false`) makes it survive instead. A player launched standalone (no IPC parent)
+>   always persists. The decision lives in the child (it reads the persist flag);
+>   the port only decides whether to spawn. MCP-only mode (web disabled) quits mpv
+>   on its own exit iff no web server is running.
+> - **In-UI controls (all loopback-gated where destructive):** a **Clear queue**
+>   button (mpv `stop`; there is no separate "stop" — mpv has no stop-but-keep-queue);
+>   a **gear settings modal** (toggles `persistAfterMcpExit` live + `autoOpenBrowser`,
+>   written to `settings.json`); a **power button** that quits mpv + exits, shown
+>   only when the server won't be auto-closed by MCP (standalone, or persist on).
+>   Settings + shutdown endpoints are loopback-only; the SSE snapshot carries
+>   `player:{hasLiveParent,persist}` so the UI recomputes button visibility live.
+> Where §8 below describes the idle reaper / `shouldKillMpvOnOwnerShutdown`, read
+> "removed — the owner always quits mpv on shutdown; lifetime is the host's."
 
 ---
 
@@ -99,10 +121,10 @@ not greenfield.
   owns the port; others probe, confirm the signature, and attach instead.
 - **G3 [DONE] — Config is env-only.** *Resolved in Phase A:* `settings.json` store
   + `resolveConfigState()`; `process.env` consulted only to seed the first-run form.
-- **G4 [DONE] — No smart mpv shutdown.** *Resolved (§8):* a **narrow, owner-only**
-  `shouldKillMpvOnOwnerShutdown` + idle reaper (`src/services/playback/shutdown.ts`)
-  + `playbackEngine.quitMpv()`, preserving "survives MCP close" while reclaiming a
-  stopped/idle mpv. MCP exit still never kills mpv.
+- **G4 [DONE] — No smart mpv shutdown.** *Resolved (§8 → §B.1):* mpv is owned by the
+  web server and quit via `playbackEngine.quitMpv()` whenever the server shuts down
+  (power button / MCP disconnect with persist off / signal). The earlier idle reaper
+  was removed in favor of this deterministic, host-tied lifetime.
 - **G5 [DONE] — No standalone launcher.** *Resolved by the browser-first approach
   (§9):* `navidrome-web` serves the player; the user opens the URL (auto-opened via
   the shared `openBrowser()`), no native shell required.
@@ -501,15 +523,16 @@ of binding). No lockfile → no stale-PID problem.
 
 ## 6. MCP launches the standalone server (resolves G1 + req #4) **[DONE]**
 
-> **As built:** `src/web/spawn.ts` `ensureWebServerRunning(config)` does the
-> fast-path probe + detached spawn (`detached:true, stdio:'ignore', unref()`),
-> with an in-process double-spawn guard. Dev/prod path: prod runs
-> `node dist/web/main.js`; dev runs `node --import tsx src/web/main.ts` (via
-> `process.execPath`, so it's PATH-independent and Windows-safe — no bare `tsx`
-> lookup or `.cmd` shim). The child inherits `NAVIDROME_CONFIG_PATH` and gets
-> `NAVIDROME_WEB_AUTO_OPEN`. `src/web/main.ts` is the bin (`navidrome-web`); it
-> logs to `${configDir}/navidrome-web.log` (sink installed first, `0600`, with a
-> stderr fallback) since it's detached. The old in-process `WebUIServer` is deleted.
+> **As built (updated by §B.1):** `src/web/spawn.ts` `ensureWebServerRunning(config)`
+> does the fast-path probe + an **IPC-child** spawn (`stdio:['ignore','ignore','ignore','ipc']`,
+> `unref()` — NOT detached, so the child can observe this MCP's exit), with an
+> in-process double-spawn guard. Dev/prod path: prod runs `node dist/web/main.js`;
+> dev runs `node --import tsx src/web/main.ts` (via `process.execPath`, so it's
+> PATH-independent and Windows-safe — no bare `tsx` lookup or `.cmd` shim). The
+> child inherits `NAVIDROME_CONFIG_PATH` and gets `NAVIDROME_WEB_AUTO_OPEN`.
+> `src/web/main.ts` is the bin (`navidrome-web`); it logs to
+> `${configDir}/navidrome-web.log` (sink installed first, `0600`, stderr fallback).
+> The old in-process `WebUIServer` is deleted.
 
 ### 6.1 Decision
 
@@ -586,10 +609,11 @@ exposed.
 > iff `acquireOrAttach` returned `owner`. **Refinement:** because the detached spawn
 > can fail (foreign port / spawn error), the election is *not purely* config-static —
 > `ensureWebServerRunning` returns a `WebServerStatus` (`running` | `spawned` |
-> `unavailable`), and MCP becomes the active host (scrobbler **and** reaper) when the
-> status is `unavailable`, so plays are never silently dropped. Both hosts run
+> `unavailable`), and MCP becomes the active scrobble host when the status is
+> `unavailable`, so plays are never silently dropped. Both hosts run
 > `playbackEngine.ensureAttached()` at startup to adopt an already-playing mpv and
 > prime observers (the tracker hydrates without re-scrobbling the in-flight track).
+> (No reaper — see §B.1; mpv lifetime follows the owning host.)
 
 Per review M1 + M2, and §3.1: MCP and `navidrome-web` are **separate processes,
 each with its own `playbackEngine` instance**, both attached to one mpv. Both
@@ -677,15 +701,14 @@ echoing credentials).
 
 ## 8. Smart mpv lifecycle (resolves G4) **[DONE]**
 
-> **As built:** `src/services/playback/shutdown.ts` —
-> `shouldKillMpvOnOwnerShutdown(isPlaying)`, `isGenuinelyIdle()` (live mpv with
-> `idle-active === true`; never a paused-mid-track), `nextIdleStreak()`, and
-> `startIdleReaper(engine, {intervalMs, ticksToReap}, onReap)` (default ~10 min;
-> timer `unref()`'d). `playbackEngine.isPlaying()` already existed; added
-> `playbackEngine.quitMpv()` (sends mpv `quit` IPC then local cleanup) used ONLY by
-> the owner's shutdown + the reaper. The web owner installs a SIGINT/SIGTERM handler
-> that quits mpv iff not playing, with a hard-exit backstop so a wedged `quit` can't
-> block exit. MCP exit still never kills mpv.
+> **As built (superseded by §B.1 — the reaper was removed):** the idle reaper and
+> `shouldKillMpvOnOwnerShutdown` were shipped then deleted (`src/services/playback/shutdown.ts`
+> is gone). The model is now deterministic: **mpv is owned by the web server and is
+> always quit when the web server shuts down** (`src/web/main.ts` `shutdownPlayer`,
+> with a hard-exit backstop so a wedged `quit` can't block exit). `playbackEngine.quitMpv()`
+> remains the primitive (sends mpv `quit` IPC then local cleanup), used by every
+> teardown path. MCP-only mode quits mpv on its own exit iff no web server owns it.
+> See the §B.1 note at the top for the full lifecycle.
 
 > **Revised per review (M3).** The earlier draft had a cross-process heartbeat
 > registry and let *any* "last controller" kill mpv. The review showed this is
@@ -883,9 +906,11 @@ identically with a plain browser. Notes if/when that happens:
 | MCP spawns web **[DONE]** | `src/index.ts`, `src/web/spawn.ts` *(new)* | `ensureWebServerRunning()` (PATH-independent dev/prod path, child env, double-spawn guard) returns `WebServerStatus`; SIGINT/TERM do NOT touch mpv. |
 | Delete WebUIServer **[DONE]** | `src/webui/index.ts` *(deleted)* | Lifecycle folded into `src/web/main.ts`; reuses `createServer` + `SseBroadcaster`. No test imported it. |
 | Scrobbler election **[DONE]** | `src/index.ts`, `src/web/main.ts`, `src/services/playback/scrobble-election.ts` *(new)* | `shouldMcpSubmit`; web owner submits, MCP fallback covers MCP-only mode **and** spawn failure (§6.4). |
-| Smart shutdown **[DONE]** | `src/services/playback/shutdown.ts`, `playback-engine.ts` | `shouldKillMpvOnOwnerShutdown()`, `isGenuinelyIdle()`, `nextIdleStreak()`, `startIdleReaper()`; `quitMpv()`; **no** controller registry (§8). |
+| mpv lifetime **[DONE]** | `src/web/main.ts`, `playback-engine.ts` | Web server owns mpv → `shutdownPlayer` always `quitMpv()`s (hard-exit backstop). **Reaper removed** (`shutdown.ts` deleted). MCP-only mode quits mpv on exit iff no web server owns it (§B.1). |
+| Player lifecycle **[DONE]** | `src/web/spawn.ts`, `src/web/main.ts`, `src/web/player-runtime.ts` *(new)* | IPC-child spawn; child stops on parent `disconnect` unless `persistAfterMcpExit`; `computePlayerFlags` for UI gating (§B.1). |
+| Player controls **[DONE]** | `src/webui/routes/{controls,player}.ts`, `src/webui/server.ts`, `src/webui/loopback.ts` *(new)*, `public/*` | Clear-queue; loopback `/api/player/settings` + `/api/shutdown`; `/api/player-state`; SSE `player{hasLiveParent,persist}`; gear + power + clear UI. |
 | Playlist UI **[DONE]** | `src/webui/routes/playlists.ts` *(new)*, `src/webui/http-helpers.ts`, `src/webui/public/*` | `/api/playlists` + `/api/playlists/play` (reuse `listPlaylists`/`playPlaylist`); shared `runAction`; playlist icon + modal. |
-| autoOpenBrowser **[DONE]** | `src/config/{schema,store,map-config,seed}.ts`, `src/config-app/public/*`, `src/web/main.ts` | New `webui.autoOpenBrowser` (default false) across the config/form layer; honored via `NAVIDROME_WEB_AUTO_OPEN`. |
+| webui settings **[DONE]** | `src/config/{schema,store,map-config,seed}.ts`, `src/config-app/public/*`, `src/web/main.ts` | `webui.autoOpenBrowser` + `webui.persistAfterMcpExit` (both default false) across the config/form layer; persist honored live + via `NAVIDROME_WEB_AUTO_OPEN`. |
 | Settings app **[DONE]** | `src/config-app/{server,routes,main,degraded-tools}.ts`, `src/config-app/public/*`, `src/utils/open-browser.ts` | Loopback ephemeral settings server (seed/save/test + static), `navidrome-config` bin, degraded-mode `open_settings`, cross-platform browser open (§7). |
 | Package **[DONE]** | `package.json` | `navidrome-config` **and** `navidrome-web` in `bin`; build copies config-app + webui assets via `scripts/build-webui.mjs`. |
 | Native shell | *(none)* | **Dropped** — browser is the launcher (§9). Optional future Tauri/Electron shell would wrap the Node server as a sidecar. |
@@ -914,18 +939,21 @@ exports of any deleted functions (dead-code gate blocks PRs).
 ### Phase B — Standalone player (browser) ✅ DONE
 - Port-as-lock `acquireOrAttach` + `/healthz` (loopback probe) (§5). ✅
 - Standalone `navidrome-web` bin (logs to file, `0600` + stderr fallback); MCP
-  spawns it detached with PATH-independent dev/prod path + double-spawn guard (§6).
-  In-process `WebUIServer` deleted; binding is now **eager** at startup. ✅
+  spawns it as an **IPC child** with PATH-independent dev/prod path + double-spawn
+  guard (§6). In-process `WebUIServer` deleted; binding is now **eager** at startup. ✅
 - **Scrobbler election** + single-submitter rule, with MCP fallback that also
   covers spawn failure (`WebServerStatus`), so scrobbling never silently dies (§6.4). ✅
-- Smart mpv shutdown: owner-only `shouldKillMpvOnOwnerShutdown` + `isPlaying()` +
-  idle reaper + `quitMpv()`; **no controller registry**; MCP exit never touches mpv;
-  hard-exit backstop on the owner's signal path (§8). ✅
+- mpv lifetime tied to the web server (§B.1): `shutdownPlayer` always `quitMpv()`s
+  with a hard-exit backstop. **Idle reaper removed.** MCP-only mode quits mpv on
+  exit iff no web server owns it. MCP exit otherwise never kills mpv. ✅
+- **Deterministic player lifecycle + in-UI controls (§B.1):** `persistAfterMcpExit`
+  setting; IPC parent-disconnect decides stop-vs-survive; clear-queue, loopback
+  gear-settings + power-button. ✅
 - Web action coverage reused transport-agnostically; shared `runAction` in
   `http-helpers.ts` for control + playlist routes. ✅
 - **Multi-process coordination tests** (`tests/integration/coordination/`,
-  port-as-lock ownership / attach / foreign-refuse / graceful-exit) under the
-  `test:playback` gate (§4.10). ✅
+  port-as-lock ownership / attach / foreign-refuse / graceful-exit + IPC
+  parent-disconnect lifecycle) under the `test:playback` gate (§4.10). ✅
 - **Launcher:** browser only — users open `http://127.0.0.1:<port>` (or the LAN URL
   when `expose=true`); auto-open via `webui.autoOpenBrowser`. ✅
 - **Beyond spec (landed here):** `webui.autoOpenBrowser` setting; **playlist picker**
@@ -1011,7 +1039,8 @@ The `.env` removal rippled into docs; all updated alongside the code:
 | First-run | Zero-config | **Settings page (browser) on first run** + auto-open + `open_settings` degraded tool (settings server decoupled from mpv gate) |
 | Settings exposure | Remote allowed? | **Never** — loopback only (incl. `::ffff:127.0.0.1`), even when the player is exposed |
 | Scrobbler | How plays are tracked | **[DONE]** Shared playback layer observes mpv → MCP- and web-initiated plays tracked identically. Single *active submitter* (web owner; MCP fallback covering MCP-only mode **and** spawn failure) to avoid double-submit and zero-submit |
-| mpv shutdown | When to stop mpv | **[DONE]** Web-owner authority: owner kills on its shutdown iff not playing (hard-exit backstop); idle reaper for crash-orphans; MCP exit never kills mpv; no heartbeat registry |
-| Player UI | What it can do | **[DONE]** Now-playing + transport + queue + **playlist picker** (start a whole Navidrome playlist: replace/append + shuffle); eager-bind at startup |
+| mpv shutdown | When to stop mpv | **[DONE, §B.1]** mpv is owned by the web server and quit whenever it shuts down (power / MCP-disconnect-if-not-persist / signal), hard-exit backstop; MCP-only mode quits on exit iff no web owner. **No idle reaper** (removed); deterministic host-tied lifetime |
+| Player lifetime | Survive MCP close? | **[DONE, §B.1]** Setting `webui.persistAfterMcpExit` (default OFF): MCP-spawned player stops with MCP unless on; a standalone-launched player always survives. Decided by the IPC parent link, not the port |
+| Player UI | What it can do | **[DONE]** Now-playing + transport + queue + **playlist picker**, **clear-queue**, loopback **gear settings** (persist/auto-open) + **power** button; eager-bind at startup |
 | Launcher | How the UI opens | **[DONE]** **Browser** — open `http://127.0.0.1:<port>` directly; `webui.autoOpenBrowser` for MCP-start auto-open. **Tauri/Electron dropped**; native shell future-only |
 | Sequencing | Order | **Phase A settings/config (done) → Phase B standalone player (done) → Phase C optional native shell (future)** |

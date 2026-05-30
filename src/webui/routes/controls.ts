@@ -18,6 +18,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
+  clearPlayQueue,
   next,
   pause,
   playQueueIndex,
@@ -30,6 +31,16 @@ import { readJsonBody, runAction, writeError } from '../http-helpers.js';
 
 export function handlePause(res: ServerResponse): Promise<void> {
   return runAction(res, () => pause({}));
+}
+
+/**
+ * POST /api/controls/clear — empty the live queue and stop audio (mpv `stop`).
+ * The UI's "clear queue" affordance; a normal control (LAN-allowed). There is
+ * deliberately no separate "stop" — mpv has no stop-but-keep-queue, so stop and
+ * clear are the same operation; we expose it once, as clear.
+ */
+export function handleClear(res: ServerResponse): Promise<void> {
+  return runAction(res, () => clearPlayQueue({}));
 }
 
 export function handleResume(res: ServerResponse): Promise<void> {

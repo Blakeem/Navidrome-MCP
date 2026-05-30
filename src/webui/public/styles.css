@@ -164,6 +164,9 @@ main {
 }
 .ghost-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
 .ghost-btn:active { transform: translateY(1px); }
+.ghost-btn.small { padding: 4px; min-width: 0; }
+.ghost-btn.danger:hover { color: #fff; background: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+.ghost-btn[hidden] { display: none; }
 
 /* ───────────────── now playing card ───────────────── */
 .now-playing-card {
@@ -632,6 +635,45 @@ main {
   min-height: 40px;
 }
 .primary-btn:hover { background: var(--accent-strong); }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border, var(--surface-2));
+  border-radius: var(--radius-sm);
+  padding: 8px 18px;
+  font-size: 0.95rem;
+  cursor: pointer;
+  min-height: 40px;
+}
+.btn-secondary:hover { border-color: var(--accent); }
+
+/* Settings modal checkbox rows */
+.modal-content label.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+.modal-content label.check input { margin-top: 3px; accent-color: var(--accent); }
+.modal-content label.check .modal-hint { display: block; margin-top: 2px; }
+
+/* Terminal state after the power button shuts the player down. */
+body.player-stopped main,
+body.player-stopped .topbar-actions .ghost-btn { opacity: 0.45; pointer-events: none; }
+body.player-stopped::after {
+  content: 'Player stopped. Relaunch navidrome-web or restart the MCP server to use it again.';
+  display: block;
+  position: fixed;
+  inset: auto 0 0 0;
+  padding: 12px 16px;
+  text-align: center;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
 
 /* ---------- playlist picker ---------- */
 .playlist-options {

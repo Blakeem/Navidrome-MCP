@@ -50,7 +50,10 @@ export default defineConfig({
     // re-initialized per file — which means a fresh /auth/login each time
     // and Navidrome's auth rate limiter (HTTP 429) kicks in.
     isolate: false,
-    testTimeout: 30000,
+    // Generous: the multi-process coordination tests chain several real
+    // child-process startups (each a Navidrome login + cache load) and waits,
+    // which run slow under the load of sibling tests in the single fork.
+    testTimeout: 90000,
     // Hook timeout is generous because beforeAll fetches test fixtures from
     // Navidrome (random-sort song search can take 10s+ on large libraries)
     // and may also auth against a cold cache.

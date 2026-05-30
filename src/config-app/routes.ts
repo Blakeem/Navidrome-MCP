@@ -73,7 +73,10 @@ function handleSeed(res: ServerResponse): void {
   }
 }
 
-/** POST /api/settings — validate + persist (sole writer of settings.json). */
+/** POST /api/settings — validate + persist. The primary settings writer; the
+ * player's loopback-only `/api/player/settings` also writes (the player-scoped
+ * webui subset). Both use the atomic `writeSettings`; concurrent saves are
+ * last-writer-wins on the whole file, acceptable for these rare local actions. */
 async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const parsed = await parseSettingsBody(req, res);
   if (parsed === null) return;

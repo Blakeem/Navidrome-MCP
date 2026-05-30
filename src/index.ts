@@ -26,15 +26,11 @@ import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
 import { ScrobbleTracker } from './services/playback/scrobble-tracker.js';
 import { shouldMcpSubmit } from './services/playback/scrobble-election.js';
-import {
-  IDLE_REAPER_INTERVAL_MS,
-  IDLE_REAPER_TICKS,
-  startIdleReaper,
-} from './services/playback/shutdown.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
 import { ensureWebServerRunning, type WebServerStatus } from './web/spawn.js';
+import { probeHealthz } from './web/acquire.js';
 import { startConfigServer } from './config-app/server.js';
 import { registerDegradedTools } from './config-app/degraded-tools.js';
 import { openBrowser } from './utils/open-browser.js';
@@ -101,12 +97,12 @@ async function main(): Promise<void> {
     registerResources(server, client);
 
     // Standalone web player (spec §6). Instead of an in-process server, MCP
-    // spawns the SAME `navidrome-web` process it would run standalone, DETACHED,
-    // so the web service survives MCP close. Eager at startup, gated on
-    // playback + webui.enabled. The spawn is best-effort and non-fatal — the
-    // MCP server stays up even if the player can't start (e.g. port conflict).
-    // SIGINT/SIGTERM deliberately do NOT stop the spawned server or touch mpv.
-    // Done BEFORE the scrobbler election because its result decides who scrobbles.
+    // spawns the SAME `navidrome-web` process it would run standalone, as an IPC
+    // CHILD so the child can react to this MCP's exit (stop with it by default,
+    // or persist if webui.persistAfterMcpExit). Eager at startup, gated on
+    // playback + webui.enabled. The spawn is best-effort and non-fatal — the MCP
+    // server stays up even if the player can't start (e.g. port conflict). Done
+    // BEFORE the scrobbler election because its result decides who scrobbles.
     let webStatus: WebServerStatus = 'unavailable';
     if (config.features.playback && config.webui.enabled) {
       webStatus = await ensureWebServerRunning(config);
@@ -130,21 +126,41 @@ async function main(): Promise<void> {
       // emit (it hydrates without re-scrobbling the in-flight track).
       const tracker = new ScrobbleTracker(client, playbackEngine);
       tracker.attach();
-      // Adopt an already-playing mpv (e.g. spawned by a prior session) so the
-      // scrobbler + reaper see real state immediately. Best-effort and never
-      // spawns mpv (ensureAttached only latches onto an existing socket).
+      // Adopt an already-playing mpv (e.g. left by a prior session) so the
+      // scrobbler sees real state immediately. Best-effort and never spawns mpv
+      // (ensureAttached only latches onto an existing socket).
       try {
         await playbackEngine.ensureAttached();
       } catch (err) {
         logger.debug('ensureAttached at startup failed (no mpv yet?):', err);
       }
-      // The active host runs the idle reaper to reclaim a continuously-idle mpv
-      // (spec §8.4). The timer is unref'd and MCP exit never kills mpv — only the
-      // running reaper reaps genuine idle.
-      startIdleReaper(playbackEngine, {
-        intervalMs: IDLE_REAPER_INTERVAL_MS,
-        ticksToReap: IDLE_REAPER_TICKS,
-      });
+    }
+
+    // mpv teardown on MCP exit (lifecycle §B.1): mpv stops with its last host.
+    // On a graceful signal, quit mpv IFF no web server is running — when a
+    // `navidrome-web` owns the port (incl. an MCP-spawned child or a persisted
+    // one) it owns mpv and tears it down itself, so MCP must not double-quit.
+    // Covers MCP-only mode and the spawn-failed case. Probe is loopback.
+    if (config.features.playback) {
+      let stopping = false;
+      const onExit = (): void => {
+        if (stopping) return;
+        stopping = true;
+        void (async (): Promise<void> => {
+          try {
+            const probe = await probeHealthz(config.webui.port);
+            if (probe !== 'ours') {
+              await playbackEngine.quitMpv();
+              logger.info('MCP exit: no web server owns mpv — quit it');
+            }
+          } catch {
+            /* best-effort */
+          }
+          process.exit(0);
+        })();
+      };
+      process.once('SIGINT', onExit);
+      process.once('SIGTERM', onExit);
     }
 
     const transport = new StdioServerTransport();

@@ -32,7 +32,7 @@ This design is built for conversational control and pairs cleanly with voice tra
 
 > Requires `mpv` (same as Local Audio Playback). On by default; starts with the server.
 
-A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser. Now-playing card with cover art, transport controls (previous / pause-resume / next), seek bar, volume slider, a queue list with click-to-jump, and a **playlist picker** so you can start any Navidrome playlist straight from the page — not just watch what the assistant queues. Updates live via Server-Sent Events so a phone laid on the desk stays in sync. It runs as its **own process** (`navidrome-web`) that the MCP server launches and that **keeps running after the MCP client closes**, so music — and scrobbling — survive. Run it without any MCP client too, and optionally have it **open in your browser automatically**. Defaults to localhost-only; flip one setting to expose it on your LAN and use a phone or tablet as a music remote. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup and the security note.
+A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser. Now-playing card with cover art, transport controls (previous / pause-resume / next), seek bar, volume slider, a queue list with click-to-jump, a **clear-queue** button, and a **playlist picker** so you can start any Navidrome playlist straight from the page — not just watch what the assistant queues. Updates live via Server-Sent Events so a phone laid on the desk stays in sync. It runs as its **own process** (`navidrome-web`) that the MCP server launches; by default it stops with the MCP server (nothing lingers), but flip one setting — **Keep playing after the MCP server closes** — and it (plus your music and scrobbling) survives. You can also launch it yourself, which always persists, and optionally have it **open in your browser automatically**. A local-only **gear** (settings) and **power** (stop everything) button live in the top bar. Defaults to localhost-only; flip one setting to expose it on your LAN and use a phone or tablet as a music remote. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup and the security note.
 
 ### 🎶 Playlists
 
@@ -201,19 +201,28 @@ When local audio playback is active, the MCP server runs a companion web interfa
 - **Now-playing card** — cover art, title, artist, album, and queue position. A `Live` indicator confirms the SSE stream is healthy.
 - **Transport controls** — previous / pause-resume / next, with a seek bar showing current position and remaining time.
 - **Volume slider** — drives mpv's internal volume control (independent of your OS volume).
-- **Queue list** — every track in the current mpv queue with title, artist · album, and duration. Click any row to jump to it.
+- **Queue list** — every track in the current mpv queue with title, artist · album, and duration. Click any row to jump to it. A **clear** icon empties the queue and stops playback.
 - **Playlist picker** — the playlist icon in the top bar opens a list of your Navidrome playlists; pick one to start it (Replace queue or Add to queue, with an optional Shuffle). This is what makes the page useful on its own, not just as a now-playing mirror.
+- **Local-only gear + power buttons** — on the host machine the top bar also shows a **gear** (player settings, incl. "keep playing after the MCP server closes") and, when applicable, a **power** button that stops mpv and shuts the player down. These are hidden for remote (LAN) browsers.
 - **Live state updates** — Server-Sent Events push state changes the instant they happen, throttled to ~1 Hz so the progress bar runs smoothly without flooding the network. Connections auto-reconnect on disconnect.
 
-### Enabling
+### Enabling & lifetime
 
-The web UI is **on by default** and **starts with the server** — the port binds immediately so the page (and its playlist picker) is reachable before anything is playing. The MCP server launches it as a **separate, detached `navidrome-web` process**, so closing the MCP client leaves the player — and playback, and scrobbling — running. Hosts without mpv installed don't start it at all.
+The web UI is **on by default** and **starts with the server** — the port binds immediately so the page (and its playlist picker) is reachable before anything is playing. The MCP server launches it as a **separate `navidrome-web` process**. Hosts without mpv installed don't start it at all.
 
-To turn it off entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
+**Does it keep playing after you close the AI?** Your choice:
+
+- **Default (off):** the MCP-launched player — and mpv — **stop when you close or restart the MCP server**, so nothing lingers.
+- **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the in-player gear modal): the MCP-launched player keeps running after you close the AI; stop it later with the **power** button.
+- **Launched it yourself** (`navidrome-web`, below): always keeps running independently — the MCP server attaches to it and never shuts it down.
+
+mpv is owned by the player: it stops exactly when the player stops (no background "idle timeout").
+
+To turn the panel off entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
 
 ### Running it standalone (without an MCP client)
 
-The player is its own binary, so you can launch it directly — handy on an always-on machine or to control playback when no AI client is open:
+The player is its own binary, so you can launch it directly — handy on an always-on machine, or to keep music playing across AI sessions (open the MCP to tweak playlists, close it, music continues):
 
 ```bash
 npx navidrome-web          # published package
@@ -221,11 +230,11 @@ npx navidrome-web          # published package
 node dist/web/main.js
 ```
 
-It reads the same `settings.json`, opens your browser to the player automatically (a direct launch always opens; the MCP-launched one honors the **auto-open** setting below), and **coexists** with an MCP-launched instance: whoever binds the configured port first owns it, and the other simply connects to it. No double servers, no port fights.
+It reads the same `settings.json`, opens your browser to the player automatically, and **coexists** with an MCP-launched instance: whoever binds the configured port first owns it, and the other simply connects to it. No double servers, no port fights. A standalone launch always persists (the MCP server will attach to it, not replace it, and won't stop it on exit). Logs go to a file (`navidrome-web.log`) in your config directory.
 
 ### Configuration
 
-All of these are optional and live in the **Web UI** section of the settings page (`navidrome-config`); the keys below are their `settings.json` paths. Restart the client after saving.
+All of these are optional and live in the **Web UI** section of the settings page (`navidrome-config`); the keys below are their `settings.json` paths. Restart the client after saving (except `persistAfterMcpExit`, which the in-player gear modal applies live).
 
 | Setting (`settings.json`) | Default | Effect |
 |---|---|---|
@@ -233,9 +242,10 @@ All of these are optional and live in the **Web UI** section of the settings pag
 | `webui.port` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
 | `webui.host` | `127.0.0.1` | Bind address. Override only if you know which interface you want — usually **Expose on LAN** is the right knob. |
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
-| `webui.autoOpenBrowser` | `false` | Open the player in your browser automatically when the MCP server starts. (Running `navidrome-web` directly always opens a browser regardless of this setting.) |
+| `webui.autoOpenBrowser` | `false` | Open the player in your browser automatically when the MCP server starts. (Running `navidrome-web` directly always opens a browser regardless.) |
+| `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player (and mpv) running after the MCP server closes/restarts. Toggle it live in the in-player gear modal too. |
 
-When **Expose on LAN** is enabled, the MCP server logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one of those on your phone or tablet.
+When **Expose on LAN** is enabled, the player logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one of those on your phone or tablet.
 
 ### Using it as a phone/tablet remote
 
@@ -248,7 +258,7 @@ When **Expose on LAN** is enabled, the MCP server logs the LAN URLs it's reachab
 The web UI has **no authentication** — anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
 
 - With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
-- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation and starting playlists. (The browser-based settings page is always loopback-only and is never exposed, even when the player is.)
+- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation and starting playlists. The **player settings and the power button are loopback-only** (and hidden in the UI for remote browsers), so a phone on your LAN can control playback but can't change settings or shut the server down. The browser-based main settings page is likewise never exposed.
 
 ## Available Tools
 

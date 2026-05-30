@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Spawn the detached standalone web server
+ * Navidrome MCP Server - Spawn the standalone web server as an IPC child
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,9 +34,9 @@ let spawned = false;
 
 /**
  * Result of `ensureWebServerRunning`, so the caller (MCP) can decide whether it
- * must run the scrobbler/reaper itself:
+ * must run the scrobbler itself:
  * - `running`     — a navidrome-web already owns the port (we attached/stood down).
- * - `spawned`     — we launched a detached child that will become the owner.
+ * - `spawned`     — we launched an IPC child that will become the owner.
  * - `unavailable` — the port is held by a FOREIGN process, or the spawn failed,
  *                   so NO web owner will exist → MCP must be the active host.
  */
@@ -68,9 +68,13 @@ function resolveLaunchTarget(): LaunchTarget {
 }
 
 /**
- * Ensure the standalone `navidrome-web` server is running, spawning it DETACHED
- * if not (spec §6). Detached + `stdio:'ignore'` + `unref()` so it OUTLIVES the
- * MCP process — closing the MCP server must not stop the web service.
+ * Ensure the standalone `navidrome-web` server is running, spawning it as an
+ * IPC CHILD if not (spec §6, lifecycle §B.1). The `ipc` stdio channel is the
+ * parent↔child link: the child watches `process.on('disconnect')` to learn when
+ * THIS MCP exits (fires even on MCP crash, cross-platform incl. Windows) and
+ * then either stops with it (default) or persists (webui.persistAfterMcpExit).
+ * `unref()` so MCP isn't blocked by the child; the child stays alive on its own
+ * HTTP server. NOT detached — the IPC channel must stay bound to this parent.
  *
  * The child re-runs `acquireOrAttach` itself, so a redundant spawn (one already
  * running) just stands down and exits cleanly; the MCP side must NOT treat that
@@ -109,8 +113,9 @@ export async function ensureWebServerRunning(config: Config): Promise<WebServerS
 
   try {
     const child = spawn(target.command, target.args, {
-      detached: true,
-      stdio: 'ignore',
+      // stdin/out/err ignored (the child logs to its own file); the 4th fd is
+      // the IPC channel that lets the child detect this parent's exit.
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       env: childEnv,
     });
     // Don't keep the MCP event loop alive for the child, and don't crash if the

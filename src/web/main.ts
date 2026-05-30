@@ -19,10 +19,16 @@
 
 /**
  * The standalone web player. This is BOTH the binary a user runs directly
- * (`navidrome-web`) AND the artifact the MCP server spawns detached (spec §6).
- * It owns the web server's full lifecycle: shared bootstrap → port-as-lock
- * acquire → serve UI/API/SSE → scrobble (as the playback survivor) → smart mpv
- * shutdown + idle reaper. Closing the MCP server does NOT stop this process.
+ * (`navidrome-web`) AND the artifact the MCP server spawns as an IPC child
+ * (spec §6 / lifecycle §B.1). It owns the web server's full lifecycle: shared
+ * bootstrap → port-as-lock acquire → serve UI/API/SSE → scrobble (as the
+ * playback owner) → shutdown.
+ *
+ * The web server OWNS mpv: whenever it shuts down it quits mpv. It shuts down on
+ * a direct signal, the in-UI power button, or — if spawned by MCP and
+ * `persistAfterMcpExit` is off — when that MCP exits (IPC `disconnect`). With
+ * persist on (or when launched standalone) it survives MCP and stops only via
+ * the power button / a signal. No idle reaper.
  */
 
 import { appendFileSync, mkdirSync } from 'node:fs';
@@ -35,27 +41,22 @@ import { resolveConfigState } from '../config.js';
 import { getSettingsStorePath } from '../config/store-path.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
-import {
-  IDLE_REAPER_INTERVAL_MS,
-  IDLE_REAPER_TICKS,
-  type IdleReaper,
-  shouldKillMpvOnOwnerShutdown,
-  startIdleReaper,
-} from '../services/playback/shutdown.js';
 import { logger, type LogLevel } from '../utils/logger.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { SseBroadcaster } from '../webui/broadcaster.js';
 import { listLanInterfaces } from '../webui/network.js';
 import { createServer } from '../webui/server.js';
 import { acquireOrAttach } from './acquire.js';
+import { getPersist, initPersist } from './player-runtime.js';
 
 /** Hard ceiling on owner shutdown: if the mpv `quit` IPC wedges, exit anyway. */
 const SHUTDOWN_HARD_EXIT_MS = 3000;
 
 /**
- * Redirect the logger to a file. The process is spawned detached with
- * `stdio:'ignore'`, so stderr is /dev/null — anything not written to the file
- * is lost. Installed FIRST, before anything can log.
+ * Redirect the logger to a file. When MCP spawns us its stdio is ignored, so
+ * stderr is /dev/null — anything not written to the file is lost. Installed
+ * FIRST, before anything can log. (A direct `navidrome-web` run has a real
+ * stderr, which the sink falls back to if the file write ever fails.)
  */
 function setupFileLogging(): string {
   const logPath = join(dirname(getSettingsStorePath()), 'navidrome-web.log');
@@ -77,9 +78,9 @@ function setupFileLogging(): string {
       appendFileSync(logPath, line, { mode: 0o600 });
     } catch (err) {
       // Best-effort logging; never throw from the log path. But don't go fully
-      // dark on a misconfigured (e.g. read-only) dir: when run directly (not
-      // detached) stderr is a real terminal, so fall back to it ONCE so the
-      // operator sees that file logging is broken.
+      // dark on a misconfigured (e.g. read-only) dir: a direct `navidrome-web`
+      // run has a real stderr, so fall back to it ONCE so the operator sees
+      // that file logging is broken.
       if (!sinkFailed) {
         sinkFailed = true;
         try {
@@ -125,42 +126,57 @@ function logBanner(port: number, host: string, expose: boolean): void {
   }
 }
 
+// Live references set once we own the port, so the single shutdown path can
+// tear them down regardless of what triggered it (signal / power button / MCP
+// disconnect).
+let serverRef: Server | null = null;
+let broadcasterRef: SseBroadcaster | null = null;
+let shuttingDown = false;
+
 /**
- * Wire SIGINT/SIGTERM for the port owner (spec §8.5): stop the HTTP server +
- * broadcaster + reaper, then kill mpv ONLY if it's not playing (playing → keep
- * detached so a web restart resumes control of the same audio).
+ * The single owner-shutdown path. The web server OWNS mpv, so it ALWAYS quits
+ * mpv as it goes (no keep-if-playing nuance — that only mattered for the
+ * since-removed reaper / survive-restart model). Stops the HTTP server +
+ * broadcaster, quits mpv, then exits, with a hard backstop so a wedged mpv
+ * `quit` IPC can't prevent exit on a signal. Idempotent.
  */
-function installOwnerShutdown(server: Server, broadcaster: SseBroadcaster, reaper: IdleReaper): void {
-  let closing = false;
-  const onExit = (signal: string): void => {
-    if (closing) return;
-    closing = true;
-    logger.info(`navidrome-web received ${signal}; shutting down owner`);
-    reaper.stop();
-    broadcaster.stop();
-    server.close();
-    // Hard backstop: never let a wedged mpv `quit` IPC keep us from exiting on a
-    // signal (the supervisor would otherwise escalate to SIGKILL). Unref'd so it
-    // doesn't itself hold the loop open if the clean path finishes first.
-    const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_HARD_EXIT_MS);
-    hardExit.unref();
-    void (async (): Promise<void> => {
-      try {
-        if (shouldKillMpvOnOwnerShutdown(playbackEngine.isPlaying())) {
-          await playbackEngine.quitMpv();
-          logger.info('owner shutdown: mpv was idle — quit it');
-        } else {
-          logger.info('owner shutdown: mpv is playing — left running (detached)');
-        }
-      } catch (err) {
-        logger.warn('owner shutdown: mpv quit failed', err);
-      }
-      clearTimeout(hardExit);
-      process.exit(0);
-    })();
-  };
-  process.once('SIGINT', (): void => onExit('SIGINT'));
-  process.once('SIGTERM', (): void => onExit('SIGTERM'));
+function shutdownPlayer(reason: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info(`navidrome-web shutting down (${reason})`);
+  broadcasterRef?.stop();
+  serverRef?.close();
+  const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_HARD_EXIT_MS);
+  hardExit.unref();
+  void (async (): Promise<void> => {
+    try {
+      await playbackEngine.quitMpv();
+      logger.info('shutdown: mpv quit');
+    } catch (err) {
+      logger.warn('shutdown: mpv quit failed', err);
+    }
+    clearTimeout(hardExit);
+    process.exit(0);
+  })();
+}
+
+/**
+ * Wire the shutdown triggers (spec lifecycle §B.1):
+ * - SIGINT/SIGTERM: a direct kill of this process.
+ * - IPC `disconnect`: the MCP that spawned us exited. Honor the persist flag —
+ *   stop with MCP by default, or stay running (now independent) if persist is
+ *   on. `disconnect` never fires for a standalone launch (no IPC parent).
+ */
+function installShutdownTriggers(): void {
+  process.once('SIGINT', (): void => shutdownPlayer('SIGINT'));
+  process.once('SIGTERM', (): void => shutdownPlayer('SIGTERM'));
+  process.on('disconnect', (): void => {
+    if (getPersist()) {
+      logger.info('MCP parent exited; persisting — now an independent player.');
+    } else {
+      shutdownPlayer('mcp-exit');
+    }
+  });
 }
 
 async function main(): Promise<void> {
@@ -178,9 +194,12 @@ async function main(): Promise<void> {
 
   // Shared bootstrap: same config/client/managers/engine the MCP server builds.
   const { config, client } = await createRuntime();
+  // Seed the persist flag (may be toggled live via the settings modal).
+  initPersist(config.webui.persistAfterMcpExit);
 
   const broadcaster = new SseBroadcaster(client);
-  const makeServer = (): Server => createServer({ config, client, broadcaster });
+  const makeServer = (): Server =>
+    createServer({ config, client, broadcaster, shutdown: () => shutdownPlayer('power-button') });
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
@@ -190,9 +209,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  // We are the port owner: serve, scrobble, reap. `result.mode === 'owner'`
-  // narrows the union, so `result.server` is defined without a cast.
-  const { server } = result;
+  // We are the port owner: serve + scrobble. `result.mode === 'owner'` narrows
+  // the union, so `result.server` is defined without a cast.
+  serverRef = result.server;
+  broadcasterRef = broadcaster;
   broadcaster.start();
 
   // The web port owner is the elected scrobble submitter (spec §6.4). Subscribe
@@ -200,9 +220,8 @@ async function main(): Promise<void> {
   // hydrates without re-scrobbling the in-flight track).
   if (config.features.playback) {
     new ScrobbleTracker(client, playbackEngine).attach();
-    // Adopt an already-playing mpv left by a since-closed MCP/session so the
-    // scrobbler + reaper see real state immediately (spec §8.6 adopt-on-startup).
-    // Best-effort; ensureAttached never spawns mpv.
+    // Adopt an already-playing mpv left by a since-closed session (spec §8.6
+    // adopt-on-startup). Best-effort; ensureAttached never spawns mpv.
     try {
       await playbackEngine.ensureAttached();
     } catch (err) {
@@ -210,22 +229,16 @@ async function main(): Promise<void> {
     }
   }
 
-  const reaper = startIdleReaper(
-    playbackEngine,
-    { intervalMs: IDLE_REAPER_INTERVAL_MS, ticksToReap: IDLE_REAPER_TICKS },
-    () => logger.info('idle reaper: quit a continuously-idle mpv'),
-  );
-
   logBanner(config.webui.port, config.webui.host, config.webui.expose);
   maybeOpenBrowser(config.webui.port);
-  installOwnerShutdown(server, broadcaster, reaper);
+  installShutdownTriggers();
 
   logger.info('navidrome-web started successfully (port owner)');
 }
 
 main().catch((error) => {
   // The file sink is installed first thing, so this reaches the logfile even
-  // though stderr is /dev/null under detached spawn.
+  // when MCP spawned us with stdio ignored (stderr → /dev/null).
   logger.error('navidrome-web failed to start:', error);
   process.exit(1);
 });
