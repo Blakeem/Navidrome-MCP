@@ -26,25 +26,7 @@ import {
   seek,
   setVolume,
 } from '../../tools/playback.js';
-import { readJsonBody, writeError, writeJson } from '../http-helpers.js';
-
-/**
- * Wrap a no-arg playback action so all control routes share consistent
- * error-to-status mapping. Errors from the engine (mpv not reachable,
- * validation failures from the reused Zod schemas) flow through here as 500
- * with their message preserved.
- */
-async function runAction(
-  res: ServerResponse,
-  action: () => Promise<unknown>,
-): Promise<void> {
-  try {
-    const result = await action();
-    writeJson(res, 200, result);
-  } catch (err) {
-    writeError(res, 500, err instanceof Error ? err.message : 'unknown error');
-  }
-}
+import { readJsonBody, runAction, writeError } from '../http-helpers.js';
 
 export function handlePause(res: ServerResponse): Promise<void> {
   return runAction(res, () => pause({}));

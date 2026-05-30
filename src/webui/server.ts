@@ -29,7 +29,9 @@ import type { SseBroadcaster } from './broadcaster.js';
 import { writeError } from './http-helpers.js';
 import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
+import { handleHealth } from './routes/health.js';
 import { handleNetworkInfo } from './routes/network-info.js';
+import { handleListPlaylists, handlePlayPlaylist } from './routes/playlists.js';
 import {
   handleNext,
   handlePause,
@@ -50,8 +52,9 @@ interface ServerDeps {
 
 /**
  * Build the underlying HTTP server. Listen/close lifecycle is owned by the
- * caller (`WebUIServer.bind/stop`) — this factory returns an unstarted
- * instance so tests can drive it independently if needed.
+ * caller (`acquireOrAttach` in `src/web/acquire.ts`, driven by the standalone
+ * `navidrome-web` entry) — this factory returns an unstarted instance so the
+ * acquire/port-as-lock logic can bind it (or discard it) as needed.
  *
  * The dispatcher is a flat if-chain rather than a route table: ten endpoints
  * is below the threshold where pattern abstraction pays for itself, and a
@@ -91,6 +94,12 @@ async function handleRequest(
   const path = parsed.pathname;
   const method = req.method ?? 'GET';
 
+  // --- Health signature (port-as-lock coexistence) ---
+  if (method === 'GET' && path === '/healthz') {
+    handleHealth(req, res, deps.config);
+    return;
+  }
+
   // --- API: snapshot reads ---
   if (method === 'GET' && path === '/api/now-playing') {
     return handleNowPlaying(res);
@@ -118,6 +127,10 @@ async function handleRequest(
     handleNetworkInfo(res, deps.config);
     return;
   }
+
+  // --- API: playlists ---
+  if (method === 'GET'  && path === '/api/playlists')      return handleListPlaylists(res, deps.client);
+  if (method === 'POST' && path === '/api/playlists/play') return handlePlayPlaylist(req, res, deps.client);
 
   // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {

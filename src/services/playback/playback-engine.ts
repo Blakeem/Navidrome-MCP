@@ -1194,6 +1194,26 @@ class PlaybackEngine {
    *
    * Idempotent.
    */
+  /**
+   * Quit the mpv PROCESS itself (not just our IPC socket), then tear down our
+   * IPC state. Used ONLY by the web port owner's shutdown decision and the idle
+   * reaper (standalone-web spec §8). This is deliberately distinct from
+   * `shutdown()`, which closes our connection but leaves mpv running (the
+   * "survives parent" design) — here we WANT mpv gone. Sending `quit` over IPC
+   * terminates mpv; the socket then closes and we clean up local state.
+   */
+  async quitMpv(): Promise<void> {
+    const ipc = this.ipc;
+    if (ipc?.isConnected() === true) {
+      try {
+        await ipc.command('quit');
+      } catch {
+        // mpv may already be exiting; fall through to local cleanup.
+      }
+    }
+    await this.shutdown();
+  }
+
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;

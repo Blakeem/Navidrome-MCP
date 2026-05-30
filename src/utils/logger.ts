@@ -185,29 +185,52 @@ export function redact(value: unknown, depth: number = 0): unknown {
   return value;
 }
 
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+
+/**
+ * Optional alternate output. When set, formatted+redacted log records go here
+ * instead of `console.error`. Used by the detached `navidrome-web` process,
+ * which is spawned with `stdio:'ignore'` and must log to a file rather than the
+ * (closed) stderr. The args passed are ALREADY redacted.
+ */
+type LogSink = (level: LogLevel, args: unknown[]) => void;
+
 class Logger {
   private debugMode = false;
+  private sink: LogSink | null = null;
 
   setDebug(enabled: boolean): void {
     this.debugMode = enabled;
   }
 
-  debug(...args: unknown[]): void {
-    if (this.debugMode) {
-      console.error('[DEBUG]', ...args.map(a => redact(a)));
+  /** Redirect output to a custom sink (or pass null to restore stderr). */
+  setSink(sink: LogSink | null): void {
+    this.sink = sink;
+  }
+
+  private write(level: LogLevel, args: unknown[]): void {
+    const redacted = args.map(a => redact(a));
+    if (this.sink !== null) {
+      this.sink(level, redacted);
+      return;
     }
+    console.error(`[${level}]`, ...redacted);
+  }
+
+  debug(...args: unknown[]): void {
+    if (this.debugMode) this.write('DEBUG', args);
   }
 
   info(...args: unknown[]): void {
-    console.error('[INFO]', ...args.map(a => redact(a)));
+    this.write('INFO', args);
   }
 
   warn(...args: unknown[]): void {
-    console.error('[WARN]', ...args.map(a => redact(a)));
+    this.write('WARN', args);
   }
 
   error(...args: unknown[]): void {
-    console.error('[ERROR]', ...args.map(a => redact(a)));
+    this.write('ERROR', args);
   }
 }
 

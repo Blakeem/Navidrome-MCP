@@ -22,7 +22,10 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/integration/playback/**/*.test.ts'],
+    include: [
+      'tests/integration/playback/**/*.test.ts',
+      'tests/integration/coordination/**/*.test.ts',
+    ],
     exclude: ['node_modules', 'dist', 'coverage'],
     // Registered once per test file. Adds an `afterAll` that clears mpv's
     // queue when the file's last test finishes, so `pnpm test:playback`

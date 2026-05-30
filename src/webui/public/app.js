@@ -44,6 +44,11 @@
     netHelp: $('network-info-help'),
     netList: $('network-info-list'),
     netHint: $('network-info-hint'),
+    openPlaylists: $('open-playlists'),
+    plDialog: $('playlists-dialog'),
+    plList: $('playlists-list'),
+    plStatus: $('playlists-status'),
+    plShuffle: $('pl-shuffle'),
   };
 
   // ---------- state ----------
@@ -583,6 +588,80 @@
         console.warn('webui: network-info fetch failed', err);
       }
     });
+
+    els.openPlaylists.addEventListener('click', async () => {
+      els.plStatus.textContent = 'Loading playlists…';
+      els.plList.replaceChildren();
+      if (typeof els.plDialog.showModal === 'function') els.plDialog.showModal();
+      try {
+        const res = await fetch('/api/playlists');
+        if (!res.ok) {
+          // Non-2xx (e.g. 500 from runAction) — show an error, not the
+          // misleading "No playlists found" an empty-array fallback would give.
+          console.warn('webui: /api/playlists failed', res.status);
+          els.plStatus.textContent = 'Could not load playlists.';
+          return;
+        }
+        const data = await res.json();
+        renderPlaylists(data.playlists ?? []);
+      } catch (err) {
+        console.warn('webui: playlists fetch failed', err);
+        els.plStatus.textContent = 'Could not load playlists.';
+      }
+    });
+  }
+
+  function selectedMode() {
+    const checked = els.plDialog.querySelector('input[name="pl-mode"]:checked');
+    return checked ? checked.value : 'replace';
+  }
+
+  async function playPlaylist(id, name) {
+    els.plStatus.textContent = `Starting “${name}”…`;
+    try {
+      const res = await fetch('/api/playlists/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playlistId: id, mode: selectedMode(), shuffle: els.plShuffle.checked }),
+      });
+      if (res.ok) {
+        els.plDialog.close();
+      } else {
+        const text = await res.text().catch(() => '');
+        console.warn('webui: play playlist failed', res.status, text);
+        els.plStatus.textContent = 'Could not start that playlist.';
+      }
+    } catch (err) {
+      console.warn('webui: play playlist failed', err);
+      els.plStatus.textContent = 'Could not start that playlist.';
+    }
+  }
+
+  function renderPlaylists(playlists) {
+    if (!playlists.length) {
+      els.plStatus.textContent = 'No playlists found.';
+      els.plList.replaceChildren();
+      return;
+    }
+    els.plStatus.textContent = '';
+    els.plList.replaceChildren(...playlists.map((pl) => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'playlist-item';
+      const head = document.createElement('span');
+      head.className = 'pl-name';
+      head.textContent = pl.name;
+      const meta = document.createElement('span');
+      meta.className = 'pl-meta';
+      const count = typeof pl.songCount === 'number' ? `${pl.songCount} track${pl.songCount === 1 ? '' : 's'}` : '';
+      meta.textContent = pl.durationFormatted ? `${count} · ${pl.durationFormatted}` : count;
+      btn.appendChild(head);
+      btn.appendChild(meta);
+      btn.addEventListener('click', () => void playPlaylist(pl.id, pl.name));
+      li.appendChild(btn);
+      return li;
+    }));
   }
 
   function renderNetworkInfo(info) {

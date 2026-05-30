@@ -28,11 +28,11 @@ The live queue is actively manipulable: move a track to the front and it starts 
 
 This design is built for conversational control and pairs cleanly with voice transports (Whisper STT + TTS) to build a hands-free music device on a Raspberry Pi or always-on machine.
 
-### 🎛️ MPV Remote (Web Control Panel)
+### 🎛️ MPV Remote (Standalone Web Player)
 
-> Requires `mpv` (same as Local Audio Playback). On by default; lazy-binds once playback starts.
+> Requires `mpv` (same as Local Audio Playback). On by default; starts with the server.
 
-A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser. Now-playing card with cover art, transport controls (previous / pause-resume / next), seek bar, volume slider, and a queue list with click-to-jump. Updates live via Server-Sent Events so a phone laid on the desk stays in sync as the assistant feeds the queue. Defaults to localhost-only; flip one env var to expose it on your LAN and use a phone or tablet as a music remote. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup and the security note.
+A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser. Now-playing card with cover art, transport controls (previous / pause-resume / next), seek bar, volume slider, a queue list with click-to-jump, and a **playlist picker** so you can start any Navidrome playlist straight from the page — not just watch what the assistant queues. Updates live via Server-Sent Events so a phone laid on the desk stays in sync. It runs as its **own process** (`navidrome-web`) that the MCP server launches and that **keeps running after the MCP client closes**, so music — and scrobbling — survive. Run it without any MCP client too, and optionally have it **open in your browser automatically**. Defaults to localhost-only; flip one setting to expose it on your LAN and use a phone or tablet as a music remote. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup and the security note.
 
 ### 🎶 Playlists
 
@@ -66,7 +66,7 @@ Star/unstar songs, albums, and artists, set 0-5 star ratings, and list everythin
 
 ### 📚 Multi-Library Support
 
-Filter all operations to a subset of your Navidrome libraries, either by setting a default in your client config (`NAVIDROME_DEFAULT_LIBRARIES`) or by switching active libraries at runtime.
+Filter all operations to a subset of your Navidrome libraries, either by setting a default in the settings page (**Default libraries**, `library.defaultLibraryIds`) or by switching active libraries at runtime.
 
 ## Installation
 
@@ -148,7 +148,7 @@ setup? The form pre-fills from your previous `env`/`.env` values — just verify
 - **Lyrics provider (LRCLIB)** + user agent — enables lyrics fetching.
 - **mpv path** — point at the mpv binary if it's not on `PATH`; blank auto-detects.
 - **Transcode format** — defaults to `raw` (streams the **original file untouched** for the highest quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
-- **Web UI** port / host / expose / enabled — configure the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
+- **Web UI** port / host / expose / enabled / auto-open browser — configure the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
 
 Features turn on automatically when their settings are present. Restart your MCP client after saving.
 
@@ -180,7 +180,7 @@ choco install mpv
 >
 > **Windows `PATH` note.** The `shinchiro.mpv` winget package installs to `C:\Program Files\MPV Player\` on Windows 11 and does **not** add itself to `PATH`. You have two options:
 > - Add the install folder to your user or system `PATH` (System Properties → Environment Variables → Path → New → `C:\Program Files\MPV Player`), then open a new terminal so the change takes effect.
-> - Or set `MPV_PATH` in your MCP client config to the full `mpv.exe` path, e.g. `"MPV_PATH": "C:\\Program Files\\MPV Player\\mpv.exe"`.
+> - Or set the **mpv path** in the settings page (`playback.mpvPath`) to the full `mpv.exe` path, e.g. `C:\Program Files\MPV Player\mpv.exe`.
 >
 > Other install methods (scoop, chocolatey, manual zip from mpv.io) drop `mpv.exe` in a different folder. If `mpv --version` doesn't work in a fresh terminal after install, locate `mpv.exe` and apply one of the two fixes above.
 
@@ -202,13 +202,26 @@ When local audio playback is active, the MCP server runs a companion web interfa
 - **Transport controls** — previous / pause-resume / next, with a seek bar showing current position and remaining time.
 - **Volume slider** — drives mpv's internal volume control (independent of your OS volume).
 - **Queue list** — every track in the current mpv queue with title, artist · album, and duration. Click any row to jump to it.
+- **Playlist picker** — the playlist icon in the top bar opens a list of your Navidrome playlists; pick one to start it (Replace queue or Add to queue, with an optional Shuffle). This is what makes the page useful on its own, not just as a now-playing mirror.
 - **Live state updates** — Server-Sent Events push state changes the instant they happen, throttled to ~1 Hz so the progress bar runs smoothly without flooding the network. Connections auto-reconnect on disconnect.
 
 ### Enabling
 
-The web UI is **on by default** and binds **lazily**: the port only opens once mpv has something playing, OR when the server reattaches to a pre-existing mpv queue across MCP restarts. Hosts without mpv installed see no listener at all.
+The web UI is **on by default** and **starts with the server** — the port binds immediately so the page (and its playlist picker) is reachable before anything is playing. The MCP server launches it as a **separate, detached `navidrome-web` process**, so closing the MCP client leaves the player — and playback, and scrobbling — running. Hosts without mpv installed don't start it at all.
 
 To turn it off entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
+
+### Running it standalone (without an MCP client)
+
+The player is its own binary, so you can launch it directly — handy on an always-on machine or to control playback when no AI client is open:
+
+```bash
+npx navidrome-web          # published package
+# or, from a manual build:
+node dist/web/main.js
+```
+
+It reads the same `settings.json`, opens your browser to the player automatically (a direct launch always opens; the MCP-launched one honors the **auto-open** setting below), and **coexists** with an MCP-launched instance: whoever binds the configured port first owns it, and the other simply connects to it. No double servers, no port fights.
 
 ### Configuration
 
@@ -220,22 +233,22 @@ All of these are optional and live in the **Web UI** section of the settings pag
 | `webui.port` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
 | `webui.host` | `127.0.0.1` | Bind address. Override only if you know which interface you want — usually **Expose on LAN** is the right knob. |
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
+| `webui.autoOpenBrowser` | `false` | Open the player in your browser automatically when the MCP server starts. (Running `navidrome-web` directly always opens a browser regardless of this setting.) |
 
 When **Expose on LAN** is enabled, the MCP server logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one of those on your phone or tablet.
 
 ### Using it as a phone/tablet remote
 
 1. Enable **Expose on LAN** in the settings page and Save.
-2. Restart the MCP client.
-3. Trigger any playback (e.g. ask the assistant to *"play all my starred songs"*) — this is what causes the web UI to bind.
-4. Open the LAN URL from the startup log on your phone's browser. Bookmark it for one-tap access — the page is a single static HTML/CSS/JS bundle, no install required.
+2. Restart the MCP client (or restart `navidrome-web`).
+3. Open the LAN URL from the startup log on your phone's browser — the player is reachable immediately, and you can start a playlist from the picker without touching the assistant. Bookmark it for one-tap access — the page is a single static HTML/CSS/JS bundle, no install required.
 
 ### Security note
 
 The web UI has **no authentication** — anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
 
-- On `WEBUI_HOST=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
-- On `WEBUI_EXPOSE=true` it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation.
+- With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
+- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation and starting playlists. (The browser-based settings page is always loopback-only and is never exposed, even when the player is.)
 
 ## Available Tools
 
@@ -347,7 +360,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 
 ### Local Playback (requires [`mpv`](https://mpv.io/))
 
-Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket. By default playback streams the **original file** (`PLAYBACK_TRANSCODE_FORMAT=raw`) for full quality and reliable seeking; set a codec to transcode for constrained bandwidth (see [Configure Your MCP Client](#configure-your-mcp-client)).
+Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket. By default playback streams the **original file** (**Transcode format** = `raw`, `playback.transcodeFormat`) for full quality and reliable seeking; set a codec to transcode for constrained bandwidth (see [First-run setup](#first-run-setup)).
 
 | Tool | Description |
 |------|-------------|
@@ -376,8 +389,8 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 
 **Connection problems**
 - Verify Navidrome is running and reachable
-- Ensure `NAVIDROME_URL` includes the protocol (`http://` or `https://`)
-- Test credentials with `curl` or a browser first
+- Ensure the **Navidrome URL** in the settings page includes the protocol (`http://` or `https://`)
+- Use the settings page's **Test connection** button (or test credentials with `curl` / a browser) before saving
 
 **macOS-specific**
 - See the [macOS Troubleshooting Guide](docs/MACOS_TROUBLESHOOTING.md) (commonly: Node.js path not found; fix with symlinks or full paths)

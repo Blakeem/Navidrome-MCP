@@ -25,10 +25,16 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
 import { ScrobbleTracker } from './services/playback/scrobble-tracker.js';
+import { shouldMcpSubmit } from './services/playback/scrobble-election.js';
+import {
+  IDLE_REAPER_INTERVAL_MS,
+  IDLE_REAPER_TICKS,
+  startIdleReaper,
+} from './services/playback/shutdown.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
-import { WebUIServer } from './webui/index.js';
+import { ensureWebServerRunning, type WebServerStatus } from './web/spawn.js';
 import { startConfigServer } from './config-app/server.js';
 import { registerDegradedTools } from './config-app/degraded-tools.js';
 import { openBrowser } from './utils/open-browser.js';
@@ -94,41 +100,51 @@ async function main(): Promise<void> {
     registerTools(server, client, config);
     registerResources(server, client);
 
+    // Standalone web player (spec §6). Instead of an in-process server, MCP
+    // spawns the SAME `navidrome-web` process it would run standalone, DETACHED,
+    // so the web service survives MCP close. Eager at startup, gated on
+    // playback + webui.enabled. The spawn is best-effort and non-fatal — the
+    // MCP server stays up even if the player can't start (e.g. port conflict).
+    // SIGINT/SIGTERM deliberately do NOT stop the spawned server or touch mpv.
+    // Done BEFORE the scrobbler election because its result decides who scrobbles.
+    let webStatus: WebServerStatus = 'unavailable';
+    if (config.features.playback && config.webui.enabled) {
+      webStatus = await ensureWebServerRunning(config);
+    }
+
     // Auto-scrobble plays to Navidrome (Last.fm rules: now-playing on start,
     // submission past 50% of duration or 4 min, whichever first; ≥30s tracks
     // only). The tracker observes the shared mpv via the engine state stream,
-    // so MCP- and web-initiated plays are tracked identically. It's attached
-    // here in the entry point (not in tool registration) because scrobbling is
-    // a process-lifetime playback concern, not a tool-registration concern —
-    // and the standalone-web spec (§6.4) ultimately moves this single line to
-    // the web server, the playback survivor. The tracker has no explicit
-    // shutdown: on SIGINT/SIGTERM the engine closes its IPC socket (mpv keeps
-    // running, detached) and the tracker is torn down with the process; any
-    // in-flight /scrobble request is abandoned, acceptable per Last.fm
-    // best-effort semantics.
-    if (config.features.playback) {
-      new ScrobbleTracker(client, playbackEngine).attach();
-    }
-
-    // Companion web UI for mpv playback control. Only initialized when the
-    // playback feature itself is enabled (mpv detected) and the user hasn't
-    // disabled the panel via WEBUI_ENABLED=false. `init()` doesn't bind a
-    // port unless something is already queued — first-play in the current
-    // session triggers the bind lazily via the engine state stream. Errors
-    // here are non-fatal: the MCP server stays up even if the panel can't
-    // start (e.g. port collision).
-    if (config.features.playback && config.webui.enabled) {
-      const webui = new WebUIServer(config, client);
+    // so MCP- and web-initiated plays are tracked identically.
+    //
+    // Single-submitter election (spec §6.4): exactly one process submits each
+    // mpv play. When a `navidrome-web` owner is running/spawned it is the
+    // submitter (the playback survivor — keeps scrobbling after MCP closes), so
+    // MCP stands down. MCP becomes the active host when there is NO web owner:
+    // MCP-only mode (webui disabled) OR the web server couldn't be brought up
+    // (foreign port / spawn failure) — otherwise plays would go unscrobbled.
+    const mcpIsActiveHost =
+      config.features.playback && (shouldMcpSubmit(config) || webStatus === 'unavailable');
+    if (mcpIsActiveHost) {
+      // Subscribe BEFORE adopting mpv so the tracker catches the initial state
+      // emit (it hydrates without re-scrobbling the in-flight track).
+      const tracker = new ScrobbleTracker(client, playbackEngine);
+      tracker.attach();
+      // Adopt an already-playing mpv (e.g. spawned by a prior session) so the
+      // scrobbler + reaper see real state immediately. Best-effort and never
+      // spawns mpv (ensureAttached only latches onto an existing socket).
       try {
-        await webui.init();
+        await playbackEngine.ensureAttached();
       } catch (err) {
-        logger.warn('Web UI init failed (continuing without panel):', err);
+        logger.debug('ensureAttached at startup failed (no mpv yet?):', err);
       }
-      const stopWebUI = (): void => {
-        void webui.stop();
-      };
-      process.once('SIGINT', stopWebUI);
-      process.once('SIGTERM', stopWebUI);
+      // The active host runs the idle reaper to reclaim a continuously-idle mpv
+      // (spec §8.4). The timer is unref'd and MCP exit never kills mpv — only the
+      // running reaper reaps genuine idle.
+      startIdleReaper(playbackEngine, {
+        intervalMs: IDLE_REAPER_INTERVAL_MS,
+        ticksToReap: IDLE_REAPER_TICKS,
+      });
     }
 
     const transport = new StdioServerTransport();

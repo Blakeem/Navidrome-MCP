@@ -90,6 +90,7 @@ function importFromLegacyEnv(): SettingsFile {
       port,
       host: get('WEBUI_HOST') ?? null,
       expose: get('WEBUI_EXPOSE') === 'true',
+      autoOpenBrowser: get('WEBUI_AUTO_OPEN_BROWSER') === 'true',
     },
     advanced: {
       debug: get('DEBUG') === 'true',

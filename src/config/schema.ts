@@ -87,6 +87,11 @@ export const ConfigSchema = z.object({
     host: z.string().default('127.0.0.1'),
     port: z.number().int().min(1).max(65535).default(8808),
     expose: z.boolean().default(false),
+    // When true, the player opens in the user's browser automatically when the
+    // MCP server starts (the standalone `navidrome-web` bin always opens, since
+    // the user ran it explicitly). Default false to avoid popping a tab on every
+    // headless Claude Desktop launch.
+    autoOpenBrowser: z.boolean().default(false),
   }),
 });
 

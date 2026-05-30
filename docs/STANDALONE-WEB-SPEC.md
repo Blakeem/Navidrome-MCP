@@ -1,7 +1,7 @@
 # Standalone Web Mode & Shared-Core Spec
 
-**Status:** Settings/config layer shipped; standalone player pending
-**Date:** 2026-05-29
+**Status:** Phase A (settings/config) **and** Phase B (standalone player) shipped; Phase C (native shell) optional/future
+**Date:** 2026-05-30
 **Author:** Blake McDonald (design w/ Claude)
 **Scope:** Make the Navidrome MCP web UI runnable as a first-class standalone
 application, sharing a single business-logic core with the MCP server, with
@@ -15,9 +15,26 @@ centralized GUI-managed settings.
 > webkit2gtk fragmentation, CI/bundling surface, OS code-signing); a native shell
 > (Tauri/Electron) may be added later if there's demand, but it is no longer on the
 > critical path. Everywhere this spec said "Tauri," read "browser page served by a
-> loopback Node server." The **standalone player** half (§5 port-as-lock, §6 spawn,
-> §8 mpv lifecycle) is the next phase and follows the same browser-first model.
-> Sections below are annotated **[DONE]** / **[PENDING]** accordingly.
+> loopback Node server."
+>
+> **Phase B update (2026-05-30) — standalone player shipped.** The **standalone
+> player** half (§5 port-as-lock, §6 spawn + scrobbler election, §8 mpv lifecycle)
+> is now **implemented**, following the same browser-first model. Sections below are
+> annotated **[DONE]** / **[PENDING]** accordingly. Two additions beyond the original
+> spec landed with it:
+> - **`webui.autoOpenBrowser`** setting (default `false`): the MCP-spawned player
+>   opens the browser automatically when enabled; the `navidrome-web` bin run
+>   directly always opens. Reuses the shared `openBrowser()` launcher.
+> - **Playlist picker in the player UI**: a playlist icon + modal lists Navidrome
+>   playlists and plays a whole one (replace/append + shuffle), reusing
+>   `listPlaylists` + `playPlaylist`. This is what makes standalone mode useful on
+>   its own, and motivated the switch from lazy-bind to **eager bind at startup**.
+>
+> One refinement to §6.4's "config-static" scrobbler election emerged in review:
+> the election can't be *purely* config-static, because the detached spawn can fail
+> (foreign port, spawn error). `ensureWebServerRunning` now returns a status, and
+> MCP falls back to being the active scrobble/reaper host when **no** web owner can
+> be brought up — so plays are never silently dropped. See §6.4.
 
 ---
 
@@ -74,26 +91,24 @@ not greenfield.
 
 **The gaps** (what this spec adds):
 
-- **G1 — No standalone entry point.** The web UI only initializes as a child of
-  the MCP server (`src/index.ts:85`). There is no `navidrome-web` binary and no
-  shared bootstrap both paths call.
-- **G2 — No cross-process coexistence.** Two processes both calling `bind()` race
-  to `listen()` on the same port; the loser just logs `EADDRINUSE` and gives up
-  (`src/webui/index.ts:119`). There is no "detect the running server and attach."
-- **G3 — Config is env-only.** `loadConfig()` (`src/config.ts:139`) reads only
-  `process.env`. A GUI/icon launch has no MCP client to inject env. No persisted,
-  GUI-editable settings store exists.
-- **G4 — No smart mpv shutdown.** mpv survives parent exit *by deliberate
-  design* (`playback-engine.ts:1121` — "No 'exit' handler kills mpv — by
-  design"). Nothing ever *stops* it, so an idle mpv can linger indefinitely.
-  We add a **narrow, owner-only** stop decision + idle reaper (§8) that preserves
-  the "survives MCP close" guarantee while reclaiming a stopped/idle mpv.
-- **G5 — No standalone launcher.** No way to open the player without the MCP
-  server. *(Resolved by the browser-first approach, §9 — settings already ship
-  this way; the player follows in Phase B.)*
-- **G6 — Scrobbling is MCP-process-only.** `ScrobbleTracker` is attached solely
-  in `registry.ts` (MCP path). Once playback survives MCP close, scrobbling would
-  stop — a regression. We relocate it (§6.4).
+- **G1 [DONE] — No standalone entry point.** *Resolved:* new `src/web/main.ts`
+  (bin `navidrome-web`) + shared `src/bootstrap.ts` `createRuntime()` that both the
+  MCP server and the web server call.
+- **G2 [DONE] — No cross-process coexistence.** *Resolved by port-as-lock (§5):*
+  `src/web/acquire.ts` `acquireOrAttach` + `GET /healthz` — whoever binds first
+  owns the port; others probe, confirm the signature, and attach instead.
+- **G3 [DONE] — Config is env-only.** *Resolved in Phase A:* `settings.json` store
+  + `resolveConfigState()`; `process.env` consulted only to seed the first-run form.
+- **G4 [DONE] — No smart mpv shutdown.** *Resolved (§8):* a **narrow, owner-only**
+  `shouldKillMpvOnOwnerShutdown` + idle reaper (`src/services/playback/shutdown.ts`)
+  + `playbackEngine.quitMpv()`, preserving "survives MCP close" while reclaiming a
+  stopped/idle mpv. MCP exit still never kills mpv.
+- **G5 [DONE] — No standalone launcher.** *Resolved by the browser-first approach
+  (§9):* `navidrome-web` serves the player; the user opens the URL (auto-opened via
+  the shared `openBrowser()`), no native shell required.
+- **G6 [DONE] — Scrobbling is MCP-process-only.** *Resolved (§6.4):* the scrobbler
+  is attached by the elected active host — the `navidrome-web` port owner when one
+  exists (so it survives MCP close), MCP only as a fallback.
 
 ---
 
@@ -162,8 +177,8 @@ of who launched it.
 
 | Entry point | Binary / trigger | Responsibilities |
 |---|---|---|
-| **MCP server** | `navidrome-mcp` (stdio, launched by Claude Desktop) | Register tools/resources; **spawn the standalone web server** (detached) if enabled; participate in mpv lifecycle as a controller. **[PENDING]** |
-| **Standalone web** | `navidrome-web` (CLI) | Run the web server (bootstrap → bind port → serve UI/API/SSE). **[PENDING]** |
+| **MCP server** | `navidrome-mcp` (stdio, launched by Claude Desktop) | Register tools/resources; **spawn the standalone web server** (detached) if enabled; fall back to scrobble/reap host when no web owner exists. **[DONE]** |
+| **Standalone web** | `navidrome-web` (CLI) | Run the web server (bootstrap → acquire-or-attach → serve UI/API/SSE → scrobble + reap → smart shutdown). **[DONE]** |
 | **Settings app** [DONE] | `navidrome-config` (CLI, opens a browser page) / MCP `open_settings` tool | First-run + ongoing settings GUI in the browser; writes the canonical settings store. |
 
 ---
@@ -415,7 +430,14 @@ listed in §11.
 
 ---
 
-## 5. Coexistence: port-as-lock (resolves G2)
+## 5. Coexistence: port-as-lock (resolves G2) **[DONE]**
+
+> **As built:** `GET /healthz` returns `{app:'navidrome-mcp-web', version}`
+> (`src/webui/routes/health.ts`, loopback-gated when `expose=true`).
+> `acquireOrAttach(config, makeServer)` (`src/web/acquire.ts`) probes loopback
+> `/healthz` (500 ms timeout + hang guard), then binds; on `EADDRINUSE` it
+> re-probes once and attaches if the signature is ours, else surfaces a clear
+> conflict. Returns a discriminated union (`owner` carries the bound `Server`).
 
 ### 5.1 Decision
 
@@ -477,7 +499,17 @@ of binding). No lockfile → no stale-PID problem.
 
 ---
 
-## 6. MCP launches the standalone server (resolves G1 + req #4)
+## 6. MCP launches the standalone server (resolves G1 + req #4) **[DONE]**
+
+> **As built:** `src/web/spawn.ts` `ensureWebServerRunning(config)` does the
+> fast-path probe + detached spawn (`detached:true, stdio:'ignore', unref()`),
+> with an in-process double-spawn guard. Dev/prod path: prod runs
+> `node dist/web/main.js`; dev runs `node --import tsx src/web/main.ts` (via
+> `process.execPath`, so it's PATH-independent and Windows-safe — no bare `tsx`
+> lookup or `.cmd` shim). The child inherits `NAVIDROME_CONFIG_PATH` and gets
+> `NAVIDROME_WEB_AUTO_OPEN`. `src/web/main.ts` is the bin (`navidrome-web`); it
+> logs to `${configDir}/navidrome-web.log` (sink installed first, `0600`, with a
+> stderr fallback) since it's detached. The old in-process `WebUIServer` is deleted.
 
 ### 6.1 Decision
 
@@ -546,7 +578,18 @@ exposed.
 - Guarantees the MCP-launched server is *byte-for-byte* the standalone server.
 - Lets an optional future native shell attach to / supervise the identical artifact.
 
-### 6.4 Engine, managers, and scrobbler ownership (the two-engine reality)
+### 6.4 Engine, managers, and scrobbler ownership (the two-engine reality) **[DONE]**
+
+> **As built (with one refinement to "config-static").** `shouldMcpSubmit(config)`
+> (`src/services/playback/scrobble-election.ts`) returns true only in MCP-only mode
+> (`features.playback && !webui.enabled`). The web port owner attaches the scrobbler
+> iff `acquireOrAttach` returned `owner`. **Refinement:** because the detached spawn
+> can fail (foreign port / spawn error), the election is *not purely* config-static —
+> `ensureWebServerRunning` returns a `WebServerStatus` (`running` | `spawned` |
+> `unavailable`), and MCP becomes the active host (scrobbler **and** reaper) when the
+> status is `unavailable`, so plays are never silently dropped. Both hosts run
+> `playbackEngine.ensureAttached()` at startup to adopt an already-playing mpv and
+> prime observers (the tracker hydrates without re-scrobbling the in-flight track).
 
 Per review M1 + M2, and §3.1: MCP and `navidrome-web` are **separate processes,
 each with its own `playbackEngine` instance**, both attached to one mpv. Both
@@ -632,7 +675,17 @@ echoing credentials).
 
 ---
 
-## 8. Smart mpv lifecycle (resolves G4)
+## 8. Smart mpv lifecycle (resolves G4) **[DONE]**
+
+> **As built:** `src/services/playback/shutdown.ts` —
+> `shouldKillMpvOnOwnerShutdown(isPlaying)`, `isGenuinelyIdle()` (live mpv with
+> `idle-active === true`; never a paused-mid-track), `nextIdleStreak()`, and
+> `startIdleReaper(engine, {intervalMs, ticksToReap}, onReap)` (default ~10 min;
+> timer `unref()`'d). `playbackEngine.isPlaying()` already existed; added
+> `playbackEngine.quitMpv()` (sends mpv `quit` IPC then local cleanup) used ONLY by
+> the owner's shutdown + the reaper. The web owner installs a SIGINT/SIGTERM handler
+> that quits mpv iff not playing, with a hard-exit backstop so a wedged `quit` can't
+> block exit. MCP exit still never kills mpv.
 
 > **Revised per review (M3).** The earlier draft had a cross-process heartbeat
 > registry and let *any* "last controller" kill mpv. The review showed this is
@@ -768,7 +821,13 @@ lifetimes**:
 
 ---
 
-## 9. Launcher: browser-first (resolves G5)
+## 9. Launcher: browser-first (resolves G5) **[DONE]**
+
+> **As built:** both the settings server and the player open the browser via the
+> shared `src/utils/open-browser.ts` `openBrowser()`. The player adds a
+> `webui.autoOpenBrowser` setting (default `false`): MCP-spawned launches honor it
+> (passed via `NAVIDROME_WEB_AUTO_OPEN`), a direct `navidrome-web` run always opens.
+> No native shell — the browser is the launcher.
 
 ### 9.1 Decision — the browser is the launcher
 
@@ -817,16 +876,18 @@ identically with a plain browser. Notes if/when that happens:
 | Env→form seed **[DONE]** | `src/config/seed.ts` *(new)* | `buildFormSeed()`: store if present, else import env + legacy `.env`. No migrate script — the form Save is the migration. |
 | Remove `.env` files **[DONE]** | `.env`, `.env.test`, `.env.example` | Deleted; added `settings.example.json`. |
 | Test/CI config **[DONE]** | `tests/helpers/` *(new)*, vitest configs | Global setup writes a temp `settings.json` (seeded), points `NAVIDROME_CONFIG_PATH` at it; `makeTestConfig()` for deterministic tests. No override flag. |
-| Multi-process tests | `tests/integration/coordination/` *(new)* | Spawn real children; assert port ownership, mpv survival, reaper (under `test:playback` gate, §4.10). |
-| Docs | `CLAUDE.md`, `tests/CLAUDE.md`, `README.md` | Update curl recipes + setup from `.env` → settings.json (§13). |
-| Port-as-lock | `src/web/acquire.ts` *(new)*, `src/webui/server.ts` | `acquireOrAttach` (loopback probe, foreign/hang branch); add `/healthz`; loopback guard for settings routes. |
-| Standalone web entry | `src/web/main.ts` *(new)* | bin `navidrome-web`; `createRuntime` → attach scrobbler → acquire → serve → owner-shutdown + reaper; logs to file. |
-| MCP spawns web | `src/index.ts` | Replace in-process `WebUIServer` block with `ensureWebServerRunning()` (dev/prod path, child env, double-spawn guard); SIGINT/TERM must NOT touch mpv. |
-| Delete WebUIServer | `src/webui/index.ts` *(delete)* | Fold lifecycle into `src/web/main.ts`; reuse `createServer` + `SseBroadcaster`. Grep `tests/` first. |
-| Scrobbler relocation | `registry.ts`, `src/web/main.ts` | Move `ScrobbleTracker.attach()` out of MCP registration; single-scrobbler rule + MCP-only fallback (§6.4). |
-| Smart shutdown | `src/services/playback/shutdown.ts` *(new)*, `playback-engine.ts` | `shouldKillMpvOnOwnerShutdown()`, `isPlaying()`, idle reaper; **no** controller registry (§8). |
-| Settings app **[DONE]** | `src/config-app/{server,routes,main,degraded-tools}.ts`, `src/config-app/public/*`, `src/utils/open-browser.ts` *(new)* | Loopback ephemeral settings server (seed/save/test + static), `navidrome-config` bin, degraded-mode `open_settings`, cross-platform browser open (§7). |
-| Package **[PARTIAL]** | `package.json` | Added `navidrome-config` to `bin`; build copies config-app + webui assets via `scripts/build-webui.mjs`. (`navidrome-web` bin pending.) |
+| Multi-process tests **[DONE]** | `tests/integration/coordination/` *(new)* | Spawn real children; assert port ownership, attach-not-bind, foreign-refuse, graceful exit (under `test:playback` gate, §4.10). |
+| Docs **[DONE]** | `CLAUDE.md`, `tests/CLAUDE.md`, `README.md` | Curl recipes + setup `.env` → settings.json (§13); README now covers the standalone player + `autoOpenBrowser`. |
+| Port-as-lock **[DONE]** | `src/web/acquire.ts` *(new)*, `src/webui/server.ts`, `src/webui/routes/health.ts` *(new)* | `acquireOrAttach` (loopback probe, foreign/hang branch, discriminated union); `/healthz` (loopback-gated when exposed). |
+| Standalone web entry **[DONE]** | `src/web/main.ts` *(new)* | bin `navidrome-web`; `createRuntime` → attach scrobbler (owner) → `ensureAttached` → acquire → serve → owner-shutdown + reaper; file logger sink. |
+| MCP spawns web **[DONE]** | `src/index.ts`, `src/web/spawn.ts` *(new)* | `ensureWebServerRunning()` (PATH-independent dev/prod path, child env, double-spawn guard) returns `WebServerStatus`; SIGINT/TERM do NOT touch mpv. |
+| Delete WebUIServer **[DONE]** | `src/webui/index.ts` *(deleted)* | Lifecycle folded into `src/web/main.ts`; reuses `createServer` + `SseBroadcaster`. No test imported it. |
+| Scrobbler election **[DONE]** | `src/index.ts`, `src/web/main.ts`, `src/services/playback/scrobble-election.ts` *(new)* | `shouldMcpSubmit`; web owner submits, MCP fallback covers MCP-only mode **and** spawn failure (§6.4). |
+| Smart shutdown **[DONE]** | `src/services/playback/shutdown.ts`, `playback-engine.ts` | `shouldKillMpvOnOwnerShutdown()`, `isGenuinelyIdle()`, `nextIdleStreak()`, `startIdleReaper()`; `quitMpv()`; **no** controller registry (§8). |
+| Playlist UI **[DONE]** | `src/webui/routes/playlists.ts` *(new)*, `src/webui/http-helpers.ts`, `src/webui/public/*` | `/api/playlists` + `/api/playlists/play` (reuse `listPlaylists`/`playPlaylist`); shared `runAction`; playlist icon + modal. |
+| autoOpenBrowser **[DONE]** | `src/config/{schema,store,map-config,seed}.ts`, `src/config-app/public/*`, `src/web/main.ts` | New `webui.autoOpenBrowser` (default false) across the config/form layer; honored via `NAVIDROME_WEB_AUTO_OPEN`. |
+| Settings app **[DONE]** | `src/config-app/{server,routes,main,degraded-tools}.ts`, `src/config-app/public/*`, `src/utils/open-browser.ts` | Loopback ephemeral settings server (seed/save/test + static), `navidrome-config` bin, degraded-mode `open_settings`, cross-platform browser open (§7). |
+| Package **[DONE]** | `package.json` | `navidrome-config` **and** `navidrome-web` in `bin`; build copies config-app + webui assets via `scripts/build-webui.mjs`. |
 | Native shell | *(none)* | **Dropped** — browser is the launcher (§9). Optional future Tauri/Electron shell would wrap the Node server as a sidecar. |
 
 **Quality gates** (per `CLAUDE.md`): every step must pass `pnpm check:all`,
@@ -850,20 +911,30 @@ exports of any deleted functions (dead-code gate blocks PRs).
 - **Outcome:** zero-config onboarding for MCP today; the same settings store and
   browser-launch pattern the standalone player will reuse.
 
-### Phase B — Standalone player (browser) ◻ NEXT
-- Port-as-lock `acquireOrAttach` + `/healthz` (loopback probe) (§5).
-- Standalone `navidrome-web` bin (logs to file); MCP spawns it detached with
-  dev/prod path + double-spawn guard (§6). Delete the in-process `WebUIServer`.
-- **Scrobbler relocation** + single-scrobbler rule, with MCP-only fallback (§6.4)
-  — land with the spawn change so scrobbling never silently dies.
+### Phase B — Standalone player (browser) ✅ DONE
+- Port-as-lock `acquireOrAttach` + `/healthz` (loopback probe) (§5). ✅
+- Standalone `navidrome-web` bin (logs to file, `0600` + stderr fallback); MCP
+  spawns it detached with PATH-independent dev/prod path + double-spawn guard (§6).
+  In-process `WebUIServer` deleted; binding is now **eager** at startup. ✅
+- **Scrobbler election** + single-submitter rule, with MCP fallback that also
+  covers spawn failure (`WebServerStatus`), so scrobbling never silently dies (§6.4). ✅
 - Smart mpv shutdown: owner-only `shouldKillMpvOnOwnerShutdown` + `isPlaying()` +
-  idle reaper; **no controller registry**; MCP exit must not touch mpv (§8).
-- Audit tool impl coverage (`controls.ts`) so every web action is transport-agnostic.
-- **Multi-process coordination tests** (§4.10).
+  idle reaper + `quitMpv()`; **no controller registry**; MCP exit never touches mpv;
+  hard-exit backstop on the owner's signal path (§8). ✅
+- Web action coverage reused transport-agnostically; shared `runAction` in
+  `http-helpers.ts` for control + playlist routes. ✅
+- **Multi-process coordination tests** (`tests/integration/coordination/`,
+  port-as-lock ownership / attach / foreign-refuse / graceful-exit) under the
+  `test:playback` gate (§4.10). ✅
 - **Launcher:** browser only — users open `http://127.0.0.1:<port>` (or the LAN URL
-  when `expose=true`); a `/config` surface can mount the §7 settings routes.
+  when `expose=true`); auto-open via `webui.autoOpenBrowser`. ✅
+- **Beyond spec (landed here):** `webui.autoOpenBrowser` setting; **playlist picker**
+  in the player UI (`/api/playlists` + `/api/playlists/play` reusing `listPlaylists`
+  + `playPlaylist`; icon + modal next to network-info). The playlist use-case is
+  what motivated eager-bind over lazy-bind.
 - **Outcome:** standalone headless web server; MCP + web coexist; music *and
-  scrobbling* survive MCP close; idle mpv reaped. All in the browser.
+  scrobbling* survive MCP close; idle mpv reaped; playlists startable from the page.
+  All in the browser.
 
 ### Phase C — Optional native shell ◻ FUTURE / only if demanded
 - Thin Tauri/Electron shell wrapping the Node server as a sidecar (§9.2);
@@ -877,32 +948,30 @@ exports of any deleted functions (dead-code gate blocks PRs).
    the largest unknown — single-file Node build (SEA/`pkg`) vs bundling a runtime;
    per-OS code signing/notarization (macOS Gatekeeper especially — see
    `docs/MACOS_TROUBLESHOOTING.md`). The browser-first path avoids this entirely.
-2. **Idle-reaper predicate + threshold** (§8.3) — needs tuning during
-   implementation (how long idle before reaping; ensure paused-mid-track is never
-   reaped). Bias toward not reaping.
-3. **Config live-reload** — out of scope; restart required. Confirm that's fine
-   for the settings app (save → prompt "restart to apply").
-4. **`expose=true` security** — exposing the player to the LAN with no auth. Do
-   we want a lightweight token/PIN on the *player* API when exposed? (Settings are
-   loopback-only regardless.) Also decide whether `/healthz` is loopback-only when
-   exposed (minor version-fingerprint leak). Flagged for a later decision.
+2. **Idle-reaper predicate + threshold** (§8.3) — **settled v1:** genuine idle only
+   (`idle-active === true`), never paused-mid-track; ~10 min (`IDLE_REAPER_INTERVAL_MS`
+   × `IDLE_REAPER_TICKS`). Tunable later if needed; biased toward not reaping.
+3. **Config live-reload** — out of scope; restart required (the settings page shows a
+   "restart to apply" notice).
+4. **`expose=true` player auth** — the LAN-exposed *player* API still has **no auth**
+   (anyone on the LAN can control playback / start playlists). A lightweight token/PIN
+   is a possible future addition; documented as a known limitation in the README. The
+   sub-question of `/healthz` is **resolved:** it's loopback-gated when `expose=true`
+   (no LAN version-fingerprint leak), and the acquire probe only ever uses loopback.
 5. **Windows ACL for `settings.json`** (§4.5) — `0600` is a no-op on Windows; an
-   `icacls` shell-out (or accepting `%APPDATA%` per-user perms) is a real task.
-6. **MCP-only scrobbler fallback handoff** (§6.4) — confirm the transition logic
-   when a web server starts/stops while MCP is running never double- or
-   zero-scrobbles during the handoff window.
+   `icacls` shell-out (or accepting `%APPDATA%` per-user perms) is a real task. (The
+   `navidrome-web.log` shares the same Windows caveat.)
 
-Note: risks 1 and 6 are **Phase B/C** concerns (player + optional shell); risks
-2–5 are partly settled — Windows `0600` no-op is an accepted v1 limitation (§4.5);
-config live-reload stays out of scope (the settings page already shows a
-"restart to apply" notice).
+The only remaining open item is **1** (Phase-C packaging, *if* a native shell is ever
+built) and **4** (optional player-auth when exposed). Everything else is settled.
 
 > **Resolved (no longer open):** config source (single `settings.json`, **no env
 > override**, §4.2); settings writer (the Node settings server, not Tauri, §4.5);
 > launcher (browser, not Tauri, §9); mpv shutdown model (web-owner authority + idle
 > reaper, no heartbeat registry, §8); playback model (remote control of host audio,
-> §1); scrobbler ownership (§6.4); `loadConfig` contract (separate
-> `resolveConfigState`, §4.6).
+> §1); scrobbler ownership + the spawn-failure fallback (§6.4); `loadConfig` contract
+> (separate `resolveConfigState`, §4.6); port-as-lock + `/healthz` gating (§5);
+> idle-reaper predicate/threshold (§8.3).
 
 ---
 
@@ -916,8 +985,12 @@ The `.env` removal rippled into docs; all updated alongside the code:
   temp-`settings.json` approach (§4.9).
 - **`README.md`** — MCP-JSON-with-env setup replaced with "launch, configure in the
   browser on first run / via `navidrome-config`". Env is **not** documented as an
-  override (there is no override — it's import-only on first run).
-- **`.env.example` → `settings.example.json`** — documents the store shape.
+  override (there is no override — it's import-only on first run). *(Phase B:* also
+  documents the standalone `navidrome-web` player — eager start, survives MCP close,
+  playlist picker, `webui.autoOpenBrowser`, port-as-lock coexistence — and fixes the
+  last stale env-var references to their `settings.json` paths.*)*
+- **`.env.example` → `settings.example.json`** — documents the store shape (now
+  includes `webui.autoOpenBrowser`).
 
 ---
 
@@ -937,7 +1010,8 @@ The `.env` removal rippled into docs; all updated alongside the code:
 | `loadConfig` contract | Sentinel vs throw | Keep `loadConfig(): Config` throwing; separate `resolveConfigState()` for the configured/unconfigured branch |
 | First-run | Zero-config | **Settings page (browser) on first run** + auto-open + `open_settings` degraded tool (settings server decoupled from mpv gate) |
 | Settings exposure | Remote allowed? | **Never** — loopback only (incl. `::ffff:127.0.0.1`), even when the player is exposed |
-| Scrobbler | How plays are tracked | **[Phase B]** Shared playback layer observes mpv → MCP- and web-initiated plays tracked identically. Single *active submitter* (web owner; MCP fallback) to avoid double-submit |
-| mpv shutdown | When to stop mpv | **[Phase B]** Web-owner authority: owner kills on its shutdown iff not playing; idle reaper for crash-orphans; MCP exit never kills mpv; no heartbeat registry |
-| Launcher | How the UI opens | **Browser** — open `http://127.0.0.1:<port>` directly. **Tauri/Electron dropped**; an optional native shell is future-only |
-| Sequencing | Order | **Phase A settings/config (done) → Phase B standalone player (browser) → Phase C optional native shell** |
+| Scrobbler | How plays are tracked | **[DONE]** Shared playback layer observes mpv → MCP- and web-initiated plays tracked identically. Single *active submitter* (web owner; MCP fallback covering MCP-only mode **and** spawn failure) to avoid double-submit and zero-submit |
+| mpv shutdown | When to stop mpv | **[DONE]** Web-owner authority: owner kills on its shutdown iff not playing (hard-exit backstop); idle reaper for crash-orphans; MCP exit never kills mpv; no heartbeat registry |
+| Player UI | What it can do | **[DONE]** Now-playing + transport + queue + **playlist picker** (start a whole Navidrome playlist: replace/append + shuffle); eager-bind at startup |
+| Launcher | How the UI opens | **[DONE]** **Browser** — open `http://127.0.0.1:<port>` directly; `webui.autoOpenBrowser` for MCP-start auto-open. **Tauri/Electron dropped**; native shell future-only |
+| Sequencing | Order | **Phase A settings/config (done) → Phase B standalone player (done) → Phase C optional native shell (future)** |

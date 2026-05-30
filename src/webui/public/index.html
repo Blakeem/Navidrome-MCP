@@ -23,6 +23,11 @@
         <span class="conn-dot"></span>
         <span class="conn-label">Connecting&hellip;</span>
       </span>
+      <button type="button" class="ghost-btn" id="open-playlists" aria-label="Play a playlist">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm12-.5V8h4V6h-6v8.05A3.5 3.5 0 1 0 15 17.5z"/>
+        </svg>
+      </button>
       <button type="button" class="ghost-btn" id="open-network-info" aria-label="Show network info">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm-1 17.93A8 8 0 0 1 4.07 13H7a14 14 0 0 0 1.46 6.93ZM11 11H4.07A8 8 0 0 1 11 4.07Zm0-6.93V11H8.5C8.61 8.34 9.5 5.85 11 4.07ZM13 4.07c1.5 1.78 2.39 4.27 2.5 6.93H13Zm0 8.93h2.5c-.11 2.66-1 5.15-2.5 6.93Zm0 8.93V13h2.93A14 14 0 0 1 13 19.93ZM19.93 13H17a14 14 0 0 0-1.46-6.93A8 8 0 0 1 19.93 13Zm0-2H17V4.07A8 8 0 0 1 19.93 11Z"/>
@@ -123,6 +128,24 @@
       <ol class="queue-list" id="queue-list"></ol>
     </section>
   </main>
+
+  <dialog id="playlists-dialog" class="modal">
+    <form method="dialog" class="modal-content">
+      <h2>Play a Playlist</h2>
+      <div class="playlist-options">
+        <fieldset class="pl-mode">
+          <label><input type="radio" name="pl-mode" value="replace" checked /> <span>Replace queue</span></label>
+          <label><input type="radio" name="pl-mode" value="append" /> <span>Add to queue</span></label>
+        </fieldset>
+        <label class="pl-shuffle"><input type="checkbox" id="pl-shuffle" /> <span>Shuffle</span></label>
+      </div>
+      <p class="modal-hint" id="playlists-status"></p>
+      <ul class="network-list playlist-list" id="playlists-list"></ul>
+      <menu class="modal-actions">
+        <button type="submit" class="primary-btn">Close</button>
+      </menu>
+    </form>
+  </dialog>
 
   <dialog id="network-info-dialog" class="modal">
     <form method="dialog" class="modal-content">

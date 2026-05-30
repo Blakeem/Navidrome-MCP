@@ -105,6 +105,7 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
       host,
       port: webui.port ?? 8808,
       expose,
+      autoOpenBrowser: webui.autoOpenBrowser ?? false,
     },
   };
 }

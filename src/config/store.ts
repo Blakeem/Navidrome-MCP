@@ -65,6 +65,7 @@ export const SettingsFileSchema = z.object({
     port: z.number().int().min(1).max(65535).optional(),
     host: z.string().nullish(),
     expose: z.boolean().optional(),
+    autoOpenBrowser: z.boolean().optional(),
   }).optional(),
   advanced: z.object({
     debug: z.boolean().optional(),

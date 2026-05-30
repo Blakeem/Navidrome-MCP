@@ -55,7 +55,8 @@
   ],
   "bin": {
     "navidrome-mcp": "./dist/index.js",
-    "navidrome-config": "./dist/config-app/main.js"
+    "navidrome-config": "./dist/config-app/main.js",
+    "navidrome-web": "./dist/web/main.js"
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {

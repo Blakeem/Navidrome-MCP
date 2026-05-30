@@ -632,3 +632,53 @@ main {
   min-height: 40px;
 }
 .primary-btn:hover { background: var(--accent-strong); }
+
+/* ---------- playlist picker ---------- */
+.playlist-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+  margin-bottom: 4px;
+  font-size: 0.9rem;
+}
+.playlist-options .pl-mode {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 14px;
+}
+.playlist-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.playlist-options input { accent-color: var(--accent); }
+
+/* The picker reuses .network-list layout but each row is a full-width button. */
+.playlist-list li { background: transparent; padding: 0; }
+.playlist-list { max-height: 50svh; overflow-y: auto; }
+
+.playlist-item {
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 44px;
+}
+.playlist-item:hover { border-color: var(--accent); background: var(--surface); }
+.playlist-item:active { transform: translateY(1px); }
+.playlist-item .pl-name { font-size: 0.98rem; font-weight: 600; }
+.playlist-item .pl-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
