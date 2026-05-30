@@ -81,7 +81,10 @@ const ConfigSchema = z.object({
 
   // Playback (mpv) Configuration
   mpvPath: z.string().optional(),
-  playbackTranscodeFormat: z.string().default('mp3'),
+  // 'raw' (default) streams the original file untouched: highest quality and
+  // fully seekable. Set a codec (e.g. 'mp3', 'opus') to transcode for limited
+  // bandwidth — `playbackTranscodeBitrate` then applies.
+  playbackTranscodeFormat: z.string().default('raw'),
   playbackTranscodeBitrate: z.string().default('192'),
 
   // Filter cache — when false, re-fetches tag/genre lists on every filter resolution
@@ -180,7 +183,10 @@ export async function loadConfig(): Promise<Config> {
   } else {
     logger.info('Playback feature disabled (mpv not found on PATH; set MPV_PATH or install mpv to enable)');
   }
-  const playbackTranscodeFormat = process.env['PLAYBACK_TRANSCODE_FORMAT'] ?? 'mp3';
+  // Default 'raw' = stream the original file (best quality, fully seekable).
+  // Set PLAYBACK_TRANSCODE_FORMAT to a codec (mp3/opus/…) to transcode for
+  // constrained bandwidth; PLAYBACK_TRANSCODE_BITRATE (kbps) then applies.
+  const playbackTranscodeFormat = process.env['PLAYBACK_TRANSCODE_FORMAT'] ?? 'raw';
   const playbackTranscodeBitrate = process.env['PLAYBACK_TRANSCODE_BITRATE'] ?? '192';
 
   // Parse default library IDs from environment

@@ -136,6 +136,8 @@ For a manual build, replace `command`/`args` with:
 - `RADIO_BROWSER_USER_AGENT`: enables Radio Browser global station discovery. Replace the project URL with your own.
 - `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`: enables lyrics fetching.
 - `MPV_PATH`: point at the mpv binary if it's not on `PATH` (e.g. `"C:\\Program Files\\mpv\\mpv.exe"`).
+- `PLAYBACK_TRANSCODE_FORMAT`: streaming format for local playback. Defaults to `raw` — streams the **original file untouched** for the highest quality and reliable seeking (audio plays on the host, so this is usually a localhost/LAN transfer). Set a codec (e.g. `mp3`, `opus`) to transcode instead, useful when the host reaches Navidrome over slow/metered Wi-Fi.
+- `PLAYBACK_TRANSCODE_BITRATE`: target bitrate in kbps when transcoding (default `192`). Ignored when format is `raw`.
 - `WEBUI_PORT` / `WEBUI_HOST` / `WEBUI_EXPOSE` / `WEBUI_ENABLED`: configure the [MPV Remote web UI](#mpv-remote-web-ui) — defaults to `localhost:8808` and lazy-binds once mpv is playing.
 
 Features turn on automatically when their config is present. Restart your MCP client after changing the config.
@@ -335,7 +337,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 
 ### Local Playback (requires [`mpv`](https://mpv.io/))
 
-Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket.
+Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket. By default playback streams the **original file** (`PLAYBACK_TRANSCODE_FORMAT=raw`) for full quality and reliable seeking; set a codec to transcode for constrained bandwidth (see [Configure Your MCP Client](#configure-your-mcp-client)).
 
 | Tool | Description |
 |------|-------------|

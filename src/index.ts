@@ -19,12 +19,11 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { loadConfig } from './config.js';
+import { createRuntime } from './bootstrap.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
-import { NavidromeClient } from './client/navidrome-client.js';
-import { libraryManager } from './services/library-manager.js';
-import { filterCacheManager } from './services/filter-cache-manager.js';
+import { playbackEngine } from './services/playback/playback-engine.js';
+import { ScrobbleTracker } from './services/playback/scrobble-tracker.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
@@ -40,9 +39,6 @@ process.on('unhandledRejection', (reason) => {
 
 async function main(): Promise<void> {
   try {
-    const config = await loadConfig();
-    logger.setDebug(config.debug);
-
     // Add startup diagnostics for troubleshooting
     logger.debug('Starting Navidrome MCP Server...');
     logger.debug('Node version:', process.version);
@@ -52,6 +48,11 @@ async function main(): Promise<void> {
       NAVIDROME_USERNAME: (process.env['NAVIDROME_USERNAME'] !== null && process.env['NAVIDROME_USERNAME'] !== undefined && process.env['NAVIDROME_USERNAME'] !== ''),
       NAVIDROME_PASSWORD: (process.env['NAVIDROME_PASSWORD'] !== null && process.env['NAVIDROME_PASSWORD'] !== undefined && process.env['NAVIDROME_PASSWORD'] !== ''),
     });
+
+    // Shared bootstrap: resolves config, authenticates the client, primes the
+    // library/filter caches, and configures the playback engine. Identical for
+    // the MCP server and the future standalone web server.
+    const { config, client } = await createRuntime();
 
     const server = new Server(
       {
@@ -63,17 +64,24 @@ async function main(): Promise<void> {
       }
     );
 
-    const client = new NavidromeClient(config);
-    await client.initialize();
-
-    // Initialize library manager with user data and configuration
-    await libraryManager.initialize(client, config);
-
-    // Initialize filter cache manager for enhanced search functionality
-    await filterCacheManager.initialize(client, config);
-
     registerTools(server, client, config);
     registerResources(server, client);
+
+    // Auto-scrobble plays to Navidrome (Last.fm rules: now-playing on start,
+    // submission past 50% of duration or 4 min, whichever first; ≥30s tracks
+    // only). The tracker observes the shared mpv via the engine state stream,
+    // so MCP- and web-initiated plays are tracked identically. It's attached
+    // here in the entry point (not in tool registration) because scrobbling is
+    // a process-lifetime playback concern, not a tool-registration concern —
+    // and the standalone-web spec (§6.4) ultimately moves this single line to
+    // the web server, the playback survivor. The tracker has no explicit
+    // shutdown: on SIGINT/SIGTERM the engine closes its IPC socket (mpv keeps
+    // running, detached) and the tracker is torn down with the process; any
+    // in-flight /scrobble request is abandoned, acceptable per Last.fm
+    // best-effort semantics.
+    if (config.features.playback) {
+      new ScrobbleTracker(client, playbackEngine).attach();
+    }
 
     // Companion web UI for mpv playback control. Only initialized when the
     // playback feature itself is enabled (mpv detected) and the user hasn't

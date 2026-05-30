@@ -55,6 +55,15 @@ const OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [10, 'eof-reached'],
 ];
 
+// Seek robustness. On a transcoded HTTP stream, mpv can intermittently reject a
+// seek ("error running command") when the demuxer/cache is momentarily settling
+// after prior transport churn (skips, pauses, earlier seeks). The seek is
+// otherwise valid — a brief wait + retry of the *same* command clears it,
+// without touching mpv's clock (so scrobble/now-playing position bookkeeping is
+// unaffected). Raw streams are fully seekable and never hit this path.
+const SEEK_MAX_ATTEMPTS = 4;
+const SEEK_RETRY_DELAY_MS = 250;
+
 /**
  * Snapshot of engine status, returned by tools.
  */
@@ -228,6 +237,32 @@ class PlaybackEngine {
    */
   isRunning(): boolean {
     return this.ipc?.isConnected() === true;
+  }
+
+  /**
+   * Whether mpv is actively playing audio, derived purely from the cached
+   * observed properties (no IPC round-trip, no lazy spawn). Used only by the
+   * web port owner's shutdown decision and the idle reaper (standalone-web
+   * spec §8) — it is NOT a general truth source for other features.
+   *
+   * Predicate: a live IPC connection AND `playlist-count > 0` AND
+   * `pause === false` AND `idle-active !== true` AND not end-of-file.
+   *
+   * **Biased toward "keep playing."** Each property is treated as "playing"
+   * unless it definitively says otherwise (`=== true` / `!== false`), so any
+   * not-yet-known value (`undefined` before `installObservers` primes it, or a
+   * transient gap) keeps mpv alive rather than risking killing a playing one.
+   * Consequently a radio stream (playlist-count === 1, never EOF) reads as
+   * perpetually playing — intended; such mpv instances are never auto-killed.
+   */
+  isPlaying(): boolean {
+    if (!this.isRunning()) return false;
+    const count = this.propertyCache.get('playlist-count');
+    if (typeof count !== 'number' || count <= 0) return false;
+    if (this.propertyCache.get('pause') !== false) return false;
+    if (this.propertyCache.get('idle-active') === true) return false;
+    if (this.propertyCache.get('eof-reached') === true) return false;
+    return true;
   }
 
   /**
@@ -681,7 +716,28 @@ class PlaybackEngine {
    */
   async seek(seconds: number, mode: 'absolute' | 'relative'): Promise<void> {
     await this.ensureRunning();
-    await this.requireIpc().command('seek', seconds, mode);
+    const ipc = this.requireIpc();
+    for (let attempt = 1; attempt <= SEEK_MAX_ATTEMPTS; attempt++) {
+      try {
+        await ipc.command('seek', seconds, mode);
+        if (attempt > 1) {
+          logger.debug(`seek ${seconds} ${mode} succeeded on retry ${attempt}/${SEEK_MAX_ATTEMPTS}`);
+        }
+        return;
+      } catch (err) {
+        // Only the transient transcode-stream rejection ("error running command")
+        // is worth retrying — a brief wait + retry of the same command clears it
+        // without touching mpv's clock. Anything else (closed socket, command
+        // timeout, invalid args) is deterministic: rethrow at once rather than
+        // burning the remaining attempts (and their delays) on a failure that
+        // won't clear. The final attempt also rethrows, so the tool surfaces a
+        // clean error (graceful degradation).
+        const retryable = err instanceof Error && /error running command/i.test(err.message);
+        if (!retryable || attempt === SEEK_MAX_ATTEMPTS) throw err;
+        logger.debug(`seek ${seconds} ${mode} attempt ${attempt}/${SEEK_MAX_ATTEMPTS} failed, retrying: ${err.message}`);
+        await new Promise<void>((resolve) => setTimeout(resolve, SEEK_RETRY_DELAY_MS));
+      }
+    }
   }
 
   /**
@@ -881,14 +937,23 @@ class PlaybackEngine {
     // salted form means leaked URLs (access logs, etc.) cannot recover the
     // password, and getPlaylist() further sanitizes the URL before exposing
     // it to the LLM via get_play_queue.
+    // `format=raw` streams the original file untouched — best quality and, more
+    // importantly, fully byte-range seekable (mpv can jump anywhere). A real
+    // transcode (mp3/opus/...) is generated on demand and seeks less reliably,
+    // so it's opt-in for bandwidth-constrained setups. `maxBitRate` only applies
+    // when transcoding, so we omit it for raw to keep the URL honest.
+    const isRaw = this.config.playbackTranscodeFormat === 'raw';
+    const streamParams: Record<string, string> = isRaw
+      ? { id: songId, format: 'raw' }
+      : {
+          id: songId,
+          format: this.config.playbackTranscodeFormat,
+          maxBitRate: this.config.playbackTranscodeBitrate,
+        };
     const params = buildSubsonicAuthParams(
       this.config.navidromeUsername,
       this.config.navidromePassword,
-      {
-        id: songId,
-        format: this.config.playbackTranscodeFormat,
-        maxBitRate: this.config.playbackTranscodeBitrate,
-      },
+      streamParams,
     );
     // Trim a single trailing slash so we don't end up with `//rest/stream`.
     const base = this.config.navidromeUrl.replace(/\/+$/, '');
