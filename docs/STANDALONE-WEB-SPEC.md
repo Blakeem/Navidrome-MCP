@@ -1,27 +1,41 @@
 # Standalone Web Mode & Shared-Core Spec
 
-**Status:** Draft for review
+**Status:** Settings/config layer shipped; standalone player pending
 **Date:** 2026-05-29
 **Author:** Blake McDonald (design w/ Claude)
 **Scope:** Make the Navidrome MCP web UI runnable as a first-class standalone
-application (eventually a Tauri desktop app + system tray), sharing a single
-business-logic core with the MCP server, with centralized GUI-managed settings.
+application, sharing a single business-logic core with the MCP server, with
+centralized GUI-managed settings.
+
+> **Implementation update — browser-based, not Tauri.** The settings/config half
+> of this spec (§4 store, §5 partials, §6 bootstrap, §7 settings app) is
+> **implemented**, with one deliberate change from the original plan: the GUI is a
+> **plain web page served by a small local Node server and opened in the user's
+> own browser** — *not* a Tauri app. Tauri was evaluated and dropped (Linux
+> webkit2gtk fragmentation, CI/bundling surface, OS code-signing); a native shell
+> (Tauri/Electron) may be added later if there's demand, but it is no longer on the
+> critical path. Everywhere this spec said "Tauri," read "browser page served by a
+> loopback Node server." The **standalone player** half (§5 port-as-lock, §6 spawn,
+> §8 mpv lifecycle) is the next phase and follows the same browser-first model.
+> Sections below are annotated **[DONE]** / **[PENDING]** accordingly.
 
 ---
 
 ## 1. Goals
 
-1. **Run the web interface without the MCP server** — launched directly (icon /
-   Tauri app / CLI), usable for "remote play" from a phone or browser.
+1. **Run the web interface without the MCP server** — launched directly (CLI /
+   browser; a native shell is optional/future), usable for "remote play" from a
+   phone or browser.
 2. **One shared core** — the exact same code services MCP tool calls *and* the
    web interface. No duplicated playback/queue/search logic.
 3. **Harmonious coexistence** — MCP server and a standalone web instance can run
    at the same time for the same user without fighting over the port or mpv.
 4. **MCP launches the *same* server it would run standalone** — not a second,
    embedded copy. Closing the MCP server must **not** stop the web service.
-5. **Zero-config UX** — a first-run settings GUI collects everything the MCP
-   JSON carries today (Navidrome URL, credentials, API keys, options). Both the
-   MCP server and the web app become launchable with no manual env setup.
+5. **Zero-config UX** [DONE] — a first-run settings page (in the browser) collects
+   everything the MCP JSON carries today (Navidrome URL, credentials, API keys,
+   options). Both the MCP server and the web app become launchable with no manual
+   env setup.
 6. **Smart, shared mpv lifecycle** — a single decision function, used by every
    entry point, decides whether to leave mpv playing or shut it down on exit.
 7. **Cross-platform** — Linux, macOS, Windows.
@@ -74,7 +88,9 @@ not greenfield.
   design"). Nothing ever *stops* it, so an idle mpv can linger indefinitely.
   We add a **narrow, owner-only** stop decision + idle reaper (§8) that preserves
   the "survives MCP close" guarantee while reclaiming a stopped/idle mpv.
-- **G5 — No native launcher.** No icon, no tray, no Tauri.
+- **G5 — No standalone launcher.** No way to open the player without the MCP
+  server. *(Resolved by the browser-first approach, §9 — settings already ship
+  this way; the player follows in Phase B.)*
 - **G6 — Scrobbling is MCP-process-only.** `ScrobbleTracker` is attached solely
   in `registry.ts` (MCP path). Once playback survives MCP close, scrobbling would
   stop — a regression. We relocate it (§6.4).
@@ -115,8 +131,9 @@ not greenfield.
   ★ single-scrobbler rule (§6.4): exactly one process scrobbles — the
     navidrome-web server (the playback survivor). MCP does NOT scrobble.
 
-  Browsers / Tauri window / phone all connect to the ONE navidrome-web
-  HTTP face (port-as-lock, §5); the Tauri window is just a webview onto it.
+  Browsers / phone all connect to the ONE navidrome-web HTTP face
+  (port-as-lock, §5) directly in a browser. (An optional future native shell
+  would just be a webview onto the same URL — not required.)
 ```
 
 Key invariants:
@@ -130,11 +147,12 @@ Key invariants:
   MCP servers already shared one mpv this way.)
 - **Exactly one process scrobbles** (§6.4) — the `navidrome-web` server.
 - **The web server is the single shared HTTP face.** Only one process binds the
-  configured port; everything else (Tauri webview, phone, MCP-triggered browser
-  open) connects to it. This is enforced by **port-as-lock** (§5).
-- **Tauri is a thin native shell**, not the server. Its webview points at
-  `http://127.0.0.1:<port>`; it spawns/supervises the Node web server as a
-  sidecar. (Same pattern as ComfyUI-desktop / Electron-wrapping-a-sidecar.)
+  configured port; everything else (phone browser, MCP-triggered browser open)
+  connects to it. This is enforced by **port-as-lock** (§5).
+- **The browser is the client**, not a bundled shell. Users open
+  `http://127.0.0.1:<port>` (or the LAN URL when exposed) directly. An optional
+  future native shell (Tauri/Electron) would merely point a webview at the same
+  URL and supervise the Node server as a sidecar — deferred, not required.
 
 ### 3.2 Three "entry points," one bootstrap
 
@@ -144,67 +162,62 @@ of who launched it.
 
 | Entry point | Binary / trigger | Responsibilities |
 |---|---|---|
-| **MCP server** | `navidrome-mcp` (stdio, launched by Claude Desktop) | Register tools/resources; **spawn the standalone web server** (detached) if enabled; participate in mpv lifecycle as a controller. |
-| **Standalone web** | `navidrome-web` (CLI) / Tauri sidecar | Run the web server (bootstrap → bind port → serve UI/API/SSE). |
-| **Settings app** | `navidrome-config` / Tauri config window / MCP `open_settings` tool | First-run + ongoing settings GUI; writes the canonical settings store. |
+| **MCP server** | `navidrome-mcp` (stdio, launched by Claude Desktop) | Register tools/resources; **spawn the standalone web server** (detached) if enabled; participate in mpv lifecycle as a controller. **[PENDING]** |
+| **Standalone web** | `navidrome-web` (CLI) | Run the web server (bootstrap → bind port → serve UI/API/SSE). **[PENDING]** |
+| **Settings app** [DONE] | `navidrome-config` (CLI, opens a browser page) / MCP `open_settings` tool | First-run + ongoing settings GUI in the browser; writes the canonical settings store. |
 
 ---
 
 ## 4. Centralized settings (resolves G3)
 
-### 4.1 Decision
+### 4.1 Decision [DONE]
 
-**Chosen: a single GUI-managed canonical settings store (the "Tauri store"),
-which is a plain JSON file on disk — used by dev and prod alike.** `.env` and
-`dotenv` are dropped; `process.env` remains only as an optional override for
-CI/tests/power users. A first-run config UI collects everything the MCP JSON
-carries today, giving zero-config launches, and a one-time **env-import
-migration** pre-fills it from any legacy env so existing users don't re-type.
+**Chosen: a single GUI-managed canonical settings store — a plain `settings.json`
+on disk, used by dev and prod alike — as the SOLE runtime config source.** A
+first-run config page (served in the browser) collects everything the MCP JSON
+carried, giving zero-config launches, and a one-time **env/.env import** pre-fills
+the form so existing users don't re-type.
 
-> **Why this works without hard Tauri coupling:** the canonical store is an
-> ordinary JSON file at a **known OS-conventional path**, written by the config
-> UI (via Tauri's `fs` API in our own shape — *not* `tauri-plugin-store`, see
-> §9.2) and read by the Node core with plain `JSON.parse`. Node never needs Tauri
-> to be running — it only needs the file to exist (created by the config UI on
-> first run, by the env-import migration, or hand-written in dev).
+> **As built (deviates from the original draft):** there is **no env-override
+> layer**. `process.env`/`.env` are read **only once, to pre-fill the form** on
+> first run (when no `settings.json` exists yet) — never as a runtime config
+> source. The store is an ordinary JSON file at a known OS-conventional path,
+> **written by the Node settings server** (custom atomic writer, *not* Tauri and
+> *not* `tauri-plugin-store`) and read by the Node core with plain `JSON.parse`.
 
-**`.env` and `dotenv` are removed entirely.** Since config no longer flows from
-the MCP client JSON as env, `.env`'s only purpose (a fallback for `process.env`)
-disappears. `settings.json` is the **single canonical store for everyone,
-including dev**. `process.env` survives *only* as a thin, optional, undocumented-
-for-normal-users override layer — retained because CI and unit tests already
-inject config via env (`test:ci`, several `process.env[...]` unit tests) and
-rewriting the whole test harness to fixtures is out of scope. See §4.9 for the
-test/CI impact.
+**`.env` and `dotenv` are removed entirely** — including from `devDependencies`.
+Runtime config comes only from `settings.json`. The legacy `.env`/env import on
+first run uses a small **hand-rolled KEY=VALUE parser** (handles quotes, `#`
+comments, `=` in values, CRLF, `export ` prefix), so there is no `dotenv`
+dependency at all. A few low-level operational env vars remain env-only and out of
+the store (timeouts, `XDG_RUNTIME_DIR`, and `NAVIDROME_CONFIG_PATH` — a *location*
+override, not a value override). See §4.9 for the test/CI approach.
 
 ### 4.2 Resolution order (settings.json wins for humans)
 
-> **Revised per review (M5 footgun).** The earlier draft let `process.env` win,
-> which silently defeats GUI edits when a stale `NAVIDROME_URL` is still exported
-> (e.g. left in the MCP client JSON after migration). Fixed below: **the file
-> wins by default; env can only override behind an explicit opt-in flag that CI
-> sets and humans never do.**
+> **As built — single source, no override flag.** The earlier draft proposed a
+> file-wins-but-env-can-override-behind-a-flag (`NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE`)
+> scheme. We simplified per Blake's decision: **`settings.json` is the only runtime
+> config source.** There is no override flag at all.
 
 ```
-built-in defaults
-  < process.env                 (read ONLY when settings.json is absent, OR per-field
-                                 when NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE is set)
-  < settings.json               (canonical for humans — wins by default)
+settings.json            ← the ONLY runtime config source (loadConfig reads it)
+process.env / .env       ← consulted ONCE, only to pre-fill the form on first run
+                            (when no settings.json exists yet); never at runtime
 ```
 
 Concretely:
 
-- **`settings.json` present (normal):** the file is authoritative. A GUI edit
-  always takes effect. `process.env` is **ignored** for config fields.
-- **`settings.json` absent:** fall back to `process.env` (this is the seed for
-  the migration in §4.6, and the path CI uses — CI has no file).
-- **`NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE=1`:** opt-in escape hatch that re-enables
-  env-over-file layering. **CI/tests set this**; it is undocumented for normal
-  users. This is what lets `test:ci` force `NAVIDROME_URL=http://ci-dummy…` even
-  if a file somehow exists, without giving humans a silent footgun.
-- **No `.env` file at runtime, no runtime `dotenv`.** `dotenv` is retained as a
-  **devDependency** used *only* by the migration script (§4.6 / §4.8) — never on
-  the runtime path.
+- **`settings.json` present (normal):** the file is authoritative. `process.env`
+  is **never** read for config fields.
+- **`settings.json` absent:** the runtime is *unconfigured* → first-run/degraded
+  mode (§4.6, §7). The settings form's **seed** is built from `process.env` + a
+  legacy `.env` (import-only) so existing users just verify and Save.
+- **No `.env`/`dotenv` at runtime, and `dotenv` is gone entirely** (not even a
+  devDependency — a hand-rolled parser handles the one-time `.env` import).
+- **Tests:** a global setup writes a throwaway `settings.json` (seeded from the
+  real store, else env, else `.env`) and points `NAVIDROME_CONFIG_PATH` at it, so
+  `test:ci`'s injected env keeps working with no override flag (§4.9).
 - **MCP JSON:** no longer carries credentials. Its only job is *launching the MCP
   server binary* (command + args).
 
@@ -218,15 +231,15 @@ Mirror the OS-awareness already used by `getDefaultIpcPath()`:
 | macOS | `~/Library/Application Support/navidrome-mcp/settings.json` |
 | Windows | `%APPDATA%\navidrome-mcp\settings.json` |
 
-- New helper: `src/config/store-path.ts` → `getSettingsStorePath()`. The Tauri
-  store plugin is configured to use this exact path so both sides agree.
+- New helper: `src/config/store-path.ts` → `getSettingsStorePath()` [DONE].
 - **`NAVIDROME_CONFIG_PATH` env var overrides the location** — used by tests
   (isolated temp file per run), portable installs, and multi-profile setups. This
-  is a *location* override, not a config-value override.
+  is a *location* override, not a config-value override. [DONE]
 - **Dev uses the same path as prod** (answering "where would this live?"): on
   Blake's machine, `~/.config/navidrome-mcp/settings.json`. Populated once via the
-  config UI or the `pnpm config:migrate` script (§4.6). Tests point
-  `NAVIDROME_CONFIG_PATH` at a throwaway file so they never touch the real store.
+  config page (run `navidrome-config`, or it auto-opens on first run of an
+  unconfigured server). Tests point `NAVIDROME_CONFIG_PATH` at a throwaway file so
+  they never touch the real store. [DONE]
 
 ### 4.4 Schema
 
@@ -270,12 +283,11 @@ Hardening:
   are never sent over the LAN-exposed player interface.
 - (Future option, out of scope: migrate secrets to OS keychain.)
 
-**Single-writer rule** (per review S7): to avoid two writers clobbering the file,
-**only the GUI/Tauri side writes `settings.json` during normal operation**
-(via Tauri's `fs` API, in the exact §4.4 shape — *not* `tauri-plugin-store`, see
-§9.2). The Node core is **read-only** except for the one-shot migration, which
-only ever writes when the file is **absent**. So at most one writer touches the
-file at a time.
+**Single-writer rule** (per review S7) [DONE, writer changed]: to avoid two writers
+clobbering the file, **only the Node settings server writes `settings.json`** (its
+`POST /api/settings` route, custom atomic writer — §4.4 shape). The MCP/web runtime
+is **read-only**. *(Original draft had Tauri's `fs` as the writer; since there is no
+Tauri, the settings server is the sole writer — same single-writer guarantee.)*
 
 ### 4.6 First-run, env-import migration, and unconfigured handling
 
@@ -291,25 +303,24 @@ and cannot pop a GUI on its own.
    `LYRICS_PROVIDER`, `LRCLIB_USER_AGENT`, `MPV_PATH`, `WEBUI_PORT`,
    `WEBUI_EXPOSE`, `WEBUI_ENABLED`, `NAVIDROME_DEFAULT_LIBRARIES`, …) — covers
    anyone who set them in their MCP client JSON or shell.
-2. A legacy `.env` file at the project root / cwd, **parsed once for import
-   only using `dotenv` as a devDependency** (per review S8 — a hand-rolled parser
-   would mishandle exactly the shell-special chars this project's `.env` is known
-   to contain, e.g. parens in `RADIO_BROWSER_USER_AGENT`; see `CLAUDE.md`). This
-   is import-only and never on the runtime path — covers dev installs.
+2. A legacy `.env` file at the project root / cwd, **parsed once for import only
+   using a hand-rolled KEY=VALUE parser** (not `dotenv` — the parser handles the
+   shell-special chars this project's `.env` contains, e.g. parens in
+   `RADIO_BROWSER_USER_AGENT`, plus quotes, `#` comments, `=` in values, CRLF, and
+   `export ` prefixes). Import-only, never on the runtime path — covers dev installs.
 
-Then:
+As built [DONE]:
 
-- **GUI available** (Tauri/web first-run): pre-fill the config form with the
-  imported values; the user reviews and saves → writes `settings.json`.
-- **Headless + complete** (MCP server, env fully specifies a valid config):
-  write `settings.json` automatically and continue. Log a one-line
-  "migrated legacy env → settings.json" notice.
-- **`pnpm config:migrate`** dev script (`scripts/migrate-env-to-store.mjs`):
-  explicit one-shot import of the current `.env`/env into `settings.json` for
-  developers who want to migrate before running anything.
+- **First run (browser):** the settings page fetches `GET /api/settings/seed`,
+  which returns the existing `settings.json` if present, else the imported
+  env/.env values (`buildFormSeed`); the user reviews and Saves → the settings
+  server writes `settings.json`.
+- **No silent auto-write.** Even when env fully specifies a valid config, the
+  server does **not** write `settings.json` on its own — it enters degraded mode
+  and the user confirms via the form. (Simpler and avoids surprising writes.)
 
-> The legacy `.env` parse is import-only and best-effort; after migration the
-> `.env` file is never read again at runtime.
+> The legacy `.env` parse is import-only and best-effort; after the user Saves,
+> `.env`/env are never read again at runtime.
 
 **Degraded mode (still unconfigured after import).** If no credentials can be
 resolved from store *or* legacy import:
@@ -335,57 +346,56 @@ resolved from store *or* legacy import:
 
 > *"The settings should never be exposed anywhere but local."*
 
-- Settings **read/write** happens via Tauri local IPC (preferred) and/or an HTTP
-  route bound to loopback only.
-- Even when `webui.expose = true` (player UI reachable on `0.0.0.0` for the
-  phone), any `/api/settings*` route **must reject non-loopback remote
-  addresses** (`req.socket.remoteAddress` not in `127.0.0.1/::1`). Add a
-  loopback-guard middleware in `src/webui/server.ts`.
+- Settings read/write happens via a **dedicated loopback-only HTTP settings
+  server** (`src/config-app/server.ts`) bound to `127.0.0.1` on an OS-assigned
+  ephemeral port. [DONE]
+- The peer guard rejects non-loopback addresses (`127.0.0.1`, `::1`, **and
+  `::ffff:127.0.0.1`** — the IPv4-mapped form dual-stack Linux presents). [DONE]
 - The player/control API and cover-art proxy *may* be exposed; settings never.
+  **[PENDING]** When a future `/config` surface is mounted inside the exposed
+  player web UI, it must reuse the same loopback guard there.
 
-### 4.8 Refactor required
+### 4.8 Refactor (as built) [DONE]
 
-- Extract config resolution: `defaults → settings.json` (humans), with
-  `process.env` consulted only when the file is absent or
-  `NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE` is set (§4.2). Keep
-  `loadConfig(): Promise<Config>` throwing for the configured path; add a
-  **separate** `resolveConfigState()` for the configured/unconfigured branch
-  (§4.6, M6) — do **not** turn `Config` into a union.
-- **Move `dotenv` from `dependencies` to `devDependencies`** and delete the two
-  runtime `loadDotenv` blocks in `src/config.ts` (lines ~27-46 and ~145-166).
-  `dotenv` survives only inside `scripts/migrate-env-to-store.mjs`.
-- Add `getSettingsStorePath()` (`src/config/store-path.ts`, honoring
-  `NAVIDROME_CONFIG_PATH`) + a typed store **reader** (`src/config/store.ts`)
-  with Zod validation reusing the existing `ConfigSchema` shape. Node writes only
-  via the migration (file-absent case); all other writes are the GUI's (§4.5).
-- Add env-import migration (`src/config/migrate.ts`) + `scripts/migrate-env-to-store.mjs`
-  + `config:migrate` npm script (§4.6).
-- Keep `mpv` auto-detection (`detectMpvBinary()`); `playback` stays gated on mpv
-  presence, but `mpvPath` may also come from the store.
-- **Delete `.env`, `.env.test`, `.env.example`** from the repo; replace
-  `.env.example` with a `settings.example.json` (documents the store shape).
+- `loadConfig()` reads `settings.json` only (no env layering). It keeps
+  `Promise<Config>` and throws for the configured path; a **separate**
+  `resolveConfigState(): {configured:true,config} | {configured:false}` does the
+  configured/unconfigured branch — `Config` was **not** turned into a union.
+- **`dotenv` removed entirely** (not even a devDependency); the two runtime
+  `loadDotenv` blocks in `src/config.ts` are gone. The one-time `.env` import uses
+  a hand-rolled parser in `src/config/seed.ts`.
+- `getSettingsStorePath()` (`src/config/store-path.ts`, honoring
+  `NAVIDROME_CONFIG_PATH`) + a typed store **reader/writer** (`src/config/store.ts`,
+  lenient Zod `SettingsFileSchema`, atomic `0600` writer). `ConfigSchema`/`Config`
+  extracted to `src/config/schema.ts`; the nested→flat projection lives in
+  `src/config/map-config.ts` (split out so the read/write path doesn't import the
+  mpv subsystem). The settings server is the only writer (§4.5).
+- Env/.env → form-seed import in `src/config/seed.ts` (`buildFormSeed`); no
+  separate migrate script — the form Save *is* the migration.
+- Kept `mpv` auto-detection; added `resolveMpvBinary()` so an explicit store
+  `playback.mpvPath` wins, else auto-detect; `playback` stays gated on mpv presence.
+- **Deleted `.env`, `.env.test`, `.env.example`**; added `settings.example.json`
+  (documents the store shape).
 
-### 4.9 Test / CI impact (must address upfront)
+### 4.9 Test / CI approach (as built) [DONE]
 
-Removing the `.env` file changes how tests get config. Current state:
+Removing `.env` changed how tests get config. Solution — **no override flag**:
 
-- `test:ci` injects `NAVIDROME_URL/USERNAME/PASSWORD` inline as env. To keep it
-  working with the new file-wins precedence (§4.2), **add
-  `NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE=1` to the `test:ci` env** (and any test
-  runner that relies on env). With no `settings.json` present in CI, env is the
-  only source anyway; the flag just guarantees env still wins if a stray file
-  exists. No fixture rewrite.
-- Unit tests that set `process.env[...]` (timeouts, `XDG_RUNTIME_DIR`, etc.) —
-  **unaffected** (those aren't store-managed config).
-- **Integration/playback tests** currently rely on `loadConfig()` auto-loading
-  `.env`. Once runtime `dotenv` is gone, they must get config another way.
-  **(Recommended)** a test bootstrap (`tests/helpers/`) that writes a **temp
-  `settings.json`** from the developer's existing `.env` values and points
-  `NAVIDROME_CONFIG_PATH` at it — keeps `.env` as the thing the *developer*
-  edits, while the runtime reads a store file (and never touches the real
-  `~/.config` store). This doubles as the first real exercise of the store
-  reader.
-- `.env.test` is **vestigial** (not referenced in code) — delete it.
+- A global setup file (`tests/helpers/setup-config-store.ts`, registered in both
+  vitest configs) builds a seed via `buildFormSeed()` **before** redirecting the
+  store path — reading the developer's real store if present, else inline env
+  (what `test:ci` injects), else a legacy `.env` — then writes a **temp
+  `settings.json`** to a per-process path and points `NAVIDROME_CONFIG_PATH` at it.
+  The real `~/.config` store is never touched.
+- `test:ci` still injects `NAVIDROME_URL/USERNAME/PASSWORD` as env; the setup turns
+  them into the temp store (no flag needed). Live tests then skip via
+  `SKIP_INTEGRATION_TESTS`.
+- Tests needing a *specific* deterministic `Config` build it directly with
+  `makeTestConfig()` (`tests/helpers/test-config.ts`) instead of `loadConfig()`.
+- New focused unit tests cover store-path resolution, `mapStoreToConfig` edge
+  cases, read/write (incl. `0600`), seed precedence, `resolveConfigState`, and the
+  settings server's mask/unmask + static serving.
+- `.env.test` was vestigial (not wired into any vitest config) — deleted.
 
 ### 4.10 New multi-process test category (per review G)
 
@@ -399,11 +409,9 @@ survival across a simulated MCP exit, and reaper cleanup. Because these touch a
 real socket + real mpv, they belong under the **`test:playback` umbrella** (gated
 like the live suite, skipped when mpv/Navidrome absent), and must honor
 `tests/CLAUDE.md`'s "mock writes / don't mutate server data" rule (these tests
-manipulate local mpv + ports only, not Navidrome state). This is a Phase-0
-deliverable — §11 lists it explicitly.
-
-This is the single most fiddly part of the `.env` removal; it must be resolved in
-Phase 0 or the integration suite breaks.
+manipulate local mpv + ports only, not Navidrome state). This is a **Phase B**
+deliverable (it validates port-as-lock / spawn / reaper — the standalone player),
+listed in §11.
 
 ---
 
@@ -447,12 +455,12 @@ of binding). No lockfile → no stale-PID problem.
    would be the owner, it instead **spawns the standalone `navidrome-web`
    process detached** (so the server outlives the MCP process) rather than
    binding in-process. If already running, it does nothing. (See §6.)
-4. **Tauri app:** its sidecar runs `acquireOrAttach`. If a server is already up
-   (e.g. MCP started one), the sidecar exits and the webview just points at the
-   existing URL. If not, the sidecar becomes the owner.
+4. **`navidrome-web` bin (and any future native shell):** runs `acquireOrAttach`.
+   If a server is already up (e.g. MCP started one), it exits and the user's
+   browser just points at the existing URL. If not, it becomes the owner.
 5. **Cold-start double-spawn** (per review S2): if two launchers (e.g. MCP +
-   Tauri, or two MCPs) both pass the probe and both spawn/try to bind, one wins
-   `listen`; every loser runs `acquireOrAttach` itself and **self-exits cleanly**
+   `navidrome-web`, or two MCPs) both pass the probe and both spawn/try to bind,
+   one wins `listen`; every loser runs `acquireOrAttach` itself and **self-exits cleanly**
    on `EADDRINUSE→re-probe→attached`. The MCP spawner must **not** treat a child
    that immediately exits (because it attached instead of binding) as an error.
    Combined with the in-process double-spawn guard (§6.2), transient orphan spawns
@@ -462,8 +470,8 @@ of binding). No lockfile → no stale-PID problem.
 
 | Sequence | Outcome |
 |---|---|
-| MCP starts → user opens Tauri | MCP spawned the server; Tauri attaches to it. |
-| Tauri starts → MCP starts | Tauri's sidecar owns it; MCP probes, stands down. |
+| MCP starts → user opens the web URL | MCP spawned the server; the browser connects to it. |
+| `navidrome-web` starts → MCP starts | `navidrome-web` owns it; MCP probes, stands down. |
 | Build playlists in MCP, close MCP, open web later | Server (spawned detached) **survives MCP close**; web keeps working; controls the still-playing mpv. |
 | Two browsers / phone + desktop | All connect to the one owner; all drive the same mpv. |
 
@@ -536,7 +544,7 @@ exposed.
 
 - Guarantees "closing MCP doesn't stop the web service."
 - Guarantees the MCP-launched server is *byte-for-byte* the standalone server.
-- Lets Tauri attach to / supervise the identical artifact.
+- Lets an optional future native shell attach to / supervise the identical artifact.
 
 ### 6.4 Engine, managers, and scrobbler ownership (the two-engine reality)
 
@@ -582,41 +590,45 @@ drive mpv directly (MCP via `play_*` tools, web via `/api/controls/*`).
 
 ---
 
-## 7. Settings app + `open_settings` tool
+## 7. Settings app + `open_settings` tool [DONE]
 
 ### 7.1 Components
 
-- **`open_settings` MCP tool** (`src/tools/settings.ts` + handler): launches the
-  settings GUI. In a packaged install it spawns the Tauri config window; in dev
-  it can open the local settings web page.
-- **Standalone config launcher** (`navidrome-config` bin / Tauri config window):
-  for users who only want the remote-play web UI and never run the MCP server.
-- **First-run flow:** when `settings.json` is absent, any entry point that has a
-  GUI available routes the user into the config app before normal operation.
+- **Settings server** (`src/config-app/`): a dedicated **loopback-only, on-demand**
+  Node HTTP server (`server.ts`) that serves the settings form (`public/`) and the
+  `seed` / `save` / `test` routes (`routes.ts`). Bound to `127.0.0.1:0` (ephemeral
+  port), fully decoupled from the mpv/`webui.enabled` gates — so setup always has a
+  target even with no mpv and no player web server. Routes are written **mountable**
+  so a future `/config` surface inside the player web UI can reuse them verbatim.
+- **`navidrome-config` bin** (`src/config-app/main.ts`): starts the settings server,
+  prints the URL, and best-effort opens the browser; for users who never run MCP.
+- **`open_settings` MCP tool** (degraded mode, `src/config-app/degraded-tools.ts`):
+  when the server is unconfigured it registers a minimal toolset (`open_settings` +
+  `test_connection`) and returns the settings URL in-band.
+- **First-run flow:** when `settings.json` lacks a Navidrome URL, the MCP entry
+  point starts the settings server in-process, **auto-opens the browser**
+  (`src/utils/open-browser.ts`), and surfaces the URL via the degraded tool + stderr
+  — so even on headless/SSH (where auto-open no-ops) the user gets a clickable URL.
 
-> **Degraded-mode bootstrapping gap (per review).** Two coupled problems:
-> (1) Today the web UI is implicitly gated on `config.features.playback` (mpv
-> present) — see `index.ts:85` and the `ConfigSchema.webui` comment. (2) In
-> unconfigured mode there may be **no mpv and no web server**, so a "open the
-> `/settings` web page" fallback has nothing to open, and spawning a Tauri window
-> from a headless MCP-under-Claude-Desktop process isn't guaranteed (no display,
-> esp. Linux/SSH).
-> **Resolution:** decouple the **setup/settings server** from the playback gate —
-> a minimal settings HTTP server (loopback-only, §4.7) must be able to start
-> **without mpv** so `open_settings` always has a target, and the packaged Tauri
-> app provides the GUI directly. Spell out in implementation: `webui.enabled`
-> gating applies to the *player* surface; the *settings* surface is always
-> available locally when unconfigured.
+> **Headless-bootstrap resolution (as built).** The settings surface is a plain
+> browser page, so there is no Tauri-window-needs-a-display problem. Auto-open is
+> best-effort; the URL is the contract. `webui.enabled`/mpv gating applies only to
+> the *player* surface — the *settings* surface is always available locally when
+> unconfigured.
 
-### 7.2 Settings UI surface
+### 7.2 Settings UI surface [DONE]
 
-Form fields mirror §4.4: Navidrome URL / username / password, Last.fm key,
-Radio Browser user-agent, lyrics provider + user-agent, mpv path (optional),
-transcode format/bitrate, web port, `expose` toggle (with a clear "exposes the
-player to your LAN — settings stay local" note), default libraries, debug.
+Form fields mirror §4.4: Navidrome URL / username / password, default libraries +
+filter-cache toggle, Last.fm key, Radio Browser user-agent (+ base), lyrics provider
++ user-agent (+ base), mpv path (optional), transcode format/bitrate, web port / host
+/ `expose` toggle (with a clear "exposes the player to your LAN — settings stay local"
+note) / enabled, debug, cache TTL, token expiry. The password is **masked** (a
+`********` sentinel) so it never round-trips to the browser in plaintext.
 
-A **"Test connection"** button calls the existing `test_connection` logic against
-the entered values before saving.
+A **"Test connection"** button connects with the entered values before saving:
+`mapStoreToConfig(form) → new NavidromeClient(cfg) → initialize()` (the JWT login is
+the real connectivity test), returning a clean ok/error via `ErrorFormatter` (never
+echoing credentials).
 
 ---
 
@@ -731,9 +743,9 @@ lifetimes**:
 - **Reaping mpv does NOT close the host.** When the reaper quits an idle mpv, the
   host stays alive as a dormant control surface (URL stays reachable; next play
   re-spawns mpv + re-arms observers). The host exits only on explicit stop
-  (Ctrl-C, Tauri tray Quit, OS shutdown). *(Optional future enhancement: a
-  headless MCP-spawned web server could self-exit after being fully idle — no mpv,
-  no SSE clients — for a long window; deferred, Tauri makes it moot.)*
+  (Ctrl-C, a native-shell Quit if present, OS shutdown). *(Optional future
+  enhancement: a headless MCP-spawned web server could self-exit after being fully
+  idle — no mpv, no SSE clients — for a long window; deferred.)*
 - **Adopt-on-startup.** Every host runs `ensureAttached` on startup; if an mpv is
   already running (e.g. spawned by a since-closed MCP), it adopts it and arms the
   observers on the in-progress playback. This is the orphan-recovery path.
@@ -756,46 +768,41 @@ lifetimes**:
 
 ---
 
-## 9. Native launcher & Tauri (resolves G5)
+## 9. Launcher: browser-first (resolves G5)
 
-### 9.1 Decision
+### 9.1 Decision — the browser is the launcher
 
-**Chosen: Tauri app (window + system tray) wrapping the Node web server as a
-sidecar.** The webview renders `http://127.0.0.1:<port>` (same UI the phone sees);
-the tray offers Open / Show-hide / Stop / Quit and (later) now-playing.
+**Chosen: open the UI in the user's own browser; no bundled native shell.** Tauri
+(and Electron) were evaluated and **dropped** for now:
 
-### 9.2 Architecture notes
+- **Tauri:** Linux `webkit2gtk` version fragmentation, a Rust toolchain in CI,
+  `externalBin` single-file packaging, and per-OS code signing / macOS
+  notarization — a large surface for what is, in the end, a form and a control
+  panel that a browser tab already renders.
+- **Electron:** far too large to bundle for this use case.
 
-> **Two reality-checks from review (E).** (1) Tauri sidecars expect a **bundled
-> binary** declared in `tauri.conf.json > bundle.externalBin`, invoked with a
-> platform-suffixed name (`navidrome-web-x86_64-unknown-linux-gnu`) — *not*
-> `node dist/web/main.js`. (2) `tauri-plugin-store` does **not** persist a
-> hand-editable flat JSON the Node side can `JSON.parse` naively; it manages its
-> own keyed format. Both are corrected below.
+Instead:
 
-- **Sidecar = the Node web server.**
-  - **Dev:** Tauri spawns the server via a `Command::new("node")` (or `tsx`) —
-    requires Node on PATH, fine for development.
-  - **Distribution:** package the Node server as a **single-file executable**
-    (e.g. Node SEA / `pkg`-style) and declare it as `externalBin` so end users
-    don't need Node. **This packaging is the single biggest Phase-2 risk** (size,
-    per-OS build, code signing / macOS notarization — see
-    `docs/MACOS_TROUBLESHOOTING.md`).
-- **Settings interop = our own `settings.json`, NOT `tauri-plugin-store`.** The
-  Tauri config window writes the canonical `settings.json` (§4.4 shape) via
-  Tauri's `fs` API or a small Rust command, at `getSettingsStorePath()`. The Node
-  side reads it with plain `JSON.parse`. This guarantees both sides agree by
-  construction **and** keeps a single writer (§4.5 / review S7). Do not rely on
-  the plugin's serialization as the contract.
-- **Tray-to-system behavior:** "minimize to tray" keeps the server running;
-  "Quit" triggers the same `onOwnerExit()` smart-shutdown (§8.5).
-- **Remote/phone access** is unaffected — it always goes to the Node server's
-  exposed port, independent of whether the Tauri window is open.
+- **Settings** [DONE]: `navidrome-config` (and MCP first-run) start the loopback
+  settings server and **auto-open the browser** to it (`open`/`start`/`xdg-open`),
+  always also surfacing the URL as the fallback.
+- **Standalone player** [PENDING]: the `navidrome-web` server serves the player UI
+  on its configured port; users open `http://127.0.0.1:<port>` (or the LAN URL
+  when `expose=true`) directly, and bookmark it. Same model as the settings page.
 
-### 9.3 Bundle identifier
+### 9.2 Optional future native shell
 
-Pick a stable identifier (e.g. `com.navidrome-mcp.app`) so the store path and
-any OS integration are consistent across versions.
+If there's demand later, a thin native shell (Tauri or otherwise) can wrap the
+**same** Node server as a sidecar: its webview points at `http://127.0.0.1:<port>`
+and a tray offers Open / Stop / Quit / now-playing. Nothing in this spec depends on
+it — the servers, port-as-lock, settings store, and smart-shutdown all work
+identically with a plain browser. Notes if/when that happens:
+
+- The shell would spawn the Node server as a sidecar (dev: `node`/`tsx`;
+  distribution: a single-file executable via Node SEA, the big packaging risk).
+- It would **not** write settings itself — it would just load the settings page
+  like any browser, preserving the single-writer rule (§4.5).
+- Pick a stable bundle identifier (e.g. `com.navidrome-mcp.app`) for OS integration.
 
 ---
 
@@ -804,12 +811,12 @@ any OS integration are consistent across versions.
 | Area | File(s) | Change |
 |---|---|---|
 | Shared bootstrap | `src/bootstrap.ts` *(new)* | `createRuntime()` → config + client + initialized managers + `engine.configure()` (§6.2). NOT scrobbler. |
-| Config resolve | `src/config.ts` | File-wins resolution (§4.2); `loadConfig()` keeps `Promise<Config>` (throws); add separate `resolveConfigState()`. |
-| Remove runtime dotenv | `src/config.ts`, `package.json` | Delete the two `loadDotenv` blocks; **move `dotenv` to devDependencies** (migration-only). |
-| Settings store | `src/config/store-path.ts`, `src/config/store.ts` *(new)* | OS-aware path (+ `NAVIDROME_CONFIG_PATH`); typed **reader** + Zod validate; atomic+`0600` writer used only by migration (§4.5). |
-| Env-import migration | `src/config/migrate.ts`, `scripts/migrate-env-to-store.mjs` *(new)* | First-run import from env + legacy `.env` (via dotenv devDep); `config:migrate` script. |
-| Remove `.env` files | `.env`, `.env.test`, `.env.example` | Delete; add `settings.example.json`. |
-| Test/CI config | `tests/helpers/` *(new)*, `package.json` (`test:ci`) | Temp `settings.json` via `NAVIDROME_CONFIG_PATH`; add `NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE=1` to `test:ci` (§4.9). |
+| Config resolve **[DONE]** | `src/config.ts`, `src/config/schema.ts` *(new)* | Store-only `loadConfig()` keeps `Promise<Config>` (throws); separate `resolveConfigState()`; `ConfigSchema`/`Config` extracted to `schema.ts`. |
+| Remove dotenv **[DONE]** | `src/config.ts`, `package.json` | Deleted both `loadDotenv` blocks; **`dotenv` removed entirely** (hand-rolled `.env` parser in `seed.ts`). |
+| Settings store **[DONE]** | `src/config/store-path.ts`, `src/config/store.ts`, `src/config/map-config.ts` *(new)* | OS-aware path (+ `NAVIDROME_CONFIG_PATH`); lenient Zod reader + atomic `0600` writer; nested→flat `mapStoreToConfig` (split out so read/write path avoids the mpv subsystem). |
+| Env→form seed **[DONE]** | `src/config/seed.ts` *(new)* | `buildFormSeed()`: store if present, else import env + legacy `.env`. No migrate script — the form Save is the migration. |
+| Remove `.env` files **[DONE]** | `.env`, `.env.test`, `.env.example` | Deleted; added `settings.example.json`. |
+| Test/CI config **[DONE]** | `tests/helpers/` *(new)*, vitest configs | Global setup writes a temp `settings.json` (seeded), points `NAVIDROME_CONFIG_PATH` at it; `makeTestConfig()` for deterministic tests. No override flag. |
 | Multi-process tests | `tests/integration/coordination/` *(new)* | Spawn real children; assert port ownership, mpv survival, reaper (under `test:playback` gate, §4.10). |
 | Docs | `CLAUDE.md`, `tests/CLAUDE.md`, `README.md` | Update curl recipes + setup from `.env` → settings.json (§13). |
 | Port-as-lock | `src/web/acquire.ts` *(new)*, `src/webui/server.ts` | `acquireOrAttach` (loopback probe, foreign/hang branch); add `/healthz`; loopback guard for settings routes. |
@@ -818,9 +825,9 @@ any OS integration are consistent across versions.
 | Delete WebUIServer | `src/webui/index.ts` *(delete)* | Fold lifecycle into `src/web/main.ts`; reuse `createServer` + `SseBroadcaster`. Grep `tests/` first. |
 | Scrobbler relocation | `registry.ts`, `src/web/main.ts` | Move `ScrobbleTracker.attach()` out of MCP registration; single-scrobbler rule + MCP-only fallback (§6.4). |
 | Smart shutdown | `src/services/playback/shutdown.ts` *(new)*, `playback-engine.ts` | `shouldKillMpvOnOwnerShutdown()`, `isPlaying()`, idle reaper; **no** controller registry (§8). |
-| Settings tool | `src/tools/settings.ts` + handler *(new)* | `open_settings`; degraded-mode toolset; loopback-only setup server decoupled from mpv gate (§7). |
-| Package | `package.json` | Add `navidrome-web` (and later `navidrome-config`) to `bin`; build copies web assets (already does via `scripts/build-webui.mjs`). |
-| Tauri (Phase 2) | `src-tauri/` *(new)* | Tauri shell, tray, sidecar (`externalBin`), settings written as our `settings.json` via fs (NOT plugin-store). |
+| Settings app **[DONE]** | `src/config-app/{server,routes,main,degraded-tools}.ts`, `src/config-app/public/*`, `src/utils/open-browser.ts` *(new)* | Loopback ephemeral settings server (seed/save/test + static), `navidrome-config` bin, degraded-mode `open_settings`, cross-platform browser open (§7). |
+| Package **[PARTIAL]** | `package.json` | Added `navidrome-config` to `bin`; build copies config-app + webui assets via `scripts/build-webui.mjs`. (`navidrome-web` bin pending.) |
+| Native shell | *(none)* | **Dropped** — browser is the launcher (§9). Optional future Tauri/Electron shell would wrap the Node server as a sidecar. |
 
 **Quality gates** (per `CLAUDE.md`): every step must pass `pnpm check:all`,
 `pnpm test:run`, `pnpm build`; playback changes also `pnpm test:playback`. Remove
@@ -828,54 +835,48 @@ exports of any deleted functions (dead-code gate blocks PRs).
 
 ---
 
-## 11. Proposed build order
+## 11. Build order
 
-Per your sequencing — **spec it all first, then build incrementally**:
+### Phase A — Settings & config (browser) ✅ DONE
+- Centralized `settings.json` store as the **sole** runtime config source; store
+  reader/writer + OS-aware path (§4); `resolveConfigState()`; `dotenv` removed
+  entirely; env/.env → form seed; test/CI via temp store (no override flag, §4.9).
+- Browser settings app: loopback-only `navidrome-config` server (seed/save/test),
+  vanilla form mirroring all settings, password masking, "Test connection" (§7).
+- First-run/degraded mode in the MCP entry point: minimal toolset + auto-open
+  browser + URL surfaced in-band (§4.6, §7).
+- Docs (`README`, `CLAUDE.md`, `tests/CLAUDE.md`) + `settings.example.json`;
+  legacy `.env*` deleted. Full unit coverage for the config layer.
+- **Outcome:** zero-config onboarding for MCP today; the same settings store and
+  browser-launch pattern the standalone player will reuse.
 
-### Phase 0 — Refactor to get ready (foundation, no user-visible feature)
-- Centralized settings store **reader** (§4); remove runtime `dotenv` (devDep
-  only); file-wins resolution + `resolveConfigState()`; env-import migration
-  (§4.6); resolve the test/CI config path + `NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE`
-  (§4.9).
-- Shared `createRuntime()` bootstrap incl. `engine.configure()` + managers (§6.2).
-- **Scrobbler relocation** + single-scrobbler rule (§6.4) — *do this with the
-  spawn change so scrobbling never silently dies.*
-- Audit tool impl functions so every web-needed action has a transport-agnostic
-  impl (most already do — audit `controls.ts` coverage).
+### Phase B — Standalone player (browser) ◻ NEXT
+- Port-as-lock `acquireOrAttach` + `/healthz` (loopback probe) (§5).
+- Standalone `navidrome-web` bin (logs to file); MCP spawns it detached with
+  dev/prod path + double-spawn guard (§6). Delete the in-process `WebUIServer`.
+- **Scrobbler relocation** + single-scrobbler rule, with MCP-only fallback (§6.4)
+  — land with the spawn change so scrobbling never silently dies.
 - Smart mpv shutdown: owner-only `shouldKillMpvOnOwnerShutdown` + `isPlaying()` +
   idle reaper; **no controller registry**; MCP exit must not touch mpv (§8).
-- Port-as-lock `acquireOrAttach` + `/healthz` (loopback probe) + loopback settings
-  guard (§5, §4.7).
-- Standalone `navidrome-web` bin (logs to file); MCP spawns it detached with
-  dev/prod path + double-spawn guard (§6). Delete `WebUIServer`.
+- Audit tool impl coverage (`controls.ts`) so every web action is transport-agnostic.
 - **Multi-process coordination tests** (§4.10).
-- **Outcome:** standalone headless web server fully works; MCP + web coexist;
-  music *and scrobbling* survive MCP close; idle mpv reaped. No GUI yet.
+- **Launcher:** browser only — users open `http://127.0.0.1:<port>` (or the LAN URL
+  when `expose=true`); a `/config` surface can mount the §7 settings routes.
+- **Outcome:** standalone headless web server; MCP + web coexist; music *and
+  scrobbling* survive MCP close; idle mpv reaped. All in the browser.
 
-### Phase 1 — Settings app (Tauri) — proof of concept, useful on its own
-- Tauri config window that **writes our `settings.json`** (via fs, the §4.4 shape
-  — *not* `tauri-plugin-store`) at `getSettingsStorePath()`.
-- First-run flow; `open_settings` MCP tool; degraded mode + loopback-only setup
-  server decoupled from the mpv gate (§4.6, §7).
-- "Test connection" before save.
-- **Outcome:** zero-config onboarding for both MCP and web; validates the Tauri
-  toolchain on a small surface before the bigger UI.
-
-### Phase 2 — Web controller interface (Tauri) — full native app
-- Tauri window rendering the player UI + system tray (Open/Stop/Quit/now-playing).
-- Packaged Node sidecar (`externalBin`, single-file executable) for distribution;
-  per-OS signing/notarization.
-- Tray-aware owner-shutdown.
-- **Outcome:** the slick ComfyUI-style desktop experience, with phone/LAN remote
-  control of host audio unchanged.
+### Phase C — Optional native shell ◻ FUTURE / only if demanded
+- Thin Tauri/Electron shell wrapping the Node server as a sidecar (§9.2);
+  single-file packaging + per-OS signing. Not required for any capability above.
 
 ---
 
 ## 12. Open questions / risks
 
-1. **Packaging the Node sidecar** (Phase 2) is the largest unknown — single-file
-   Node build (SEA/`pkg`) vs bundling a runtime; per-OS code signing/notarization
-   (macOS Gatekeeper especially — see `docs/MACOS_TROUBLESHOOTING.md`).
+1. **Packaging the Node sidecar** (Phase C, *only if* a native shell is built) is
+   the largest unknown — single-file Node build (SEA/`pkg`) vs bundling a runtime;
+   per-OS code signing/notarization (macOS Gatekeeper especially — see
+   `docs/MACOS_TROUBLESHOOTING.md`). The browser-first path avoids this entirely.
 2. **Idle-reaper predicate + threshold** (§8.3) — needs tuning during
    implementation (how long idle before reaping; ensure paused-mid-track is never
    reaped). Bias toward not reaping.
@@ -891,32 +892,32 @@ Per your sequencing — **spec it all first, then build incrementally**:
    when a web server starts/stops while MCP is running never double- or
    zero-scrobbles during the handoff window.
 
-> **Resolved by review + your decisions (no longer open):** env precedence
-> (file-wins + CI opt-in flag, §4.2); mpv shutdown model (web-owner authority +
-> idle reaper, no heartbeat registry, §8); playback model (remote control of host
-> audio, §1); Tauri settings interop (our `settings.json` via fs, not
-> plugin-store, §9.2); scrobbler ownership (§6.4); `loadConfig` contract (separate
+Note: risks 1 and 6 are **Phase B/C** concerns (player + optional shell); risks
+2–5 are partly settled — Windows `0600` no-op is an accepted v1 limitation (§4.5);
+config live-reload stays out of scope (the settings page already shows a
+"restart to apply" notice).
+
+> **Resolved (no longer open):** config source (single `settings.json`, **no env
+> override**, §4.2); settings writer (the Node settings server, not Tauri, §4.5);
+> launcher (browser, not Tauri, §9); mpv shutdown model (web-owner authority + idle
+> reaper, no heartbeat registry, §8); playback model (remote control of host audio,
+> §1); scrobbler ownership (§6.4); `loadConfig` contract (separate
 > `resolveConfigState`, §4.6).
 
 ---
 
-## 13. Documentation updates required (consequence of removing `.env`)
+## 13. Documentation updates (consequence of removing `.env`) [DONE]
 
-The `.env` removal ripples into docs that currently teach the env workflow:
+The `.env` removal rippled into docs; all updated alongside the code:
 
-- **`CLAUDE.md`** — the curl recipe pulls creds via `grep '^NAVIDROME_URL=' .env`.
-  Rewrite to read from `settings.json` (e.g. `jq -r '.navidrome.url' "$(…store path…)"`).
-  Update the "Environment" + "Local config lives in `.env`" sections to describe
-  the settings store + `NAVIDROME_CONFIG_PATH`.
-- **`tests/CLAUDE.md`** — update any `.env.test` / env-based testing guidance to
-  the temp-`settings.json` approach (§4.9).
-- **`README.md` / `docs/`** — replace MCP-JSON-with-env setup instructions with
-  "launch, configure in the first-run UI" (env still documented as an advanced
-  override).
-- **`.env.example` → `settings.example.json`** — document the store shape.
-
-These are tracked as Phase 0 deliverables (doc + code land together so the repo
-is never in a state where the instructions don't match the code).
+- **`CLAUDE.md`** — curl recipe now reads creds from `settings.json` via `jq`;
+  "Environment" section describes the settings store + `NAVIDROME_CONFIG_PATH`.
+- **`tests/CLAUDE.md`** — env-based testing guidance replaced with the
+  temp-`settings.json` approach (§4.9).
+- **`README.md`** — MCP-JSON-with-env setup replaced with "launch, configure in the
+  browser on first run / via `navidrome-config`". Env is **not** documented as an
+  override (there is no override — it's import-only on first run).
+- **`.env.example` → `settings.example.json`** — documents the store shape.
 
 ---
 
@@ -928,15 +929,15 @@ is never in a state where the instructions don't match the code).
 | MCP web launch | Embedded vs spawned | **MCP spawns the standalone `navidrome-web` detached**, eager at startup |
 | Survive MCP close | Yes/no | **Yes** — separate process |
 | Playback model | Where audio plays | **Host machine only**; phone/web/AI are remote controls (no browser audio) |
-| Settings store | Where settings live | **Single GUI-managed JSON store**, dev + prod; **`.env`/runtime `dotenv` removed** (dotenv → devDep) |
-| Settings precedence | File vs env | **File wins**; env only when file absent OR `NAVIDROME_CONFIG_ALLOW_ENV_OVERRIDE=1` (CI) |
-| Settings writer | Who writes the file | **GUI/Tauri only** (via fs, our shape — *not* plugin-store); Node read-only except file-absent migration |
-| Migration | Don't make users re-type | **Env-import on first run** (process.env + legacy `.env` via dotenv devDep) + `config:migrate` |
-| Credentials | Where secrets live | **In the store file**, atomic `0600` write, never exposed remotely |
-| `loadConfig` contract | Sentinel vs throw | Keep `loadConfig(): Config` throwing; add separate `resolveConfigState()` |
-| First-run | Zero-config | **Config GUI on first run** + `open_settings` + degraded mode (settings server decoupled from mpv gate) |
-| Settings exposure | Remote allowed? | **Never** — loopback only, even when player is exposed |
-| Scrobbler | How plays are tracked | **Shared playback layer, observes mpv** → MCP- and web-initiated plays tracked identically. Single *active submitter* (web owner; MCP fallback) only to avoid double-submit — every mpv play scrobbled exactly once |
-| mpv shutdown | When to stop mpv | **Web-owner authority**: owner kills on its shutdown iff not playing; **idle reaper** for crash-orphans; **MCP exit never kills mpv**; no heartbeat registry |
-| Launcher | Icon/app | **Tauri window + system tray** wrapping the Node server as `externalBin` sidecar |
-| Sequencing | Order | **Phase 0 refactor → Phase 1 settings app → Phase 2 web app** |
+| Settings store | Where settings live | **Single GUI-managed `settings.json`**, dev + prod; **`.env`/`dotenv` removed entirely** (no devDep) |
+| Settings precedence | File vs env | **`settings.json` is the sole runtime source — no env override.** Env/.env read once only, to pre-fill the form on first run |
+| Settings writer | Who writes the file | **The Node settings server** (its `/api/settings` route, custom atomic `0600` writer); MCP/web runtime read-only |
+| Migration | Don't make users re-type | **Env/.env import on first run** (`buildFormSeed`, hand-rolled `.env` parser) → pre-fills the form; the Save *is* the migration |
+| Credentials | Where secrets live | **In the store file**, atomic `0600` write, never exposed remotely; **masked** (sentinel) in the form so they never round-trip in plaintext |
+| `loadConfig` contract | Sentinel vs throw | Keep `loadConfig(): Config` throwing; separate `resolveConfigState()` for the configured/unconfigured branch |
+| First-run | Zero-config | **Settings page (browser) on first run** + auto-open + `open_settings` degraded tool (settings server decoupled from mpv gate) |
+| Settings exposure | Remote allowed? | **Never** — loopback only (incl. `::ffff:127.0.0.1`), even when the player is exposed |
+| Scrobbler | How plays are tracked | **[Phase B]** Shared playback layer observes mpv → MCP- and web-initiated plays tracked identically. Single *active submitter* (web owner; MCP fallback) to avoid double-submit |
+| mpv shutdown | When to stop mpv | **[Phase B]** Web-owner authority: owner kills on its shutdown iff not playing; idle reaper for crash-orphans; MCP exit never kills mpv; no heartbeat registry |
+| Launcher | How the UI opens | **Browser** — open `http://127.0.0.1:<port>` directly. **Tauri/Electron dropped**; an optional native shell is future-only |
+| Sequencing | Order | **Phase A settings/config (done) → Phase B standalone player (browser) → Phase C optional native shell** |
