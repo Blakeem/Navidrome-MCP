@@ -5,13 +5,12 @@
  * no tools go missing and all expected tools are registered.
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
-import { loadConfig } from '../../../src/config.js';
 import { logger } from '../../../src/utils/logger.js';
 import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
-import { shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
+import { makeTestConfig } from '../../helpers/test-config.js';
 
 // Import category factory functions for comprehensive tool validation
 import { createTestToolCategory } from '../../../src/tools/test.js';
@@ -134,21 +133,18 @@ describe('Tools Registry - Tool Count Verification', () => {
   let config: Config;
 
   beforeAll(async () => {
-    // For deterministic testing, always use a consistent configuration.
-    // vi.stubEnv records the original value and restores it on vi.unstubAllEnvs()
-    // (called in afterAll), so no subsequent test sees these fabricated values.
-    vi.stubEnv('NAVIDROME_URL', 'http://deterministic-test:4533');
-    vi.stubEnv('NAVIDROME_USERNAME', 'test-user');
-    vi.stubEnv('NAVIDROME_PASSWORD', 'test-password');
-    vi.stubEnv('LASTFM_API_KEY', 'test-lastfm-key');
-    vi.stubEnv('RADIO_BROWSER_USER_AGENT', 'Test-Agent/1.0');
-    vi.stubEnv('LYRICS_PROVIDER', 'lrclib');
-    // Force mpv detection to fail so the playback feature is deterministically
-    // disabled regardless of whether mpv is installed on the host machine.
-    vi.stubEnv('MPV_PATH', '/nonexistent/path/to/mpv');
-
-    // Load config with deterministic environment
-    config = await loadConfig();
+    // Build a deterministic Config directly (no store/env resolution) so this
+    // test is independent of the developer's real settings and of whether mpv
+    // is installed. Mirrors the original intent: optional discovery features
+    // enabled, playback disabled (the playback tool set is exercised by the
+    // playback integration suite).
+    config = makeTestConfig({
+      features: { lastfm: true, radioBrowser: true, lyrics: true, playback: false },
+      lastFmApiKey: 'test-lastfm-key',
+      radioBrowserUserAgent: 'Test-Agent/1.0',
+      lyricsProvider: 'lrclib',
+      lrclibUserAgent: 'Test-Agent/1.0',
+    });
 
     // Always use mock client for deterministic tool registry testing
     // since we're using a fake URL for consistency
@@ -156,12 +152,6 @@ describe('Tools Registry - Tool Count Verification', () => {
     liveClient = createMockClient() as any; // Tool registry only needs client interface for creation
 
     logger.debug(`Using deterministic configuration - Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}, playback=${config.features.playback}`);
-  });
-
-  afterAll(() => {
-    // Restore all env vars stubbed in beforeAll so downstream tests in the
-    // same worker see their real environment (not the fabricated test values).
-    vi.unstubAllEnvs();
   });
 
   // Helper function to build expected tool list based on feature configuration

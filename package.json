@@ -54,7 +54,8 @@
     "package.json"
   ],
   "bin": {
-    "navidrome-mcp": "./dist/index.js"
+    "navidrome-mcp": "./dist/index.js",
+    "navidrome-config": "./dist/config-app/main.js"
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {
@@ -62,7 +63,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
-    "dotenv": "^16.4.7",
     "file-type": "^19.5.0",
     "zod": "^4.1.4"
   },

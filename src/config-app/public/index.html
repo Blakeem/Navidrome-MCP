@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Navidrome MCP — Settings</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="head">
+      <h1>Navidrome MCP — Settings</h1>
+      <p class="sub">Stored locally in <code>settings.json</code>. After saving, restart the server to apply.</p>
+    </header>
+
+    <form id="settings-form" autocomplete="off">
+      <section class="card">
+        <h2>Navidrome connection <span class="req">required</span></h2>
+        <label>Server URL
+          <input id="url" type="url" placeholder="http://your-server:4533" required />
+        </label>
+        <label>Username
+          <input id="username" type="text" required />
+        </label>
+        <label>Password
+          <input id="password" type="password" required />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Library</h2>
+        <label>Default libraries <span class="hint">comma-separated IDs, e.g. <code>1,2</code> — blank means all</span>
+          <input id="defaultLibraries" type="text" placeholder="(all)" />
+        </label>
+        <label class="check">
+          <input id="filterCacheEnabled" type="checkbox" />
+          <span>Cache filter/tag values at startup <span class="hint">uncheck to re-fetch genres/labels live while curating</span></span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Music discovery — Last.fm <span class="opt">optional</span></h2>
+        <label>API key <span class="hint">enables similar artists/tracks, bios, charts</span>
+          <input id="lastFmApiKey" type="text" placeholder="(disabled)" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Internet radio <span class="opt">optional</span></h2>
+        <label>Radio Browser user agent <span class="hint">required to enable station discovery</span>
+          <input id="radioBrowserUserAgent" type="text" placeholder="(disabled)" />
+        </label>
+        <label>Radio Browser base URL <span class="hint">advanced — leave blank for auto mirror selection</span>
+          <input id="radioBrowserBase" type="url" placeholder="(auto)" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Lyrics <span class="opt">optional</span></h2>
+        <label>Provider
+          <select id="lyricsProvider">
+            <option value="">(disabled)</option>
+            <option value="lrclib">LRCLIB</option>
+          </select>
+        </label>
+        <label>LRCLIB user agent <span class="hint">required when provider is LRCLIB</span>
+          <input id="lrclibUserAgent" type="text" />
+        </label>
+        <label>LRCLIB base URL <span class="hint">advanced — leave blank for default</span>
+          <input id="lrclibBase" type="url" placeholder="https://lrclib.net" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Local playback (mpv) <span class="opt">optional</span></h2>
+        <label>mpv binary path <span class="hint">leave blank to auto-detect on PATH</span>
+          <input id="mpvPath" type="text" placeholder="(auto-detect)" />
+        </label>
+        <label>Transcode format <span class="hint"><code>raw</code> = original file; or a codec like <code>mp3</code>, <code>opus</code></span>
+          <input id="transcodeFormat" type="text" placeholder="raw" />
+        </label>
+        <label>Transcode bitrate (kbps) <span class="hint">ignored when format is raw</span>
+          <input id="transcodeBitrate" type="text" placeholder="192" />
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Web UI (mpv remote)</h2>
+        <label class="check">
+          <input id="webuiEnabled" type="checkbox" />
+          <span>Enable the companion control panel</span>
+        </label>
+        <label>Port
+          <input id="webuiPort" type="number" min="1" max="65535" placeholder="8808" />
+        </label>
+        <label>Bind host <span class="hint">advanced — usually leave blank</span>
+          <input id="webuiHost" type="text" placeholder="127.0.0.1" />
+        </label>
+        <label class="check">
+          <input id="webuiExpose" type="checkbox" />
+          <span>Expose on LAN <span class="warn">exposes the player (no auth) to your network — settings always stay local</span></span>
+        </label>
+      </section>
+
+      <section class="card">
+        <h2>Advanced</h2>
+        <label class="check">
+          <input id="debug" type="checkbox" />
+          <span>Verbose debug logging</span>
+        </label>
+        <label>Cache TTL (seconds)
+          <input id="cacheTtl" type="number" min="1" placeholder="300" />
+        </label>
+        <label>Token expiry (seconds)
+          <input id="tokenExpiry" type="number" min="1" placeholder="86400" />
+        </label>
+      </section>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+
+      <div class="actions">
+        <button type="button" id="test-btn" class="btn secondary">Test connection</button>
+        <button type="submit" id="save-btn" class="btn primary">Save settings</button>
+      </div>
+    </form>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

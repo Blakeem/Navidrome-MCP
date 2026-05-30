@@ -96,6 +96,28 @@ export function detectMpvBinary(): string | null {
 }
 
 /**
+ * Resolve the mpv binary from a store-provided value.
+ *
+ * The `settings.json` store is the source of truth for `playback.mpvPath`:
+ *   - An explicit path wins — validated for executability; a stale/non-executable
+ *     path returns `null` (and warns) so playback is disabled with a clear reason
+ *     rather than silently failing on first play.
+ *   - `null`/empty means "auto-detect" — falls back to `detectMpvBinary()` (which
+ *     honors the legacy `MPV_PATH` env, then a PATH lookup).
+ */
+export function resolveMpvBinary(explicitPath: string | null | undefined): string | null {
+  if (explicitPath !== undefined && explicitPath !== null && explicitPath.trim() !== '') {
+    const trimmed = explicitPath.trim();
+    if (isExecutable(trimmed)) {
+      return trimmed;
+    }
+    logger.warn(`Configured mpv path is not executable, disabling playback: ${trimmed}`);
+    return null;
+  }
+  return detectMpvBinary();
+}
+
+/**
  * Check whether a path exists and is executable. On Windows the `X_OK`
  * permission bit is not enforced, but `accessSync(F_OK)` is sufficient.
  */

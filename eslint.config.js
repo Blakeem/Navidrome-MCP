@@ -75,6 +75,6 @@ export default [
     },
   },
   {
-    ignores: ['dist/', 'node_modules/', 'coverage/', '*.js', '*.mjs', 'eslint.config.js', 'src/webui/public/'],
+    ignores: ['dist/', 'node_modules/', 'coverage/', '*.js', '*.mjs', 'eslint.config.js', 'src/webui/public/', 'src/config-app/public/'],
   },
 ];

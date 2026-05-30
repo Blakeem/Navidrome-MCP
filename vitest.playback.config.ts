@@ -27,7 +27,7 @@ export default defineConfig({
     // Registered once per test file. Adds an `afterAll` that clears mpv's
     // queue when the file's last test finishes, so `pnpm test:playback`
     // never leaves music playing on the host after the run exits.
-    setupFiles: ['tests/integration/playback/setup-cleanup.ts'],
+    setupFiles: ['tests/helpers/setup-config-store.ts', 'tests/integration/playback/setup-cleanup.ts'],
     // mpv is a single shared resource; concurrent test files would fight
     // over queue state. Run files sequentially.
     fileParallelism: false,

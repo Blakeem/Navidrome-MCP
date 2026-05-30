@@ -1,0 +1,35 @@
+{
+  "navidrome": {
+    "url": "http://your-server:4533",
+    "username": "your_username",
+    "password": "your_password"
+  },
+  "library": {
+    "defaultLibraryIds": [],
+    "filterCacheEnabled": true
+  },
+  "features": {
+    "lastFmApiKey": null,
+    "radioBrowserUserAgent": null,
+    "radioBrowserBase": null,
+    "lyricsProvider": null,
+    "lrclibUserAgent": null,
+    "lrclibBase": null
+  },
+  "playback": {
+    "mpvPath": null,
+    "transcodeFormat": "raw",
+    "transcodeBitrate": "192"
+  },
+  "webui": {
+    "enabled": true,
+    "port": 8808,
+    "host": "127.0.0.1",
+    "expose": false
+  },
+  "advanced": {
+    "debug": false,
+    "cacheTtl": 300,
+    "tokenExpiry": 86400
+  }
+}

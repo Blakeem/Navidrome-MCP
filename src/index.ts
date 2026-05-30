@@ -20,6 +20,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createRuntime } from './bootstrap.js';
+import { resolveConfigState } from './config.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
@@ -28,6 +29,9 @@ import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
 import { WebUIServer } from './webui/index.js';
+import { startConfigServer } from './config-app/server.js';
+import { registerDegradedTools } from './config-app/degraded-tools.js';
+import { openBrowser } from './utils/open-browser.js';
 
 // Belt-and-suspenders against any unhandled rejection escaping the system —
 // without this, Node 20+ terminates the process by default. The mpv IPC layer
@@ -39,20 +43,12 @@ process.on('unhandledRejection', (reason) => {
 
 async function main(): Promise<void> {
   try {
-    // Add startup diagnostics for troubleshooting
+    // Add startup diagnostics for troubleshooting. Config now comes from the
+    // settings.json store (resolved below), not env — so we don't log env
+    // presence here, which would be misleading under the store-based model.
     logger.debug('Starting Navidrome MCP Server...');
     logger.debug('Node version:', process.version);
     logger.debug('Platform:', process.platform);
-    logger.debug('Environment variables present:', {
-      NAVIDROME_URL: (process.env['NAVIDROME_URL'] !== null && process.env['NAVIDROME_URL'] !== undefined && process.env['NAVIDROME_URL'] !== ''),
-      NAVIDROME_USERNAME: (process.env['NAVIDROME_USERNAME'] !== null && process.env['NAVIDROME_USERNAME'] !== undefined && process.env['NAVIDROME_USERNAME'] !== ''),
-      NAVIDROME_PASSWORD: (process.env['NAVIDROME_PASSWORD'] !== null && process.env['NAVIDROME_PASSWORD'] !== undefined && process.env['NAVIDROME_PASSWORD'] !== ''),
-    });
-
-    // Shared bootstrap: resolves config, authenticates the client, primes the
-    // library/filter caches, and configures the playback engine. Identical for
-    // the MCP server and the future standalone web server.
-    const { config, client } = await createRuntime();
 
     const server = new Server(
       {
@@ -63,6 +59,37 @@ async function main(): Promise<void> {
         capabilities: MCP_CAPABILITIES,
       }
     );
+
+    // First-run / degraded mode: when settings.json has no usable Navidrome URL
+    // we cannot build a client. Instead of crashing, start the loopback settings
+    // server, try to open the browser, and register a minimal toolset that hands
+    // the user the settings URL (the auto-open silently no-ops on headless/SSH,
+    // so the in-band URL is the real path to first config).
+    const state = await resolveConfigState();
+    if (!state.configured) {
+      const settings = await startConfigServer();
+      logger.warn(
+        `Navidrome MCP is not configured. Open the settings page to set it up: ${settings.url}`
+      );
+      openBrowser(settings.url);
+      registerDegradedTools(server, settings.url);
+
+      const stopSettings = (): void => {
+        void settings.close();
+      };
+      process.once('SIGINT', stopSettings);
+      process.once('SIGTERM', stopSettings);
+
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      logger.info('Navidrome MCP Server started in setup mode (awaiting configuration)');
+      return;
+    }
+
+    // Shared bootstrap: resolves config, authenticates the client, primes the
+    // library/filter caches, and configures the playback engine. Identical for
+    // the MCP server and the future standalone web server.
+    const { config, client } = await createRuntime();
 
     registerTools(server, client, config);
     registerResources(server, client);

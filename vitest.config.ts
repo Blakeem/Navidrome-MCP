@@ -23,6 +23,9 @@ export default defineConfig({
     // `pnpm test:playback` against vitest.playback.config.ts. Excluded here
     // so the default `pnpm test:run` stays mpv-free.
     exclude: ['node_modules', 'dist', 'coverage', 'tests/integration/playback/**'],
+    // Provision a temp settings.json store (seeded from env/.env) before each
+    // test file, since runtime config now comes only from the store.
+    setupFiles: ['tests/helpers/setup-config-store.ts'],
     testTimeout: 10000,
     hookTimeout: 10000,
   },

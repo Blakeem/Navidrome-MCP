@@ -71,8 +71,8 @@ pnpm test:playback   # Runs vitest with vitest.playback.config.ts
 ```
 
 They require:
-- A real mpv binary on PATH (or `MPV_PATH` env override)
-- A reachable Navidrome instance (per `.env`)
+- A real mpv binary on PATH (or `playback.mpvPath` in the store / `MPV_PATH`)
+- A reachable Navidrome instance (per the seeded `settings.json` store)
 
 Tests skip cleanly when either is missing. Use `describePlayback` /
 `itPlayback` from `tests/integration/playback/helpers.ts` instead of
@@ -146,10 +146,19 @@ pnpm check:all       # Comprehensive validation
 
 ## Environment Configuration
 
-Test environment requires:
-- `NAVIDROME_URL`, `NAVIDROME_USERNAME`, `NAVIDROME_PASSWORD` for live reads
-- External API keys DISABLED by default for unit tests
-- Use `.env.test` for test-specific configuration
+Runtime config comes from a `settings.json` store, not env. A global setup file
+(`tests/helpers/setup-config-store.ts`, registered in both vitest configs) writes a
+**throwaway** store to a temp path and points `NAVIDROME_CONFIG_PATH` at it, so the
+suite never touches the real `~/.config/navidrome-mcp/settings.json`.
+
+The temp store is seeded (via `buildFormSeed()`) from, in order: the developer's real
+canonical store if present, otherwise inline env (what `test:ci` injects), otherwise a
+legacy `.env`. So:
+- Live-read tests get real credentials from your store / env / `.env`.
+- `test:ci` keeps injecting `NAVIDROME_URL/USERNAME/PASSWORD` as env — the setup turns
+  them into the temp store; live tests then skip via `SKIP_INTEGRATION_TESTS`.
+- Tests needing a *specific* deterministic `Config` should build it with
+  `makeTestConfig()` (`tests/helpers/test-config.ts`) instead of `loadConfig()`.
 
 ---
 

@@ -98,6 +98,10 @@ pnpm build
 
 ### Configure Your MCP Client
 
+The MCP client only needs to *launch* the server — your Navidrome credentials and all
+options live in a local `settings.json` that you edit through a browser-based settings
+page (no secrets in the client JSON or environment).
+
 For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Claude/` on Windows, `~/Library/Application Support/Claude/` on macOS, `~/.config/Claude/` on Linux). Other MCP clients use the same JSON shape.
 
 ```json
@@ -105,17 +109,7 @@ For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Cla
   "mcpServers": {
     "navidrome": {
       "command": "npx",
-      "args": ["navidrome-mcp"],
-      "env": {
-        "NAVIDROME_URL": "http://your-server:4533",
-        "NAVIDROME_USERNAME": "your_username",
-        "NAVIDROME_PASSWORD": "your_password",
-        "NAVIDROME_DEFAULT_LIBRARIES": "1,2",
-        "LASTFM_API_KEY": "your_api_key",
-        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)",
-        "LYRICS_PROVIDER": "lrclib",
-        "LRCLIB_USER_AGENT": "Navidrome-MCP/2.0 (+https://github.com/Blakeem/Navidrome-MCP)"
-      }
+      "args": ["navidrome-mcp"]
     }
   }
 }
@@ -128,19 +122,35 @@ For a manual build, replace `command`/`args` with:
 "args": ["/absolute/path/to/Navidrome-MCP/dist/index.js"]
 ```
 
-**Required:** `NAVIDROME_URL`, `NAVIDROME_USERNAME`, `NAVIDROME_PASSWORD`.
+### First-run setup
 
-**Optional:**
-- `NAVIDROME_DEFAULT_LIBRARIES`: comma-separated library IDs to activate by default; omit for all libraries.
-- `LASTFM_API_KEY`: enables Last.fm discovery features.
-- `RADIO_BROWSER_USER_AGENT`: enables Radio Browser global station discovery. Replace the project URL with your own.
-- `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`: enables lyrics fetching.
-- `MPV_PATH`: point at the mpv binary if it's not on `PATH` (e.g. `"C:\\Program Files\\mpv\\mpv.exe"`).
-- `PLAYBACK_TRANSCODE_FORMAT`: streaming format for local playback. Defaults to `raw` — streams the **original file untouched** for the highest quality and reliable seeking (audio plays on the host, so this is usually a localhost/LAN transfer). Set a codec (e.g. `mp3`, `opus`) to transcode instead, useful when the host reaches Navidrome over slow/metered Wi-Fi.
-- `PLAYBACK_TRANSCODE_BITRATE`: target bitrate in kbps when transcoding (default `192`). Ignored when format is `raw`.
-- `WEBUI_PORT` / `WEBUI_HOST` / `WEBUI_EXPOSE` / `WEBUI_ENABLED`: configure the [MPV Remote web UI](#mpv-remote-web-ui) — defaults to `localhost:8808` and lazy-binds once mpv is playing.
+The first time the server starts without configuration, it opens a local **settings
+page** in your browser automatically (and surfaces the URL if it can't open one, e.g.
+over SSH — the unconfigured server exposes an `open_settings` tool that returns it).
+You can also open it any time:
 
-Features turn on automatically when their config is present. Restart your MCP client after changing the config.
+```bash
+npx navidrome-config
+```
+
+Enter your Navidrome URL, username, and password (plus any optional features), click
+**Test connection**, then **Save**. Settings are written to a local `settings.json`
+(see [`settings.example.json`](settings.example.json) for the shape) and never leave
+your machine. **Restart** the MCP client to apply. Upgrading from the old env-based
+setup? The form pre-fills from your previous `env`/`.env` values — just verify and save.
+
+**Required:** Navidrome URL, username, password.
+
+**Optional (set in the settings page):**
+- **Default libraries** — comma-separated library IDs to activate by default; blank = all.
+- **Last.fm API key** — enables Last.fm discovery features.
+- **Radio Browser user agent** — enables global station discovery.
+- **Lyrics provider (LRCLIB)** + user agent — enables lyrics fetching.
+- **mpv path** — point at the mpv binary if it's not on `PATH`; blank auto-detects.
+- **Transcode format** — defaults to `raw` (streams the **original file untouched** for the highest quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
+- **Web UI** port / host / expose / enabled — configure the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
+
+Features turn on automatically when their settings are present. Restart your MCP client after saving.
 
 ### Installing mpv (optional)
 
@@ -198,24 +208,24 @@ When local audio playback is active, the MCP server runs a companion web interfa
 
 The web UI is **on by default** and binds **lazily**: the port only opens once mpv has something playing, OR when the server reattaches to a pre-existing mpv queue across MCP restarts. Hosts without mpv installed see no listener at all.
 
-To turn it off entirely, set `WEBUI_ENABLED=false` in your MCP client's env block.
+To turn it off entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
 
 ### Configuration
 
-All variables are optional. Add them alongside `NAVIDROME_URL` etc. in your MCP client's `env` block, then restart the client.
+All of these are optional and live in the **Web UI** section of the settings page (`navidrome-config`); the keys below are their `settings.json` paths. Restart the client after saving.
 
-| Variable | Default | Effect |
+| Setting (`settings.json`) | Default | Effect |
 |---|---|---|
-| `WEBUI_ENABLED` | `true` | Set to `false` to disable the panel entirely. |
-| `WEBUI_PORT` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
-| `WEBUI_HOST` | `127.0.0.1` | Bind address. Override only if you know which interface you want — usually `WEBUI_EXPOSE` is the right knob. |
-| `WEBUI_EXPOSE` | `false` | Set to `true` to bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
+| `webui.enabled` | `true` | Disable the panel entirely. |
+| `webui.port` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
+| `webui.host` | `127.0.0.1` | Bind address. Override only if you know which interface you want — usually **Expose on LAN** is the right knob. |
+| `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
 
-When `WEBUI_EXPOSE=true`, the MCP server logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one of those on your phone or tablet.
+When **Expose on LAN** is enabled, the MCP server logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one of those on your phone or tablet.
 
 ### Using it as a phone/tablet remote
 
-1. Set `"WEBUI_EXPOSE": "true"` in your MCP client's env block.
+1. Enable **Expose on LAN** in the settings page and Save.
 2. Restart the MCP client.
 3. Trigger any playback (e.g. ask the assistant to *"play all my starred songs"*) — this is what causes the web UI to bind.
 4. Open the LAN URL from the startup log on your phone's browser. Bookmark it for one-tap access — the page is a single static HTML/CSS/JS bundle, no install required.
@@ -388,8 +398,10 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 ```bash
 git clone https://github.com/Blakeem/Navidrome-MCP.git
 cd Navidrome-MCP
-cp .env.example .env
-# Edit .env with your credentials
+pnpm install
+pnpm build
+node dist/config-app/main.js   # opens the settings page; fill in + Save
+# (writes settings.json to your OS config dir — see settings.example.json)
 
 pnpm dev          # hot reload
 pnpm test         # watch-mode tests
