@@ -41,6 +41,12 @@ export function parseDuration(durationFormatted: string): number {
   if (parts.length === 2) {
     const minutes = parseInt(parts[0] ?? '0', 10);
     const seconds = parseInt(parts[1] ?? '0', 10);
+    if (Number.isNaN(minutes) || Number.isNaN(seconds)) {
+      return 0;
+    }
+    if (minutes < 0 || seconds < 0) {
+      return 0;
+    }
     return minutes * 60 + seconds;
   }
   return 0;
@@ -52,7 +58,7 @@ export function parseDuration(durationFormatted: string): number {
  * @returns Formatted string like "3:45"
  */
 export function formatDuration(seconds?: number): string {
-  if (seconds === null || seconds === undefined || seconds <= 0) {
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
     return '0:00';
   }
 
@@ -69,13 +75,13 @@ export function formatDuration(seconds?: number): string {
 export function extractGenre(entity: RawEntityWithGenres): string | undefined {
   // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
-    const firstGenre = entity.genres[0];
-    if (firstGenre) {
-      return firstGenre.name;
+    const first = entity.genres.find(g => g.name !== '');
+    if (first) {
+      return first.name;
     }
   }
   // Fall back to genre string
-  if (entity.genre !== null && entity.genre !== undefined && entity.genre !== '') {
+  if (entity.genre !== undefined && entity.genre !== '') {
     return entity.genre;
   }
   return undefined;
@@ -89,10 +95,11 @@ export function extractGenre(entity: RawEntityWithGenres): string | undefined {
 export function extractAllGenres(entity: RawEntityWithGenres): string[] | undefined {
   // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
-    return entity.genres.map(g => g.name).filter(Boolean);
+    const names = entity.genres.map(g => g.name).filter(Boolean);
+    return names.length > 0 ? names : undefined;
   }
   // Fall back to single genre string as array
-  if (entity.genre !== null && entity.genre !== undefined && entity.genre !== '') {
+  if (entity.genre !== undefined && entity.genre !== '') {
     return [entity.genre];
   }
   return undefined;

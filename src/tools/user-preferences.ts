@@ -191,7 +191,7 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
         if (song.title) item.title = song.title;
         if (song.artist) item.artist = song.artist;
         if (song.album) item.album = song.album;
-        if (song.playCount !== null && song.playCount !== undefined && song.playCount > 0) item.playCount = song.playCount;
+        if (song.playCount !== undefined && song.playCount > 0) item.playCount = song.playCount;
         return item;
       })
       .slice(0, limit);
@@ -206,8 +206,8 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
         };
         if (album.name) item.name = album.name;
         if (album.artist) item.artist = album.artist;
-        if (album.releaseYear !== null && album.releaseYear !== undefined) item.year = album.releaseYear;
-        if (album.playCount !== null && album.playCount !== undefined && album.playCount > 0) item.playCount = album.playCount;
+        if (album.releaseYear !== undefined) item.year = album.releaseYear;
+        if (album.playCount !== undefined && album.playCount > 0) item.playCount = album.playCount;
         return item;
       })
       .slice(0, limit);

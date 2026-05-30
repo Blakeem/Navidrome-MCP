@@ -56,11 +56,11 @@ export class AuthManager {
   }
 
   async getToken(): Promise<string> {
-    if (this.token === null || this.token === undefined || this.token === '' || this.tokenExpiry === null || this.tokenExpiry === undefined || this.tokenExpiry <= new Date()) {
+    if (this.token === null || this.token === '' || this.tokenExpiry === null || this.tokenExpiry <= new Date()) {
       await this.authenticate();
     }
 
-    if (this.token === null || this.token === undefined || this.token === '') {
+    if (this.token === null || this.token === '') {
       throw new Error(ErrorFormatter.authentication('token not available after authentication'));
     }
 

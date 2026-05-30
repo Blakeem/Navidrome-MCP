@@ -44,9 +44,9 @@ const MAX_LIMIT = 500;
  * Radio Browser API station response
  */
 interface RadioBrowserStation {
-  stationuuid: string;
-  name: string;
-  url: string;
+  stationuuid: string | null | undefined;
+  name: string | null | undefined;
+  url: string | null | undefined;
   url_resolved?: string;
   homepage?: string;
   favicon?: string;
@@ -179,11 +179,20 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
   // Guard required fields. An empty stationuuid means we can't identify the
   // station later (e.g. for click/vote); an empty name or url means we can't
   // play or display it. Drop these rows before they reach the LLM.
-  const hasUuid = station.stationuuid !== '' && station.stationuuid !== undefined && station.stationuuid !== null;
-  const hasName = station.name !== '' && station.name !== undefined && station.name !== null;
-  const hasUrl = (station.url !== '' && station.url !== undefined && station.url !== null) ||
-                 (station.url_resolved !== '' && station.url_resolved !== undefined && station.url_resolved !== null);
-  if (!hasUuid || !hasName || !hasUrl) {
+  //
+  // Prefer url_resolved when it's a non-empty string. `??` would keep an empty
+  // string (falsy but not null/undefined), yielding playUrl=''; the explicit
+  // empty-string check handles `url_resolved=''` + `url='http://...'`.
+  const stationUuid = station.stationuuid;
+  const name = station.name;
+  const playUrl = (station.url_resolved !== undefined && station.url_resolved !== '')
+    ? station.url_resolved
+    : station.url ?? '';
+  if (
+    stationUuid === undefined || stationUuid === null || stationUuid === '' ||
+    name === undefined || name === null || name === '' ||
+    playUrl === ''
+  ) {
     logger.debug('mapStationToDTO: dropping station with missing required field', {
       stationuuid: station.stationuuid,
       name: station.name,
@@ -192,19 +201,12 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
     return null;
   }
 
-  // Prefer url_resolved when it's a non-empty string. `??` would keep an empty
-  // string (falsy but not null/undefined), yielding playUrl=''. The hasUrl
-  // guard above caught the all-empty case but `url_resolved=''` + `url='http://...'`
-  // would slip through without this explicit empty-string check.
-  const playUrl = (station.url_resolved !== undefined && station.url_resolved !== null && station.url_resolved !== '')
-    ? station.url_resolved
-    : station.url;
   const dto: ExternalRadioStationDTO = {
-    stationUuid: station.stationuuid,
-    name: station.name,
+    stationUuid,
+    name,
     playUrl,
-    tags: (station.tags !== null && station.tags !== undefined && station.tags !== '') ? station.tags.split(',').map(t => t.trim()).filter(t => t !== '') : [],
-    languageCodes: (station.languagecodes !== null && station.languagecodes !== undefined && station.languagecodes !== '') ? station.languagecodes.split(',').map(l => l.trim()).filter(l => l !== '') : [],
+    tags: (station.tags !== undefined && station.tags !== '') ? station.tags.split(',').map(t => t.trim()).filter(t => t !== '') : [],
+    languageCodes: (station.languagecodes !== undefined && station.languagecodes !== '') ? station.languagecodes.split(',').map(l => l.trim()).filter(l => l !== '') : [],
     hls: Boolean(station.hls),
     // safeNumber guards against Radio Browser sometimes returning numerics
     // as strings or non-numeric placeholders (matches the Last.fm pattern).
@@ -213,9 +215,9 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
   };
 
   // Only include essential fields for cleaner LLM context
-  if (station.homepage !== null && station.homepage !== undefined && station.homepage !== '') dto.homepage = station.homepage;
-  if (station.countrycode !== null && station.countrycode !== undefined && station.countrycode !== '') dto.countryCode = station.countrycode;
-  if (station.codec !== null && station.codec !== undefined && station.codec !== '') dto.codec = station.codec;
+  if (station.homepage !== undefined && station.homepage !== '') dto.homepage = station.homepage;
+  if (station.countrycode !== undefined && station.countrycode !== '') dto.countryCode = station.countrycode;
+  if (station.codec !== undefined && station.codec !== '') dto.codec = station.codec;
   if (station.bitrate !== undefined) {
     const bitrate = safeNumber(station.bitrate, -1);
     if (bitrate >= 0) dto.bitrate = bitrate;
@@ -299,15 +301,15 @@ export async function discoverRadioStations(
     const url = new URL('/json/stations/search', radioBrowserBase);
     
     // Map parameters to Radio Browser API format
-    if (params.query !== null && params.query !== undefined && params.query !== '') url.searchParams.set('name', params.query);
-    if (params.tag !== null && params.tag !== undefined && params.tag !== '') url.searchParams.set('tag', params.tag);
-    if (params.countryCode !== null && params.countryCode !== undefined && params.countryCode !== '') url.searchParams.set('countrycode', params.countryCode);
-    if (params.language !== null && params.language !== undefined && params.language !== '') url.searchParams.set('language', params.language);
-    if (params.codec !== null && params.codec !== undefined && params.codec !== '') url.searchParams.set('codec', params.codec);
+    if (params.query !== undefined && params.query !== '') url.searchParams.set('name', params.query);
+    if (params.tag !== undefined && params.tag !== '') url.searchParams.set('tag', params.tag);
+    if (params.countryCode !== undefined && params.countryCode !== '') url.searchParams.set('countrycode', params.countryCode);
+    if (params.language !== undefined && params.language !== '') url.searchParams.set('language', params.language);
+    if (params.codec !== undefined && params.codec !== '') url.searchParams.set('codec', params.codec);
     if (params.bitrateMin !== undefined) url.searchParams.set('bitrateMin', String(params.bitrateMin));
     if (params.isHttps !== undefined) url.searchParams.set('is_https', params.isHttps ? 'true' : 'false');
-    if (params.order) url.searchParams.set('order', params.order);
-    if (params.reverse !== undefined) url.searchParams.set('reverse', params.reverse ? 'true' : 'false');
+    url.searchParams.set('order', params.order);
+    url.searchParams.set('reverse', params.reverse ? 'true' : 'false');
     if (params.offset !== undefined) url.searchParams.set('offset', String(params.offset));
     url.searchParams.set('limit', String(params.limit));
     url.searchParams.set('hidebroken', params.hideBroken ? 'true' : 'false');
@@ -516,7 +518,7 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
 
     const data = await response.json() as RadioBrowserStation[];
 
-    if (data === null || data === undefined || data.length === 0) {
+    if (data.length === 0) {
       throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
     }
     
@@ -589,7 +591,7 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
 
     // Mark as clicked only on a successful round-trip — if Radio Browser
     // rejected the click (data.ok=false), let the caller retry next turn.
-    if (data.ok === true) {
+    if (data.ok) {
       markClicked(params.stationUuid);
     }
 
@@ -667,7 +669,7 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
     // Only record the dedup marker on a confirmed-successful vote; if
     // Radio Browser declined (data.ok=false, e.g. "station not found"),
     // a retry next session/process is still meaningful.
-    if (data.ok === true) {
+    if (data.ok) {
       markVoted(params.stationUuid);
     }
 

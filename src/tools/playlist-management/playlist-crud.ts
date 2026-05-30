@@ -113,7 +113,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
-    const newId = created?.id;
+    const newId = created.id;
     if (typeof newId !== 'string' || newId === '') {
       throw new Error('Navidrome POST /playlist did not return a playlist id');
     }
@@ -122,10 +122,10 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
     const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
 
     // Defence-in-depth fallbacks if the follow-up GET also omits fields.
-    if (playlist.name === null || playlist.name === undefined || playlist.name === '' || playlist.name === 'Unknown Playlist') {
+    if (playlist.name === '') {
       playlist.name = params.name;
     }
-    if (params.comment !== null && params.comment !== undefined && params.comment !== '' && (playlist.comment === null || playlist.comment === undefined || playlist.comment === '')) {
+    if (params.comment !== undefined && params.comment !== '' && (playlist.comment === undefined || playlist.comment === '')) {
       playlist.comment = params.comment;
     }
 
@@ -168,12 +168,12 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
     const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
 
     // Fix the name if it was updated but not properly returned from API
-    if (params.name !== null && params.name !== undefined && params.name !== '' && (playlist.name === null || playlist.name === undefined || playlist.name === '' || playlist.name === 'Unknown Playlist')) {
+    if (params.name !== undefined && params.name !== '' && playlist.name === '') {
       playlist.name = params.name;
     }
 
     // Fix the comment if it was updated but not properly returned from API
-    if (params.comment !== undefined && (playlist.comment === null || playlist.comment === undefined || playlist.comment === '')) {
+    if (params.comment !== undefined && (playlist.comment === undefined || playlist.comment === '')) {
       playlist.comment = params.comment;
     }
 

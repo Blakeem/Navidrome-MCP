@@ -71,7 +71,7 @@ interface ClearSavedQueueResult {
 export async function getSavedQueue(client: NavidromeClient, _args: unknown): Promise<SavedQueueResult> {
   logger.info('Getting saved queue from Navidrome server');
 
-  const response = await client.request<{ current?: number; position?: number; items?: RawQueueTrack[]; updatedAt?: string }>('/queue');
+  const response = await client.request<{ current?: number; position?: number; items?: RawQueueTrack[]; updatedAt?: string } | null | undefined>('/queue');
 
   if (response === null || response === undefined || Object.keys(response).length === 0) {
     return {

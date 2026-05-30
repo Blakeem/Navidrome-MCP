@@ -55,7 +55,7 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
       },
     );
 
-    const addedCount = response.added ?? 0;
+    const addedCount = response.added;
     return {
       added: addedCount,
       message: `Successfully added ${addedCount} track${addedCount !== 1 ? 's' : ''} to playlist`,
@@ -82,7 +82,7 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
       method: 'DELETE',
     });
 
-    const removedIds = response.ids ?? params.trackIds;
+    const removedIds = response.ids;
     return {
       ids: removedIds,
       message: `Successfully removed ${removedIds.length} track${removedIds.length !== 1 ? 's' : ''} from playlist`,

@@ -40,6 +40,7 @@ function makeFakeIpc(): FakeIpc {
   ipc.callOrder = [];
   ipc.connect = vi.fn().mockResolvedValue(undefined);
   ipc.isConnected = vi.fn().mockReturnValue(true);
+  // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
   ipc.command = vi.fn(async (...args: unknown[]) => {
     const cmd = args[0] as string;
     if (cmd === 'get_property') {
@@ -49,6 +50,7 @@ function makeFakeIpc(): FakeIpc {
     ipc.callOrder.push({ kind: cmd });
     return null;
   });
+  // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC observeProperty interface
   ipc.observeProperty = vi.fn(async (_id: number, name: string) => {
     ipc.callOrder.push({ kind: 'observe', name });
     return undefined;
@@ -119,8 +121,8 @@ beforeEach(() => {
   playbackEngine.configure(baseConfig);
 });
 
-afterEach(async () => {
-  await playbackEngine.shutdown();
+afterEach(() => {
+  playbackEngine.shutdown();
   vi.clearAllMocks();
 });
 
@@ -171,6 +173,7 @@ describe('getPlaylist filename caching (H4)', () => {
 
     // get_property for 'playlist' is what getPlaylist calls. Make it return
     // the same entry twice across two getPlaylist invocations.
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
@@ -208,6 +211,7 @@ describe('getPlaylist filename caching (H4)', () => {
     (globalThis as unknown as { URL: typeof URL }).URL = CountingUrl as unknown as typeof URL;
 
     try {
+      // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
       ipc.command.mockImplementation(async (...args: unknown[]) => {
         if (args[0] === 'get_property' && args[1] === 'playlist') {
           callCount++;
@@ -238,6 +242,7 @@ describe('getPlaylist filename caching (H4)', () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
 
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
@@ -278,6 +283,7 @@ describe('getPlaylist filename caching (H4)', () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
 
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
@@ -305,6 +311,7 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
     // Reset the call recorder so we only see commands from the test below
     ipc.command.mockReset();
     let loadfileCount = 0;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'loadfile') {
@@ -337,6 +344,7 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
     ipc.command.mockReset();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       if (args[0] === 'loadfile') throw new Error('network blip during stream open');
       return null;

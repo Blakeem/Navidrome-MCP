@@ -414,6 +414,5 @@ export async function getTestRadioStationId(): Promise<string> {
   // Last resort: first station, even if it's a fake URL — tests that
   // exercise structural assertions (queue-shape, mutual exclusion) don't
   // depend on actual audio playback.
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   return result.stations[0]!.id;
 }

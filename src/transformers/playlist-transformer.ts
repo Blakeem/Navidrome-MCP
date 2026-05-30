@@ -63,19 +63,19 @@ export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
     owner,
   };
 
-  if (rawPlaylist.ownerId !== undefined) {
+  if (rawPlaylist.ownerId !== undefined && rawPlaylist.ownerId !== '') {
     dto.ownerId = rawPlaylist.ownerId;
   }
 
-  if (rawPlaylist.comment !== undefined) {
+  if (rawPlaylist.comment !== undefined && rawPlaylist.comment !== '') {
     dto.comment = rawPlaylist.comment;
   }
 
-  if (rawPlaylist.createdAt !== undefined) {
+  if (rawPlaylist.createdAt !== undefined && rawPlaylist.createdAt !== '') {
     dto.createdAt = rawPlaylist.createdAt;
   }
 
-  if (rawPlaylist.updatedAt !== undefined) {
+  if (rawPlaylist.updatedAt !== undefined && rawPlaylist.updatedAt !== '') {
     dto.updatedAt = rawPlaylist.updatedAt;
   }
 

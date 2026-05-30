@@ -385,6 +385,7 @@ export async function playAlbums(client: NavidromeClient, args: unknown): Promis
       case 'songs':
         flat = fisherYatesShuffle(albumTracks.flat());
         break;
+      case 'none':
       default:
         flat = albumTracks.flat();
         break;
@@ -471,6 +472,7 @@ export async function playAlbumsSearch(
       case 'songs':
         flat = fisherYatesShuffle(albumTracks.flat());
         break;
+      case 'none':
       default:
         flat = albumTracks.flat();
         break;

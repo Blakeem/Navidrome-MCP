@@ -287,7 +287,7 @@ describe('redact()', () => {
       const err = new Error('outer error') as Error & { cause: Error };
       Object.defineProperty(err, 'cause', { value: cause, configurable: true });
       const result = redact(err) as Error & { cause: Error };
-      expect((result.cause as Error).message).not.toContain('causepwd456');
+      expect(result.cause.message).not.toContain('causepwd456');
     });
 
     it('preserves Error.name', () => {

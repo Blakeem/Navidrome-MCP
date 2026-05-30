@@ -53,16 +53,19 @@ export function generateRecommendations(
   if (result.status === 'valid') {
     recommendations.push('Stream validated successfully');
 
-    if (result.streamingHeaders?.['icy-name'] !== null && result.streamingHeaders?.['icy-name'] !== undefined && result.streamingHeaders?.['icy-name'] !== '') {
-      recommendations.push(`Station: ${result.streamingHeaders['icy-name']}`);
+    const icyName = result.streamingHeaders?.['icy-name'];
+    if (icyName !== undefined && icyName !== '') {
+      recommendations.push(`Station: ${icyName}`);
     }
 
-    if (result.streamingHeaders?.['icy-br'] !== null && result.streamingHeaders?.['icy-br'] !== undefined && result.streamingHeaders?.['icy-br'] !== '') {
-      recommendations.push(`Bitrate: ${result.streamingHeaders['icy-br']}kbps`);
+    const icyBr = result.streamingHeaders?.['icy-br'];
+    if (icyBr !== undefined && icyBr !== '') {
+      recommendations.push(`Bitrate: ${icyBr}kbps`);
     }
 
-    if (result.audioFormat?.format !== null && result.audioFormat?.format !== undefined && result.audioFormat?.format !== '') {
-      recommendations.push(`Format: ${result.audioFormat.format.toUpperCase()}`);
+    const audioFormatName = result.audioFormat?.format;
+    if (audioFormatName !== undefined && audioFormatName !== '') {
+      recommendations.push(`Format: ${audioFormatName.toUpperCase()}`);
     }
 
     recommendations.push('Ready to add as radio station');

@@ -149,7 +149,7 @@ export async function validateRadioStream(
       resolvedFinalUrl = headResult.finalUrl;
     }
 
-    if (headError !== null && headError !== undefined && headError !== '') {
+    if (headError !== null && headError !== '') {
       warnings.push(headError);
     }
 
@@ -159,10 +159,10 @@ export async function validateRadioStream(
       const streamHeaders = extractStreamingHeaders(headResponse.headers);
 
       // If we have clear audio content-type OR streaming headers, we can skip audio sampling
-      const hasAudioContentType = contentType !== null && contentType !== undefined && contentType !== '' && isAudioContentType(contentType);
+      const hasAudioContentType = contentType !== null && contentType !== '' && isAudioContentType(contentType);
       const hasStreamingHeaders = Object.keys(streamHeaders).length > 0;
 
-      if (hasAudioContentType === true || hasStreamingHeaders === true) {
+      if (hasAudioContentType || hasStreamingHeaders) {
         skipAudioSampling = true;
         // Headers were conclusive — no need to sample audio data.
         // We intentionally do NOT synthesize a fake buffer here; that would
@@ -202,13 +202,13 @@ export async function validateRadioStream(
     clearTimeout(overallTimeoutId);
   }
 
-  if (sampleError !== null && sampleError !== undefined && sampleError !== '' && headResponse === null) {
+  if (sampleError !== null && sampleError !== '' && headResponse === null) {
     errors.push(sampleError);
     result.status = 'error';
   }
 
   // Use whichever response we got
-  const finalResponse = headResponse ?? (headers !== null && headers !== undefined ? { headers, ok: true, status: 200 } : null);
+  const finalResponse = headResponse ?? (headers !== null ? { headers, ok: true, status: 200 } : null);
 
   if (finalResponse) {
     result.httpStatus = finalResponse.status || 200;
@@ -220,7 +220,7 @@ export async function validateRadioStream(
 
     // Extract content type
     const contentType = finalResponse.headers.get('content-type');
-    if (contentType !== null && contentType !== undefined && contentType !== '') {
+    if (contentType !== null && contentType !== '') {
       result.contentType = contentType;
       result.validation.hasAudioContentType = isAudioContentType(contentType);
 
@@ -243,7 +243,7 @@ export async function validateRadioStream(
     if (!audioFormat.detected && result.validation.hasAudioContentType) {
       warnings.push('Could not detect audio format from data sample');
     }
-  } else if (result.validation.httpAccessible === true && !skipAudioSampling) {
+  } else if (result.validation.httpAccessible && !skipAudioSampling) {
     // Only warn about missing samples when sampling was actually attempted —
     // when headers are conclusive we deliberately skip the body read.
     warnings.push('Could not sample audio data from stream');

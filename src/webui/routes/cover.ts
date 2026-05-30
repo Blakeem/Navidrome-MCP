@@ -99,7 +99,7 @@ export async function handleCover(
   // Stream the body through. Convert the WHATWG ReadableStream to a Node
   // Readable; piping streams is preferable to buffering because some album
   // art (animated, high-res) can be several MB.
-  const nodeStream = Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]);
+  const nodeStream = Readable.fromWeb(upstream.body);
   nodeStream.on('error', (err) => {
     logger.debug(`webui: cover stream error for id=${id}: ${err.message}`);
     if (!res.writableEnded) res.end();

@@ -19,7 +19,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
 
   beforeAll(async () => {
     if (shouldSkipLiveTests()) {
-      console.log(`Skipping live tests: ${getSkipReason()}`);
+      console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
     // Use shared client and config for connection testing (avoids rate limiting)

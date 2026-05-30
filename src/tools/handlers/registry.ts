@@ -117,7 +117,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
   }
 
   // Register MCP handlers
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: registry.getAllTools(),
   }));
 

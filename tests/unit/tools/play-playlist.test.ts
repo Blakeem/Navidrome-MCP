@@ -109,7 +109,7 @@ describe('play_playlist', () => {
     expect(result.count).toBe(1500);
     expect(client.requestWithMeta).toHaveBeenCalledTimes(3);
 
-    const calls = client.requestWithMeta.mock.calls.map((c) => c[0] as string);
+    const calls = client.requestWithMeta.mock.calls.map((c) => c[0]);
     expect(calls[0]).toContain('_start=0');
     expect(calls[0]).toContain('_end=500');
     expect(calls[1]).toContain('_start=500');

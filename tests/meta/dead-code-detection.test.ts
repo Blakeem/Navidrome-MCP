@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, resolve } from 'path';
 import { execSync } from 'child_process';
 
@@ -16,7 +16,7 @@ const projectRoot = resolve(__dirname, '../../');
 describe('Dead Code Detection - Deterministic Validation', () => {
 
   describe('Method Call Validation', () => {
-    it('should not have calls to non-existent methods', async () => {
+    it('should not have calls to non-existent methods', () => {
       // Test the specific pattern that caused our SharedTestClient bug
       const problematicPatterns = [
         {
@@ -26,7 +26,7 @@ describe('Dead Code Detection - Deterministic Validation', () => {
         }
       ];
 
-      for (const { pattern, file, description } of problematicPatterns) {
+      for (const { pattern, file } of problematicPatterns) {
         try {
           const content = readFileSync(file, 'utf-8');
           const matches = content.match(pattern);
@@ -47,7 +47,7 @@ describe('Dead Code Detection - Deterministic Validation', () => {
               expect(problematicLines).toEqual([]);
             }
           }
-        } catch (error) {
+        } catch {
           // File might not exist, which is fine
           continue;
         }
@@ -74,7 +74,7 @@ describe('Dead Code Detection - Deterministic Validation', () => {
           } else {
             servicesWithoutIsInitialized.push(serviceFile);
           }
-        } catch (error) {
+        } catch {
           // Service file doesn't exist
           continue;
         }
@@ -119,8 +119,8 @@ describe('Dead Code Detection - Deterministic Validation', () => {
           // These are the critical service exports we identified
           // If any of these show up, fail the test with details
           if (unusedExportLines.length > 0) {
-            console.log('Unused service exports detected:');
-            unusedExportLines.forEach(line => console.log(`  ${line}`));
+            console.warn('Unused service exports detected:');
+            unusedExportLines.forEach(line => console.warn(`  ${line}`));
 
             // This is informational for now - we document known unused exports
             // Note: Cache and MessageManager were removed since they're used in tests (fixed tsconfig.analysis.json)
@@ -189,11 +189,11 @@ describe('Dead Code Detection - Deterministic Validation', () => {
 
               if (!hasNullCheck && line.includes('this.client.')) {
                 expect.soft(false).toBe(true);
-                console.log(`Potentially unguarded instance usage at ${file}:${number}: ${line}`);
+                console.warn(`Potentially unguarded instance usage at ${file}:${number}: ${line}`);
               }
             }
           }
-        } catch (error) {
+        } catch {
           // File doesn't exist, skip
           continue;
         }
@@ -202,13 +202,13 @@ describe('Dead Code Detection - Deterministic Validation', () => {
   });
 
   describe('Test Coverage for Dead Code Paths', () => {
-    it('should ensure critical singleton code paths are tested', async () => {
+    it('should ensure critical singleton code paths are tested', () => {
       // This test ensures that singleton patterns like SharedTestClient
       // have tests that actually exercise retry/error paths
 
       const sharedClientFile = join(projectRoot, 'tests/factories/shared-client.ts');
       if (!existsSync(sharedClientFile)) {
-        console.log('Info: SharedTestClient file not found, skipping test coverage analysis');
+        console.warn('Info: SharedTestClient file not found, skipping test coverage analysis');
         return;
       }
       const sharedClientContent = readFileSync(sharedClientFile, 'utf-8');
@@ -220,7 +220,7 @@ describe('Dead Code Detection - Deterministic Validation', () => {
         // Check if there are tests for these patterns
         const testDir = join(projectRoot, 'tests/unit');
         if (!existsSync(testDir)) {
-          console.log('Info: Test directory not found, skipping retry test analysis');
+          console.warn('Info: Test directory not found, skipping retry test analysis');
           return;
         }
         const testFiles = readdirSync(testDir)
@@ -242,7 +242,7 @@ describe('Dead Code Detection - Deterministic Validation', () => {
 
         // This is informational - complex singleton patterns should have dedicated tests
         if (!hasRetryTests) {
-          console.log('Info: SharedTestClient has complex retry logic but no dedicated retry tests');
+          console.warn('Info: SharedTestClient has complex retry logic but no dedicated retry tests');
         }
       }
     });
@@ -278,9 +278,9 @@ describe('Dead Code Detection - Deterministic Validation', () => {
 
           if (exportsClass && !exportsInstance) {
             // This might indicate the class export is unused (people use the instance)
-            console.log(`Info: ${serviceFile} exports ${exportedClass} class but usage pattern suggests instance is preferred`);
+            console.warn(`Info: ${serviceFile} exports ${exportedClass} class but usage pattern suggests instance is preferred`);
           }
-        } catch (error) {
+        } catch {
           continue;
         }
       }

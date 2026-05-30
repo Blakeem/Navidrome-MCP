@@ -179,7 +179,7 @@ class LibraryManager {
       }
       const byId = new Map<number, LibraryInfo>();
       for (const lib of libraries) {
-        if (typeof lib?.id === 'number') {
+        if (typeof lib.id === 'number') {
           byId.set(lib.id, lib);
         }
       }
@@ -192,19 +192,19 @@ class LibraryManager {
         }
         return {
           ...userLib,
-          totalSongs: stats.totalSongs ?? userLib.totalSongs,
-          totalAlbums: stats.totalAlbums ?? userLib.totalAlbums,
-          totalArtists: stats.totalArtists ?? userLib.totalArtists,
-          totalFolders: stats.totalFolders ?? userLib.totalFolders,
-          totalFiles: stats.totalFiles ?? userLib.totalFiles,
-          totalMissingFiles: stats.totalMissingFiles ?? userLib.totalMissingFiles,
-          totalSize: stats.totalSize ?? userLib.totalSize,
-          totalDuration: stats.totalDuration ?? userLib.totalDuration,
-          lastScanAt: stats.lastScanAt ?? userLib.lastScanAt,
-          lastScanStartedAt: stats.lastScanStartedAt ?? userLib.lastScanStartedAt,
-          fullScanInProgress: stats.fullScanInProgress ?? userLib.fullScanInProgress,
-          createdAt: stats.createdAt ?? userLib.createdAt,
-          updatedAt: stats.updatedAt ?? userLib.updatedAt,
+          totalSongs: stats.totalSongs,
+          totalAlbums: stats.totalAlbums,
+          totalArtists: stats.totalArtists,
+          totalFolders: stats.totalFolders,
+          totalFiles: stats.totalFiles,
+          totalMissingFiles: stats.totalMissingFiles,
+          totalSize: stats.totalSize,
+          totalDuration: stats.totalDuration,
+          lastScanAt: stats.lastScanAt,
+          lastScanStartedAt: stats.lastScanStartedAt,
+          fullScanInProgress: stats.fullScanInProgress,
+          createdAt: stats.createdAt,
+          updatedAt: stats.updatedAt,
         };
       });
     } catch (error) {

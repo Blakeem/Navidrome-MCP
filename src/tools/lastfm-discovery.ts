@@ -169,7 +169,7 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
 
   logger.debug('Tool getSimilarArtists called with args:', { artist, limit });
 
-  if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
+  if (config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
 
@@ -181,17 +181,18 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
     autocorrect: '1',
   }, config.lastFmApiKey);
 
-  const similarArtists = (data['similarartists'] as { artist?: unknown[] })?.artist ?? [];
+  const similarArtistsContainer = data['similarartists'] as { artist?: unknown[] };
+  const similarArtists = similarArtistsContainer.artist ?? [];
 
   return {
     count: similarArtists.length,
     similarArtists: similarArtists.map((a: unknown) => {
       const artist = a as Record<string, unknown>;
       return {
-        name: String(artist['name'] ?? ''),
+        name: typeof artist['name'] === 'string' ? artist['name'] : '',
         match: safeNumber(artist['match']),
-        url: String(artist['url'] ?? ''),
-        mbid: (artist['mbid'] as string) ?? null,
+        url: typeof artist['url'] === 'string' ? artist['url'] : '',
+        mbid: typeof artist['mbid'] === 'string' ? artist['mbid'] : null,
       };
     }),
   };
@@ -202,7 +203,7 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
 
   logger.debug('Tool getSimilarTracks called with args:', { artist, track, limit });
 
-  if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
+  if (config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
 
@@ -215,19 +216,21 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
     autocorrect: '1',
   }, config.lastFmApiKey);
 
-  const similarTracks = (data['similartracks'] as { track?: unknown[] })?.track ?? [];
+  const similarTracksContainer = data['similartracks'] as { track?: unknown[] };
+  const similarTracks = similarTracksContainer.track ?? [];
 
   return {
     count: similarTracks.length,
     similarTracks: similarTracks.map((t: unknown) => {
       const track = t as Record<string, unknown>;
       const trackArtist = track['artist'] as Record<string, unknown> | undefined;
+      const artistName = trackArtist?.['name'] ?? trackArtist?.['#text'];
       return {
-        name: String(track['name'] ?? ''),
-        artist: String(trackArtist?.['name'] ?? trackArtist?.['#text'] ?? 'Unknown'),
+        name: typeof track['name'] === 'string' ? track['name'] : '',
+        artist: typeof artistName === 'string' ? artistName : 'Unknown',
         match: safeNumber(track['match']),
-        url: String(track['url'] ?? ''),
-        mbid: (track['mbid'] as string) ?? null,
+        url: typeof track['url'] === 'string' ? track['url'] : '',
+        mbid: typeof track['mbid'] === 'string' ? track['mbid'] : null,
       };
     }),
   };
@@ -238,36 +241,37 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
 
   logger.debug('Tool getArtistInfo called with args:', { artist, lang });
 
-  if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
+  if (config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
-  
+
   logger.info(`Getting artist info for: ${artist}`);
-  
+
   const data = await callLastFmApi('artist.getInfo', {
     artist,
     lang,
     autocorrect: '1',
   }, config.lastFmApiKey);
-  
-  const artistInfo = (data['artist'] as Record<string, unknown>) ?? {};
+
+  const artistInfo = data['artist'] as Record<string, unknown>;
   const stats = artistInfo['stats'] as Record<string, unknown> | undefined;
   const bio = artistInfo['bio'] as Record<string, unknown> | undefined;
   const tags = artistInfo['tags'] as Record<string, unknown> | undefined;
   const similar = artistInfo['similar'] as Record<string, unknown> | undefined;
-  
+  const bioSummary = bio?.['summary'];
+
   return {
-    name: String(artistInfo['name'] ?? ''),
-    mbid: (artistInfo['mbid'] as string) ?? null,
-    url: String(artistInfo['url'] ?? ''),
+    name: typeof artistInfo['name'] === 'string' ? artistInfo['name'] : '',
+    mbid: typeof artistInfo['mbid'] === 'string' ? artistInfo['mbid'] : null,
+    url: typeof artistInfo['url'] === 'string' ? artistInfo['url'] : '',
     listeners: safeNumber(stats?.['listeners']),
     playcount: safeNumber(stats?.['playcount']),
-    biography: bio?.['summary'] !== null && bio?.['summary'] !== undefined ? String(bio['summary']).replace(/<[^>]*>/g, '') : null,
-    tags: ((tags?.['tag'] as Record<string, unknown>[]) ?? []).map((t: Record<string, unknown>) => ({
-      name: String(t['name'] ?? ''),
-      url: String(t['url'] ?? ''),
+    biography: typeof bioSummary === 'string' ? bioSummary.replace(/<[^>]*>/g, '') : null,
+    tags: ((tags?.['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>) => ({
+      name: typeof t['name'] === 'string' ? t['name'] : '',
+      url: typeof t['url'] === 'string' ? t['url'] : '',
     })),
-    similar: ((similar?.['artist'] as Record<string, unknown>[]) ?? []).slice(0, 5).map((a: Record<string, unknown>) => String(a['name'] ?? '')),
+    similar: ((similar?.['artist'] as Record<string, unknown>[] | undefined) ?? []).slice(0, 5).map((a: Record<string, unknown>) => typeof a['name'] === 'string' ? a['name'] : ''),
   };
 }
 
@@ -276,7 +280,7 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
 
   logger.debug('Tool getTopTracksByArtist called with args:', { artist, limit });
 
-  if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
+  if (config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
 
@@ -288,17 +292,18 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
     autocorrect: '1',
   }, config.lastFmApiKey);
 
-  const topTracks = (data['toptracks'] as Record<string, unknown>)?.['track'] as Record<string, unknown>[] ?? [];
+  const topTracksContainer = data['toptracks'] as Record<string, unknown>;
+  const topTracks = (topTracksContainer['track'] as Record<string, unknown>[] | undefined) ?? [];
 
   return {
     count: topTracks.length,
     tracks: topTracks.map((t: Record<string, unknown>, index: number) => ({
       rank: index + 1,
-      name: String(t['name'] ?? ''),
+      name: typeof t['name'] === 'string' ? t['name'] : '',
       playcount: safeNumber(t['playcount']),
       listeners: safeNumber(t['listeners']),
-      url: String(t['url'] ?? ''),
-      mbid: (t['mbid'] as string) ?? null,
+      url: typeof t['url'] === 'string' ? t['url'] : '',
+      mbid: typeof t['mbid'] === 'string' ? t['mbid'] : null,
     })),
   };
 }
@@ -308,29 +313,30 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
 
   logger.debug('Tool getTrendingMusic called with args:', { type, limit, page });
 
-  if (config.lastFmApiKey === null || config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
+  if (config.lastFmApiKey === undefined || config.lastFmApiKey === '') {
     throw new Error(ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY'));
   }
 
   logger.info(`Getting global ${type} chart`);
-  
-  const method = type === 'artists' ? 'chart.getTopArtists' : 
+
+  const method = type === 'artists' ? 'chart.getTopArtists' :
                  type === 'tracks' ? 'chart.getTopTracks' :
                  'chart.getTopTags';
-  
+
   const data = await callLastFmApi(method, {
     limit: limit.toString(),
     page: page.toString(),
   }, config.lastFmApiKey);
-  
+
   if (type === 'artists') {
-    const artists = ((data['artists'] as Record<string, unknown>)?.['artist'] as Record<string, unknown>[] ?? []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
+    const artistsContainer = data['artists'] as Record<string, unknown>;
+    const artists = ((artistsContainer['artist'] as Record<string, unknown>[] | undefined) ?? []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
       rank: (page - 1) * limit + index + 1,
-      name: String(a['name'] ?? ''),
+      name: typeof a['name'] === 'string' ? a['name'] : '',
       playcount: safeNumber(a['playcount']),
       listeners: safeNumber(a['listeners']),
-      url: String(a['url'] ?? ''),
-      mbid: (a['mbid'] as string) ?? null,
+      url: typeof a['url'] === 'string' ? a['url'] : '',
+      mbid: typeof a['mbid'] === 'string' ? a['mbid'] : null,
     }));
 
     return {
@@ -338,15 +344,20 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
       items: artists,
     };
   } else if (type === 'tracks') {
-    const tracks = ((data['tracks'] as Record<string, unknown>)?.['track'] as Record<string, unknown>[] ?? []).map((t: Record<string, unknown>, index: number): TrendingTrackItem => ({
-      rank: (page - 1) * limit + index + 1,
-      name: String(t['name'] ?? ''),
-      artist: String(((t['artist'] as Record<string, unknown>)?.['name']) ?? 'Unknown'),
-      playcount: safeNumber(t['playcount']),
-      listeners: safeNumber(t['listeners']),
-      url: String(t['url'] ?? ''),
-      mbid: (t['mbid'] as string) ?? null,
-    }));
+    const tracksContainer = data['tracks'] as Record<string, unknown>;
+    const tracks = ((tracksContainer['track'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>, index: number): TrendingTrackItem => {
+      const artistObj = t['artist'] as Record<string, unknown> | undefined;
+      const artistName = artistObj?.['name'];
+      return {
+        rank: (page - 1) * limit + index + 1,
+        name: typeof t['name'] === 'string' ? t['name'] : '',
+        artist: typeof artistName === 'string' ? artistName : 'Unknown',
+        playcount: safeNumber(t['playcount']),
+        listeners: safeNumber(t['listeners']),
+        url: typeof t['url'] === 'string' ? t['url'] : '',
+        mbid: typeof t['mbid'] === 'string' ? t['mbid'] : null,
+      };
+    });
 
     return {
       count: tracks.length,
@@ -358,12 +369,13 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
     // instead. Surface `taggings` as `count` (the LLM-facing semantic field)
     // because that's the closer analogue to per-tag popularity; also expose
     // `reach` so callers that care about distinct users can use it.
-    const tags = ((data['tags'] as Record<string, unknown>)?.['tag'] as Record<string, unknown>[] ?? []).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
+    const tagsContainer = data['tags'] as Record<string, unknown>;
+    const tags = ((tagsContainer['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
       rank: (page - 1) * limit + index + 1,
-      name: String(t['name'] ?? ''),
+      name: typeof t['name'] === 'string' ? t['name'] : '',
       count: safeNumber(t['taggings'] ?? t['count']),
       reach: safeNumber(t['reach']),
-      url: String(t['url'] ?? ''),
+      url: typeof t['url'] === 'string' ? t['url'] : '',
     }));
 
     return {

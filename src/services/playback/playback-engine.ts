@@ -472,8 +472,9 @@ class PlaybackEngine {
     await this.ensureAttached();
     if (!this.isRunning()) return [];
 
-    const raw = await this.requireIpc().command('get_property', 'playlist');
-    if (!Array.isArray(raw)) return [];
+    const rawResult = await this.requireIpc().command('get_property', 'playlist');
+    if (!Array.isArray(rawResult)) return [];
+    const raw: unknown[] = rawResult;
 
     const entries: PlaylistEntry[] = [];
     for (let index = 0; index < raw.length; index++) {
@@ -890,7 +891,7 @@ class PlaybackEngine {
         return `client-api ${major}.${minor}.${patch}`;
       }
       if (fallback !== null && fallback !== undefined) {
-        return String(fallback);
+        return typeof fallback === 'string' ? fallback : JSON.stringify(fallback);
       }
     } catch {
       // ignore — no version available
@@ -1210,10 +1211,10 @@ class PlaybackEngine {
    */
   async quitMpv(): Promise<void> {
     await quitMpvViaSocket(this.ipcPath);
-    await this.shutdown();
+    this.shutdown();
   }
 
-  async shutdown(): Promise<void> {
+  shutdown(): void {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
 

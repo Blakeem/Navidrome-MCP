@@ -46,6 +46,7 @@ function createFakeEngine(): FakeEngine {
         if (handler === h) handler = null;
       };
     },
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async ScrobbleEngine.getPlaylist interface
     async getPlaylist(): Promise<FakeEntry[]> {
       return playlist;
     },

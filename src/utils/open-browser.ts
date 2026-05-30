@@ -41,6 +41,7 @@ export function openBrowser(url: string): void {
 }
 
 function browserCommand(url: string): { command: string; args: string[] } {
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- intentional: all non-darwin/win32 platforms (linux, freebsd, etc.) fall through to xdg-open as a best-effort attempt
   switch (process.platform) {
     case 'darwin':
       return { command: 'open', args: [url] };

@@ -60,7 +60,7 @@ export const STREAMING_HEADERS = [
  * Check if content type indicates audio
  */
 export function isAudioContentType(contentType: string | null): boolean {
-  if (contentType === null || contentType === undefined || contentType === '') return false;
+  if (contentType === null || contentType === '') return false;
 
   const normalized = contentType.toLowerCase();
   return VALID_AUDIO_MIMES.some(mime => normalized.includes(mime));
@@ -96,7 +96,7 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
   try {
     const fileType = await fileTypeFromBuffer(buffer);
 
-    if (fileType?.mime?.startsWith('audio/') === true) {
+    if (fileType?.mime.startsWith('audio/') === true) {
       return {
         detected: true,
         format: fileType.ext,

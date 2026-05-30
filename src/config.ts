@@ -34,6 +34,7 @@ export type { Config } from './config/schema.js';
  * the store is absent or incomplete — callers that need to branch into a
  * first-run/degraded flow should use {@link resolveConfigState} instead.
  */
+// eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function; body is intentionally sync (ConfigSchema.parse + readSettings are synchronous)
 export async function loadConfig(): Promise<Config> {
   const settings = readSettings();
   if (settings === null) {

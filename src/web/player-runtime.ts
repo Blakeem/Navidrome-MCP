@@ -50,7 +50,7 @@ export function getPersist(): boolean {
  * `navidrome-web` (no IPC channel) is always false → treated as independent.
  */
 export function hasLiveParent(): boolean {
-  return process.connected === true;
+  return process.connected;
 }
 
 export interface PlayerFlags {

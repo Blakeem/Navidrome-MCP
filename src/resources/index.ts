@@ -37,7 +37,7 @@ export function registerResources(server: Server, client: NavidromeClient): void
   ];
 
   // Register list resources handler
-  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler(ListResourcesRequestSchema, () => ({
     resources,
   }));
 
@@ -46,7 +46,7 @@ export function registerResources(server: Server, client: NavidromeClient): void
     const { uri } = request.params;
 
     // Parse URI to handle query parameters
-    const baseUri = uri.split('?')[0];
+    const baseUri = uri.split('?')[0] ?? uri;
 
 
     if (baseUri === 'navidrome://server/status') {
@@ -102,6 +102,6 @@ export function registerResources(server: Server, client: NavidromeClient): void
       }
     }
 
-    throw new Error(ErrorFormatter.unknownResource(baseUri !== null && baseUri !== undefined && baseUri !== '' ? baseUri : uri));
+    throw new Error(ErrorFormatter.unknownResource(baseUri));
   });
 }

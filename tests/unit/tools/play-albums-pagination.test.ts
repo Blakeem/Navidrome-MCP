@@ -85,7 +85,7 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
     expect(client.requestWithMeta).toHaveBeenCalledTimes(3);
 
     // Verify pagination cursor moves forward correctly
-    const calls = client.requestWithMeta.mock.calls.map((c) => c[0] as string);
+    const calls = client.requestWithMeta.mock.calls.map((c) => c[0]);
     expect(calls[0]).toContain('_start=0');
     expect(calls[0]).toContain('_end=500');
     expect(calls[1]).toContain('_start=500');

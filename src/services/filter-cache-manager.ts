@@ -92,7 +92,7 @@ class FilterCacheManager {
     // Store the client reference for use by ensureFresh() when cache is disabled.
     // Default to true (cache enabled) — only explicitly false disables it.
     this.client = client;
-    this.cacheEnabled = config.filterCacheEnabled !== false;
+    this.cacheEnabled = config.filterCacheEnabled;
 
     if (this.initialized && this.cacheEnabled) {
       logger.debug('FilterCacheManager already initialized');
@@ -270,7 +270,6 @@ class FilterCacheManager {
       case 'releaseTypes': return this.releaseTypes;
       case 'recordLabels': return this.recordLabels;
       case 'moods': return this.moods;
-      default: throw new Error(`Unknown filter type: ${type}`);
     }
   }
 
@@ -285,7 +284,6 @@ class FilterCacheManager {
       case 'releaseTypes': return this.releaseTypesOriginal;
       case 'recordLabels': return this.recordLabelsOriginal;
       case 'moods': return this.moodsOriginal;
-      default: throw new Error(`Unknown filter type: ${type}`);
     }
   }
 

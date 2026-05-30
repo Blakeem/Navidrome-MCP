@@ -234,7 +234,7 @@ export class NavidromeClient {
     };
 
     // Only set Content-Type for non-GET requests
-    if (options.method !== null && options.method !== undefined && options.method !== 'GET') {
+    if (options.method !== undefined && options.method !== 'GET') {
       defaultHeaders['Content-Type'] = 'application/json';
     }
 

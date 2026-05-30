@@ -180,7 +180,7 @@ export async function listRadioStations(
             updatedAt: nullIfGoZeroTime(row.updatedAt) ?? '',
           };
 
-          if (row.homePageUrl !== null && row.homePageUrl !== undefined && row.homePageUrl !== '') {
+          if (row.homePageUrl !== undefined && row.homePageUrl !== '') {
             stationDto.homePageUrl = row.homePageUrl;
           }
 
@@ -212,7 +212,7 @@ export async function listRadioStations(
     };
 
     // Add tip if this is the first time showing the list
-    if (tip !== null && tip !== undefined && tip !== '') {
+    if (tip !== null && tip !== '') {
       apiResponse.tip = tip;
     }
 
@@ -267,7 +267,7 @@ export async function createRadioStation(
       // Optional stream validation. validateRadioStream's `client` parameter
       // is currently unused (it makes outbound HTTP calls only) but the
       // signature requires it — pass the existing client, no new auth needed.
-      if (params.validateBeforeAdd === true) {
+      if (params.validateBeforeAdd) {
         const { validateRadioStream } = await import('./radio-validation.js');
 
         const validationResult = await validateRadioStream(client, {
@@ -302,7 +302,7 @@ export async function createRadioStation(
         streamUrl: station.streamUrl,
         name: station.name,
       };
-      if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
+      if (station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
         subsonicParams['homepageUrl'] = station.homePageUrl;
       }
       await client.subsonicRequest('/createInternetRadioStation', subsonicParams);
@@ -320,7 +320,7 @@ export async function createRadioStation(
         updatedAt: new Date().toISOString(),
       };
 
-      if (station.homePageUrl !== null && station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
+      if (station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
         createdStation.homePageUrl = station.homePageUrl;
       }
 
@@ -359,7 +359,7 @@ export async function createRadioStation(
   // (Navidrome doesn't enforce uniqueness — both would otherwise collide on
   // the lex-max match). Lex-max == newest because Navidrome IDs are monotonic.
   const pendingLookups = results.filter((r): r is CreateRadioStationResponse & { station: RadioStationDTO } =>
-    r.success === true && r.station !== undefined && r.station.id === ''
+    r.success && r.station !== undefined && r.station.id === ''
   );
   if (pendingLookups.length > 0) {
     try {

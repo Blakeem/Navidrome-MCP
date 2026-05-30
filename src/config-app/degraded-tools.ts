@@ -48,9 +48,9 @@ export function registerDegradedTools(server: Server, settingsUrl: string): void
     },
   ];
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  server.setRequestHandler(ListToolsRequestSchema, () => ({ tools }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, (request) => {
     const { name } = request.params;
     if (name === 'open_settings') {
       openBrowser(settingsUrl);

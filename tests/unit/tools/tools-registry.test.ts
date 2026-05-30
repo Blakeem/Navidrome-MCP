@@ -178,7 +178,7 @@ describe('Tools Registry - Tool Count Verification', () => {
   }
 
   describe('Tool Registration', () => {
-    it('should register exactly the expected tools for current configuration', async () => {
+    it('should register exactly the expected tools for current configuration', () => {
       // Create registry and register all categories
       const registry = new ToolRegistry();
 
@@ -215,15 +215,15 @@ describe('Tools Registry - Tool Count Verification', () => {
 
       // Log detailed comparison for debugging
       if (missingTools.length > 0 || unexpectedTools.length > 0) {
-        console.log(`\nTool registration mismatch:`);
-        console.log(`Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
-        console.log(`Expected ${expectedToolNames.length} tools, got ${actualToolNames.length}`);
+        console.error(`\nTool registration mismatch:`);
+        console.error(`Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
+        console.error(`Expected ${expectedToolNames.length} tools, got ${actualToolNames.length}`);
 
         if (missingTools.length > 0) {
-          console.log(`Missing tools (${missingTools.length}):`, missingTools);
+          console.error(`Missing tools (${missingTools.length}):`, missingTools);
         }
         if (unexpectedTools.length > 0) {
-          console.log(`Unexpected tools (${unexpectedTools.length}):`, unexpectedTools);
+          console.error(`Unexpected tools (${unexpectedTools.length}):`, unexpectedTools);
         }
       }
 
@@ -243,7 +243,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       });
     });
 
-    it('should register all core tools regardless of feature flags', async () => {
+    it('should register all core tools regardless of feature flags', () => {
       // Create registry with only core categories (no conditional features)
       const registry = new ToolRegistry();
 
@@ -263,8 +263,8 @@ describe('Tools Registry - Tool Count Verification', () => {
       const missingCoreTools = EXPECTED_CORE_TOOLS.filter(toolName => !actualToolNames.includes(toolName));
 
       if (missingCoreTools.length > 0) {
-        console.log('Missing core tools:', missingCoreTools);
-        console.log('Actual tools:', actualToolNames.sort());
+        console.error('Missing core tools:', missingCoreTools);
+        console.error('Actual tools:', actualToolNames.sort());
       }
 
       expect(missingCoreTools).toEqual([]);
@@ -273,7 +273,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       expect(actualToolNames.length).toBeGreaterThanOrEqual(EXPECTED_CORE_TOOLS.length);
     });
 
-    it('should conditionally include Last.fm tools based on feature flag', async () => {
+    it('should conditionally include Last.fm tools based on feature flag', () => {
       const registry = new ToolRegistry();
 
       // Register core categories
@@ -297,7 +297,6 @@ describe('Tools Registry - Tool Count Verification', () => {
       // Validate Last.fm tools presence based on feature flag
       const actualLastFmTools = actualToolNames.filter(name => EXPECTED_LASTFM_TOOLS.includes(name));
       const missingLastFmTools = EXPECTED_LASTFM_TOOLS.filter(name => !actualToolNames.includes(name));
-      const unexpectedLastFmTools = actualLastFmTools.filter(name => !EXPECTED_LASTFM_TOOLS.includes(name));
 
       if (config.features.lastfm) {
         // When enabled, all Last.fm tools should be present
@@ -309,7 +308,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
     });
 
-    it('should conditionally include lyrics tools based on feature flag', async () => {
+    it('should conditionally include lyrics tools based on feature flag', () => {
       const registry = new ToolRegistry();
 
       // Register core categories
@@ -346,7 +345,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
     });
 
-    it('should have unique tool names and match expected configuration', async () => {
+    it('should have unique tool names and match expected configuration', () => {
       // Create registry with all possible tools
       const registry = new ToolRegistry();
 

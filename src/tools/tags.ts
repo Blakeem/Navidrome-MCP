@@ -70,11 +70,14 @@ function transformTagToMeta(rawTag: unknown): TagWithMeta {
     (typeof albumCountRaw === 'number' && Number.isFinite(albumCountRaw)) ||
     (typeof songCountRaw === 'number' && Number.isFinite(songCountRaw));
 
+  const idRaw = tag['id'];
+  const tagNameRaw = tag['tagName'];
+  const tagValueRaw = tag['tagValue'];
   return {
     tag: {
-      id: String(tag['id'] ?? ''),
-      tagName: String(tag['tagName'] ?? ''),
-      tagValue: String(tag['tagValue'] ?? ''),
+      id: typeof idRaw === 'string' || typeof idRaw === 'number' ? String(idRaw) : '',
+      tagName: typeof tagNameRaw === 'string' || typeof tagNameRaw === 'number' ? String(tagNameRaw) : '',
+      tagValue: typeof tagValueRaw === 'string' || typeof tagValueRaw === 'number' ? String(tagValueRaw) : '',
       albumCount: Number(albumCountRaw) || 0,
       songCount: Number(songCountRaw) || 0,
     },
@@ -167,7 +170,7 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
     });
 
     // Add tag_value filter if specified
-    if (params.tagValue !== null && params.tagValue !== undefined && params.tagValue !== '') {
+    if (params.tagValue !== undefined && params.tagValue !== '') {
       queryParams.append('tag_value', params.tagValue);
     }
 

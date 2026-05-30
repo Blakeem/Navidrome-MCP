@@ -28,6 +28,10 @@ export interface SongDTO {
   artist: string;
   /** Artist ID for lookups */
   artistId: string;
+  /** Album artist (may differ from track artists) */
+  albumArtist?: string;
+  /** Album artist ID */
+  albumArtistId?: string;
   /** Album name */
   album: string;
   /** Album ID for lookups */

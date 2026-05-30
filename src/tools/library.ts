@@ -36,7 +36,7 @@ import { nullIfGoZeroTime } from '../utils/go-time.js';
 /**
  * Get user details including library information with active status
  */
-async function getUserDetails(): Promise<UserDetailsDTO> {
+function getUserDetails(): UserDetailsDTO {
   try {
     if (!libraryManager.isInitialized()) {
       throw new Error('LibraryManager not initialized');
@@ -116,7 +116,7 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
 /**
  * Set active libraries for the user session
  */
-async function setActiveLibraries(args: unknown): Promise<LibraryManagementResponse> {
+function setActiveLibraries(args: unknown): LibraryManagementResponse {
   try {
     const params = SetActiveLibrariesSchema.parse(args);
 
@@ -255,9 +255,9 @@ export function createLibraryToolCategory(client: NavidromeClient, _config: Conf
         case 'get_song_playlists':
           return await getSongPlaylists(client, args);
         case 'get_user_details':
-          return await getUserDetails();
+          return getUserDetails();
         case 'set_active_libraries':
-          return await setActiveLibraries(args);
+          return setActiveLibraries(args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }

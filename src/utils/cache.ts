@@ -49,9 +49,7 @@ export class Cache<T> {
     }, this.cleanupIntervalMs);
     
     // Ensure cleanup runs when process exits
-    if (this.cleanupInterval?.unref !== null && this.cleanupInterval?.unref !== undefined) {
-      this.cleanupInterval.unref(); // Don't keep process alive just for cleanup
-    }
+    this.cleanupInterval.unref(); // Don't keep process alive just for cleanup
   }
 
   private cleanup(): void {

@@ -75,12 +75,12 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     dto.genres = genres;
   }
 
-  if (rawSong.year !== undefined) {
+  if (rawSong.year !== undefined && rawSong.year > 0) {
     dto.year = rawSong.year;
   }
 
   if (rawSong.path !== undefined) {
-    dto.path = rawSong.path as string;
+    dto.path = rawSong.path;
   }
 
   if (rawSong.trackNumber !== undefined) {
@@ -91,7 +91,7 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     dto.playCount = rawSong.playCount;
   }
 
-  if (rawSong.rating !== undefined) {
+  if (rawSong.rating !== undefined && rawSong.rating > 0) {
     dto.rating = rawSong.rating;
   }
 
@@ -101,15 +101,23 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
   // Only echo `starredAt` when the boolean confirms the starred state.
   if (rawSong.starred === true) {
     dto.starred = true;
-    if (rawSong.starredAt !== undefined && rawSong.starredAt !== null) {
+    if (rawSong.starredAt !== undefined) {
       dto.starredAt = rawSong.starredAt;
     }
   } else if (rawSong.starred === false) {
     dto.starred = false;
   }
 
-  if (rawSong.playDate !== undefined) {
+  if (rawSong.playDate !== undefined && rawSong.playDate !== '') {
     dto.playDate = rawSong.playDate;
+  }
+
+  if (rawSong.albumArtist !== undefined && rawSong.albumArtist !== '') {
+    dto.albumArtist = rawSong.albumArtist;
+  }
+
+  if (rawSong.albumArtistId !== undefined && rawSong.albumArtistId !== '') {
+    dto.albumArtistId = rawSong.albumArtistId;
   }
 
   return dto;

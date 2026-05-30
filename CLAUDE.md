@@ -27,6 +27,24 @@ analysis, so tests importing a symbol keep it alive.
 See `tests/CLAUDE.md` for the testing strategy (live reads / mocked writes /
 mocked external APIs).
 
+### `no-unnecessary-condition` triage
+
+This rule flags a guard the *types* say is redundant. Before changing anything,
+decide which of three cases is true — **never blanket-`--fix` it**:
+
+1. **The guard is dead** (the value truly can't be null/falsy here) → delete it.
+2. **The type is lying** — the value really can be `null`/`undefined`/empty at
+   runtime, common with external Navidrome/Last.fm responses, but the type claims
+   it can't → **fix the type** (`| undefined`, or validate with zod). Don't delete
+   the guard. Prefer this over (3): an honest type protects the next change too.
+3. **Genuinely intentional and the rule can't see why** → suppress as a last resort:
+   `// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- <reason>`
+
+**Suppression discipline (enforced):** every `eslint-disable` must carry a
+`-- <reason>` (`require-description`), and stale/unused disables are a hard error
+(`reportUnusedDisableDirectives`) — so when you fix a lying type, its old
+suppression must come out. Reach for a disable only after ruling out (1) and (2).
+
 ---
 
 ## Application structure

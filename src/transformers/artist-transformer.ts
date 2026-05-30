@@ -55,14 +55,17 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
   };
 
   if (rawArtist.genres !== undefined) {
-    dto.genres = rawArtist.genres;
+    const filtered = rawArtist.genres.filter(g => g.length > 0);
+    if (filtered.length > 0) {
+      dto.genres = filtered;
+    }
   }
 
-  if (rawArtist.biography !== undefined) {
+  if (rawArtist.biography !== undefined && rawArtist.biography !== '') {
     dto.biography = rawArtist.biography;
   }
 
-  if (rawArtist.rating !== undefined) {
+  if (rawArtist.rating !== undefined && rawArtist.rating > 0) {
     dto.rating = rawArtist.rating;
   }
 
@@ -72,7 +75,7 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
   // Only echo `starredAt` when the boolean confirms the starred state.
   if (rawArtist.starred === true) {
     dto.starred = true;
-    if (rawArtist.starredAt !== undefined && rawArtist.starredAt !== null) {
+    if (rawArtist.starredAt !== undefined) {
       dto.starredAt = rawArtist.starredAt;
     }
   } else if (rawArtist.starred === false) {

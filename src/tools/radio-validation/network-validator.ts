@@ -196,8 +196,8 @@ export async function sampleAudioData(
     // Some servers don't handle Range requests properly and hang on arrayBuffer()
     // Use streaming approach with timeout protection
     try {
-      const reader = response.body?.getReader();
-      if (!reader) {
+      const bodyStream = response.body;
+      if (!bodyStream) {
         return {
           buffer: null,
           headers: response.headers,
@@ -205,6 +205,7 @@ export async function sampleAudioData(
           error: 'No response body reader available',
         };
       }
+      const reader = (bodyStream as ReadableStream<Uint8Array>).getReader();
 
       const chunks: Uint8Array[] = [];
       let totalLength = 0;
@@ -212,6 +213,7 @@ export async function sampleAudioData(
       const startTime = Date.now();
       const readTimeout = RADIO_VALIDATION.STREAM_READ_TIMEOUT; // 3 second timeout for reading
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop; exits via break/return
       while (true) {
         // Check if we've exceeded our read timeout
         if (Date.now() - startTime > readTimeout) {
@@ -227,20 +229,18 @@ export async function sampleAudioData(
         const { value, done } = await reader.read();
 
         if (done) break;
-        if (value !== null && value !== undefined) {
-          // Slice oversized chunks BEFORE pushing — a server that ignores the
-          // Range header can hand us one multi-MB chunk; the post-push limit
-          // check would already have allocated the entire blob in heap.
-          const remaining = maxBytes - totalLength;
-          const slice = value.length > remaining ? value.subarray(0, remaining) : value;
-          chunks.push(slice);
-          totalLength += slice.length;
+        // Slice oversized chunks BEFORE pushing — a server that ignores the
+        // Range header can hand us one multi-MB chunk; the post-push limit
+        // check would already have allocated the entire blob in heap.
+        const remaining = maxBytes - totalLength;
+        const slice = value.length > remaining ? value.subarray(0, remaining) : value;
+        chunks.push(slice);
+        totalLength += slice.length;
 
-          // Stop if we have enough data
-          if (totalLength >= maxBytes) {
-            await reader.cancel();
-            break;
-          }
+        // Stop if we have enough data
+        if (totalLength >= maxBytes) {
+          await reader.cancel();
+          break;
         }
       }
 

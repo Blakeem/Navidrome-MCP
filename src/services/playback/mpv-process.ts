@@ -71,7 +71,7 @@ export function getDefaultIpcPath(): string {
 export function detectMpvBinary(): string | null {
   // 1. Explicit env override
   const override = process.env['MPV_PATH'];
-  if (override !== undefined && override !== null && override.trim() !== '') {
+  if (override !== undefined && override.trim() !== '') {
     const trimmed = override.trim();
     if (isExecutable(trimmed)) {
       return trimmed;

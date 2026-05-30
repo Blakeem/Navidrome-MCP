@@ -33,11 +33,13 @@ function deps(
   let probeCalls = 0;
   let bindCalls = 0;
   return {
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async AcquireDeps.probe interface
     probe: async () => {
       const outcome = probeOutcomes[Math.min(probeCalls, probeOutcomes.length - 1)];
       probeCalls += 1;
       return outcome as ProbeOutcome;
     },
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async AcquireDeps.bind interface
     bind: async () => {
       bindCalls += 1;
       return bindResult;

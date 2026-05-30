@@ -65,7 +65,7 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
   };
 
   // Add optional fields only if they have values
-  if (rawTrack.albumArtist !== null && rawTrack.albumArtist !== undefined && rawTrack.albumArtist !== '') {
+  if (rawTrack.albumArtist !== undefined && rawTrack.albumArtist !== '') {
     dto.albumArtist = rawTrack.albumArtist;
   }
 
@@ -73,7 +73,7 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
     dto.bitRate = rawTrack.bitRate;
   }
 
-  if (rawTrack.path !== null && rawTrack.path !== undefined && rawTrack.path !== '') {
+  if (rawTrack.path !== undefined && rawTrack.path !== '') {
     dto.path = rawTrack.path;
   }
 
@@ -85,7 +85,7 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
     dto.year = rawTrack.year;
   }
 
-  if (rawTrack.genre !== null && rawTrack.genre !== undefined && rawTrack.genre !== '') {
+  if (rawTrack.genre !== undefined && rawTrack.genre !== '') {
     dto.genre = rawTrack.genre;
   }
 
@@ -147,7 +147,7 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
     if (params.format === 'm3u') {
       return {
         format: 'm3u',
-        m3uContent: typeof data === 'string' ? data : String(data ?? ''),
+        m3uContent: typeof data === 'string' ? data : '',
       };
     }
 

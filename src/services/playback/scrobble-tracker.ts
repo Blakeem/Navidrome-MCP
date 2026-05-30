@@ -134,7 +134,6 @@ export class ScrobbleTracker {
       this.onQueueMutation();
       return;
     }
-    if (event.kind !== 'property') return;
     switch (event.name) {
       case 'playlist-pos':
         this.onPlaylistPos(event.data);

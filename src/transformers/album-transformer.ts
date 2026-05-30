@@ -106,11 +106,11 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
     durationFormatted: formatDuration(rawAlbum.duration),
   };
 
-  if (rawAlbum.albumArtist !== undefined) {
+  if (rawAlbum.albumArtist !== undefined && rawAlbum.albumArtist !== '') {
     dto.albumArtist = rawAlbum.albumArtist;
   }
 
-  if (rawAlbum.albumArtistId !== undefined) {
+  if (rawAlbum.albumArtistId !== undefined && rawAlbum.albumArtistId !== '') {
     dto.albumArtistId = rawAlbum.albumArtistId;
   }
 
@@ -147,7 +147,7 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
     dto.playCount = rawAlbum.playCount;
   }
 
-  if (rawAlbum.rating !== undefined) {
+  if (rawAlbum.rating !== undefined && rawAlbum.rating > 0) {
     dto.rating = rawAlbum.rating;
   }
 
@@ -157,7 +157,7 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
   // Only echo `starredAt` when the boolean confirms the starred state.
   if (rawAlbum.starred === true) {
     dto.starred = true;
-    if (rawAlbum.starredAt !== undefined && rawAlbum.starredAt !== null) {
+    if (rawAlbum.starredAt !== undefined) {
       dto.starredAt = rawAlbum.starredAt;
     }
   } else if (rawAlbum.starred === false) {
