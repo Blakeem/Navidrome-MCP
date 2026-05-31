@@ -94,10 +94,13 @@ function redactString(s: string): string {
   out = out.replace(RE_BEARER_VALUE, 'Bearer <REDACTED>');
   RE_BEARER_VALUE.lastIndex = 0;
 
-  // Password fields (JSON-quoted key or bare-colon key) — replace only the value
+  // Password fields (JSON-quoted key or bare-colon key) — replace only the
+  // value. The pattern also matches '=' separators (NAME=secret), so find the
+  // separator generically; using indexOf(':') alone would return -1 there and
+  // collapse the whole field name. Preserve the separator so context survives.
   out = out.replace(RE_PASSWORD_FIELD, (match) => {
-    const colonIdx = match.indexOf(':');
-    return `${match.slice(0, colonIdx + 1)} "<REDACTED>"`;
+    const sepIdx = match.search(/[:=]/);
+    return `${match.slice(0, sepIdx + 1)} "<REDACTED>"`;
   });
   RE_PASSWORD_FIELD.lastIndex = 0;
 

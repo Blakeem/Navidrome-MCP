@@ -214,6 +214,17 @@ export async function getLyrics(config: Config, args: unknown): Promise<LyricsDT
 
   logger.debug('Tool getLyrics called with args:', params);
 
+  // Attribution should point at the data source actually queried (which may be
+  // a self-hosted LRCLIB mirror), not the public host. Derive it from the
+  // configured base; fall back to the canonical host if the base is somehow
+  // unparseable.
+  let attributionUrl = 'https://lrclib.net';
+  try {
+    attributionUrl = new URL(config.lrclibBase).origin;
+  } catch {
+    // Keep the canonical default.
+  }
+
   try {
     // Try exact match first
     let lyricsData = await tryExactMatch(params, config);
@@ -233,7 +244,7 @@ export async function getLyrics(config: Config, args: unknown): Promise<LyricsDT
         isInstrumental: false,
         provider: 'lrclib',
         attribution: {
-          url: 'https://lrclib.net',
+          url: attributionUrl,
           license: 'community-sourced'
         }
       };
@@ -254,7 +265,7 @@ export async function getLyrics(config: Config, args: unknown): Promise<LyricsDT
       isInstrumental: Boolean(lyricsData.instrumental),
       provider: 'lrclib',
       attribution: {
-        url: 'https://lrclib.net',
+        url: attributionUrl,
         license: 'community-sourced'
       }
     };

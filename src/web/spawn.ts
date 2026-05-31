@@ -123,6 +123,12 @@ export async function ensureWebServerRunning(config: Config): Promise<WebServerS
     // resolves; it's logged, and the child failing to bind leaves mpv playing
     // unscrobbled until the next host adopts it — the accepted orphan edge.
     child.on('error', (err) => {
+      // Reset the in-process guard so the next ensureWebServerRunning re-probes
+      // and MCP can fall back to scrobbling itself — otherwise the `if (spawned)`
+      // fast-path would permanently skip that fallback for a child that never
+      // came alive. (The accepted-orphan behavior is unchanged: a child that DID
+      // bind but errors later is the operator's edge to resolve.)
+      spawned = false;
       logger.warn('navidrome-web child failed after spawn:', err);
     });
     child.unref();

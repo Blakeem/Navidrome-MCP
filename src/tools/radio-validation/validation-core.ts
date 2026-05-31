@@ -182,7 +182,7 @@ export async function validateRadioStream(
       const remainingTime = params.timeout - elapsed;
 
       if (remainingTime > 1000 && !overallController.signal.aborted) {
-        const sampleResult = await sampleAudioData(params.url, remainingTime, params.followRedirects);
+        const sampleResult = await sampleAudioData(params.url, remainingTime, params.followRedirects, overallController.signal);
         buffer = sampleResult.buffer;
         headers = sampleResult.headers ?? headResponse?.headers ?? null;
         sampledStatus = sampleResult.httpStatus ?? null;
@@ -209,12 +209,17 @@ export async function validateRadioStream(
     result.status = 'error';
   }
 
-  // Use whichever response we got
-  const finalResponse = headResponse ?? (headers !== null ? { headers, status: sampledStatus ?? 0 } : null);
+  // Use whichever response we got. The status may be absent when HEAD failed
+  // and sampling produced headers but no real HTTP status — track it separately
+  // so we never write a bogus 0 into result.httpStatus.
+  const finalStatus: number | null = headResponse?.status ?? sampledStatus;
+  const finalResponse = headResponse ?? (headers !== null ? { headers, status: finalStatus } : null);
 
   if (finalResponse) {
-    result.httpStatus = finalResponse.status;
-    result.validation.httpAccessible = (finalResponse.status >= 200 && finalResponse.status < 300) || finalResponse.status === 206;
+    if (finalStatus !== null) {
+      result.httpStatus = finalStatus;
+      result.validation.httpAccessible = (finalStatus >= 200 && finalStatus < 300) || finalStatus === 206;
+    }
 
     if (resolvedFinalUrl !== null) {
       result.finalUrl = resolvedFinalUrl;

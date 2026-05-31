@@ -18,7 +18,7 @@
 
 import { z } from 'zod';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
-import { createLimitSchema, ItemListTypeSchema, OffsetSchema, OrderSchema } from './common.js';
+import { createLimitSchema, ID_PATTERN, ItemListTypeSchema, OffsetSchema, OrderSchema } from './common.js';
 
 // Base pagination schema factory
 export const createPaginationSchema = (
@@ -69,7 +69,7 @@ export const GenrePaginationSchema = createPaginationSchema(
 );
 
 export const PlaylistTracksPaginationSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAYLIST_TRACKS_LIMIT),
   offset: OffsetSchema,
   format: z.enum(['json', 'm3u']).optional().default('json'),
@@ -112,11 +112,12 @@ export const TagsPaginationSchema = z.object({
   tagName: z.string().optional(),
 });
 
-// Search pagination (smaller limits for performance)
+// Search pagination (smaller limits for performance). `.int()` for the same
+// reason as createLimitSchema — these counts become Navidrome pagination params.
 export const SearchPaginationSchema = z.object({
-  artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-  albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-  songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  artistCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  albumCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  songCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
 });
 
 export const SimpleSearchPaginationSchema = z.object({

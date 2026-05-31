@@ -194,33 +194,25 @@ describe('setActiveLibraries', () => {
     expect(libraryManager.getActiveLibraryIds()).toContain(2);
   });
 
-  it('returns failure (not throw) for invalid library ID', async () => {
+  it('throws (not a {success:false} envelope) for an invalid library ID', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
-    // ID 999 doesn't exist — setActiveLibraries catches the throw and returns {success: false}
-    const result = await category.handleToolCall('set_active_libraries', { libraryIds: [999] }) as {
-      success: boolean;
-      activeLibraries: unknown[];
-    };
-
-    expect(result.success).toBe(false);
-    expect(result.activeLibraries).toHaveLength(0);
+    // ID 999 doesn't exist — setActiveLibraries now re-throws so the failure
+    // surfaces as a real protocol error instead of a misleading HTTP-200 body.
+    await expect(category.handleToolCall('set_active_libraries', { libraryIds: [999] }))
+      .rejects.toThrow(/set_active_libraries/);
   });
 
-  it('rejects non-integer library IDs at Zod validation layer', async () => {
+  it('throws when non-integer library IDs fail Zod validation', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
-    // The Zod schema requires array of integers; 'abc' should fail
-    const result = await category.handleToolCall('set_active_libraries', { libraryIds: ['abc'] }) as {
-      success: boolean;
-    };
-    // setActiveLibraries catches Zod errors and returns {success: false}
-    expect(result.success).toBe(false);
+    // The Zod schema requires an array of integers; 'abc' should be rejected,
+    // and the ZodError is re-thrown (formatted) rather than swallowed.
+    await expect(category.handleToolCall('set_active_libraries', { libraryIds: ['abc'] }))
+      .rejects.toThrow(/set_active_libraries/);
   });
 
-  it('rejects empty libraryIds array', async () => {
+  it('throws when the libraryIds array is empty', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
-    const result = await category.handleToolCall('set_active_libraries', { libraryIds: [] }) as {
-      success: boolean;
-    };
-    expect(result.success).toBe(false);
+    await expect(category.handleToolCall('set_active_libraries', { libraryIds: [] }))
+      .rejects.toThrow(/set_active_libraries/);
   });
 });

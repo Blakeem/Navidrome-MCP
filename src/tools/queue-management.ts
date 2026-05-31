@@ -18,7 +18,7 @@
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import { SaveQueueSchema } from '../schemas/validation.js';
+import { SaveQueueSchema } from '../schemas/index.js';
 import { formatDuration } from '../transformers/shared-transformers.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';

@@ -95,5 +95,11 @@ export function transformArtistsToDTO(rawArtists: unknown): ArtistDTO[] {
     return [];
   }
 
-  return rawArtists.map((artist) => transformToArtistDTO(artist as RawArtist));
+  // Guard each element: Navidrome can return null / non-object entries on
+  // certain API errors. The `as RawArtist` cast would pass TS but crash the
+  // single-item transformer at runtime, aborting the whole batch. Drop the
+  // bad rows instead so one malformed entry doesn't lose every good one.
+  return rawArtists
+    .filter((artist): artist is RawArtist => typeof artist === 'object' && artist !== null)
+    .map((artist) => transformToArtistDTO(artist));
 }

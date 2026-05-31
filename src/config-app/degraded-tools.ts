@@ -20,6 +20,7 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { openBrowser } from '../utils/open-browser.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 /**
  * Register the minimal toolset for an unconfigured server. The full toolset is
@@ -52,6 +53,12 @@ export function registerDegradedTools(server: Server, settingsUrl: string): void
 
   server.setRequestHandler(CallToolRequestSchema, (request) => {
     const { name } = request.params;
+    // Only the two degraded-mode tools are registered; reject anything else
+    // instead of masking an unknown tool with a success notice (matches the
+    // registry convention).
+    if (name !== 'open_settings' && name !== 'test_connection') {
+      throw new Error(ErrorFormatter.toolUnknown(name));
+    }
     if (name === 'open_settings') {
       openBrowser(settingsUrl);
     }

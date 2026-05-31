@@ -142,15 +142,11 @@ function setActiveLibraries(args: unknown): LibraryManagementResponse {
     logger.info(`Set active libraries: ${activeLibraries.map(lib => `${lib.name} (${lib.id})`).join(', ')}`);
     return result;
   } catch (error) {
-    const message = ErrorFormatter.toolExecution('set_active_libraries', error);
-    logger.error(message);
-
-    return {
-      success: false,
-      message,
-      activeLibraries: [],
-      totalCount: 0,
-    };
+    // Re-throw rather than returning a {success:false} payload: an MCP-200
+    // body with success:false reads as a successful call to the LLM. Throwing
+    // surfaces the failure as a tool error, matching getUserDetails above.
+    logger.error('Error setting active libraries:', error);
+    throw new Error(ErrorFormatter.toolExecution('set_active_libraries', error));
   }
 }
 

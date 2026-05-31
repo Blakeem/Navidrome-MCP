@@ -53,11 +53,11 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
   totalResults: number;
   appliedFilters?: AppliedFiltersByType;
 }> {
-  // Data collection - parse and validate input parameters
-  const params = SearchAllSchema.parse(args);
-  logger.debug('Tool searchAll called with args:', params);
-
   try {
+    // Data collection - parse and validate input parameters
+    const params = SearchAllSchema.parse(args);
+    logger.debug('Tool searchAll called with args:', params);
+
     // Processing - resolve text-based filters to IDs (may refresh from Navidrome when cache is disabled)
     const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
 

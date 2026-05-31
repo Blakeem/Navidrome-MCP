@@ -152,21 +152,21 @@ const GetRadioFiltersArgsSchema = z.object({
  * Schema for getting station by UUID
  */
 const GetStationByUuidArgsSchema = z.object({
-  stationUuid: z.string()
+  stationUuid: z.string().min(1)
 });
 
 /**
  * Schema for clicking a station
  */
 const ClickStationArgsSchema = z.object({
-  stationUuid: z.string()
+  stationUuid: z.string().min(1)
 });
 
 /**
  * Schema for voting for a station
  */
 const VoteStationArgsSchema = z.object({
-  stationUuid: z.string()
+  stationUuid: z.string().min(1)
 });
 
 /**

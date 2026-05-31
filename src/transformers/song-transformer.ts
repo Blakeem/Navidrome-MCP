@@ -61,10 +61,17 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     album: rawSong.album || '',
     albumId: rawSong.albumId,
     durationFormatted: formatDuration(rawSong.duration),
-    addedDate: rawSong.createdAt ?? new Date().toISOString(),
   };
 
   // Add optional fields only if they have values
+
+  // Only emit addedDate when the source actually provides it. Navidrome's REST
+  // API always supplies `createdAt`; omitting (rather than fabricating `now`)
+  // keeps the value honest for any row that doesn't, matching every other
+  // optional field below.
+  if (rawSong.createdAt !== undefined && rawSong.createdAt !== '') {
+    dto.addedDate = rawSong.createdAt;
+  }
   const genre = extractGenre(rawSong);
   if (genre !== undefined) {
     dto.genre = genre;
@@ -134,6 +141,12 @@ export function transformSongsToDTO(rawSongs: unknown): SongDTO[] {
     return [];
   }
 
-  return rawSongs.map((song) => transformToSongDTO(song as RawSong));
+  // Guard each element: Navidrome can return null / non-object entries on
+  // certain API errors. The `as RawSong` cast would pass TS but crash the
+  // single-item transformer at runtime, aborting the whole batch. Drop the
+  // bad rows instead so one malformed entry doesn't lose every good one.
+  return rawSongs
+    .filter((song): song is RawSong => typeof song === 'object' && song !== null)
+    .map((song) => transformToSongDTO(song));
 }
 

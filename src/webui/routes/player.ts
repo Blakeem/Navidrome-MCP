@@ -74,7 +74,11 @@ export async function handleSetPlayerSettings(
     writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
     return;
   }
-  const input = (body ?? {}) as { persistAfterMcpExit?: unknown; autoOpenBrowser?: unknown };
+  // Narrow the unknown JSON body to a plain object before reading fields.
+  // A non-object body (array, string, number, null) carries no settings keys,
+  // so we treat it as an empty patch rather than indexing into it blindly.
+  const input: { persistAfterMcpExit?: unknown; autoOpenBrowser?: unknown } =
+    typeof body === 'object' && body !== null && !Array.isArray(body) ? body : {};
 
   // Apply the live flag first (this is the part that matters for the running
   // process); persistence to disk is best-effort below.

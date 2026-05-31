@@ -29,16 +29,17 @@ import {
   OptionalBooleanSchema,
   createLimitSchema,
   createTimeoutSchema,
+  ID_PATTERN,
 } from './common.js';
 
 // User preferences validation
 export const StarItemSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
   type: ItemTypeSchema,
 });
 
 export const SetRatingSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
   type: ItemTypeSchema,
   rating: RatingSchema,
 });
@@ -58,7 +59,7 @@ export const UpdatePlaylistSchema = z.object({
 });
 
 export const AddTracksToPlaylistSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
   songIds: OptionalStringArraySchema,
   albumIds: OptionalStringArraySchema,
   artistIds: OptionalStringArraySchema,
@@ -81,7 +82,7 @@ export const AddTracksToPlaylistSchema = z.object({
 });
 
 export const RemoveTracksFromPlaylistSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
   trackIds: NonEmptyStringArraySchema,
 });
 
@@ -91,16 +92,27 @@ export const RemoveTracksFromPlaylistSchema = z.object({
 // returns 500 from Navidrome, so the schema enforces >= 1 with a friendly message
 // (see Batch 2 #1 fix).
 export const ReorderPlaylistTrackSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
-  trackId: z.string().min(1, 'Track ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
+  trackId: z.string().min(1, 'Track ID is required').regex(ID_PATTERN, 'Track ID contains invalid characters'),
   insert_before: z.number().int().min(1, 'insert_before must be a 1-based position (use 1 for the first slot)'),
 });
 
 // Saved queue (Navidrome cross-device sync) validation
 export const SaveQueueSchema = z.object({
   songIds: StringArraySchema,
-  current: z.number().min(0).optional().default(0),
-  position: z.number().min(0).optional().default(0),
+  current: z.number().int().min(0).optional().default(0),
+  position: z.number().int().min(0).optional().default(0),
+}).superRefine((val, ctx) => {
+  // `current` is a 0-based index into `songIds`. Allow 0 even when songIds is
+  // empty (covers the empty-queue / clear case), but otherwise it must point at
+  // a real track — current >= songIds.length would desync the saved queue.
+  if (val.current > 0 && val.current >= val.songIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['current'],
+      message: `current must be less than songIds.length (${val.songIds.length})`,
+    });
+  }
 });
 
 // Search validation schemas - import enhanced schemas from common.js
@@ -179,8 +191,8 @@ export const TrendingMusicSchema = z.object({
 
 // Lyrics validation schema
 export const GetLyricsSchema = z.object({
-  title: z.string(),
-  artist: z.string(),
+  title: z.string().min(1),
+  artist: z.string().min(1),
   album: z.string().optional(),
   durationMs: z.number().min(0).optional(),
   id: z.string().optional(),

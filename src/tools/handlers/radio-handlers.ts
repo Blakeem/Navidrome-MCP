@@ -102,6 +102,7 @@ function getRadioTools(config: Config): Tool[] {
         properties: {
           id: {
             type: 'string',
+            minLength: 1,
             description: 'The unique ID of the radio station to delete',
           },
         },
@@ -116,6 +117,7 @@ function getRadioTools(config: Config): Tool[] {
         properties: {
           id: {
             type: 'string',
+            minLength: 1,
             description: 'The unique ID of the radio station',
           },
         },
@@ -266,6 +268,7 @@ function getRadioTools(config: Config): Tool[] {
           properties: {
             stationUuid: {
               type: 'string',
+              minLength: 1,
               description: 'The unique UUID of the radio station',
             },
           },
@@ -280,6 +283,7 @@ function getRadioTools(config: Config): Tool[] {
           properties: {
             stationUuid: {
               type: 'string',
+              minLength: 1,
               description: 'The unique UUID of the radio station',
             },
           },
@@ -294,6 +298,7 @@ function getRadioTools(config: Config): Tool[] {
           properties: {
             stationUuid: {
               type: 'string',
+              minLength: 1,
               description: 'The unique UUID of the radio station',
             },
           },

@@ -65,6 +65,10 @@ class LibraryManager {
   private userInfo: UserInfo | null = null;
   private activeLibraryIds: number[] = [];
   private initialized = false;
+  // Single-flight init: concurrent callers await the same in-flight promise so
+  // two callers can't both run loadUserLibraries() and clobber userInfo /
+  // activeLibraryIds. Cleared on settle so a later re-init can run if needed.
+  private initPromise: Promise<void> | null = null;
 
   private constructor() {}
 
@@ -94,27 +98,38 @@ class LibraryManager {
       return;
     }
 
-    try {
-      const loaded = await this.loadUserLibraries(client);
-      if (!loaded) {
-        // JWT decode failed — already logged with diagnostic detail. Stay
-        // uninitialized; library_id filtering is simply absent for this
-        // session. Tools that depend on it (e.g. `set_active_libraries`)
-        // will throw their own clear "not initialized" error if invoked.
-        logger.warn(
-          'LibraryManager: skipping initialization (could not extract user ID from JWT). ' +
-            'Library scoping will be disabled for this session.',
-        );
-        return;
-      }
+    // Coalesce concurrent callers onto one in-flight init so the network
+    // round-trips don't race and overwrite each other's state. Cleared on
+    // settle so a failed attempt can be retried by a later call.
+    this.initPromise ??= (async (): Promise<void> => {
+      try {
+        const loaded = await this.loadUserLibraries(client);
+        if (!loaded) {
+          // JWT decode failed — already logged with diagnostic detail. Stay
+          // uninitialized; library_id filtering is simply absent for this
+          // session. Tools that depend on it (e.g. `set_active_libraries`)
+          // will throw their own clear "not initialized" error if invoked.
+          logger.warn(
+            'LibraryManager: skipping initialization (could not extract user ID from JWT). ' +
+              'Library scoping will be disabled for this session.',
+          );
+          return;
+        }
 
-      this.applyDefaultConfiguration(config);
-      this.initialized = true;
-      logger.info(
-        `LibraryManager initialized with ${this.userInfo?.libraries.length ?? 0} libraries, ${this.activeLibraryIds.length} active`,
-      );
-    } catch (error) {
-      throw new Error(ErrorFormatter.toolExecution('LibraryManager.initialize', error));
+        this.applyDefaultConfiguration(config);
+        this.initialized = true;
+        logger.info(
+          `LibraryManager initialized with ${this.userInfo?.libraries.length ?? 0} libraries, ${this.activeLibraryIds.length} active`,
+        );
+      } catch (error) {
+        throw new Error(ErrorFormatter.toolExecution('LibraryManager.initialize', error));
+      }
+    })();
+
+    try {
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
     }
   }
 
@@ -324,8 +339,17 @@ class LibraryManager {
    * Remove a library from the active set
    */
   removeActiveLibrary(libraryId: number): void {
+    if (!this.userInfo) {
+      throw new Error('LibraryManager not initialized');
+    }
+
     const index = this.activeLibraryIds.indexOf(libraryId);
     if (index > -1) {
+      if (this.activeLibraryIds.length === 1) {
+        throw new Error(
+          `Cannot remove the last active library (${libraryId}); at least one library must remain active.`,
+        );
+      }
       this.activeLibraryIds.splice(index, 1);
       logger.info(`Removed library ${libraryId} from active set`);
     }

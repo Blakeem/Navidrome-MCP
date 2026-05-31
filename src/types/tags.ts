@@ -39,15 +39,15 @@ export interface TagDTO {
 export interface TagDistribution {
   /** Tag name being analyzed */
   tagName: string;
-  /** Number of unique values for this tag name */
+  /** Library-wide count of distinct values for this tag name */
   uniqueValues: number;
-  /** Total songs across all values */
+  /** Total songs across the surfaced top values (the `distribution` slice) */
   totalSongs: number;
-  /** Total albums across all values */
+  /** Total albums across the surfaced top values (the `distribution` slice) */
   totalAlbums: number;
   /** Most common tag value */
   mostCommon: TagDTO;
-  /** Distribution of values (sorted by usage) */
+  /** Top values surfaced (sorted by usage), capped at the distribution limit */
   distribution: TagDTO[];
 }
 

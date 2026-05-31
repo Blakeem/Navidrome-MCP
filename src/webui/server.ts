@@ -150,7 +150,15 @@ async function handleRequest(
 
   // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {
-    const id = decodeURIComponent(path.slice('/api/cover/'.length));
+    // A malformed percent-sequence (e.g. /api/cover/%GG) makes
+    // decodeURIComponent throw a URIError; that's a client error, not a 500.
+    let id: string;
+    try {
+      id = decodeURIComponent(path.slice('/api/cover/'.length));
+    } catch {
+      writeError(res, 400, 'Malformed cover id');
+      return;
+    }
     return handleCover(res, deps.config, id);
   }
 

@@ -46,7 +46,13 @@ export function getDefaultIpcPath(): string {
   }
   // POSIX: prefer numeric uid for stability; fall back to USER env if unavailable
   const uidFn = (process as unknown as { getuid?: () => number }).getuid;
-  const uid = typeof uidFn === 'function' ? uidFn() : (process.env['USER'] ?? 'default');
+  // The numeric getuid() path is inherently safe; the USER env fallback is
+  // attacker-influenceable and gets interpolated into filesystem paths below,
+  // so scrub it to the same character set as the Windows USERNAME branch.
+  const uid =
+    typeof uidFn === 'function'
+      ? uidFn()
+      : (process.env['USER'] ?? 'default').replace(/[^A-Za-z0-9_-]/g, '_');
 
   const xdgRuntime = process.env['XDG_RUNTIME_DIR'];
   if (xdgRuntime !== undefined && xdgRuntime.trim() !== '') {

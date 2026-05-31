@@ -247,7 +247,11 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
     let mapped: string;
     switch (requestedSort) {
       case 'name':
-        mapped = defaultSort === 'title' ? 'title' : 'name';
+        // The song endpoint sorts by `title`; albums/artists sort by `name`.
+        // Discriminate on the endpoint itself rather than the `defaultSort`
+        // sentinel so the mapping stays correct if the per-endpoint defaults
+        // are ever reshuffled.
+        mapped = endpoint === 'song' ? 'title' : 'name';
         break;
       case 'recently_added':
       case 'starred_at':

@@ -101,7 +101,10 @@ export function readSettings(): SettingsFile | null {
 
   const result = SettingsFileSchema.safeParse(parsed);
   if (!result.success) {
-    logger.warn(`settings.json failed validation (${path}); treating as unconfigured`);
+    const issues = result.error.issues
+      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('; ');
+    logger.warn(`settings.json failed validation (${path}); treating as unconfigured [${issues}]`);
     return null;
   }
   return result.data;
@@ -129,13 +132,15 @@ export function writeSettings(settings: SettingsFile): void {
   const tmpPath = `${path}.${process.pid}.${Math.floor(performance.now() * 1000).toString(36)}.tmp`;
   const fd = openSync(tmpPath, 'wx', 0o600);
   try {
-    writeSync(fd, `${JSON.stringify(settings, null, 2)}\n`);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-
-  try {
+    // Any failure after the tmp file is opened — write/fsync (e.g. disk-full)
+    // or the final rename — must remove the tmp file so a partial file holding
+    // plaintext credentials is never left orphaned on disk.
+    try {
+      writeSync(fd, `${JSON.stringify(settings, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(tmpPath, path);
   } catch (err) {
     try {

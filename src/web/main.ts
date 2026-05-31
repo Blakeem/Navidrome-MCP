@@ -49,6 +49,14 @@ import { createServer } from '../webui/server.js';
 import { acquireOrAttach } from './acquire.js';
 import { getPersist, initPersist } from './player-runtime.js';
 
+// Belt-and-suspenders against any unhandled rejection escaping the system —
+// without this, Node 20+ terminates the process by default, and (MCP-spawned)
+// our stderr is /dev/null, so a fire-and-forget rejection would die silently.
+// Routes through the already-installed file sink. Mirrors src/index.ts.
+process.on('unhandledRejection', (reason) => {
+  logger.error('unhandledRejection:', reason);
+});
+
 /** Hard ceiling on owner shutdown: if the mpv `quit` IPC wedges, exit anyway. */
 const SHUTDOWN_HARD_EXIT_MS = 3000;
 

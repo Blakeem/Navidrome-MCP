@@ -152,13 +152,24 @@ export async function sampleAudioData(
   url: string,
   remainingTimeout: number,
   followRedirects: boolean,
+  overallSignal?: AbortSignal,
 ): Promise<{ buffer: Uint8Array | null; headers: Headers | null; httpStatus?: number; finalUrl: string; error: string | null }> {
+  // Clamp the sample timeout to the caller's remaining budget — never raise it
+  // above what's left (e.g. when remainingTimeout is in (1000, 2000) the old
+  // Math.max would have over-run the overall deadline). We still cap at the
+  // MIN_SAMPLE_TIMEOUT ceiling so a generous budget doesn't sample forever.
+  const sampleTimeout = Math.min(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout);
   try {
     const controller = new AbortController();
-    const sampleTimeout = Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout); // Ensure at least 2 seconds
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, sampleTimeout);
+    // Combine our local sample-timeout signal with the caller's overall-deadline
+    // signal so the overall timeout aborts an in-flight sample, not just the
+    // starting of a new one. AbortSignal.any fires when either input aborts.
+    const signal = overallSignal
+      ? AbortSignal.any([controller.signal, overallSignal])
+      : controller.signal;
 
     // Keep the abort timer armed through the entire sampling operation
     // (including the stream-reading phase) so a mid-body stall is interrupted.
@@ -173,7 +184,7 @@ export async function sampleAudioData(
             'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
             'Accept': 'audio/*',
           },
-          signal: controller.signal,
+          signal,
         },
         followRedirects,
       );
@@ -206,7 +217,10 @@ export async function sampleAudioData(
             error: 'No response body reader available',
           };
         }
-        const reader = (bodyStream as ReadableStream<Uint8Array>).getReader();
+        // Annotate the reader type rather than structurally casting the stream:
+        // response.body resolves to ReadableStream<any> here, so without this the
+        // read-loop chunks would be `any` (unsafe). The reader yields Uint8Array.
+        const reader: ReadableStreamDefaultReader<Uint8Array> = bodyStream.getReader();
 
         try {
           const chunks: Uint8Array[] = [];
@@ -281,7 +295,7 @@ export async function sampleAudioData(
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling timeout after ${Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout)}ms` };
+        return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling timeout after ${sampleTimeout}ms` };
       }
       return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling failed: ${err.message}` };
     }

@@ -127,7 +127,12 @@ export class SseBroadcaster {
     res.on('close', () => { this.clients.delete(res); });
 
     const snapshot = await this.buildSnapshot();
-    if (snapshot !== null) this.writeToClient(res, snapshot);
+    // Re-check membership: the client may have disconnected during the await
+    // (the 'close' handler above already removed it). Writing to a socket
+    // that's gone is harmless but pointless; gating on `clients.has(res)`
+    // also avoids racing a concurrent broadcast() that snapshotted the set
+    // while this client was half-closed.
+    if (snapshot !== null && this.clients.has(res)) this.writeToClient(res, snapshot);
   }
 
   /** Number of currently-connected SSE clients. Used for diagnostics. */

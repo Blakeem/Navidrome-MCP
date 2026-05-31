@@ -28,6 +28,7 @@ import {
 } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
+import { TAG_DISTRIBUTION_FETCH_CAP } from '../constants/defaults.js';
 
 interface SearchByTagsResult {
   matches: TagDTO[];
@@ -221,16 +222,26 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
 
     const tagResults = await Promise.all(
       tagNamesToFetch.map(async (tagName): Promise<TagDistribution | null> => {
+        // Only the top `distributionLimit` values are ever surfaced (and only
+        // that slice gets count-enriched below), so fetching more rows than
+        // that is wasted work. Derive `_end` from `distributionLimit`, clamped
+        // to a sane ceiling so a pathological limit can't request a huge page.
+        const fetchEnd = Math.min(params.distributionLimit, TAG_DISTRIBUTION_FETCH_CAP);
         const queryParams = new URLSearchParams({
           _start: '0',
-          _end: '1000', // Get enough to analyze distribution
+          _end: String(fetchEnd),
           _sort: 'tagValue',
           _order: 'ASC',
           tag_name: tagName,
         });
 
         try {
-          const rawTags = await client.requestWithLibraryFilter<unknown>(`/tag?${queryParams.toString()}`);
+          // Use ...AndMeta so X-Total-Count gives the library-wide cardinality
+          // for this tag name even though we only fetch `fetchEnd` rows — that
+          // lets `uniqueValues` stay truthful without an unbounded fetch.
+          const { data: rawTags, total } = await client.requestWithLibraryFilterAndMeta<unknown>(
+            `/tag?${queryParams.toString()}`,
+          );
           const tagMeta = transformTagsToMeta(rawTags);
 
           if (tagMeta.length === 0) {
@@ -251,10 +262,19 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
           const toEnrich = tagMeta.slice(0, params.distributionLimit);
           await backfillTagCounts(client, toEnrich);
 
-          const tags = tagMeta.map((entry) => entry.tag);
+          // Only the enriched slice carries real counts: for non-genre tag
+          // names the entries past `distributionLimit` were never backfilled
+          // (songCount/albumCount stay 0), so reducing totals over the full
+          // set would undercount. Compute totals over exactly the surfaced
+          // slice instead, so `totalSongs`/`totalAlbums` honestly describe the
+          // tags we report in `distribution` below. For `genre` (API-provided
+          // counts) the slice is the top-N genres, so the totals describe the
+          // surfaced genres rather than the entire genre set — consistent and
+          // truthful for every tag type.
+          const surfacedTags = toEnrich.map((entry) => entry.tag);
 
           // Sort by usage for most relevant results
-          const sortedTags = tags.sort((a, b) => b.songCount - a.songCount);
+          const sortedTags = surfacedTags.sort((a, b) => b.songCount - a.songCount);
           const mostCommon = sortedTags[0];
 
           if (!mostCommon) {
@@ -263,12 +283,16 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
 
           return {
             tagName,
-            uniqueValues: tags.length,
-            totalSongs: tags.reduce((sum, tag) => sum + tag.songCount, 0),
-            totalAlbums: tags.reduce((sum, tag) => sum + tag.albumCount, 0),
+            // Library-wide distinct count from X-Total-Count (recovered from the
+            // same narrowed fetch); falls back to the surfaced count if the
+            // header is absent. The `distribution`/`totals` below still describe
+            // only the surfaced top-`distributionLimit` slice.
+            uniqueValues: total ?? surfacedTags.length,
+            // Totals cover only the surfaced tags (see note above).
+            totalSongs: surfacedTags.reduce((sum, tag) => sum + tag.songCount, 0),
+            totalAlbums: surfacedTags.reduce((sum, tag) => sum + tag.albumCount, 0),
             mostCommon,
-            // Limit distribution to prevent massive output
-            distribution: sortedTags.slice(0, params.distributionLimit),
+            distribution: sortedTags,
           };
         } catch (error) {
           // Skip tag types that don't exist in this library (e.g. 404), but log for observability

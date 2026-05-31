@@ -177,5 +177,11 @@ export function transformAlbumsToDTO(rawAlbums: unknown): AlbumDTO[] {
     return [];
   }
 
-  return rawAlbums.map((album) => transformToAlbumDTO(album as RawAlbum));
+  // Guard each element: Navidrome can return null / non-object entries on
+  // certain API errors. The `as RawAlbum` cast would pass TS but crash the
+  // single-item transformer at runtime, aborting the whole batch. Drop the
+  // bad rows instead so one malformed entry doesn't lose every good one.
+  return rawAlbums
+    .filter((album): album is RawAlbum => typeof album === 'object' && album !== null)
+    .map((album) => transformToAlbumDTO(album));
 }

@@ -44,6 +44,15 @@ export const DEFAULT_VALUES = {
 } as const;
 
 /**
+ * Upper cap on how many tag values `getTagDistribution` fetches per tag name
+ * (the `_end` of the per-`tagName` `/tag` query). The response only surfaces
+ * the top `distributionLimit` values, so fetching far more is wasted work —
+ * we derive `_end` from `distributionLimit` and clamp it to this ceiling so a
+ * pathological `distributionLimit` can't request an unbounded page.
+ */
+export const TAG_DISTRIBUTION_FETCH_CAP = 200;
+
+/**
  * Subsonic API protocol version we report when calling Subsonic-compatible endpoints.
  * Bump together across every Subsonic call site by editing this single constant.
  */

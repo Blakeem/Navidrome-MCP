@@ -45,10 +45,10 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
   playlists: PlaylistDTO[];
   total: number;
 }> {
-  const params = PlaylistPaginationSchema.parse(args);
-  logger.debug('Tool listPlaylists called with args:', params);
-
   try {
+    const params = PlaylistPaginationSchema.parse(args);
+    logger.debug('Tool listPlaylists called with args:', params);
+
     const queryParams = new URLSearchParams({
       _start: params.offset.toString(),
       _end: (params.offset + params.limit).toString(),
@@ -72,10 +72,10 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
  * Get a specific playlist by ID
  */
 export async function getPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
-  const params = PlaylistIdSchema.parse(args);
-  logger.debug('Tool getPlaylist called with args:', params);
-
   try {
+    const params = PlaylistIdSchema.parse(args);
+    logger.debug('Tool getPlaylist called with args:', params);
+
     const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`);
     return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
   } catch (error) {
@@ -87,10 +87,10 @@ export async function getPlaylist(client: NavidromeClient, args: unknown): Promi
  * Create a new playlist
  */
 export async function createPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
-  const params = CreatePlaylistSchema.parse(args);
-  logger.debug('Tool createPlaylist called with args:', params);
-
   try {
+    const params = CreatePlaylistSchema.parse(args);
+    logger.debug('Tool createPlaylist called with args:', params);
+
     const requestBody: CreatePlaylistRequest = {
       name: params.name,
       public: params.public,
@@ -139,10 +139,10 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
  * Update a playlist's metadata
  */
 export async function updatePlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
-  const params = UpdatePlaylistSchema.parse(args);
-  logger.debug('Tool updatePlaylist called with args:', params);
-
   try {
+    const params = UpdatePlaylistSchema.parse(args);
+    logger.debug('Tool updatePlaylist called with args:', params);
+
     const requestBody: UpdatePlaylistRequest = {};
 
     if (params.name !== undefined) {
@@ -190,10 +190,10 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
  * round trip; the id is captured in the DEBUG log for diagnostics.
  */
 export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; message: string }> {
-  const params = PlaylistIdSchema.parse(args);
-  logger.debug('Tool deletePlaylist called with args:', params);
-
   try {
+    const params = PlaylistIdSchema.parse(args);
+    logger.debug('Tool deletePlaylist called with args:', params);
+
     await client.request<unknown>(`/playlist/${encodeURIComponent(params.id)}`, {
       method: 'DELETE',
     });

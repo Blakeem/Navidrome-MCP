@@ -92,5 +92,11 @@ export function transformPlaylistsToDTO(rawPlaylists: unknown): PlaylistDTO[] {
     return [];
   }
 
-  return rawPlaylists.map((playlist) => transformToPlaylistDTO(playlist as RawPlaylist));
+  // Guard each element: Navidrome can return null / non-object entries on
+  // certain API errors. The `as RawPlaylist` cast would pass TS but crash the
+  // single-item transformer at runtime, aborting the whole batch. Drop the
+  // bad rows instead so one malformed entry doesn't lose every good one.
+  return rawPlaylists
+    .filter((playlist): playlist is RawPlaylist => typeof playlist === 'object' && playlist !== null)
+    .map((playlist) => transformToPlaylistDTO(playlist));
 }

@@ -23,7 +23,7 @@ import { z } from 'zod';
 // builder — an ID containing `?`, `&`, `..`, or `/` would otherwise inject
 // query params or path segments into the request. encodeURIComponent at the
 // call sites is defense-in-depth on top of this regex.
-const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+export const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // Basic ID validation schema
 export const IdSchema = z.object({
@@ -67,17 +67,20 @@ export const ItemListTypeSchema = z.enum(ITEM_TYPE_VARIANTS).transform((v): 'son
   return v;
 });
 
-// Common limit validation patterns
+// Common limit validation patterns. `.int()` is required: limit/offset feed
+// `_start`/`_end` in the Navidrome REST URL, and a non-integer (e.g. `50.5`)
+// is silently dropped by Navidrome — the param is ignored and the endpoint
+// returns the ENTIRE unpaginated result set. Reject non-integers up front.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory; return type inferred by zod, explicit annotation would be unwieldy
 export const createLimitSchema = (min = 1, max = 500, defaultValue?: number) => {
   if (defaultValue !== undefined) {
-    return z.number().min(min).max(max).optional().default(defaultValue);
+    return z.number().int().min(min).max(max).optional().default(defaultValue);
   }
-  return z.number().min(min).max(max);
+  return z.number().int().min(min).max(max);
 };
 
-// Offset schema for pagination
-export const OffsetSchema = z.number().min(0).optional().default(0);
+// Offset schema for pagination (see createLimitSchema for why `.int()`)
+export const OffsetSchema = z.number().int().min(0).optional().default(0);
 
 // Order enum
 export const OrderSchema = z.enum(['ASC', 'DESC']).optional().default('ASC');
@@ -140,7 +143,7 @@ export const NonEmptyStringArraySchema = z.array(z.string()).min(1, 'At least on
 
 // Individual search tool schemas (query optional for listing functionality)
 export const SearchSongsSchema = EnhancedSearchSchema.extend({
-  query: z.string().optional().default(''), // Override required query to be optional
+  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
   limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
   offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
@@ -150,7 +153,7 @@ export const SearchSongsSchema = EnhancedSearchSchema.extend({
 });
 
 export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
-  query: z.string().optional().default(''), // Override required query to be optional
+  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
   limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
   offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
@@ -164,7 +167,7 @@ export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
 // (the filter chain wouldn't send it for /api/artist anyway, but stripping
 // it at the schema layer keeps the type honest for any non-LLM caller).
 export const SearchArtistsSchema = EnhancedSearchSchema.omit({ year: true }).extend({
-  query: z.string().optional().default(''), // Override required query to be optional
+  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
   limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
   offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([

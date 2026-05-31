@@ -113,9 +113,13 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
     ];
 
     for (const sig of signatures) {
+      // A buffer shorter than the signature can never match — an absent byte
+      // (i >= buffer.length) must count as a mismatch, not a wildcard, so a
+      // 1-byte [0xFF] sample doesn't falsely match MP3/AAC/OGG.
+      if (buffer.length < sig.bytes.length) continue;
       let matches = true;
       for (let i = 0; i < sig.bytes.length; i++) {
-        if (buffer[i] !== undefined && buffer[i] !== sig.bytes[i]) {
+        if (buffer[i] !== sig.bytes[i]) {
           matches = false;
           break;
         }

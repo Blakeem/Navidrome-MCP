@@ -44,6 +44,11 @@ import {
   playQueueIndex,
 } from '../playback.js';
 
+// Upper bound for the `year` filter, mirroring EnhancedSearchSchema in
+// src/schemas/common.ts (`y <= new Date().getFullYear() + 1`). Computed at
+// module load so the JSON Schema `maximum` matches the Zod refine.
+const MAX_YEAR = new Date().getFullYear() + 1;
+
 // Tool definitions for the playback category (Stage 2 + Stage 3 + Stage 4 — 18 tools).
 const tools: Tool[] = [
   {
@@ -215,8 +220,9 @@ const tools: Tool[] = [
         // Single-year filter. Navidrome's REST API has no range filter — for
         // multi-year queries, call the tool once per year and merge client-side.
         year: {
-          type: 'number',
+          type: 'integer',
           minimum: 1900,
+          maximum: MAX_YEAR,
           description: 'Filter to a single year. Albums match if [minYear, maxYear] contains this year; songs match the exact year column.',
         },
         // Boolean filters
@@ -310,8 +316,9 @@ const tools: Tool[] = [
         // Single-year filter. Navidrome's REST API has no range filter — for
         // multi-year queries, call the tool once per year and merge client-side.
         year: {
-          type: 'number',
+          type: 'integer',
           minimum: 1900,
+          maximum: MAX_YEAR,
           description: 'Filter to a single year. Albums match if [minYear, maxYear] contains this year; songs match the exact year column.',
         },
         // Boolean filters

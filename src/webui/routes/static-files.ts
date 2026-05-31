@@ -72,7 +72,11 @@ function resolveStaticPath(pathname: string): string | null {
   let rel = pathname === '/' ? '/index.html' : pathname;
   // Strip leading slash; normalize collapses any `..` segments.
   rel = normalize(rel.replace(/^\/+/, ''));
-  if (rel.includes(`..${sep}`) || rel === '..' || rel.includes('/.')) return null;
+  if (rel.includes(`..${sep}`) || rel === '..') return null;
+  // Reject any path SEGMENT that begins with a dot. Checking the post-strip
+  // `rel` for `/.` would miss root-level dotfiles (e.g. `/.env` -> `.env`),
+  // so split on the separator and reject leading dots in any segment.
+  if (rel.split(sep).some((s) => s.startsWith('.'))) return null;
   const abs = join(PUBLIC_DIR, rel);
   // Defense-in-depth: confirm the resolved path is still inside PUBLIC_DIR.
   if (!abs.startsWith(PUBLIC_DIR + sep) && abs !== PUBLIC_DIR) return null;

@@ -14,6 +14,7 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { Cache } from '../utils/cache.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
+import { isHttpUrlScheme } from '../utils/network-safety.js';
 
 // Zod schemas for radio tool arguments — used instead of `args as { ... }` casts
 // to catch invalid inputs before they reach the Subsonic API.
@@ -156,6 +157,13 @@ export async function listRadioStations(
     } else if (inflightFetch !== null) {
       // Another caller is already fetching — piggy-back instead of stampeding.
       stations = await inflightFetch;
+      // The in-flight owner only warms the cache if IT had a config. A
+      // config-less owner (e.g. the post-create id lookup) fetches without
+      // writing, so a piggybacking caller that DOES have config must warm
+      // the cache itself — otherwise the next read re-fetches needlessly.
+      if (config !== undefined && getStationCache(config).get(CACHE_KEY) === undefined) {
+        getStationCache(config).set(CACHE_KEY, stations);
+      }
     } else {
       const fetchPromise = (async (): Promise<RadioStationDTO[]> => {
         // Use Navidrome's REST `/radio` endpoint instead of Subsonic
@@ -231,203 +239,225 @@ export async function createRadioStation(
   config: Config,
   args: unknown
 ): Promise<{ results: CreateRadioStationResponse[]; summary: string }> {
-  const params = CreateRadioStationArgsSchema.parse(args);
+  try {
+    const params = CreateRadioStationArgsSchema.parse(args);
 
-  logger.debug('Tool createRadioStation called with args:', { stationCount: params.stations.length, validateBeforeAdd: params.validateBeforeAdd });
+    logger.debug('Tool createRadioStation called with args:', { stationCount: params.stations.length, validateBeforeAdd: params.validateBeforeAdd });
 
-  const results: CreateRadioStationResponse[] = [];
-  let successCount = 0;
-  let failedCount = 0;
-  let validationFailedCount = 0;
+    const results: CreateRadioStationResponse[] = [];
+    let successCount = 0;
+    let failedCount = 0;
+    let validationFailedCount = 0;
 
-  // Process each station
-  for (const station of params.stations) {
-    try {
-      // Validate required fields
-      if (!station.name || station.name.trim() === '') {
-        results.push({
-          success: false,
-          error: 'Station name is required and cannot be empty'
-        });
-        failedCount++;
-        continue;
-      }
-
-      if (!station.streamUrl || station.streamUrl.trim() === '') {
-        results.push({
-          success: false,
-          error: `Stream URL is required for station "${station.name}"`
-        });
-        failedCount++;
-        continue;
-      }
-
-      logger.debug('Creating radio station:', station);
-
-      // Optional stream validation. validateRadioStream's `client` parameter
-      // is currently unused (it makes outbound HTTP calls only) but the
-      // signature requires it — pass the existing client, no new auth needed.
-      if (params.validateBeforeAdd) {
-        const { validateRadioStream } = await import('./radio-validation.js');
-
-        const validationResult = await validateRadioStream(client, {
-          url: station.streamUrl,
-          timeout: BATCH_VALIDATION_TIMEOUT
-        });
-
-        if (!validationResult.success) {
+    // Process each station
+    for (const station of params.stations) {
+      try {
+        // Validate required fields
+        if (!station.name || station.name.trim() === '') {
           results.push({
             success: false,
-            error: `Stream validation failed for "${station.name}": ${validationResult.errors.join(', ')}`
+            error: 'Station name is required and cannot be empty'
           });
           failedCount++;
-          validationFailedCount++;
           continue;
         }
-      }
 
-      // Create the station via Subsonic API. Auth travels in the POST body
-      // (via client.subsonicRequest) — never in URL query params where access
-      // logs would capture it.
-      //
-      // Param name pedantry: the Subsonic spec parameter is `homepageUrl`
-      // (lowercase 'p'), NOT `homePageUrl` — Navidrome silently drops the
-      // mis-cased variant and stores an empty string, which is why every
-      // existing station in the wild has an empty homePageUrl even though
-      // create_radio_station echoed it back to the caller. The REST `/radio`
-      // response field is `homePageUrl` (camelCase 'P'), so input and output
-      // capitalisation differ. We accept the camelCase form in our schema for
-      // consistency with the output shape but translate to lowercase here.
-      const subsonicParams: Record<string, string> = {
-        streamUrl: station.streamUrl,
-        name: station.name,
-      };
-      if (station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
-        subsonicParams['homepageUrl'] = station.homePageUrl;
-      }
-      await client.subsonicRequest('/createInternetRadioStation', subsonicParams);
-
-      // Successfully created. Subsonic's createInternetRadioStation does not
-      // echo back the new id; we resolve the real id below by listing all
-      // stations once after the batch and matching on (name, streamUrl).
-      // The empty id here is a sentinel — the post-loop lookup either fills
-      // it in or logs a warning if the station can't be matched.
-      const createdStation: RadioStationDTO = {
-        id: '',
-        name: station.name,
-        streamUrl: station.streamUrl,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      if (station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
-        createdStation.homePageUrl = station.homePageUrl;
-      }
-
-      results.push({
-        success: true,
-        station: createdStation,
-      });
-      successCount++;
-
-    } catch (error) {
-      logger.error(`Error creating radio station "${station.name}":`, error);
-      // Per-station error inside batch loop: the outer prefix already names
-      // the operation, so we keep the raw extracted message rather than
-      // double-wrapping with ErrorFormatter.toolExecution.
-      results.push({
-        success: false,
-        error: `Failed to add "${station.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
-      });
-      failedCount++;
-    }
-  }
-
-  // We just mutated the station list — drop any cached snapshot so the
-  // next listRadioStations/getRadioStation call refetches.
-  if (successCount > 0) {
-    invalidateRadioStationCache();
-  }
-
-  // Resolve the real station IDs for everything we just created. Subsonic's
-  // createInternetRadioStation doesn't echo the new id, so without this
-  // lookup the response carries empty ids and a follow-up
-  // delete_radio_station/get_radio_station call would fail. Single batch
-  // call (one extra listRadioStations request regardless of batch size).
-  // Match on (name, streamUrl); track assignedIds so that two creates with
-  // identical (name, streamUrl) in the same batch each get a distinct id
-  // (Navidrome doesn't enforce uniqueness — both would otherwise collide on
-  // the lex-max match). Lex-max == newest because Navidrome IDs are monotonic.
-  const pendingLookups = results.filter((r): r is CreateRadioStationResponse & { station: RadioStationDTO } =>
-    r.success && r.station !== undefined && r.station.id === ''
-  );
-  if (pendingLookups.length > 0) {
-    try {
-      // Bypass cache for the post-create lookup — we just mutated Navidrome
-      // and need a fresh snapshot to match the new ids. Passing no config
-      // skips the cache entirely (rather than using a stale snapshot from
-      // before this batch ran).
-      const allStations = await listRadioStations(client, {});
-      const assignedIds = new Set<string>();
-      for (const result of pendingLookups) {
-        const matches = allStations.stations
-          .filter(s => s.name === result.station.name && s.streamUrl === result.station.streamUrl)
-          .filter(s => !assignedIds.has(s.id))
-          .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
-        const newest = matches[0];
-        if (newest !== undefined) {
-          result.station.id = newest.id;
-          result.station.createdAt = newest.createdAt;
-          result.station.updatedAt = newest.updatedAt;
-          assignedIds.add(newest.id);
-        } else {
-          // No fresh match — either Navidrome dropped the create silently,
-          // or another batch entry already claimed every duplicate. Surface
-          // this to the LLM via `note` so it knows to re-list rather than
-          // call delete_radio_station('') with the empty id.
-          result.note = `Created "${result.station.name}" but could not resolve its id. Call list_radio_stations to find it.`;
-          logger.warn(
-            `Created station "${result.station.name}" but could not find a fresh match in the post-create listing — leaving id empty.`
-          );
+        if (!station.streamUrl || station.streamUrl.trim() === '') {
+          results.push({
+            success: false,
+            error: `Stream URL is required for station "${station.name}"`
+          });
+          failedCount++;
+          continue;
         }
+
+        // Enforce an http/https-only scheme on the DEFAULT path (independent
+        // of validateBeforeAdd). Without this, file://, smb://, gopher:// etc.
+        // would sail through and later reach mpv loadfile via
+        // play_radio_station. Reuses the same isHttpUrlScheme helper the
+        // opt-in validator uses. mpv-only protocols (mms://, rtsp://, rtmp://)
+        // are also rejected here for safety — callers needing those should be
+        // explicit, and Navidrome's saved-station path is the wrong place to
+        // smuggle arbitrary schemes.
+        if (!isHttpUrlScheme(station.streamUrl)) {
+          results.push({
+            success: false,
+            error: `Stream URL for station "${station.name}" must use http:// or https://`
+          });
+          failedCount++;
+          continue;
+        }
+
+        logger.debug('Creating radio station:', station);
+
+        // Optional stream validation. validateRadioStream's `client` parameter
+        // is currently unused (it makes outbound HTTP calls only) but the
+        // signature requires it — pass the existing client, no new auth needed.
+        if (params.validateBeforeAdd) {
+          const { validateRadioStream } = await import('./radio-validation.js');
+
+          const validationResult = await validateRadioStream(client, {
+            url: station.streamUrl,
+            timeout: BATCH_VALIDATION_TIMEOUT
+          });
+
+          if (!validationResult.success) {
+            results.push({
+              success: false,
+              error: `Stream validation failed for "${station.name}": ${validationResult.errors.join(', ')}`
+            });
+            failedCount++;
+            validationFailedCount++;
+            continue;
+          }
+        }
+
+        // Create the station via Subsonic API. Auth travels in the POST body
+        // (via client.subsonicRequest) — never in URL query params where access
+        // logs would capture it.
+        //
+        // Param name pedantry: the Subsonic spec parameter is `homepageUrl`
+        // (lowercase 'p'), NOT `homePageUrl` — Navidrome silently drops the
+        // mis-cased variant and stores an empty string, which is why every
+        // existing station in the wild has an empty homePageUrl even though
+        // create_radio_station echoed it back to the caller. The REST `/radio`
+        // response field is `homePageUrl` (camelCase 'P'), so input and output
+        // capitalisation differ. We accept the camelCase form in our schema for
+        // consistency with the output shape but translate to lowercase here.
+        const subsonicParams: Record<string, string> = {
+          streamUrl: station.streamUrl,
+          name: station.name,
+        };
+        if (station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
+          subsonicParams['homepageUrl'] = station.homePageUrl;
+        }
+        await client.subsonicRequest('/createInternetRadioStation', subsonicParams);
+
+        // Successfully created. Subsonic's createInternetRadioStation does not
+        // echo back the new id; we resolve the real id below by listing all
+        // stations once after the batch and matching on (name, streamUrl).
+        // The empty id here is a sentinel — the post-loop lookup either fills
+        // it in or logs a warning if the station can't be matched.
+        const createdStation: RadioStationDTO = {
+          id: '',
+          name: station.name,
+          streamUrl: station.streamUrl,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        if (station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
+          createdStation.homePageUrl = station.homePageUrl;
+        }
+
+        results.push({
+          success: true,
+          station: createdStation,
+        });
+        successCount++;
+
+      } catch (error) {
+        logger.error(`Error creating radio station "${station.name}":`, error);
+        // Per-station error inside batch loop: the outer prefix already names
+        // the operation, so we keep the raw extracted message rather than
+        // double-wrapping with ErrorFormatter.toolExecution.
+        results.push({
+          success: false,
+          error: `Failed to add "${station.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
+        });
+        failedCount++;
       }
-    } catch (lookupError) {
-      // Lookup itself failed — annotate every pending result so the LLM
-      // doesn't silently round-trip an empty id into delete/get.
-      for (const result of pendingLookups) {
-        result.note = `Created "${result.station.name}" but failed to look up its id. Call list_radio_stations to find it.`;
+    }
+
+    // We just mutated the station list — drop any cached snapshot so the
+    // next listRadioStations/getRadioStation call refetches.
+    if (successCount > 0) {
+      invalidateRadioStationCache();
+    }
+
+    // Resolve the real station IDs for everything we just created. Subsonic's
+    // createInternetRadioStation doesn't echo the new id, so without this
+    // lookup the response carries empty ids and a follow-up
+    // delete_radio_station/get_radio_station call would fail. Single batch
+    // call (one extra listRadioStations request regardless of batch size).
+    // Match on (name, streamUrl); track assignedIds so that two creates with
+    // identical (name, streamUrl) in the same batch each get a distinct id
+    // (Navidrome doesn't enforce uniqueness — both would otherwise collide on
+    // the lex-max match). Lex-max == newest because Navidrome IDs are monotonic.
+    const pendingLookups = results.filter((r): r is CreateRadioStationResponse & { station: RadioStationDTO } =>
+      r.success && r.station !== undefined && r.station.id === ''
+    );
+    if (pendingLookups.length > 0) {
+      try {
+        // Bypass cache for the post-create lookup — we just mutated Navidrome
+        // and need a fresh snapshot to match the new ids. Passing no config
+        // skips the cache entirely (rather than using a stale snapshot from
+        // before this batch ran).
+        const allStations = await listRadioStations(client, {});
+        const assignedIds = new Set<string>();
+        for (const result of pendingLookups) {
+          const matches = allStations.stations
+            .filter(s => s.name === result.station.name && s.streamUrl === result.station.streamUrl)
+            .filter(s => !assignedIds.has(s.id))
+            .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+          const newest = matches[0];
+          if (newest !== undefined) {
+            result.station.id = newest.id;
+            result.station.createdAt = newest.createdAt;
+            result.station.updatedAt = newest.updatedAt;
+            assignedIds.add(newest.id);
+          } else {
+            // No fresh match — either Navidrome dropped the create silently,
+            // or another batch entry already claimed every duplicate. Surface
+            // this to the LLM via `note` so it knows to re-list rather than
+            // call delete_radio_station('') with the empty id.
+            result.note = `Created "${result.station.name}" but could not resolve its id. Call list_radio_stations to find it.`;
+            logger.warn(
+              `Created station "${result.station.name}" but could not find a fresh match in the post-create listing — leaving id empty.`
+            );
+          }
+        }
+      } catch (lookupError) {
+        // Lookup itself failed — annotate every pending result so the LLM
+        // doesn't silently round-trip an empty id into delete/get.
+        for (const result of pendingLookups) {
+          result.note = `Created "${result.station.name}" but failed to look up its id. Call list_radio_stations to find it.`;
+        }
+        logger.warn('Failed to resolve created radio station IDs:', lookupError);
       }
-      logger.warn('Failed to resolve created radio station IDs:', lookupError);
     }
-  }
 
-  // Generate summary. Plain prose — no emoji, no inline tips. The previous
-  // implementation always appended a static "STREAM VALIDATION RECOMMENDED"
-  // reminder block for single-station creates, even when validateBeforeAdd
-  // had already validated the stream end-to-end. The reminder was both
-  // factually wrong (validation had just happened) and visually noisy.
-  // It is now omitted entirely: discover_radio_stations validates as part
-  // of the discovery surface, and create_radio_station(validateBeforeAdd:true)
-  // validates inline — so by the time a row reaches the LLM, validation is
-  // either done or was explicitly opted out of by the caller.
-  let summary = `Added ${successCount} of ${params.stations.length} station(s).`;
-  if (failedCount > 0) {
-    summary += ` ${failedCount} failed`;
-    if (validationFailedCount > 0) {
-      summary += ` (${validationFailedCount} due to validation)`;
+    // Generate summary. Plain prose — no emoji, no inline tips. The previous
+    // implementation always appended a static "STREAM VALIDATION RECOMMENDED"
+    // reminder block for single-station creates, even when validateBeforeAdd
+    // had already validated the stream end-to-end. The reminder was both
+    // factually wrong (validation had just happened) and visually noisy.
+    // It is now omitted entirely: discover_radio_stations validates as part
+    // of the discovery surface, and create_radio_station(validateBeforeAdd:true)
+    // validates inline — so by the time a row reaches the LLM, validation is
+    // either done or was explicitly opted out of by the caller.
+    let summary = `Added ${successCount} of ${params.stations.length} station(s).`;
+    if (failedCount > 0) {
+      summary += ` ${failedCount} failed`;
+      if (validationFailedCount > 0) {
+        summary += ` (${validationFailedCount} due to validation)`;
+      }
+      summary += '.';
     }
-    summary += '.';
+
+    // Suppress unused-parameter warning — config remains in the signature for
+    // future use (e.g. honoring validation timeouts from config) and for
+    // call-site symmetry with discoverRadioStations.
+    void config;
+
+    return {
+      results,
+      summary
+    };
+  } catch (error) {
+    logger.error('Error creating radio station:', error);
+    throw new Error(ErrorFormatter.toolExecution('create_radio_station', error));
   }
-
-  // Suppress unused-parameter warning — config remains in the signature for
-  // future use (e.g. honoring validation timeouts from config) and for
-  // call-site symmetry with discoverRadioStations.
-  void config;
-
-  return {
-    results,
-    summary
-  };
 }
 
 /**

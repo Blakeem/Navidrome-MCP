@@ -78,6 +78,49 @@ describe('transformToSongDTO — starred state', () => {
   });
 });
 
+describe('transformToSongDTO — addedDate', () => {
+  it('echoes createdAt as addedDate when present', () => {
+    const raw: RawSong = {
+      id: 'song-1',
+      title: 'Test',
+      artist: 'A',
+      artistId: 'a-1',
+      album: 'B',
+      albumId: 'b-1',
+      createdAt: ISO_TIMESTAMP,
+    };
+    const dto = transformToSongDTO(raw);
+    expect(dto.addedDate).toBe(ISO_TIMESTAMP);
+  });
+
+  it('omits addedDate (never fabricates "now") when createdAt is absent', () => {
+    const raw: RawSong = {
+      id: 'song-1',
+      title: 'Test',
+      artist: 'A',
+      artistId: 'a-1',
+      album: 'B',
+      albumId: 'b-1',
+    };
+    const dto = transformToSongDTO(raw);
+    expect(dto.addedDate).toBeUndefined();
+  });
+
+  it('omits addedDate when createdAt is an empty string', () => {
+    const raw: RawSong = {
+      id: 'song-1',
+      title: 'Test',
+      artist: 'A',
+      artistId: 'a-1',
+      album: 'B',
+      albumId: 'b-1',
+      createdAt: '',
+    };
+    const dto = transformToSongDTO(raw);
+    expect(dto.addedDate).toBeUndefined();
+  });
+});
+
 describe('transformToAlbumDTO — starred state', () => {
   it('propagates starred=true and starredAt when both are set', () => {
     const raw: RawAlbum = {

@@ -58,7 +58,14 @@ export async function startConfigServer(): Promise<ConfigServer> {
 
   return {
     url,
-    close: () => new Promise<void>((resolvePromise) => server.close(() => resolvePromise())),
+    close: () =>
+      new Promise<void>((resolvePromise) => {
+        // Terminate in-flight connections (Node 18.2+) so server.close()'s
+        // callback actually fires — otherwise an open request at Ctrl-C would
+        // keep the server alive and hang the close promise forever.
+        server.closeAllConnections();
+        server.close(() => resolvePromise());
+      }),
   };
 }
 
