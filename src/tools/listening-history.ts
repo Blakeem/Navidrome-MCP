@@ -28,6 +28,7 @@ import {
   RecentlyPlayedPaginationSchema,
   MostPlayedPaginationSchema,
 } from '../schemas/index.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 /**
  * Recently-played track shape: the full SongDTO (artist/album IDs, formatted
@@ -52,102 +53,126 @@ interface MostPlayedResult {
 }
 
 export async function listRecentlyPlayed(client: NavidromeClient, args: unknown): Promise<RecentlyPlayedResult> {
-  const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedPaginationSchema.parse(args);
+  try {
+    const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedPaginationSchema.parse(args);
 
-  logger.debug('Tool listRecentlyPlayed called with args:', { limit, offset, timeRange });
-  logger.info(`Getting recently played songs (${timeRange})`);
+    logger.debug('Tool listRecentlyPlayed called with args:', { limit, offset, timeRange });
+    logger.info(`Getting recently played songs (${timeRange})`);
 
-  // Compute the cutoff timestamp for client-side filtering. Navidrome's REST
-  // API has no playDate-range filter, so we sort playDate DESC server-side
-  // and apply the cutoff after transforming. `today` rounds down to local
-  // midnight so the user's morning sessions are included; week and month
-  // are 7 / 30 days back from now.
-  const now = new Date();
-  let cutoff: Date | null = null;
-  if (timeRange === 'today') {
-    cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  } else if (timeRange === 'week') {
-    cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-  } else if (timeRange === 'month') {
-    cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    // Compute the cutoff timestamp for client-side filtering. Navidrome's REST
+    // API has no playDate-range filter, so we sort playDate DESC server-side
+    // and apply the cutoff after transforming. `today` rounds down to local
+    // midnight so the user's morning sessions are included; week and month
+    // are 7 / 30 days back from now.
+    const now = new Date();
+    let cutoff: Date | null = null;
+    if (timeRange === 'today') {
+      cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (timeRange === 'week') {
+      cutoff = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (timeRange === 'month') {
+      cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    }
+
+    // When filtering by timeRange, the date cutoff is applied client-side AFTER
+    // the fetch, so we must NOT let the server pre-skip with `_start=offset` —
+    // that would permanently drop rows in global positions 0..offset-1 that may
+    // fall within the requested window (page 2 would miss/overlap page 1). Instead
+    // fetch from _start=0, over-fetch to cover offset+limit after filtering, then
+    // apply the offset in memory. Cap at 500 (Navidrome's per-page max). Caveat:
+    // for deep `offset+limit` with a sparse history the cap can still truncate;
+    // the DESC sort by playDate makes this rare (recent plays cluster), but deep
+    // pagination under a timeRange would need cursor-based deepening.
+    // For timeRange='all' (cutoff null) there is no client-side filter, so the
+    // server-side offset is correct and we fetch exactly `limit` from `_start=offset`.
+    const filtering = cutoff !== null;
+    const serverStart = filtering ? 0 : offset;
+    const fetchLimit = filtering ? Math.min((offset + limit) * 5, 500) : limit;
+
+    const response = await client.requestWithLibraryFilter<unknown>(
+      `/song?_sort=playDate&_order=DESC&_start=${serverStart}&_end=${serverStart + fetchLimit}`
+    );
+
+    const songs = transformSongsToDTO(response);
+
+    const tracks = songs
+      .filter((song) => {
+        // Drop never-played songs (null/empty playDate sort to the end).
+        if (song.playDate === undefined || song.playDate === '') return false;
+        if (cutoff === null) return true;
+        const played = new Date(song.playDate);
+        return Number.isFinite(played.getTime()) && played >= cutoff;
+      })
+      // When filtering, apply offset AFTER the date cutoff so pagination is
+      // honest; when not filtering the server already applied the offset so we
+      // slice from 0.
+      .slice(filtering ? offset : 0, filtering ? offset + limit : limit)
+      .map((song): RecentlyPlayedTrack => {
+        // Return the full SongDTO so the LLM gets durationFormatted, artistId,
+        // albumId, genres, year, rating, starred state — everything other song
+        // responses carry. Mirror playDate → lastPlayed for back-compat.
+        const track: RecentlyPlayedTrack = { ...song };
+        if (song.playDate !== undefined && song.playDate !== '') {
+          track.lastPlayed = song.playDate;
+        }
+        return track;
+      });
+
+    return {
+      count: tracks.length,
+      tracks,
+    };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('list_recently_played', error));
   }
-
-  // When filtering by timeRange, over-fetch so the post-filter slice still
-  // has a meaningful page. Cap at 500 (Navidrome's per-page max). Caveat:
-  // for `limit > 100` with a tight timeRange and a sparse listening history,
-  // we may under-deliver because the cap kicks in before 5x. The DESC sort
-  // by playDate makes this rare in practice (recent plays cluster), but if
-  // it bites we'd need cursor-based deepening rather than a single fetch.
-  const fetchLimit = cutoff !== null ? Math.min(limit * 5, 500) : limit;
-
-  const response = await client.requestWithLibraryFilter<unknown>(
-    `/song?_sort=playDate&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
-  );
-
-  const songs = transformSongsToDTO(response);
-
-  const tracks = songs
-    .filter((song) => {
-      // Drop never-played songs (null/empty playDate sort to the end).
-      if (song.playDate === undefined || song.playDate === '') return false;
-      if (cutoff === null) return true;
-      const played = new Date(song.playDate);
-      return Number.isFinite(played.getTime()) && played >= cutoff;
-    })
-    .slice(0, limit)
-    .map((song): RecentlyPlayedTrack => {
-      // Return the full SongDTO so the LLM gets durationFormatted, artistId,
-      // albumId, genres, year, rating, starred state — everything other song
-      // responses carry. Mirror playDate → lastPlayed for back-compat.
-      const track: RecentlyPlayedTrack = { ...song };
-      if (song.playDate !== undefined && song.playDate !== '') {
-        track.lastPlayed = song.playDate;
-      }
-      return track;
-    });
-
-  return {
-    count: tracks.length,
-    tracks,
-  };
 }
 
 export async function listMostPlayed(client: NavidromeClient, args: unknown): Promise<MostPlayedResult> {
-  const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedPaginationSchema.parse(args);
+  try {
+    const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedPaginationSchema.parse(args);
 
-  logger.debug('Tool listMostPlayed called with args:', { type, limit, offset, minPlayCount });
-  logger.info(`Getting most played ${type} with minPlayCount: ${minPlayCount}`);
+    logger.debug('Tool listMostPlayed called with args:', { type, limit, offset, minPlayCount });
+    logger.info(`Getting most played ${type} with minPlayCount: ${minPlayCount}`);
 
-  const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
+    const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
 
-  // Fetch more items to account for filtering by minPlayCount
-  // We'll fetch 3x the requested amount to ensure we have enough after filtering
-  const fetchLimit = limit * 3;
+    // `minPlayCount` is applied client-side AFTER the fetch, so we must NOT let
+    // the server pre-skip with `_start=offset` — that would permanently drop
+    // high-playCount rows in global positions 0..offset-1 whenever the filter
+    // prunes earlier rows (page 2 misses/overlaps page 1). Fetch from _start=0,
+    // over-fetch to cover offset+limit after filtering, then apply the offset in
+    // memory. Cap at 500 (Navidrome's per-page max); deep offsets past the
+    // over-fetch window can still truncate and would need cursor-based deepening.
+    const fetchLimit = Math.min((offset + limit) * 3, 500);
 
-  const response = await client.requestWithLibraryFilter<unknown>(
-    `${endpoint}?_sort=playCount&_order=DESC&_start=${offset}&_end=${offset + fetchLimit}`
-  );
+    const response = await client.requestWithLibraryFilter<unknown>(
+      `${endpoint}?_sort=playCount&_order=DESC&_start=0&_end=${fetchLimit}`
+    );
 
-  // Use the shared transformers so the response carries the same rich fields
-  // (durationFormatted, artistId/albumId, genres, year, rating, starred,
-  // …) that every other song/album/artist tool produces.
-  let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
-  if (type === 'songs') {
-    items = transformSongsToDTO(response)
-      .filter((song) => (song.playCount ?? 0) >= minPlayCount)
-      .slice(0, limit);
-  } else if (type === 'albums') {
-    items = transformAlbumsToDTO(response)
-      .filter((album) => (album.playCount ?? 0) >= minPlayCount)
-      .slice(0, limit);
-  } else {
-    items = transformArtistsToDTO(response)
-      .filter((artist) => (artist.playCount ?? 0) >= minPlayCount)
-      .slice(0, limit);
+    // Use the shared transformers so the response carries the same rich fields
+    // (durationFormatted, artistId/albumId, genres, year, rating, starred,
+    // …) that every other song/album/artist tool produces. Apply the offset
+    // AFTER the minPlayCount filter so pagination is honest.
+    let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
+    if (type === 'songs') {
+      items = transformSongsToDTO(response)
+        .filter((song) => (song.playCount ?? 0) >= minPlayCount)
+        .slice(offset, offset + limit);
+    } else if (type === 'albums') {
+      items = transformAlbumsToDTO(response)
+        .filter((album) => (album.playCount ?? 0) >= minPlayCount)
+        .slice(offset, offset + limit);
+    } else {
+      items = transformArtistsToDTO(response)
+        .filter((artist) => (artist.playCount ?? 0) >= minPlayCount)
+        .slice(offset, offset + limit);
+    }
+
+    return {
+      count: items.length,
+      items,
+    };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('list_most_played', error));
   }
-
-  return {
-    count: items.length,
-    items,
-  };
 }

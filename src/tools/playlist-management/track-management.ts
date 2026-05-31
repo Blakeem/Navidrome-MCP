@@ -78,11 +78,11 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
     const queryParams = new URLSearchParams();
     params.trackIds.forEach(id => queryParams.append('id', id));
 
-    const response = await client.request<{ ids: string[] }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
+    const response = await client.request<{ ids?: string[] | null }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
       method: 'DELETE',
     });
 
-    const removedIds = response.ids;
+    const removedIds = response.ids ?? [];
     return {
       ids: removedIds,
       message: `Successfully removed ${removedIds.length} track${removedIds.length !== 1 ? 's' : ''} from playlist`,

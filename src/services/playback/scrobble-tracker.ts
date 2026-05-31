@@ -179,6 +179,7 @@ export class ScrobbleTracker {
   }
 
   private async maybeRehydrateAfterQueue(): Promise<void> {
+    const gen = ++this.generation;
     const cachedPos = this.engine.getCachedProperty('playlist-pos');
     if (typeof cachedPos !== 'number' || cachedPos < 0) {
       this.reset();
@@ -188,6 +189,7 @@ export class ScrobbleTracker {
     let entry: { songId: string | null; duration?: number } | undefined;
     try {
       const playlist = await this.engine.getPlaylist();
+      if (gen !== this.generation) return; // superseded by a newer transition
       entry = playlist.find((e) => e.index === cachedPos);
     } catch (err) {
       logger.warn(`scrobble: failed to read playlist after queue mutation: ${String(err)}`);
@@ -200,7 +202,6 @@ export class ScrobbleTracker {
     if (entry.songId !== null && entry.songId === this.currentSongId) return;
     this.reset();
     this.lastPlaylistPos = cachedPos;
-    this.generation++;
     if (entry.songId === null) return; // radio
     this.startTrackingTrack(entry.songId, entry.duration);
   }

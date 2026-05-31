@@ -84,7 +84,7 @@ export const StarredItemsPaginationSchema = z.object({
 
 export const TopRatedItemsPaginationSchema = z.object({
   type: ItemListTypeSchema,
-  minRating: z.number().min(1).max(5).optional().default(4),
+  minRating: z.number().int().min(1).max(5).optional().default(4),
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.TOP_RATED_LIMIT),
   offset: OffsetSchema,
 });

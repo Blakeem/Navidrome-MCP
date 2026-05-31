@@ -133,6 +133,7 @@ export async function validateRadioStream(
   let headError: string | null = null;
   let buffer: Uint8Array | null = null;
   let headers: Headers | null = null;
+  let sampledStatus: number | null = null;
   let sampleError: string | null = null;
   let resolvedFinalUrl: string | null = null;
   // Hoisted to function scope so the post-validation warning logic (~line 243)
@@ -184,6 +185,7 @@ export async function validateRadioStream(
         const sampleResult = await sampleAudioData(params.url, remainingTime, params.followRedirects);
         buffer = sampleResult.buffer;
         headers = sampleResult.headers ?? headResponse?.headers ?? null;
+        sampledStatus = sampleResult.httpStatus ?? null;
         sampleError = sampleResult.error;
         if (resolvedFinalUrl === null && sampleResult.finalUrl !== params.url) {
           resolvedFinalUrl = sampleResult.finalUrl;
@@ -208,11 +210,11 @@ export async function validateRadioStream(
   }
 
   // Use whichever response we got
-  const finalResponse = headResponse ?? (headers !== null ? { headers, ok: true, status: 200 } : null);
+  const finalResponse = headResponse ?? (headers !== null ? { headers, status: sampledStatus ?? 0 } : null);
 
   if (finalResponse) {
-    result.httpStatus = finalResponse.status || 200;
-    result.validation.httpAccessible = true;
+    result.httpStatus = finalResponse.status;
+    result.validation.httpAccessible = (finalResponse.status >= 200 && finalResponse.status < 300) || finalResponse.status === 206;
 
     if (resolvedFinalUrl !== null) {
       result.finalUrl = resolvedFinalUrl;

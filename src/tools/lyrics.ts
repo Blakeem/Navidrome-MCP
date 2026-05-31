@@ -203,7 +203,7 @@ async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config:
     }
   }
 
-  return bestMatch;
+  return bestScore > 0 ? bestMatch : null;
 }
 
 /**

@@ -123,7 +123,7 @@ export const EnhancedSearchSchema = SearchQuerySchema.extend({
 });
 
 // Rating validation
-export const RatingSchema = z.number().min(0).max(5);
+export const RatingSchema = z.number().int().min(0).max(5);
 
 // Duration validation for timeouts
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory; return type inferred by zod, explicit annotation would be unwieldy

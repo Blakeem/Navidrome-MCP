@@ -123,7 +123,7 @@ interface TrendingMusicResult {
   items: TrendingArtistItem[] | TrendingTrackItem[] | TrendingTagItem[];
 }
 
-const LASTFM_API_BASE = 'http://ws.audioscrobbler.com/2.0/';
+const LASTFM_API_BASE = 'https://ws.audioscrobbler.com/2.0/';
 
 async function callLastFmApi(method: string, params: Record<string, string>, apiKey: string): Promise<Record<string, unknown>> {
   const url = new URL(LASTFM_API_BASE);
@@ -181,7 +181,11 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
     autocorrect: '1',
   }, config.lastFmApiKey);
 
-  const similarArtistsContainer = data['similarartists'] as { artist?: unknown[] };
+  const similarArtistsRaw = data['similarartists'];
+  if (typeof similarArtistsRaw !== 'object' || similarArtistsRaw === null) {
+    throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing similarartists'));
+  }
+  const similarArtistsContainer = similarArtistsRaw as { artist?: unknown[] };
   const similarArtists = similarArtistsContainer.artist ?? [];
 
   return {
@@ -216,7 +220,11 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
     autocorrect: '1',
   }, config.lastFmApiKey);
 
-  const similarTracksContainer = data['similartracks'] as { track?: unknown[] };
+  const similarTracksRaw = data['similartracks'];
+  if (typeof similarTracksRaw !== 'object' || similarTracksRaw === null) {
+    throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing similartracks'));
+  }
+  const similarTracksContainer = similarTracksRaw as { track?: unknown[] };
   const similarTracks = similarTracksContainer.track ?? [];
 
   return {
@@ -253,7 +261,11 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
     autocorrect: '1',
   }, config.lastFmApiKey);
 
-  const artistInfo = data['artist'] as Record<string, unknown>;
+  const artistInfoRaw = data['artist'];
+  if (typeof artistInfoRaw !== 'object' || artistInfoRaw === null) {
+    throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing artist'));
+  }
+  const artistInfo = artistInfoRaw as Record<string, unknown>;
   const stats = artistInfo['stats'] as Record<string, unknown> | undefined;
   const bio = artistInfo['bio'] as Record<string, unknown> | undefined;
   const tags = artistInfo['tags'] as Record<string, unknown> | undefined;
@@ -292,7 +304,11 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
     autocorrect: '1',
   }, config.lastFmApiKey);
 
-  const topTracksContainer = data['toptracks'] as Record<string, unknown>;
+  const topTracksRaw = data['toptracks'];
+  if (typeof topTracksRaw !== 'object' || topTracksRaw === null) {
+    throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing toptracks'));
+  }
+  const topTracksContainer = topTracksRaw as Record<string, unknown>;
   const topTracks = (topTracksContainer['track'] as Record<string, unknown>[] | undefined) ?? [];
 
   return {
@@ -329,7 +345,11 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
   }, config.lastFmApiKey);
 
   if (type === 'artists') {
-    const artistsContainer = data['artists'] as Record<string, unknown>;
+    const artistsRaw = data['artists'];
+    if (typeof artistsRaw !== 'object' || artistsRaw === null) {
+      throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing artists'));
+    }
+    const artistsContainer = artistsRaw as Record<string, unknown>;
     const artists = ((artistsContainer['artist'] as Record<string, unknown>[] | undefined) ?? []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
       rank: (page - 1) * limit + index + 1,
       name: typeof a['name'] === 'string' ? a['name'] : '',
@@ -344,7 +364,11 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
       items: artists,
     };
   } else if (type === 'tracks') {
-    const tracksContainer = data['tracks'] as Record<string, unknown>;
+    const tracksRaw = data['tracks'];
+    if (typeof tracksRaw !== 'object' || tracksRaw === null) {
+      throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tracks'));
+    }
+    const tracksContainer = tracksRaw as Record<string, unknown>;
     const tracks = ((tracksContainer['track'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>, index: number): TrendingTrackItem => {
       const artistObj = t['artist'] as Record<string, unknown> | undefined;
       const artistName = artistObj?.['name'];
@@ -369,7 +393,11 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
     // instead. Surface `taggings` as `count` (the LLM-facing semantic field)
     // because that's the closer analogue to per-tag popularity; also expose
     // `reach` so callers that care about distinct users can use it.
-    const tagsContainer = data['tags'] as Record<string, unknown>;
+    const tagsRaw = data['tags'];
+    if (typeof tagsRaw !== 'object' || tagsRaw === null) {
+      throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tags'));
+    }
+    const tagsContainer = tagsRaw as Record<string, unknown>;
     const tags = ((tagsContainer['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
       rank: (page - 1) * limit + index + 1,
       name: typeof t['name'] === 'string' ? t['name'] : '',

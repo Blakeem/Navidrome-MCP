@@ -416,6 +416,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/tags' },
         );
+        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
         const data = await res.json() as RadioBrowserTag[];
         result.tags = data
           .slice(0, 100)
@@ -430,6 +431,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/countries' },
         );
+        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
         const data = await res.json() as RadioBrowserCountry[];
         result.countries = data
           .slice(0, 100)
@@ -448,6 +450,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/languages' },
         );
+        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
         const data = await res.json() as RadioBrowserLanguage[];
         result.languages = data
           .slice(0, 100)
@@ -466,6 +469,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
           filterHeaders,
           { ...filterFetchOptions, operationLabel: 'Radio Browser /json/codecs' },
         );
+        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
         const data = await res.json() as RadioBrowserCodec[];
         result.codecs = data
           .slice(0, 50)
@@ -476,7 +480,16 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
       })());
     }
 
-    await Promise.all(fetchPromises);
+    const outcomes = await Promise.allSettled(fetchPromises);
+    const rejected = outcomes.filter((o): o is PromiseRejectedResult => o.status === 'rejected');
+    const allFailed = outcomes.length > 0 && rejected.length === outcomes.length;
+    if (allFailed) {
+      invalidateRadioBrowserBase();
+      throw new Error(ErrorFormatter.toolExecution('getRadioFilters', rejected[0]?.reason));
+    }
+    for (const o of rejected) {
+      logger.debug('getRadioFilters sub-fetch failed:', o.reason);
+    }
     return result;
   } catch (error) {
     invalidateRadioBrowserBase();

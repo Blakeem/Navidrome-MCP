@@ -66,6 +66,18 @@ export const AddTracksToPlaylistSchema = z.object({
     albumId: z.string(),
     discNumber: z.number(),
   })).optional(),
+}).superRefine((val, ctx) => {
+  const hasContent =
+    (val.songIds?.length ?? 0) > 0 ||
+    (val.albumIds?.length ?? 0) > 0 ||
+    (val.artistIds?.length ?? 0) > 0 ||
+    (val.discs?.length ?? 0) > 0;
+  if (!hasContent) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one of songIds, albumIds, artistIds, or discs must be provided',
+    });
+  }
 });
 
 export const RemoveTracksFromPlaylistSchema = z.object({

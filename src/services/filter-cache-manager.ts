@@ -195,10 +195,10 @@ class FilterCacheManager {
    */
   private async loadTagsByType(client: NavidromeClient, tagType: string): Promise<void> {
     try {
-      // Get all tags and filter by tagName
-      const allTags = await client.requestWithLibraryFilter<TagResponse[]>('/tag');
-      
-      if (!Array.isArray(allTags)) {
+      // Fetch only the tags for this type (server filters by tag_name)
+      const tags = await client.requestWithLibraryFilter<TagResponse[]>(`/tag?tag_name=${encodeURIComponent(tagType)}`);
+
+      if (!Array.isArray(tags)) {
         logger.warn(`Invalid tags response for ${tagType}, skipping`);
         return;
       }
@@ -212,9 +212,8 @@ class FilterCacheManager {
       targetCache.clear();
       const targetOriginalMap = this.getOriginalCaseMapForTagType(tagType);
       targetOriginalMap?.clear();
-      const filteredTags = allTags.filter(tag => tag.tagName === tagType);
 
-      for (const tag of filteredTags) {
+      for (const tag of tags) {
         if (tag.id && tag.tagValue) {
           // Store both exact case and lowercase for case-insensitive lookup
           targetCache.set(tag.tagValue, tag.id);

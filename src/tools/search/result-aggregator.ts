@@ -19,7 +19,7 @@
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../../types/index.js';
 import { transformSongsToDTO, transformAlbumsToDTO, transformArtistsToDTO } from '../../transformers/index.js';
 import { logger } from '../../utils/logger.js';
-import { mapSortField, type SearchEndpoint } from './filter-resolver.js';
+import { mapSortField, stripUnsupportedFilters, type SearchEndpoint } from './filter-resolver.js';
 
 /**
  * Raw API response data from parallel search requests
@@ -42,12 +42,33 @@ export interface ParallelSearchTotals {
 }
 
 /**
+ * Per-content-type view of the filters that were *actually honored* by each
+ * sub-fetch. Navidrome's `/api/artist` silently ignores tag/year filters (no
+ * such columns), so a single shared `appliedFilters` over-claimed for the
+ * artist slice in a mixed result. Reporting per type keeps the claim truthful:
+ * `songs`/`albums` carry the tag+year filters they honor; `artists` only
+ * carries filters the artist endpoint actually applies (e.g. `starred`).
+ *
+ * A type's entry is omitted entirely when no filters applied to that slice, so
+ * an unfiltered query still yields no `appliedFilters` at all (see the
+ * non-empty guard in {@link aggregateSearchResults}).
+ */
+export interface AppliedFiltersByType {
+  songs?: Record<string, string>;
+  albums?: Record<string, string>;
+  artists?: Record<string, string>;
+}
+
+/**
  * Aggregated search results with metadata. The per-type totals (`totalSongs`,
  * `totalAlbums`, `totalArtists`) reflect the server's full match count for
  * each type — the LLM uses these to know whether more results exist beyond
  * the current page. `totalResults` is the sum so the LLM has a single number
  * to report. The original query is intentionally NOT echoed (LLM already
  * knows what it asked for); it surfaces in DEBUG logs only.
+ *
+ * `appliedFilters` is reported per content type (see {@link AppliedFiltersByType})
+ * so the artist slice never claims tag/year filters that `/api/artist` ignores.
  */
 interface AggregatedSearchResult {
   artists: ArtistDTO[];
@@ -57,7 +78,7 @@ interface AggregatedSearchResult {
   totalAlbums: number;
   totalSongs: number;
   totalResults: number;
-  appliedFilters?: Record<string, string>;
+  appliedFilters?: AppliedFiltersByType;
 }
 
 /**
@@ -66,7 +87,10 @@ interface AggregatedSearchResult {
  *
  * @param responses - Raw responses from parallel API calls
  * @param totals - Per-type totals from X-Total-Count (null falls back to array length)
- * @param appliedFilters - Filters that were successfully applied to the search
+ * @param appliedFilters - The full set of resolved filters (display-name keys)
+ *   the caller requested. This is split per content type here: the song/album
+ *   slices keep all of them; the artist slice drops tag/year (which `/api/artist`
+ *   ignores) so the reported `appliedFilters` is truthful for every slice.
  * @returns Aggregated search result with transformed DTOs and metadata
  */
 export function aggregateSearchResults(
@@ -101,9 +125,24 @@ export function aggregateSearchResults(
     totalResults,
   };
 
-  // Only include appliedFilters if any filters were applied
+  // Report appliedFilters per content type so each slice's claim is truthful.
+  // Songs/albums honor every resolved filter; artists drop tag/year (which
+  // /api/artist silently ignores) via stripUnsupportedFilters. A type entry is
+  // included only when that slice actually had filters applied, so an entirely
+  // unfiltered query still emits no `appliedFilters` at all.
   if (Object.keys(appliedFilters).length > 0) {
-    result.appliedFilters = appliedFilters;
+    const songFilters = stripUnsupportedFilters(appliedFilters, 'song', true);
+    const albumFilters = stripUnsupportedFilters(appliedFilters, 'album', true);
+    const artistFilters = stripUnsupportedFilters(appliedFilters, 'artist', true);
+
+    const byType: AppliedFiltersByType = {};
+    if (Object.keys(songFilters).length > 0) byType.songs = songFilters;
+    if (Object.keys(albumFilters).length > 0) byType.albums = albumFilters;
+    if (Object.keys(artistFilters).length > 0) byType.artists = artistFilters;
+
+    if (Object.keys(byType).length > 0) {
+      result.appliedFilters = byType;
+    }
   }
 
   return result;
@@ -153,7 +192,8 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
   const buildParams = (
     limit: number,
     searchField: string,
-    sortField: string
+    sortField: string,
+    endpoint: SearchEndpoint
   ): string => {
     const searchParams = new URLSearchParams();
 
@@ -175,8 +215,9 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
       searchParams.set('seed', randomSeed.toString());
     }
 
-    // Add resolved filters
-    Object.entries(resolvedFilters).forEach(([key, value]) => {
+    // Add resolved filters, dropping any the endpoint silently ignores
+    // (tag/year on /api/artist) so we don't send dead params there.
+    Object.entries(stripUnsupportedFilters(resolvedFilters, endpoint, false)).forEach(([key, value]) => {
       searchParams.set(key, value);
     });
 
@@ -186,8 +227,9 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
     }
 
     // Single-year filter — albums match by [minYear, maxYear] containing N,
-    // songs match the year column exactly, artists ignore it (no column).
-    if (year !== undefined) {
+    // songs match the year column exactly, artists ignore it (no column), so
+    // skip it for the artist endpoint rather than send a no-op param.
+    if (year !== undefined && endpoint !== 'artist') {
       searchParams.set('year', year.toString());
     }
 
@@ -219,9 +261,9 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
   };
 
   // Output construction - build parameters for each endpoint type with appropriate sort fields
-  const songParams = buildParams(songCount, 'title', getSortField('title', 'song'));
-  const albumParams = buildParams(albumCount, 'name', getSortField('name', 'album'));
-  const artistParams = buildParams(artistCount, 'name', getSortField('name', 'artist'));
+  const songParams = buildParams(songCount, 'title', getSortField('title', 'song'), 'song');
+  const albumParams = buildParams(albumCount, 'name', getSortField('name', 'album'), 'album');
+  const artistParams = buildParams(artistCount, 'name', getSortField('name', 'artist'), 'artist');
 
   return {
     songParams,

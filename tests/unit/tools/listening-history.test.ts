@@ -104,12 +104,12 @@ describe('listRecentlyPlayed', () => {
     expect(result).not.toHaveProperty('timeRange');
   });
 
-  it('over-fetches (5x limit, capped at 500) when timeRange !== "all"', async () => {
+  it('over-fetches ((offset+limit)*5, capped at 500) when timeRange !== "all"', async () => {
     mockClient.requestWithLibraryFilter.mockResolvedValue([]);
 
     await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 20, timeRange: 'today' });
     const filteredEndpoint = mockClient.requestWithLibraryFilter.mock.calls[0]![0];
-    // limit 20, timeRange filtering -> _end = 0 + 20*5 = 100
+    // offset 0, limit 20, timeRange filtering -> _end = 0 + (0+20)*5 = 100
     expect(filteredEndpoint).toContain('_end=100');
 
     mockClient.requestWithLibraryFilter.mockClear();
@@ -117,5 +117,51 @@ describe('listRecentlyPlayed', () => {
     const allEndpoint = mockClient.requestWithLibraryFilter.mock.calls[0]![0];
     // timeRange=all -> exact limit, no over-fetch
     expect(allEndpoint).toContain('_end=20');
+  });
+
+  // Pagination-honesty regression: when a timeRange filter is active, the date
+  // cutoff is applied client-side AFTER the fetch, so the server must NOT
+  // pre-skip with _start=offset (that would permanently drop in-range rows in
+  // global positions 0..offset-1). Instead we fetch from _start=0 and apply the
+  // offset in memory after filtering.
+  it('timeRange filter: fetches from _start=0 (not _start=offset) and applies offset client-side', async () => {
+    mockClient.requestWithLibraryFilter.mockResolvedValue([]);
+
+    await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 10, offset: 20, timeRange: 'week' });
+
+    const endpoint = mockClient.requestWithLibraryFilter.mock.calls[0]![0];
+    // Must NOT pre-skip server-side: _start stays 0.
+    expect(endpoint).toContain('_start=0');
+    expect(endpoint).not.toContain('_start=20');
+    // Over-fetch covers offset+limit: _end = 0 + (20+10)*5 = 150.
+    expect(endpoint).toContain('_end=150');
+  });
+
+  it('timeRange filter: offset paginates the post-filter window (page 2 != page 1)', async () => {
+    // 5 in-range plays, newest first (the server returns them sorted playDate DESC).
+    const rows = Array.from({ length: 5 }, (_, i) => ({
+      id: `s${i}`, title: `T${i}`, artist: 'A', artistId: 'a',
+      album: 'Al', albumId: 'al',
+      playDate: new Date(2026, 4, 9, 12, 0, 0 - i).toISOString(),
+    }));
+    mockClient.requestWithLibraryFilter.mockResolvedValue(rows);
+
+    const page0 = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 2, offset: 0, timeRange: 'month' });
+    const page1 = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 2, offset: 2, timeRange: 'month' });
+
+    expect(page0.tracks.map(t => t.id)).toEqual(['s0', 's1']);
+    // Page 2 continues past the offset rather than re-returning page 1.
+    expect(page1.tracks.map(t => t.id)).toEqual(['s2', 's3']);
+  });
+
+  it('timeRange="all": keeps server-side offset (no client-side re-pagination)', async () => {
+    mockClient.requestWithLibraryFilter.mockResolvedValue([]);
+
+    await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 10, offset: 20, timeRange: 'all' });
+
+    const endpoint = mockClient.requestWithLibraryFilter.mock.calls[0]![0];
+    // No client-side filter -> server offset is correct; fetch exactly `limit`.
+    expect(endpoint).toContain('_start=20');
+    expect(endpoint).toContain('_end=30');
   });
 });

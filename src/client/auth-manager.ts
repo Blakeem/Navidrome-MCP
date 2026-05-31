@@ -96,6 +96,9 @@ export class AuthManager {
     }
 
     const data = (await response.json()) as { token: string };
+    if (typeof data.token !== 'string' || data.token === '') {
+      throw new Error(ErrorFormatter.authentication('server returned no token'));
+    }
     this.token = data.token;
     this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
     logger.debug('Authentication successful');

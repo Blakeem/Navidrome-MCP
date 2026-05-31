@@ -26,6 +26,7 @@ import { resolveTextFilters } from './filter-resolver.js';
 import {
   buildContentTypeParams,
   aggregateSearchResults,
+  type AppliedFiltersByType,
   type ParallelSearchResponses,
   type ParallelSearchTotals,
 } from './result-aggregator.js';
@@ -50,7 +51,7 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
   totalAlbums: number;
   totalSongs: number;
   totalResults: number;
-  appliedFilters?: Record<string, string>;
+  appliedFilters?: AppliedFiltersByType;
 }> {
   // Data collection - parse and validate input parameters
   const params = SearchAllSchema.parse(args);
@@ -102,7 +103,7 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${contentTypeParams.albumParams}`)
         : Promise.resolve(empty()),
       params.artistCount > 0
-        ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${contentTypeParams.artistParams}`)
+        ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${contentTypeParams.artistParams}&role=maincredit`)
         : Promise.resolve(empty()),
     ]);
 

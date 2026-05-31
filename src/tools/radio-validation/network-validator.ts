@@ -152,7 +152,7 @@ export async function sampleAudioData(
   url: string,
   remainingTimeout: number,
   followRedirects: boolean,
-): Promise<{ buffer: Uint8Array | null; headers: Headers | null; finalUrl: string; error: string | null }> {
+): Promise<{ buffer: Uint8Array | null; headers: Headers | null; httpStatus?: number; finalUrl: string; error: string | null }> {
   try {
     const controller = new AbortController();
     const sampleTimeout = Math.max(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout); // Ensure at least 2 seconds
@@ -160,9 +160,11 @@ export async function sampleAudioData(
       controller.abort();
     }, sampleTimeout);
 
-    let result: FetchWithRedirectsResult;
+    // Keep the abort timer armed through the entire sampling operation
+    // (including the stream-reading phase) so a mid-body stall is interrupted.
+    // It is cleared exactly once in the outer finally below.
     try {
-      result = await fetchWithManualRedirects(
+      const result = await fetchWithManualRedirects(
         url,
         {
           method: 'GET',
@@ -175,96 +177,106 @@ export async function sampleAudioData(
         },
         followRedirects,
       );
-    } finally {
-      clearTimeout(timeoutId);
-    }
 
-    if (result.error !== null || result.response === null) {
-      return { buffer: null, headers: null, finalUrl: result.finalUrl, error: result.error ?? 'No response' };
-    }
+      if (result.error !== null || result.response === null) {
+        return { buffer: null, headers: null, finalUrl: result.finalUrl, error: result.error ?? 'No response' };
+      }
 
-    const response = result.response;
-    if (!response.ok && response.status !== 206) {
-      return {
-        buffer: null,
-        headers: response.headers,
-        finalUrl: result.finalUrl,
-        error: `HTTP ${response.status}: ${response.statusText}`,
-      };
-    }
-
-    // Some servers don't handle Range requests properly and hang on arrayBuffer()
-    // Use streaming approach with timeout protection
-    try {
-      const bodyStream = response.body;
-      if (!bodyStream) {
+      const response = result.response;
+      if (!response.ok && response.status !== 206) {
         return {
           buffer: null,
           headers: response.headers,
+          httpStatus: response.status,
           finalUrl: result.finalUrl,
-          error: 'No response body reader available',
+          error: `HTTP ${response.status}: ${response.statusText}`,
         };
       }
-      const reader = (bodyStream as ReadableStream<Uint8Array>).getReader();
 
-      const chunks: Uint8Array[] = [];
-      let totalLength = 0;
-      const maxBytes = RADIO_VALIDATION.SAMPLE_BUFFER_SIZE; // 8KB limit
-      const startTime = Date.now();
-      const readTimeout = RADIO_VALIDATION.STREAM_READ_TIMEOUT; // 3 second timeout for reading
-
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop; exits via break/return
-      while (true) {
-        // Check if we've exceeded our read timeout
-        if (Date.now() - startTime > readTimeout) {
-          await reader.cancel();
+      // Some servers don't handle Range requests properly and hang on arrayBuffer()
+      // Use streaming approach with timeout protection
+      try {
+        const bodyStream = response.body;
+        if (!bodyStream) {
           return {
-            buffer: totalLength > 0 ? concatChunks(chunks, totalLength) : null,
+            buffer: null,
             headers: response.headers,
+            httpStatus: response.status,
             finalUrl: result.finalUrl,
-            error: 'Read timeout - got partial data',
+            error: 'No response body reader available',
           };
         }
+        const reader = (bodyStream as ReadableStream<Uint8Array>).getReader();
 
-        const { value, done } = await reader.read();
+        try {
+          const chunks: Uint8Array[] = [];
+          let totalLength = 0;
+          const maxBytes = RADIO_VALIDATION.SAMPLE_BUFFER_SIZE; // 8KB limit
+          const startTime = Date.now();
+          const readTimeout = RADIO_VALIDATION.STREAM_READ_TIMEOUT; // 3 second timeout for reading
 
-        if (done) break;
-        // Slice oversized chunks BEFORE pushing — a server that ignores the
-        // Range header can hand us one multi-MB chunk; the post-push limit
-        // check would already have allocated the entire blob in heap.
-        const remaining = maxBytes - totalLength;
-        const slice = value.length > remaining ? value.subarray(0, remaining) : value;
-        chunks.push(slice);
-        totalLength += slice.length;
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop; exits via break/return
+          while (true) {
+            // Check if we've exceeded our read timeout
+            if (Date.now() - startTime > readTimeout) {
+              return {
+                buffer: totalLength > 0 ? concatChunks(chunks, totalLength) : null,
+                headers: response.headers,
+                httpStatus: response.status,
+                finalUrl: result.finalUrl,
+                error: 'Read timeout - got partial data',
+              };
+            }
 
-        // Stop if we have enough data
-        if (totalLength >= maxBytes) {
-          await reader.cancel();
-          break;
+            const { value, done } = await reader.read();
+
+            if (done) break;
+            // Slice oversized chunks BEFORE pushing — a server that ignores the
+            // Range header can hand us one multi-MB chunk; the post-push limit
+            // check would already have allocated the entire blob in heap.
+            const remaining = maxBytes - totalLength;
+            const slice = value.length > remaining ? value.subarray(0, remaining) : value;
+            chunks.push(slice);
+            totalLength += slice.length;
+
+            // Stop if we have enough data
+            if (totalLength >= maxBytes) {
+              break;
+            }
+          }
+
+          // Combine chunks
+          if (totalLength > 0) {
+            return {
+              buffer: concatChunks(chunks, totalLength),
+              headers: response.headers,
+              httpStatus: response.status,
+              finalUrl: result.finalUrl,
+              error: null,
+            };
+          } else {
+            return {
+              buffer: null,
+              headers: response.headers,
+              httpStatus: response.status,
+              finalUrl: result.finalUrl,
+              error: 'No data received from stream',
+            };
+          }
+        } finally {
+          // Always release the reader on every exit path (success, timeout,
+          // break, or thrown error). cancel() is a safe no-op on an already
+          // drained/cancelled reader and must not throw out of the finally.
+          await reader.cancel().catch(() => { /* reader already released */ });
         }
+      } catch (streamErr) {
+        if (streamErr instanceof Error && streamErr.name === 'AbortError') {
+          return { buffer: null, headers: response.headers, httpStatus: response.status, finalUrl: result.finalUrl, error: 'Stream reading aborted' };
+        }
+        throw streamErr;
       }
-
-      // Combine chunks
-      if (totalLength > 0) {
-        return {
-          buffer: concatChunks(chunks, totalLength),
-          headers: response.headers,
-          finalUrl: result.finalUrl,
-          error: null,
-        };
-      } else {
-        return {
-          buffer: null,
-          headers: response.headers,
-          finalUrl: result.finalUrl,
-          error: 'No data received from stream',
-        };
-      }
-    } catch (streamErr) {
-      if (streamErr instanceof Error && streamErr.name === 'AbortError') {
-        return { buffer: null, headers: response.headers, finalUrl: result.finalUrl, error: 'Stream reading aborted' };
-      }
-      throw streamErr;
+    } finally {
+      clearTimeout(timeoutId);
     }
   } catch (err) {
     if (err instanceof Error) {

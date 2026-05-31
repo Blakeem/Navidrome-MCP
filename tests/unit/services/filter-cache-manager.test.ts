@@ -39,8 +39,11 @@ const createMockClient = (): NavidromeClient => {
     if (endpoint === '/genre') {
       return Promise.resolve(mockGenres);
     }
-    if (endpoint === '/tag') {
-      return Promise.resolve(mockTags);
+    if (endpoint.startsWith('/tag')) {
+      const tagName = new URLSearchParams(endpoint.split('?')[1] ?? '').get('tag_name');
+      return Promise.resolve(
+        tagName === null ? mockTags : mockTags.filter(tag => tag.tagName === tagName),
+      );
     }
     return Promise.resolve([]);
   });
@@ -156,7 +159,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       const largeClient = {
         requestWithLibraryFilter: vi.fn().mockImplementation((endpoint: string) => {
           if (endpoint === '/genre') return Promise.resolve(largeGenres);
-          if (endpoint === '/tag') return Promise.resolve([]);
+          if (endpoint.startsWith('/tag')) return Promise.resolve([]);
           return Promise.resolve([]);
         }),
       } as unknown as NavidromeClient;
@@ -273,8 +276,11 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
         if (endpoint === '/genre') {
           return Promise.resolve(returnUpdated ? updatedGenres : initialGenres);
         }
-        if (endpoint === '/tag') {
-          return Promise.resolve(mockTags);
+        if (endpoint.startsWith('/tag')) {
+          const tagName = new URLSearchParams(endpoint.split('?')[1] ?? '').get('tag_name');
+          return Promise.resolve(
+            tagName === null ? mockTags : mockTags.filter(tag => tag.tagName === tagName),
+          );
         }
         return Promise.resolve([]);
       }),

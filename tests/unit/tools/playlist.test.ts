@@ -356,6 +356,16 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
       });
 
+      it('should reject when no content IDs are supplied', async () => {
+        await expect(
+          addTracksToPlaylist(mockClient, {
+            playlistId: 'playlist-123',
+          })
+        ).rejects.toThrow();
+
+        expect(mockClient.request).not.toHaveBeenCalled();
+      });
+
       it('should add specific disc tracks to playlist', async () => {
         const mockResponse = { 
           added: 8,
