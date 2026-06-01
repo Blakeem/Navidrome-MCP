@@ -38,6 +38,7 @@ import { inspect } from 'node:util';
 
 import { createRuntime } from '../bootstrap.js';
 import { resolveConfigState } from '../config.js';
+import { startConfigServer } from '../config-app/server.js';
 import { getSettingsStorePath } from '../config/store-path.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
@@ -187,15 +188,68 @@ function installShutdownTriggers(): void {
   });
 }
 
+/**
+ * Setup mode self-reaps after this long with no settings-page activity. The idle
+ * clock resets on every request (page load / Test connection / Save), so it fires
+ * only once the user has truly walked away — re-saving and slow form-filling keep
+ * it alive. Generous because reaping mid-config is worse than a harmless idle
+ * loopback process, and it sits on its own ephemeral port so a lingering one never
+ * blocks a freshly launched player. Easy to tune.
+ */
+const SETUP_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * First-run setup mode (parity with the MCP server's degraded mode). When run
+ * before configuration, instead of dying with a logfile-only warning, host the
+ * settings UI and open the browser so a user who launched us first — including
+ * via the desktop shortcut, which shows NO terminal — has a visible path to
+ * configure.
+ *
+ * We OWN this config server with no player UI/power button yet and possibly no
+ * terminal, so it must be able to stop itself: an inactivity reaper exits once
+ * the user has stopped interacting (covering both the saved-and-left and the
+ * opened-but-never-saved cases), while leaving the page fully usable for repeated
+ * edits/saves until then. Settings load only at startup, so the user is told to
+ * re-launch `navidrome-web` to actually start playing. (The MCP server needs none
+ * of this — its config server is in-process and dies with the MCP client.)
+ */
+async function runSetupMode(): Promise<void> {
+  const settings = await startConfigServer({
+    idleTimeoutMs: SETUP_IDLE_TIMEOUT_MS,
+    onIdleTimeout: () => {
+      logger.info(
+        'navidrome-web: settings page idle — leaving setup mode. Re-launch navidrome-web when ready.',
+      );
+      process.exit(0);
+    },
+  });
+
+  logger.warn(`navidrome-web is not configured. Opening the settings page: ${settings.url}`);
+  // The logger is redirected to a file (setupFileLogging), so for a direct
+  // terminal run — and the headless/SSH case where the browser can't open — also
+  // print the URL to real stdout, the guaranteed fallback. (Mirrors navidrome-config.)
+  process.stdout.write(
+    `\n  navidrome-web is not configured yet.\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, re-launch navidrome-web.\n\n`,
+  );
+  openBrowser(settings.url);
+
+  const stop = (): void => {
+    void settings.close().then(() => process.exit(0));
+  };
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+
+  // The listening config server keeps the event loop alive; we intentionally do
+  // not proceed to bootstrap/serve until the next launch reads the saved config.
+}
+
 async function main(): Promise<void> {
   setupFileLogging();
   logger.info('navidrome-web starting');
 
   const state = await resolveConfigState();
   if (!state.configured) {
-    logger.warn(
-      'navidrome-web is not configured — run `navidrome-config` to set up Navidrome, then restart. Exiting.',
-    );
+    await runSetupMode();
     return;
   }
   logger.setDebug(state.config.debug);

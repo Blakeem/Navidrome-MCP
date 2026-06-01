@@ -40,10 +40,12 @@ describe('settings server seed/save', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function start(): Promise<string> {
-    server = await startConfigServer();
+  async function start(options?: { idleTimeoutMs?: number; onIdleTimeout?: () => void }): Promise<string> {
+    server = await startConfigServer(options);
     return server.url.replace(/\/$/, '');
   }
+
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
   const getJson = async (r: Response): Promise<any> => r.json();
   const post = (base: string, body: unknown): Promise<Response> =>
@@ -94,6 +96,34 @@ describe('settings server seed/save', () => {
     const base = await start();
     const res = await post(base, { navidrome: { url: '', username: 'u', password: 'p' } });
     expect(res.status).toBe(400);
+  });
+
+  // The no-orphan reaper: setup-mode hosts (the standalone web player launched
+  // before configuration) pass idleTimeoutMs to self-terminate after inactivity.
+  it('self-reaps after the idle timeout when there is no activity', async () => {
+    let reaped = 0;
+    await start({ idleTimeoutMs: 100, onIdleTimeout: () => { reaped += 1; } });
+    await sleep(300);
+    expect(reaped).toBe(1);
+  });
+
+  it('stays alive while requests keep arriving (idle timer resets each request)', async () => {
+    let reaped = 0;
+    const base = await start({ idleTimeoutMs: 200, onIdleTimeout: () => { reaped += 1; } });
+    // Poke every 70ms (< 200ms) for ~350ms; each request must reset the clock.
+    for (let i = 0; i < 5; i++) {
+      await fetch(`${base}/api/settings/seed`);
+      await sleep(70);
+    }
+    expect(reaped).toBe(0);
+  });
+
+  it('does not install a reaper unless idleTimeoutMs is set', async () => {
+    let reaped = 0;
+    const base = await start({ onIdleTimeout: () => { reaped += 1; } });
+    await sleep(200);
+    expect(reaped).toBe(0);
+    expect((await fetch(`${base}/api/settings/seed`)).status).toBe(200);
   });
 
   it('serves the settings form on GET /', async () => {

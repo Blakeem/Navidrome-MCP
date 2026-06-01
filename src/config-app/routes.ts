@@ -99,9 +99,14 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
   writeJson(res, 200, {
     ok: true,
+    // Host-agnostic: this server is launched by the MCP client, the standalone
+    // web player, or `navidrome-config`, and the reader doesn't know which. All
+    // load settings once at startup (no hot-reload), so cover both restart paths.
     message:
-      'Settings saved. Now RESTART your MCP client (e.g. quit and reopen Claude Desktop) — ' +
-      'the server does not hot-reload, and the full toolset only appears after a restart.',
+      'Settings saved. They load at startup and the server does not hot-reload, so restart ' +
+      "whatever you launched to apply them: your MCP client (e.g. quit and reopen Claude " +
+      'Desktop — the full toolset appears after a restart) and/or the web player (re-run ' +
+      '`navidrome-web`). You can keep changing settings and saving again from this page.',
   });
 }
 

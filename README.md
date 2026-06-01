@@ -98,9 +98,10 @@ pnpm build
 
 ### Configure Your MCP Client
 
-The MCP client only needs to *launch* the server. Your Navidrome credentials and all
-options live in a local `settings.json`, edited through a browser-based settings page
-(no secrets in the client JSON or environment).
+The MCP client config does just one thing: tell it how to *launch* the server. Your
+Navidrome credentials and all options live in a local `settings.json`, edited through a
+browser-based settings page (no secrets in the client JSON or environment). The settings
+page opens automatically on first run (see [First-run setup](#first-run-setup)).
 
 For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Claude/` on Windows, `~/Library/Application Support/Claude/` on macOS, `~/.config/Claude/` on Linux). Other MCP clients use the same JSON shape.
 
@@ -124,9 +125,12 @@ For a manual build, replace `command`/`args` with:
 
 ### First-run setup
 
-On first start without configuration, the server opens a local **settings page** in
-your browser. If it can't open one (e.g. over SSH), the unconfigured server exposes an
-`open_settings` tool that returns the URL. Open it any time with:
+On first start without configuration, the **settings page** opens automatically in your
+browser. This happens whether you launched the MCP server or the standalone web player
+(`navidrome-web`) first; either one, run unconfigured, brings it up. If a browser can't
+open (e.g. over SSH), the URL is printed to the console, and the unconfigured MCP server
+also exposes an `open_settings` tool that returns it. You can open the settings page any
+time with:
 
 ```bash
 npx navidrome-config
@@ -134,9 +138,13 @@ npx navidrome-config
 
 Enter your Navidrome URL, username, and password (plus any optional features), click
 **Test connection**, then **Save**. This writes a local `settings.json` (shape:
-[`settings.example.json`](settings.example.json)). **Restart** the MCP client to apply.
-Upgrading from the old env-based setup? The form pre-fills from your previous
-`env`/`.env` values; verify and save.
+[`settings.example.json`](settings.example.json)). Settings load at startup and don't
+hot-reload, so restart whatever you launched to apply them: the MCP client (quit and
+reopen, e.g. Claude Desktop) or the web player (re-run `navidrome-web`). If the web
+player brought up the settings page itself, it stays open for further edits and
+self-closes when idle; re-launch `navidrome-web` to start playing. Upgrading from the old
+env-based setup? The form pre-fills from your previous `env`/`.env` values; verify and
+save.
 
 **Required:** Navidrome URL, username, password.
 
@@ -221,9 +229,9 @@ To disable the panel entirely, uncheck **Enable the companion control panel** in
 
 ### Running it standalone (without an MCP client)
 
-Launch the player directly to run it independently of any MCP client. It reads the same `settings.json` and opens your browser automatically. A standalone launch always persists: it runs in the background until you stop it with the **power** button in the UI. It **coexists** with an MCP-launched instance: whoever binds the configured port first owns it and the other connects to it (an MCP server attaches rather than replacing or stopping it). Logs go to `navidrome-web.log` in your config directory.
+Launch the player directly to run it independently of any MCP client. It reads the `settings.json` and opens your browser automatically. A standalone launch always persists: it runs in the background until you stop it with the **power** button in the UI. It **coexists** with an MCP-launched instance: whoever binds the configured port first owns it and the other connects to it (an MCP server attaches rather than replacing or stopping it). Logs go to `navidrome-web.log` in your config directory.
 
-> **Configure first.** The player needs your Navidrome details in `settings.json`. If it isn't configured, run `npx navidrome-config` (see [First-run setup](#first-run-setup)) before launching, or the player starts and immediately exits.
+> **Configure first.** The player needs your Navidrome details in `settings.json`. If it isn't configured yet, launching it brings up the **settings page** instead of the player (see [First-run setup](#first-run-setup)). Fill it in and Save, then re-launch `navidrome-web` to start playing. The setup page self-closes when idle, so it never lingers. You can also configure ahead of time with `npx navidrome-config`.
 
 #### Desktop shortcut (recommended)
 
