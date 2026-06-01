@@ -211,9 +211,16 @@ async function main(): Promise<void> {
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
-    // Another navidrome-web already owns the port. Nothing to do — exit cleanly
-    // (the MCP spawner must treat this exit(0) as success, not an error).
-    logger.info(`navidrome-web already running at ${result.url}; standing down.`);
+    // Another navidrome-web already owns the port, so we don't serve. But a user
+    // who just launched us — double-clicked the desktop shortcut, or ran the bin
+    // directly — still expects the player to appear, so open the browser to the
+    // existing owner before standing down. This is the "if it's already running,
+    // just open the browser" path. MCP-spawned attaches (a cold-start race) honor
+    // autoOpenBrowser via the same gate as the owner path, so this stays quiet
+    // when the parent asked it to. Then exit cleanly (the MCP spawner must treat
+    // this exit(0) as success, not an error).
+    logger.info(`navidrome-web already running at ${result.url}; opening browser and standing down.`);
+    maybeOpenBrowser(config.webui.port);
     return;
   }
 

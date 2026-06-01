@@ -222,15 +222,35 @@ To turn the panel off entirely, uncheck **Enable the companion control panel** i
 
 ### Running it standalone (without an MCP client)
 
-The player is its own binary, so you can launch it directly — handy on an always-on machine, or to keep music playing across AI sessions (open the MCP to tweak playlists, close it, music continues):
+The player is its own program, so you can launch it directly — handy on an always-on machine, or to keep music playing across AI sessions (open the MCP to tweak playlists, close it, music continues). It reads the same `settings.json`, opens your browser to the player automatically, and **coexists** with an MCP-launched instance: whoever binds the configured port first owns it, and the other simply connects to it (and opens your browser to it). No double servers, no port fights. A standalone launch always persists (the MCP server will attach to it, not replace it, and won't stop it on exit). Logs go to a file (`navidrome-web.log`) in your config directory.
+
+> **Configure first.** The player needs your Navidrome details in `settings.json`. If it isn't configured yet, run `npx navidrome-config` (see [First-run setup](#first-run-setup)) before launching — otherwise the player starts and immediately exits.
+
+#### Desktop shortcut (recommended)
+
+The friendliest way to launch it: generate a double-clickable icon for your platform. It starts the player in the background with **no terminal window** and opens your browser to the UI; if a player is already running (e.g. one the MCP server launched), it just opens the browser. Stop it any time with the **power** button in the UI.
 
 ```bash
-npx navidrome-web          # published package
-# or, from a manual build:
-node dist/web/main.js
+navidrome-web-shortcut       # after: npm install -g navidrome-mcp
+# or, from a dev clone (see Development):
+pnpm make:launcher
 ```
 
-It reads the same `settings.json`, opens your browser to the player automatically, and **coexists** with an MCP-launched instance: whoever binds the configured port first owns it, and the other simply connects to it. No double servers, no port fights. A standalone launch always persists (the MCP server will attach to it, not replace it, and won't stop it on exit). Logs go to a file (`navidrome-web.log`) in your config directory.
+This bakes the absolute paths to your `node` and the built player into the shortcut, so it works without anything on your `PATH`. It writes:
+
+- **Linux** — `Navidrome Player.desktop` to your Desktop **and** your app menu (`~/.local/share/applications`). On GNOME you may have to right-click → *Allow Launching* the first time.
+- **macOS** — a `Navidrome Player.app` on your Desktop (drag it to `/Applications` if you like).
+- **Windows** — `Navidrome Player.vbs` to your Desktop **and** Start Menu. (If your Desktop is redirected into OneDrive, it lands there.)
+
+Re-run the generator any time you move or rebuild the project to refresh the baked-in paths.
+
+#### From the command line
+
+```bash
+navidrome-web                # after: npm install -g navidrome-mcp
+# or, from a dev clone / manual build:
+node dist/web/main.js
+```
 
 ### Configuration
 
@@ -432,6 +452,36 @@ pnpm test:run     # one-shot tests
 pnpm check:all    # lint + typecheck + dead-code
 pnpm build        # production bundle
 ```
+
+### Testing the standalone web player from a dev build
+
+This is the from-source path for trying the player **before it's published to npm** (the published package may lag behind `dev`). It applies to the MCP server too — both run from the same `dist/`.
+
+```bash
+# 1. Build (also bundles the web UI's static assets into dist/)
+pnpm build
+
+# 2. Configure, if you haven't — writes settings.json to your OS config dir
+node dist/config-app/main.js     # opens the settings page; fill in + Save
+
+# 3. Run the standalone player directly
+node dist/web/main.js            # serves http://127.0.0.1:8808 and opens your browser
+```
+
+To make a double-clickable icon out of that build (no global install needed):
+
+```bash
+pnpm make:launcher               # writes a shortcut to your Desktop + app menu
+```
+
+**Windows notes** (PowerShell):
+
+- Use `pnpm build` then `node dist\web\main.js` — same as above with backslashes.
+- `pnpm make:launcher` writes `Navidrome Player.vbs` to your Desktop **and** Start Menu; it launches `node dist\web\main.js` with **no console window** and bakes in the absolute path to *this* checkout, so don't move the folder afterward (re-run it if you do).
+- If a redirected/OneDrive Desktop hides the file, the Start Menu copy still works (Start → type "Navidrome").
+- mpv must be installed and discoverable for playback to start — set `playback.mpvPath` in the settings page if it isn't on `PATH`.
+
+When you publish, `npm install -g navidrome-mcp` puts `navidrome-web`, `navidrome-config`, and `navidrome-web-shortcut` on the user's `PATH`, so the same flows become `navidrome-web` / `navidrome-config` / `navidrome-web-shortcut` with no clone or build.
 
 Testing with [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
 

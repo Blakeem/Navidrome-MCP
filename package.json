@@ -24,7 +24,8 @@
     "check:all": "pnpm lint && pnpm typecheck && pnpm check:dead-code",
     "prepare": "pnpm build",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
-    "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts"
+    "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts",
+    "make:launcher": "node scripts/make-launcher.mjs"
   },
   "keywords": [
     "mcp",
@@ -49,6 +50,7 @@
   },
   "files": [
     "dist",
+    "scripts/make-launcher.mjs",
     "README.md",
     "LICENSE",
     "package.json"
@@ -56,7 +58,8 @@
   "bin": {
     "navidrome-mcp": "./dist/index.js",
     "navidrome-config": "./dist/config-app/main.js",
-    "navidrome-web": "./dist/web/main.js"
+    "navidrome-web": "./dist/web/main.js",
+    "navidrome-web-shortcut": "./scripts/make-launcher.mjs"
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {
