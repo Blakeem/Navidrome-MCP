@@ -32,7 +32,7 @@ This design is built for conversational control and pairs cleanly with voice tra
 
 > Requires `mpv` (same as Local Audio Playback). On by default; starts with the server.
 
-A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser. Now-playing card with cover art, transport controls (previous / pause-resume / next), seek bar, volume slider, a queue list with click-to-jump, a **clear-queue** button, and a **playlist picker** so you can start any Navidrome playlist straight from the page — not just watch what the assistant queues. Updates live via Server-Sent Events so a phone laid on the desk stays in sync. It runs as its **own process** (`navidrome-web`) that the MCP server launches; by default it stops with the MCP server (nothing lingers), but flip one setting — **Keep playing after the MCP server closes** — and it (plus your music and scrobbling) survives. You can also launch it yourself, which always persists, and optionally have it **open in your browser automatically**. A local-only **gear** (settings) and **power** (stop everything) button live in the top bar. Defaults to localhost-only; flip one setting to expose it on your LAN and use a phone or tablet as a music remote. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup and the security note.
+A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser: a now-playing card with cover art, transport controls, a seek bar, volume, and a live queue you can click to jump around. A built-in playlist picker starts any Navidrome playlist straight from the page, so it works as a real remote, not just a now-playing mirror. Expose it on your LAN to use a phone or tablet to control playback. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup, lifetime, and the security note.
 
 ### 🎶 Playlists
 
@@ -40,13 +40,13 @@ Create, update, reorder, and delete playlists conversationally. Add content flex
 
 ### 🎼 Music Discovery (Last.fm)
 
-> Requires `LASTFM_API_KEY`. Free key at [last.fm/api](https://www.last.fm/api/account/create).
+> Requires a Last.fm API key (free at [last.fm/api](https://www.last.fm/api/account/create)), set in the settings page.
 
 Find similar artists and tracks, fetch biographies and top tracks, and browse global music charts. Combine with your library to do gap analysis (*"albums missing from my top 5 artists, ranked by popularity"*), rediscover overlooked music (*"tracks similar to my favorites that I own but never play"*), or build curated "Best Of" playlists scoped to what you actually own.
 
 ### 🎤 Synchronized Lyrics
 
-> Requires `LYRICS_PROVIDER=lrclib` and `LRCLIB_USER_AGENT`. No API key needed.
+> Enabled in the settings page (LRCLIB provider + a user agent). No API key needed.
 
 Fetch time-synced lyrics with millisecond-precision timestamps (LRC format) and plain-text fallbacks from LRCLIB's community database. Matched automatically by title, artist, album, and duration.
 
@@ -54,7 +54,7 @@ Fetch time-synced lyrics with millisecond-precision timestamps (LRC format) and 
 
 Manage Navidrome radio stations and discover new ones globally. Stream URLs are validated before adding (MP3, AAC, OGG, FLAC detection) and SHOUTcast/Icecast metadata is extracted automatically. Bulk maintenance is supported: *"validate all my stations and remove the broken ones"* or *"test these 10 URLs and add the working ones"*.
 
-Global station discovery via Radio Browser (requires `RADIO_BROWSER_USER_AGENT`) covers thousands of stations filterable by genre, country, language, codec, bitrate, and popularity, with vote and click registration so your usage feeds the community ranking.
+Global station discovery via Radio Browser (requires a Radio Browser user agent, set in the settings page) covers thousands of stations filterable by genre, country, language, codec, bitrate, and popularity, with vote and click registration so your usage feeds the community ranking.
 
 ### 📊 Listening Analytics
 
@@ -98,9 +98,9 @@ pnpm build
 
 ### Configure Your MCP Client
 
-The MCP client only needs to *launch* the server — your Navidrome credentials and all
-options live in a local `settings.json` that you edit through a browser-based settings
-page (no secrets in the client JSON or environment).
+The MCP client only needs to *launch* the server. Your Navidrome credentials and all
+options live in a local `settings.json`, edited through a browser-based settings page
+(no secrets in the client JSON or environment).
 
 For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Claude/` on Windows, `~/Library/Application Support/Claude/` on macOS, `~/.config/Claude/` on Linux). Other MCP clients use the same JSON shape.
 
@@ -124,31 +124,30 @@ For a manual build, replace `command`/`args` with:
 
 ### First-run setup
 
-The first time the server starts without configuration, it opens a local **settings
-page** in your browser automatically (and surfaces the URL if it can't open one, e.g.
-over SSH — the unconfigured server exposes an `open_settings` tool that returns it).
-You can also open it any time:
+On first start without configuration, the server opens a local **settings page** in
+your browser. If it can't open one (e.g. over SSH), the unconfigured server exposes an
+`open_settings` tool that returns the URL. Open it any time with:
 
 ```bash
 npx navidrome-config
 ```
 
 Enter your Navidrome URL, username, and password (plus any optional features), click
-**Test connection**, then **Save**. Settings are written to a local `settings.json`
-(see [`settings.example.json`](settings.example.json) for the shape) and never leave
-your machine. **Restart** the MCP client to apply. Upgrading from the old env-based
-setup? The form pre-fills from your previous `env`/`.env` values — just verify and save.
+**Test connection**, then **Save**. This writes a local `settings.json` (shape:
+[`settings.example.json`](settings.example.json)). **Restart** the MCP client to apply.
+Upgrading from the old env-based setup? The form pre-fills from your previous
+`env`/`.env` values; verify and save.
 
 **Required:** Navidrome URL, username, password.
 
 **Optional (set in the settings page):**
-- **Default libraries** — comma-separated library IDs to activate by default; blank = all.
-- **Last.fm API key** — enables Last.fm discovery features.
-- **Radio Browser user agent** — enables global station discovery.
-- **Lyrics provider (LRCLIB)** + user agent — enables lyrics fetching.
-- **mpv path** — point at the mpv binary if it's not on `PATH`; blank auto-detects.
-- **Transcode format** — defaults to `raw` (streams the **original file untouched** for the highest quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
-- **Web UI** port / host / expose / enabled / auto-open browser — configure the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
+- **Default libraries:** comma-separated library IDs to activate by default; blank = all.
+- **Last.fm API key:** enables Last.fm discovery features.
+- **Radio Browser user agent:** enables global station discovery.
+- **Lyrics provider (LRCLIB)** + user agent: enables lyrics fetching.
+- **mpv path:** point at the mpv binary if it's not on `PATH`; blank auto-detects.
+- **Transcode format:** defaults to `raw` (streams the original file untouched for best quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
+- **Web UI** (port / host / expose / enabled / auto-open browser): configures the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
 
 Features turn on automatically when their settings are present. Restart your MCP client after saving.
 
@@ -176,59 +175,59 @@ scoop install mpv
 choco install mpv
 ```
 
-> Use the full package ID `shinchiro.mpv` to skip the disambiguation prompt; the Microsoft Store also lists an unofficial third-party `mpv` package, and plain `winget install mpv` will ask you to pick. The shinchiro build is the community standard that [mpv.io](https://mpv.io/installation/) itself points to for Windows.
+> Use the full ID `shinchiro.mpv`; plain `winget install mpv` prompts you to disambiguate from an unofficial Store package. The shinchiro build is the one [mpv.io](https://mpv.io/installation/) points to for Windows.
 >
-> **Windows `PATH` note.** The `shinchiro.mpv` winget package installs to `C:\Program Files\MPV Player\` on Windows 11 and does **not** add itself to `PATH`. You have two options:
-> - Add the install folder to your user or system `PATH` (System Properties → Environment Variables → Path → New → `C:\Program Files\MPV Player`), then open a new terminal so the change takes effect.
-> - Or set the **mpv path** in the settings page (`playback.mpvPath`) to the full `mpv.exe` path, e.g. `C:\Program Files\MPV Player\mpv.exe`.
+> **Windows `PATH` note.** The `shinchiro.mpv` package installs to `C:\Program Files\MPV Player\` and does **not** add itself to `PATH`. Either:
+> - Add that folder to your `PATH` (System Properties → Environment Variables → Path → New), then open a new terminal, or
+> - Set **mpv path** in the settings page (`playback.mpvPath`) to the full `mpv.exe` path, e.g. `C:\Program Files\MPV Player\mpv.exe`.
 >
-> Other install methods (scoop, chocolatey, manual zip from mpv.io) drop `mpv.exe` in a different folder. If `mpv --version` doesn't work in a fresh terminal after install, locate `mpv.exe` and apply one of the two fixes above.
+> Other install methods (scoop, choco, manual zip) use different folders. If `mpv --version` fails in a fresh terminal, locate `mpv.exe` and apply one of the fixes above.
 
 Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `mpv --version`, then restart your MCP client so the server re-detects mpv.
 
 ### A Note on ChatGPT Desktop
 
-ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and is not currently compatible with local stdio servers like this one. If you really want to make it work with ChatGPT, you can wrap a stdio server in HTTPS using a bridge like [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), but that adds operational complexity for a self-hosted music server. Otherwise, use Claude Desktop, Claude Code, Cursor, or another client with native stdio support. Re-check once OpenAI adds first-party stdio MCP support.
+ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and isn't compatible with local stdio servers like this one. You can bridge a stdio server to HTTPS with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), but for a self-hosted music server it's simpler to use Claude Desktop, Claude Code, Cursor, or another client with native stdio support.
 
 ## MPV Remote (Web UI)
 
-When local audio playback is active, the MCP server runs a companion web interface that doubles as a now-playing display and a transport-control remote. Open it in any browser on the host (or anywhere on your LAN once exposed).
+When local audio playback is active, the server runs a companion web interface: a now-playing display and transport-control remote. Open it in any browser on the host (or anywhere on your LAN once exposed).
 
 [![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)](navidome-mcp-mpv-remote-large.png)
 
 ### What it does
 
-- **Now-playing card** — cover art, title, artist, album, and queue position. A `Live` indicator confirms the SSE stream is healthy.
-- **Transport controls** — previous / pause-resume / next, with a seek bar showing current position and remaining time.
-- **Volume slider** — drives mpv's internal volume control (independent of your OS volume).
-- **Queue list** — every track in the current mpv queue with title, artist · album, and duration. Click any row to jump to it. A **clear** icon empties the queue and stops playback.
-- **Playlist picker** — the playlist icon in the top bar opens a list of your Navidrome playlists; pick one to start it (Replace queue or Add to queue, with an optional Shuffle). This is what makes the page useful on its own, not just as a now-playing mirror.
-- **Local-only gear + power buttons** — on the host machine the top bar also shows a **gear** (player settings, incl. "keep playing after the MCP server closes") and, when applicable, a **power** button that stops mpv and shuts the player down. These are hidden for remote (LAN) browsers.
-- **Live state updates** — Server-Sent Events push state changes the instant they happen, throttled to ~1 Hz so the progress bar runs smoothly without flooding the network. Connections auto-reconnect on disconnect.
+- **Now-playing card:** cover art, title, artist, album, and queue position. A `Live` indicator confirms the SSE stream is healthy.
+- **Transport controls:** previous / pause-resume / next, with a seek bar showing position and remaining time.
+- **Volume slider:** drives mpv's internal volume (independent of your OS volume).
+- **Queue list:** every track with title, artist · album, and duration. Click a row to jump to it; the **clear** icon empties the queue and stops playback.
+- **Playlist picker:** the playlist icon opens your Navidrome playlists; pick one to start it (Replace or Add to queue, with optional Shuffle).
+- **Gear + power buttons (host only):** the top bar shows a **gear** (player settings, including "keep playing after the MCP server closes") and a **power** button that stops mpv and the player. Both are hidden for remote (LAN) browsers.
+- **Live updates:** Server-Sent Events push state changes as they happen (throttled to ~1 Hz) and auto-reconnect on disconnect.
 
 ### Enabling & lifetime
 
-The web UI is **on by default** and **starts with the server** — the port binds immediately so the page (and its playlist picker) is reachable before anything is playing. The MCP server launches it as a **separate `navidrome-web` process**. Hosts without mpv installed don't start it at all.
+On by default, it starts with the server as a separate `navidrome-web` process; the port binds immediately, so the page and its playlist picker are reachable before anything plays. Hosts without mpv don't start it.
 
-**Does it keep playing after you close the AI?** Your choice:
+**Does it keep playing after you close the AI?**
 
-- **Default (off):** the MCP-launched player — and mpv — **stop when you close or restart the MCP server**, so nothing lingers.
-- **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the in-player gear modal): the MCP-launched player keeps running after you close the AI; stop it later with the **power** button.
-- **Launched it yourself** (`navidrome-web`, below): always keeps running independently — the MCP server attaches to it and never shuts it down.
+- **Default (off):** the MCP-launched player and mpv stop when you close or restart the MCP server.
+- **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the in-player gear modal): the player keeps running after you close the AI; stop it later with the **power** button.
+- **Launched it yourself** (`navidrome-web`, below): always runs independently; the MCP server attaches to it and never shuts it down.
 
-mpv is owned by the player: it stops exactly when the player stops (no background "idle timeout").
+mpv stops exactly when the player stops (no background idle timeout).
 
-To turn the panel off entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
+To disable the panel entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
 
 ### Running it standalone (without an MCP client)
 
-The player is its own program, so you can launch it directly — handy on an always-on machine, or to keep music playing across AI sessions (open the MCP to tweak playlists, close it, music continues). It reads the same `settings.json`, opens your browser to the player automatically, and **coexists** with an MCP-launched instance: whoever binds the configured port first owns it, and the other simply connects to it (and opens your browser to it). No double servers, no port fights. A standalone launch always persists (the MCP server will attach to it, not replace it, and won't stop it on exit). Logs go to a file (`navidrome-web.log`) in your config directory.
+Launch the player directly to run it independently of any MCP client. It reads the same `settings.json` and opens your browser automatically. A standalone launch always persists: it runs in the background until you stop it with the **power** button in the UI. It **coexists** with an MCP-launched instance: whoever binds the configured port first owns it and the other connects to it (an MCP server attaches rather than replacing or stopping it). Logs go to `navidrome-web.log` in your config directory.
 
-> **Configure first.** The player needs your Navidrome details in `settings.json`. If it isn't configured yet, run `npx navidrome-config` (see [First-run setup](#first-run-setup)) before launching — otherwise the player starts and immediately exits.
+> **Configure first.** The player needs your Navidrome details in `settings.json`. If it isn't configured, run `npx navidrome-config` (see [First-run setup](#first-run-setup)) before launching, or the player starts and immediately exits.
 
 #### Desktop shortcut (recommended)
 
-The friendliest way to launch it: generate a double-clickable icon for your platform. It starts the player in the background with **no terminal window** and opens your browser to the UI; if a player is already running (e.g. one the MCP server launched), it just opens the browser. Stop it any time with the **power** button in the UI.
+Generate a double-clickable icon for your platform. It starts the player in the background with **no terminal window** and opens your browser; if a player is already running, it just opens the browser. Stop it with the **power** button in the UI.
 
 ```bash
 navidrome-web-shortcut       # after: npm install -g navidrome-mcp
@@ -238,9 +237,9 @@ pnpm make:launcher
 
 This bakes the absolute paths to your `node` and the built player into the shortcut, so it works without anything on your `PATH`. It writes:
 
-- **Linux** — `Navidrome Player.desktop` to your Desktop **and** your app menu (`~/.local/share/applications`). On GNOME you may have to right-click → *Allow Launching* the first time.
-- **macOS** — a `Navidrome Player.app` on your Desktop (drag it to `/Applications` if you like).
-- **Windows** — `Navidrome Player.vbs` to your Desktop **and** Start Menu. (If your Desktop is redirected into OneDrive, it lands there.)
+- **Linux:** `Navidrome Player.desktop` on your Desktop **and** in your app menu (`~/.local/share/applications`). On GNOME, right-click → *Allow Launching* the first time.
+- **macOS:** `Navidrome Player.app` on your Desktop (drag to `/Applications` if you like).
+- **Windows:** `Navidrome Player.vbs` on your Desktop **and** Start Menu. (If your Desktop is redirected into OneDrive, it lands there.)
 
 Re-run the generator any time you move or rebuild the project to refresh the baked-in paths.
 
@@ -260,7 +259,7 @@ All of these are optional and live in the **Web UI** section of the settings pag
 |---|---|---|
 | `webui.enabled` | `true` | Disable the panel entirely. |
 | `webui.port` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
-| `webui.host` | `127.0.0.1` | Bind address. Override only if you know which interface you want — usually **Expose on LAN** is the right knob. |
+| `webui.host` | `127.0.0.1` | Bind address. Override only if you know which interface you want; usually **Expose on LAN** is the right knob. |
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
 | `webui.autoOpenBrowser` | `false` | Open the player in your browser automatically when the MCP server starts. (Running `navidrome-web` directly always opens a browser regardless.) |
 | `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player (and mpv) running after the MCP server closes/restarts. Toggle it live in the in-player gear modal too. |
@@ -271,11 +270,11 @@ When **Expose on LAN** is enabled, the player logs the LAN URLs it's reachable o
 
 1. Enable **Expose on LAN** in the settings page and Save.
 2. Restart the MCP client (or restart `navidrome-web`).
-3. Open the LAN URL from the startup log on your phone's browser — the player is reachable immediately, and you can start a playlist from the picker without touching the assistant. Bookmark it for one-tap access — the page is a single static HTML/CSS/JS bundle, no install required.
+3. Open the LAN URL from the startup log in your phone's browser. The player is reachable immediately; start a playlist from the picker without touching the assistant. Bookmark it for one-tap access (the page is a single static bundle, no install required).
 
 ### Security note
 
-The web UI has **no authentication** — anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
+The web UI has **no authentication**: anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
 
 - With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
 - With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation and starting playlists. The **player settings and the power button are loopback-only** (and hidden in the UI for remote browsers), so a phone on your LAN can control playback but can't change settings or shut the server down. The browser-based main settings page is likewise never exposed.
@@ -352,7 +351,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `get_tag_distribution` | Tag usage counts across the library |
 | `get_filter_options` | Discover available filter values for search operations |
 
-### Last.fm Discovery (requires `LASTFM_API_KEY`)
+### Last.fm Discovery (requires a Last.fm API key)
 
 | Tool | Description |
 |------|-------------|
@@ -362,7 +361,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `get_top_tracks_by_artist` | Top tracks for an artist |
 | `get_trending_music` | Trending artists, tracks, and tags from Last.fm charts |
 
-### Lyrics (requires `LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT`)
+### Lyrics (requires the LRCLIB provider, set in the settings page)
 
 | Tool | Description |
 |------|-------------|
@@ -378,7 +377,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `delete_radio_station` | Delete a station |
 | `validate_radio_stream` | Test an http(s) stream URL for accessibility and audio content |
 
-### Global Radio Discovery (requires `RADIO_BROWSER_USER_AGENT`)
+### Global Radio Discovery (requires a Radio Browser user agent)
 
 | Tool | Description |
 |------|-------------|
@@ -390,7 +389,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 
 ### Local Playback (requires [`mpv`](https://mpv.io/))
 
-Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket. By default playback streams the **original file** (**Transcode format** = `raw`, `playback.transcodeFormat`) for full quality and reliable seeking; set a codec to transcode for constrained bandwidth (see [First-run setup](#first-run-setup)).
+Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket. Playback streams the original file by default; set **Transcode format** to a codec for constrained bandwidth (see [First-run setup](#first-run-setup)).
 
 | Tool | Description |
 |------|-------------|
@@ -444,7 +443,7 @@ cd Navidrome-MCP
 pnpm install
 pnpm build
 node dist/config-app/main.js   # opens the settings page; fill in + Save
-# (writes settings.json to your OS config dir — see settings.example.json)
+# (writes settings.json to your OS config dir; see settings.example.json)
 
 pnpm dev          # hot reload
 pnpm test         # watch-mode tests
@@ -455,13 +454,13 @@ pnpm build        # production bundle
 
 ### Testing the standalone web player from a dev build
 
-This is the from-source path for trying the player **before it's published to npm** (the published package may lag behind `dev`). It applies to the MCP server too — both run from the same `dist/`.
+This is the from-source path for trying the player **before it's published to npm** (the published package may lag behind `dev`). It applies to the MCP server too; both run from the same `dist/`.
 
 ```bash
 # 1. Build (also bundles the web UI's static assets into dist/)
 pnpm build
 
-# 2. Configure, if you haven't — writes settings.json to your OS config dir
+# 2. Configure if needed; writes settings.json to your OS config dir
 node dist/config-app/main.js     # opens the settings page; fill in + Save
 
 # 3. Run the standalone player directly
@@ -476,10 +475,10 @@ pnpm make:launcher               # writes a shortcut to your Desktop + app menu
 
 **Windows notes** (PowerShell):
 
-- Use `pnpm build` then `node dist\web\main.js` — same as above with backslashes.
+- Use `pnpm build` then `node dist\web\main.js`, same as above with backslashes.
 - `pnpm make:launcher` writes `Navidrome Player.vbs` to your Desktop **and** Start Menu; it launches `node dist\web\main.js` with **no console window** and bakes in the absolute path to *this* checkout, so don't move the folder afterward (re-run it if you do).
 - If a redirected/OneDrive Desktop hides the file, the Start Menu copy still works (Start → type "Navidrome").
-- mpv must be installed and discoverable for playback to start — set `playback.mpvPath` in the settings page if it isn't on `PATH`.
+- mpv must be installed and discoverable for playback to start; set `playback.mpvPath` in the settings page if it isn't on `PATH`.
 
 When you publish, `npm install -g navidrome-mcp` puts `navidrome-web`, `navidrome-config`, and `navidrome-web-shortcut` on the user's `PATH`, so the same flows become `navidrome-web` / `navidrome-config` / `navidrome-web-shortcut` with no clone or build.
 
