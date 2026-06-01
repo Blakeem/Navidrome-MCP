@@ -45,7 +45,7 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
   });
 
   it('makes a single request for an album with <= MAX_ALBUM_TRACKS tracks', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
 
     const result = await playAlbums(client as never, {
       albumIds: ['album-1'],
@@ -55,7 +55,7 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
 
     expect(result.success).toBe(true);
     expect(result.trackCount).toBe(12);
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(1);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
     // Third arg is the optional metadata array — the engine ingests it into
     // its per-session cache so `get_play_queue` reports titles for the full
     // queue, not just mpv's current track. Mock-track rows omit title/etc.
@@ -69,7 +69,7 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
 
   it('paginates through a 1500-track boxset using X-Total-Count', async () => {
     // Three pages: 500 + 500 + 500 = 1500 total
-    client.requestWithMeta
+    client.requestWithLibraryFilterAndMeta
       .mockResolvedValueOnce({ data: trackPage(0, 500), total: 1500 })
       .mockResolvedValueOnce({ data: trackPage(500, 500), total: 1500 })
       .mockResolvedValueOnce({ data: trackPage(1000, 500), total: 1500 });
@@ -82,10 +82,10 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
 
     expect(result.success).toBe(true);
     expect(result.trackCount).toBe(1500);
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(3);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(3);
 
     // Verify pagination cursor moves forward correctly
-    const calls = client.requestWithMeta.mock.calls.map((c) => c[0]);
+    const calls = client.requestWithLibraryFilterAndMeta.mock.calls.map((c) => c[0]);
     expect(calls[0]).toContain('_start=0');
     expect(calls[0]).toContain('_end=500');
     expect(calls[1]).toContain('_start=500');
@@ -101,7 +101,7 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
 
   it('falls back to short-page heuristic when X-Total-Count is missing', async () => {
     // Server returns null total, second page is short → stop
-    client.requestWithMeta
+    client.requestWithLibraryFilterAndMeta
       .mockResolvedValueOnce({ data: trackPage(0, 500), total: null })
       .mockResolvedValueOnce({ data: trackPage(500, 87), total: null });
 
@@ -113,11 +113,11 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
 
     expect(result.success).toBe(true);
     expect(result.trackCount).toBe(587);
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(2);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(2);
   });
 
   it('stops when first page returns less than a full page', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
       data: trackPage(0, 250),
       total: null,
     });
@@ -130,11 +130,11 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
 
     expect(result.success).toBe(true);
     expect(result.trackCount).toBe(250);
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(1);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
   });
 
   it('stops when total is 0 (no tracks, single request)', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: [], total: 0 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
 
     await expect(
       playAlbums(client as never, {
@@ -144,6 +144,6 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
       }),
     ).rejects.toThrow(/No tracks found/);
 
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(1);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
   });
 });

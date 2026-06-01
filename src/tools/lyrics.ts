@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { LyricsDTO, LyricsLine } from '../types/index.js';
 import type { Config } from '../config.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
@@ -26,17 +26,7 @@ import {
   getExternalApiTimeoutMs,
 } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_USER_AGENT } from '../constants/defaults.js';
-
-/**
- * Schema for getting lyrics
- */
-const GetLyricsArgsSchema = z.object({
-  title: z.string(),
-  artist: z.string(),
-  album: z.string().optional(),
-  durationMs: z.number().min(0).optional(),
-  id: z.string().optional()
-});
+import { GetLyricsSchema } from '../schemas/index.js';
 
 /**
  * LRCLIB API response interface
@@ -83,7 +73,7 @@ function parseSyncedLyrics(lrcText: string): LyricsLine[] {
  * All other errors (5xx, 429, network failures) are re-thrown so the caller
  * can distinguish "service unavailable / misconfigured" from "not found".
  */
-async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>, config: Config): Promise<LRCLIBResponse | null> {
+async function tryExactMatch(params: z.infer<typeof GetLyricsSchema>, config: Config): Promise<LRCLIBResponse | null> {
   const url = new URL('/api/get', config.lrclibBase);
 
   if (params.id !== undefined && params.id !== '') {
@@ -128,7 +118,7 @@ async function tryExactMatch(params: z.infer<typeof GetLyricsArgsSchema>, config
  * Re-throws transport errors (5xx, 429, network failures) so the caller can
  * distinguish "service unavailable" from "no matching lyrics in LRCLIB".
  */
-async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config: Config): Promise<LRCLIBResponse | null> {
+async function searchLyrics(params: z.infer<typeof GetLyricsSchema>, config: Config): Promise<LRCLIBResponse | null> {
   const url = new URL('/api/search', config.lrclibBase);
   url.searchParams.set('query', `${params.title} ${params.artist}`);
   if (params.durationMs !== undefined) {
@@ -210,7 +200,7 @@ async function searchLyrics(params: z.infer<typeof GetLyricsArgsSchema>, config:
  * Get lyrics for a song
  */
 export async function getLyrics(config: Config, args: unknown): Promise<LyricsDTO> {
-  const params = GetLyricsArgsSchema.parse(args);
+  const params = GetLyricsSchema.parse(args);
 
   logger.debug('Tool getLyrics called with args:', params);
 

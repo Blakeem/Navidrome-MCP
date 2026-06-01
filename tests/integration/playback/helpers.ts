@@ -379,7 +379,7 @@ export async function playbackStatus(): Promise<PlaybackStatus> {
  * this single radio stream (per radio mutual-exclusion rule).
  */
 export async function playRadioStation(args: {
-  id: string;
+  stationId: string;
 }): Promise<Awaited<ReturnType<typeof playRadioStationTool>>> {
   const { client } = await ctx();
   return playRadioStationTool(client, args);

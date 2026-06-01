@@ -84,10 +84,13 @@ describe('NavidromeClient', () => {
         ([url]) => typeof url === 'string' && url.includes('/api/album/123'),
       );
       expect(apiCalls).toHaveLength(2);
-      const firstHeaders = (apiCalls[0]![1] as RequestInit).headers as Record<string, string>;
-      const retryHeaders = (apiCalls[1]![1] as RequestInit).headers as Record<string, string>;
-      expect(firstHeaders['X-ND-Authorization']).toBe('Bearer first');
-      expect(retryHeaders['X-ND-Authorization']).toBe('Bearer second');
+      // doFetch now merges headers via the Headers API (so a caller's
+      // `Headers` instance isn't silently dropped), so the value reaching
+      // fetch is a Headers object, not a plain record.
+      const firstHeaders = new Headers((apiCalls[0]![1] as RequestInit).headers);
+      const retryHeaders = new Headers((apiCalls[1]![1] as RequestInit).headers);
+      expect(firstHeaders.get('X-ND-Authorization')).toBe('Bearer first');
+      expect(retryHeaders.get('X-ND-Authorization')).toBe('Bearer second');
     });
 
     it('401 twice throws the standard HTTP error (one retry max)', async () => {
@@ -112,6 +115,51 @@ describe('NavidromeClient', () => {
       await expect(client.request('/album/123')).rejects.toThrow();
       // login + one request only — 500 is not retried.
       expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('doFetch header merge', () => {
+    // RequestInit.headers is HeadersInit (Headers | [k,v][] | object). The old
+    // object-spread merge silently dropped a caller's Headers instance, yielding
+    // `{}`. The Headers-API merge must preserve every form AND keep the default
+    // auth header. We assert a caller header actually reaches fetch.
+    it('preserves a caller-supplied header alongside the default auth header', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('tok'))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const client = new NavidromeClient(makeConfig());
+      await client.request('/album/123', {
+        headers: { 'X-Custom-Header': 'custom-value' },
+      });
+
+      const apiCall = mockFetch.mock.calls.find(
+        ([url]) => typeof url === 'string' && url.includes('/api/album/123'),
+      );
+      expect(apiCall).toBeDefined();
+      const sent = new Headers((apiCall![1] as RequestInit).headers);
+      // Caller header survives the merge...
+      expect(sent.get('X-Custom-Header')).toBe('custom-value');
+      // ...and the default auth header is still present.
+      expect(sent.get('X-ND-Authorization')).toBe('Bearer tok');
+    });
+
+    it('preserves a caller-supplied Headers instance (the form the old spread dropped)', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('tok'))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const client = new NavidromeClient(makeConfig());
+      await client.request('/album/123', {
+        headers: new Headers({ 'X-Custom-Header': 'from-headers-instance' }),
+      });
+
+      const apiCall = mockFetch.mock.calls.find(
+        ([url]) => typeof url === 'string' && url.includes('/api/album/123'),
+      );
+      const sent = new Headers((apiCall![1] as RequestInit).headers);
+      expect(sent.get('X-Custom-Header')).toBe('from-headers-instance');
+      expect(sent.get('X-ND-Authorization')).toBe('Bearer tok');
     });
   });
 
@@ -307,6 +355,19 @@ describe('NavidromeClient', () => {
 
     it('rejects endpoints with .. segments', async () => {
       await expect(client.request('/album/../user/admin')).rejects.toThrow(/path-traversal/);
+    });
+
+    it('rejects URL-encoded traversal (%2e%2e) that would normalize back to ..', async () => {
+      // The literal `..` check misses percent-encoded traversal, but Node
+      // decodes `%2e%2e` to `..` before the request leaves the process. The
+      // decode-and-recheck guard must reject it.
+      await expect(client.request('/album/%2e%2e/user/admin')).rejects.toThrow(/path-traversal/);
+    });
+
+    it('rejects endpoints with a malformed percent-encoding sequence', async () => {
+      // A lone `%` (no two hex digits) makes decodeURIComponent throw; we treat
+      // that as suspect and reject rather than letting it through.
+      await expect(client.request('/album/%zz')).rejects.toThrow(/malformed percent-encoding/);
     });
 
     it('rejects absolute URLs', async () => {

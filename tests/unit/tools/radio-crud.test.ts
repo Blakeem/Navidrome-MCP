@@ -142,7 +142,7 @@ describe('getRadioStation', () => {
       ])
     );
 
-    const result = await getRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-2' });
+    const result = await getRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-2' });
 
     expect(result.id).toBe('st-2');
     expect(result.name).toBe('NPR');
@@ -155,7 +155,7 @@ describe('getRadioStation', () => {
     );
 
     await expect(
-      getRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-999' })
+      getRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-999' })
     ).rejects.toThrow();
   });
 
@@ -178,7 +178,7 @@ describe('deleteRadioStation', () => {
   it('returns success: true and calls /deleteInternetRadioStation with the id', async () => {
     mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
-    const result = await deleteRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-1' });
+    const result = await deleteRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-1' });
 
     expect(result.success).toBe(true);
     expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
@@ -197,7 +197,7 @@ describe('deleteRadioStation', () => {
     mockClient.subsonicRequest.mockRejectedValue(new Error('Subsonic error'));
 
     await expect(
-      deleteRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-1' })
+      deleteRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-1' })
     ).rejects.toThrow();
   });
 });
@@ -219,13 +219,13 @@ describe('radio.ts Zod schema validation', () => {
 
   it('deleteRadioStation rejects non-string id', async () => {
     await expect(
-      deleteRadioStation(mockClient as unknown as NavidromeClient, { id: 42 })
+      deleteRadioStation(mockClient as unknown as NavidromeClient, { stationId: 42 })
     ).rejects.toThrow();
   });
 
   it('getRadioStation rejects empty-string id', async () => {
     await expect(
-      getRadioStation(mockClient as unknown as NavidromeClient, { id: '' })
+      getRadioStation(mockClient as unknown as NavidromeClient, { stationId: '' })
     ).rejects.toThrow();
   });
 

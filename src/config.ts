@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { ErrorFormatter } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { ConfigSchema, type Config } from './config/schema.js';
-import { readSettings } from './config/store.js';
+import { readSettings, type SettingsFile } from './config/store.js';
 import { mapStoreToConfig } from './config/map-config.js';
 import { getSettingsStorePath } from './config/store-path.js';
 
@@ -33,11 +33,19 @@ export type { Config } from './config/schema.js';
  * collected once through the settings GUI and persisted to disk. Throws when
  * the store is absent or incomplete — callers that need to branch into a
  * first-run/degraded flow should use {@link resolveConfigState} instead.
+ *
+ * @param settings - Optional already-read settings snapshot. When provided, it
+ *   is parsed directly instead of re-reading from disk; this lets a caller that
+ *   has already performed a presence check (e.g. {@link resolveConfigState})
+ *   parse the SAME snapshot, closing the TOCTOU window where a concurrent
+ *   settings save between two independent `readSettings()` disk reads could make
+ *   the guard and the parse disagree. When omitted, behaves exactly as before
+ *   (reads from disk).
  */
 // eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function; body is intentionally sync (ConfigSchema.parse + readSettings are synchronous)
-export async function loadConfig(): Promise<Config> {
-  const settings = readSettings();
-  if (settings === null) {
+export async function loadConfig(settings?: SettingsFile): Promise<Config> {
+  settings ??= readSettings() ?? undefined;
+  if (settings === undefined) {
     throw new Error(
       ErrorFormatter.configValidation([
         `No usable settings found at ${getSettingsStorePath()}.`,
@@ -78,7 +86,10 @@ export async function resolveConfigState(): Promise<ConfigState> {
   }
 
   try {
-    return { configured: true, config: await loadConfig() };
+    // Reuse the single `settings` snapshot already read above for the URL guard
+    // instead of letting loadConfig re-read from disk — a second independent
+    // read could observe a concurrent settings save and disagree with the guard.
+    return { configured: true, config: await loadConfig(settings) };
   } catch (err) {
     // Present but invalid → treat as unconfigured so the entry point opens the
     // settings GUI instead of crashing. Log the specific reason so a malformed

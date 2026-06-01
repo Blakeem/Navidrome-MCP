@@ -11,7 +11,7 @@ import type { PlaylistDTO } from '../../src/types/index.js';
  * Mock playlist data following the PlaylistDTO interface structure
  */
 export const mockPlaylist: PlaylistDTO = {
-  id: 'mock-playlist-id-001',
+  playlistId: 'mock-playlist-id-001',
   name: 'Mock Test Playlist',
   comment: 'A test playlist for unit testing',
   owner: 'test-user',

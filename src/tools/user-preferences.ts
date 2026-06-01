@@ -99,13 +99,13 @@ interface SetRatingResult {
 
 export async function starItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   try {
-    const { id, type } = StarItemSchema.parse(args);
+    const { itemId, type } = StarItemSchema.parse(args);
 
-    logger.debug('Tool starItem called with args:', { id, type });
-    logger.info(`Starring ${type}: ${id}`);
+    logger.debug('Tool starItem called with args:', { itemId, type });
+    logger.info(`Starring ${type}: ${itemId}`);
 
-    // Use Subsonic REST API for starring
-    const response = await client.subsonicRequest('/star', { id });
+    // Use Subsonic REST API for starring (wire param key stays `id`)
+    const response = await client.subsonicRequest('/star', { id: itemId });
 
     logger.debug('Star response:', response);
 
@@ -120,13 +120,13 @@ export async function starItem(client: NavidromeClient, _config: Config, args: u
 
 export async function unstarItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
   try {
-    const { id, type } = StarItemSchema.parse(args);
+    const { itemId, type } = StarItemSchema.parse(args);
 
-    logger.debug('Tool unstarItem called with args:', { id, type });
-    logger.info(`Unstarring ${type}: ${id}`);
+    logger.debug('Tool unstarItem called with args:', { itemId, type });
+    logger.info(`Unstarring ${type}: ${itemId}`);
 
-    // Use Subsonic REST API for unstarring
-    const response = await client.subsonicRequest('/unstar', { id });
+    // Use Subsonic REST API for unstarring (wire param key stays `id`)
+    const response = await client.subsonicRequest('/unstar', { id: itemId });
 
     logger.debug('Unstar response:', response);
 
@@ -141,14 +141,14 @@ export async function unstarItem(client: NavidromeClient, _config: Config, args:
 
 export async function setRating(client: NavidromeClient, _config: Config, args: unknown): Promise<SetRatingResult> {
   try {
-    const { id, type, rating } = SetRatingSchema.parse(args);
+    const { itemId, type, rating } = SetRatingSchema.parse(args);
 
-    logger.debug('Tool setRating called with args:', { id, type, rating });
-    logger.info(`Setting rating ${rating} for ${type}: ${id}`);
+    logger.debug('Tool setRating called with args:', { itemId, type, rating });
+    logger.info(`Setting rating ${rating} for ${type}: ${itemId}`);
 
-    // Use Subsonic REST API for setting rating
+    // Use Subsonic REST API for setting rating (wire param key stays `id`)
     const response = await client.subsonicRequest('/setRating', {
-      id,
+      id: itemId,
       rating: rating.toString()
     });
 

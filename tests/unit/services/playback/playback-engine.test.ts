@@ -369,3 +369,69 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
     expect(commands).not.toContain('stop');
   });
 });
+
+// ---------- radio → append demotion ----------
+
+describe("enqueue('append') radio demotion", () => {
+  it("demotes append to replace when the queue holds a radio stream", async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+
+    // Drive hasRadioStream() entirely through the IPC mock at the same seams
+    // the other unit tests use:
+    //   - get_property('playlist-count') > 0  → primes the cache so isRunning()
+    //     is true AND hasRadioStream()'s cheap cached-count check passes.
+    //   - get_property('playlist') returns a single radio entry whose filename
+    //     is non-HTTP, so the engine parses songId as null → the queue is seen
+    //     as containing a radio stream.
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'get_property' && args[1] === 'playlist-count') return 1;
+      if (cmd === 'get_property' && args[1] === 'playlist') {
+        return [{ filename: 'rtsp://radio.example/stream', current: true, playing: true }];
+      }
+      return null;
+    });
+
+    await playbackEngine.ensureRunning();
+
+    const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
+
+    // The append was demoted to replace because a radio stream was present.
+    expect(result).toEqual({ demoted: true });
+
+    // Observe the effective mode the way the other tests do — via the issued
+    // IPC commands. Replace-mode issues an explicit `playlist-clear`; a true
+    // append never clears the playlist. So the presence of playlist-clear is
+    // proof the effective mode became 'replace'.
+    const commands = ipc.command.mock.calls.map((c) => c[0] as string);
+    expect(commands).toContain('playlist-clear');
+  });
+
+  it("does NOT demote append when the queue holds only real songs", async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+
+    // playlist-count > 0 but every entry parses to a real songId (HTTP stream
+    // URL the engine built), so hasRadioStream() returns false and append stays
+    // append.
+    const songUrl = 'http://navidrome.test/rest/stream?id=song-existing&u=x&s=y&t=z';
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'get_property' && args[1] === 'playlist-count') return 1;
+      if (cmd === 'get_property' && args[1] === 'playlist') {
+        return [{ filename: songUrl, current: true, playing: true }];
+      }
+      return null;
+    });
+
+    await playbackEngine.ensureRunning();
+
+    const result = await playbackEngine.enqueue(['song-1'], 'append');
+
+    expect(result).toEqual({ demoted: false });
+    // A genuine append never clears the playlist.
+    const commands = ipc.command.mock.calls.map((c) => c[0] as string);
+    expect(commands).not.toContain('playlist-clear');
+  });
+});

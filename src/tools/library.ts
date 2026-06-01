@@ -158,12 +158,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        songId: {
           type: 'string',
-          description: 'The unique ID of the song',
+          description: 'The song ID, as returned by search_songs or list_* tools.',
         },
       },
-      required: ['id'],
+      required: ['songId'],
     },
   },
   {
@@ -172,12 +172,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        albumId: {
           type: 'string',
-          description: 'The unique ID of the album',
+          description: 'The album ID, as returned by search_albums or list_* tools.',
         },
       },
-      required: ['id'],
+      required: ['albumId'],
     },
   },
   {
@@ -186,12 +186,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        artistId: {
           type: 'string',
-          description: 'The unique ID of the artist',
+          description: 'The artist ID, as returned by search_artists or list_* tools.',
         },
       },
-      required: ['id'],
+      required: ['artistId'],
     },
   },
   {

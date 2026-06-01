@@ -184,12 +184,12 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        const result = await starItem(mockClient, config, { 
-          id: 'song-123',
+        const result = await starItem(mockClient, config, {
+          itemId: 'song-123',
           type: 'song'
         });
 
-        // Verify correct API call was made
+        // Verify correct API call was made (wire param key stays `id`)
         expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
           '/star',
           expect.objectContaining({
@@ -218,7 +218,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
         const result = await starItem(mockClient, config, {
-          id: 'album-456',
+          itemId: 'album-456',
           type: 'album'
         });
 
@@ -244,7 +244,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
         const result = await starItem(mockClient, config, {
-          id: 'artist-789',
+          itemId: 'artist-789',
           type: 'artist'
         });
 
@@ -266,7 +266,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
         const result = await starItem(mockClient, config, {
-          id: 'song-xyz',
+          itemId: 'song-xyz',
           type: 'songs',
         });
 
@@ -289,8 +289,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        const result = await unstarItem(mockClient, config, { 
-          id: 'song-123',
+        const result = await unstarItem(mockClient, config, {
+          itemId: 'song-123',
           type: 'song'
         });
 
@@ -317,8 +317,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        await unstarItem(mockClient, config, { 
-          id: 'album-456',
+        await unstarItem(mockClient, config, {
+          itemId: 'album-456',
           type: 'album'
         });
 
@@ -340,8 +340,8 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        await unstarItem(mockClient, config, { 
-          id: 'artist-789',
+        await unstarItem(mockClient, config, {
+          itemId: 'artist-789',
           type: 'artist'
         });
 
@@ -366,15 +366,15 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        const result = await setRating(mockClient, config, { 
-          id: 'song-123',
+        const result = await setRating(mockClient, config, {
+          itemId: 'song-123',
           type: 'song',
           rating: 5
         });
 
-        // Verify correct API call was made. `id`, `type`, and `rating` are
-        // not echoed back — they are LLM input echoes. The success+message
-        // confirms the round trip.
+        // Verify correct API call was made (wire param key stays `id`).
+        // `id`, `type`, and `rating` are not echoed back — they are LLM input
+        // echoes. The success+message confirms the round trip.
         expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
           '/setRating',
           expect.objectContaining({
@@ -403,7 +403,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
         const result = await setRating(mockClient, config, {
-          id: 'album-456',
+          itemId: 'album-456',
           type: 'album',
           rating: 3
         });
@@ -432,7 +432,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
         const result = await setRating(mockClient, config, {
-          id: 'song-123',
+          itemId: 'song-123',
           type: 'song',
           rating: 0
         });
@@ -461,7 +461,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
         const result = await setRating(mockClient, config, {
-          id: 'artist-789',
+          itemId: 'artist-789',
           type: 'artist',
           rating: 5
         });
@@ -483,7 +483,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockRejectedValue(new Error('Network connection failed'));
       
       await expect(
-        starItem(mockClient, config, { id: 'song-123', type: 'song' })
+        starItem(mockClient, config, { itemId: 'song-123', type: 'song' })
       ).rejects.toThrow('Network connection failed');
     });
 
@@ -491,7 +491,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockRejectedValue(new Error('Item not found'));
       
       await expect(
-        setRating(mockClient, config, { id: 'non-existent-id', type: 'song', rating: 3 })
+        setRating(mockClient, config, { itemId: 'non-existent-id', type: 'song', rating: 3 })
       ).rejects.toThrow('Item not found');
     });
 
@@ -499,7 +499,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockRejectedValue(new Error('Insufficient permissions'));
       
       await expect(
-        unstarItem(mockClient, config, { id: 'protected-song', type: 'song' })
+        unstarItem(mockClient, config, { itemId: 'protected-song', type: 'song' })
       ).rejects.toThrow('Insufficient permissions');
     });
   });
@@ -514,19 +514,19 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
     it('should validate required ID parameter for starring', async () => {
       await expect(
-        starItem(mockClient, config, { id: '', type: 'song' })
+        starItem(mockClient, config, { itemId: '', type: 'song' })
       ).rejects.toThrow();
     });
 
     it('should validate required type parameter', async () => {
       await expect(
-        starItem(mockClient, config, { id: 'song-123', type: '' })
+        starItem(mockClient, config, { itemId: 'song-123', type: '' })
       ).rejects.toThrow();
     });
 
     it('should validate item type enum values for starring', async () => {
       await expect(
-        starItem(mockClient, config, { id: 'song-123', type: 'invalid-type' })
+        starItem(mockClient, config, { itemId: 'song-123', type: 'invalid-type' })
       ).rejects.toThrow();
     });
 
@@ -539,12 +539,12 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
     it('should validate rating range values', async () => {
       // Test below minimum
       await expect(
-        setRating(mockClient, config, { id: 'song-123', type: 'song', rating: -1 })
+        setRating(mockClient, config, { itemId: 'song-123', type: 'song', rating: -1 })
       ).rejects.toThrow();
 
-      // Test above maximum  
+      // Test above maximum
       await expect(
-        setRating(mockClient, config, { id: 'song-123', type: 'song', rating: 6 })
+        setRating(mockClient, config, { itemId: 'song-123', type: 'song', rating: 6 })
       ).rejects.toThrow();
     });
 
@@ -742,7 +742,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
       const result = await starItem(mockClient, config, {
-        id: 'song-123',
+        itemId: 'song-123',
         type: 'song'
       });
 
@@ -757,7 +757,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
       const result = await unstarItem(mockClient, config, {
-        id: 'song-123',
+        itemId: 'song-123',
         type: 'song'
       });
 

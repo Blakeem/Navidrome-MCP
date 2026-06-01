@@ -438,6 +438,12 @@ class PlaybackEngine {
           // these via the change event shortly with the same values.
           this.propertyCache.set('playlist-count', 0);
           this.propertyCache.set('playlist-pos', null);
+          // Re-throwing exits withMutationLock before the success-path
+          // `emitStateChange` below runs, so subscribers (e.g. the SSE web-UI)
+          // would never learn the queue was just cleared. Emit the same queue
+          // event the success path emits, AFTER the clear/stop/cache-zero and
+          // BEFORE re-throwing, so the cleared state is broadcast even on failure.
+          this.emitStateChange({ kind: 'queue' });
           const reason = err instanceof Error ? err.message : String(err);
           throw new Error(`enqueue failed mid-sequence; queue was cleared and is now empty: ${reason}`);
         }
@@ -1189,14 +1195,6 @@ class PlaybackEngine {
   }
 
   /**
-   * Disconnect IPC from mpv. Does NOT kill the mpv process — mpv is intended
-   * to outlive the MCP server so playback persists across restarts. Use
-   * `pkill mpv` (or a future `stop_playback` tool) if you actually want to
-   * stop the audio.
-   *
-   * Idempotent.
-   */
-  /**
    * Quit the mpv PROCESS itself (not just our IPC socket), then tear down our
    * IPC state. Used by the web port owner's shutdown and the MCP-only exit path
    * (standalone-web spec §B.1). Distinct from `shutdown()`, which closes our
@@ -1214,6 +1212,15 @@ class PlaybackEngine {
     this.shutdown();
   }
 
+  /**
+   * Disconnect our IPC from mpv and reset all engine session state (cache,
+   * subscribers, version). Does NOT kill the mpv PROCESS — mpv is intended to
+   * outlive the MCP server so playback persists across restarts. Contrast with
+   * {@link quitMpv}, which sends `quit` to actually stop the audio before
+   * tearing down our connection.
+   *
+   * Idempotent; the engine can be restarted after an explicit shutdown.
+   */
   shutdown(): void {
     if (this.shuttingDown) return;
     this.shuttingDown = true;

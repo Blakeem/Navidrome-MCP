@@ -310,6 +310,34 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     ).rejects.toThrow();
   });
 
+  it('getLyrics rejects an empty title (schema dedup → stricter .min(1) validation)', async () => {
+    // After dedup onto the canonical GetLyricsSchema, title/artist carry .min(1),
+    // so an empty title is rejected before any network call. fetch must not run.
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy;
+
+    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const config = makeMockConfig();
+
+    await expect(
+      getLyrics(config, { title: '', artist: 'Radiohead' })
+    ).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('getLyrics rejects an empty artist (schema dedup → stricter .min(1) validation)', async () => {
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy;
+
+    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const config = makeMockConfig();
+
+    await expect(
+      getLyrics(config, { title: 'Creep', artist: '' })
+    ).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('getLyrics still returns "no lyrics found" shape on genuine 404 from /api/get (song not in LRCLIB)', async () => {
     // 404 on /api/get = song not in LRCLIB by exact lookup — legitimate "not found".
     // The search endpoint then returns 200 with an empty array (its standard "no results" shape).

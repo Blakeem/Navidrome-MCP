@@ -237,6 +237,55 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     });
   });
 
+  describe('getFilterOptions - input validation (FilterOptionsSchema)', () => {
+    it('rejects limit=0 instead of silently returning an empty list', async () => {
+      // Regression: limit=0 used to flow into slice(0,0) → [] with no error.
+      // The schema clamps limit to [1,200], so 0 is now rejected.
+      await expect(
+        filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 0 }),
+      ).rejects.toThrow();
+
+      // Sanity: a valid call against the same cache still returns data, proving
+      // the rejection above is the limit=0 guard and not an empty cache.
+      const ok = await filterCacheManager.getFilterOptions({ filterType: 'genres' });
+      expect(ok.available.length).toBeGreaterThan(0);
+    });
+
+    it('rejects an invalid filterType via the schema enum', async () => {
+      await expect(
+        filterCacheManager.getFilterOptions({ filterType: 'bogus' }),
+      ).rejects.toThrow();
+    });
+
+    it('rejects a missing filterType', async () => {
+      await expect(
+        filterCacheManager.getFilterOptions({ limit: 10 }),
+      ).rejects.toThrow();
+    });
+
+    it('defaults limit to 50 when omitted', async () => {
+      const result = await filterCacheManager.getFilterOptions({ filterType: 'genres' });
+      // Only 4 genres exist, so the default cap of 50 returns all of them.
+      expect(result.available).toHaveLength(4);
+      expect(result.total).toBe(4);
+    });
+
+    it('error message uses the registered tool name get_filter_options', async () => {
+      // Force the inner try/catch path: a valid schema parse, but the cache is
+      // not initialized, so getAvailableOptions throws and the catch wraps the
+      // error with the (now corrected) registered tool name.
+      filterCacheManager.reset();
+      try {
+        await filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 5 });
+        throw new Error('expected getFilterOptions to reject');
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain('get_filter_options');
+        expect((error as Error).message).not.toContain('getFilterOptions');
+      }
+    });
+  });
+
   describe('findSimilar functionality', () => {
     it('should find similar filter names', () => {
       const similar = filterCacheManager.findSimilar('genres', 'roc', 3);

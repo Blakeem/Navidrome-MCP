@@ -756,7 +756,7 @@
       meta.textContent = pl.durationFormatted ? `${count} · ${pl.durationFormatted}` : count;
       btn.appendChild(head);
       btn.appendChild(meta);
-      btn.addEventListener('click', () => void playPlaylist(pl.id, pl.name));
+      btn.addEventListener('click', () => void playPlaylist(pl.playlistId, pl.name));
       li.appendChild(btn);
       return li;
     }));

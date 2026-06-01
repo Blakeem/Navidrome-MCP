@@ -60,14 +60,14 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           const playlist = result.playlists[0];
           
           // Required fields from PlaylistDTO
-          expect(playlist).toHaveProperty('id');
+          expect(playlist).toHaveProperty('playlistId');
           expect(playlist).toHaveProperty('name');
           expect(playlist).toHaveProperty('owner');
           expect(playlist).toHaveProperty('public');
           expect(playlist).toHaveProperty('songCount');
-          
+
           // Verify field types
-          expect(typeof playlist.id).toBe('string');
+          expect(typeof playlist.playlistId).toBe('string');
           expect(typeof playlist.name).toBe('string');
           expect(typeof playlist.owner).toBe('string');
           expect(typeof playlist.public).toBe('boolean');
@@ -100,18 +100,18 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         const listResult = await listPlaylists(liveClient, { limit: 1 });
         
         if (listResult.playlists.length > 0) {
-          const playlistId = listResult.playlists[0].id;
-          const result = await getPlaylist(liveClient, { id: playlistId });
+          const playlistId = listResult.playlists[0].playlistId;
+          const result = await getPlaylist(liveClient, { playlistId });
 
           // Validate detailed playlist structure
-          expect(result).toHaveProperty('id');
+          expect(result).toHaveProperty('playlistId');
           expect(result).toHaveProperty('name');
           expect(result).toHaveProperty('owner');
           expect(result).toHaveProperty('public');
           expect(result).toHaveProperty('songCount');
           expect(result).toHaveProperty('durationFormatted');
-          
-          expect(result.id).toBe(playlistId);
+
+          expect(result.playlistId).toBe(playlistId);
         }
       });
     });
@@ -123,9 +123,9 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         const playlistWithTracks = listResult.playlists.find(p => p.songCount > 0);
         
         if (playlistWithTracks) {
-          const result = await getPlaylistTracks(liveClient, { 
-            playlistId: playlistWithTracks.id,
-            limit: 1 
+          const result = await getPlaylistTracks(liveClient, {
+            playlistId: playlistWithTracks.playlistId,
+            limit: 1
           });
 
           expect(result).toHaveProperty('tracks');
@@ -142,7 +142,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             expect(track).toHaveProperty('title');
             expect(track).toHaveProperty('artist');
             
-            expect(track.playlistId).toBe(playlistWithTracks.id);
+            expect(track.playlistId).toBe(playlistWithTracks.playlistId);
           }
         }
       });
@@ -190,7 +190,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
 
         // Verify response structure
-        expect(result).toHaveProperty('id');
+        expect(result).toHaveProperty('playlistId');
         expect(result).toHaveProperty('name');
         expect(result.name).toBe('Test Playlist');
       });
@@ -235,8 +235,8 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         
         mockClient.request.mockResolvedValue(mockResponse);
         
-        const result = await updatePlaylist(mockClient, { 
-          id: 'playlist-123',
+        const result = await updatePlaylist(mockClient, {
+          playlistId: 'playlist-123',
           name: 'Updated Playlist Name',
           comment: 'Updated description',
           public: true
@@ -261,7 +261,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       it('should delete playlist with correct ID parameter', async () => {
         mockClient.request.mockResolvedValue({ success: true });
         
-        const result = await deletePlaylist(mockClient, { id: 'playlist-to-delete' });
+        const result = await deletePlaylist(mockClient, { playlistId: 'playlist-to-delete' });
 
         expect(mockClient.request).toHaveBeenCalledWith(
           '/playlist/playlist-to-delete',
@@ -302,6 +302,56 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
 
         expect(result.added).toBe(2);
+        // Acknowledged HTTP call → success true regardless of count; count > 0
+        // gets the "Added N tracks" message.
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('Added 2 tracks to playlist');
+      });
+
+      it('should report a no-op (not a failure) when no new tracks were added', async () => {
+        // Navidrome acknowledges the POST but adds nothing because every
+        // requested track was already present. Success is decoupled from the
+        // count — the round trip succeeded, the change set is just empty.
+        mockClient.request.mockResolvedValue({ added: 0 });
+
+        const result = await addTracksToPlaylist(mockClient, {
+          playlistId: 'playlist-123',
+          songIds: ['song-1'],
+        });
+
+        expect(result.added).toBe(0);
+        expect(result.success).toBe(true);
+        expect(result.message).toBe(
+          'No new tracks added — all requested tracks are already in the playlist',
+        );
+      });
+
+      it('should default a missing `added` field to 0 (no-op message)', async () => {
+        // The response type says `{ added: number }` but Navidrome may omit
+        // it; the guard must not produce NaN or undefined.
+        mockClient.request.mockResolvedValue({});
+
+        const result = await addTracksToPlaylist(mockClient, {
+          playlistId: 'playlist-123',
+          songIds: ['song-1'],
+        });
+
+        expect(result.added).toBe(0);
+        expect(result.success).toBe(true);
+        expect(result.message).toBe(
+          'No new tracks added — all requested tracks are already in the playlist',
+        );
+      });
+
+      it('should use singular "track" for a single add', async () => {
+        mockClient.request.mockResolvedValue({ added: 1 });
+
+        const result = await addTracksToPlaylist(mockClient, {
+          playlistId: 'playlist-123',
+          songIds: ['song-1'],
+        });
+
+        expect(result.message).toBe('Added 1 track to playlist');
       });
 
       it('should add entire albums to playlist', async () => {
@@ -455,6 +505,49 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
 
         expect(result.ids).toEqual(['1', '3']);
+        expect(result.success).toBe(true);
+        expect(result.message).toBe('Removed 2 tracks from playlist');
+      });
+
+      it('should report a no-op (not a failure) when nothing matched', async () => {
+        // DELETE acknowledged but no IDs matched (none of the specified tracks
+        // were in the playlist). Success stays true; the empty change set is
+        // conveyed via the message.
+        mockClient.request.mockResolvedValue({ ids: [] });
+
+        const result = await removeTracksFromPlaylist(mockClient, {
+          playlistId: 'playlist-123',
+          trackIds: ['9'],
+        });
+
+        expect(result.ids).toEqual([]);
+        expect(result.success).toBe(true);
+        expect(result.message).toBe(
+          'No tracks removed — none of the specified tracks were in the playlist',
+        );
+      });
+
+      it('should default a missing/null `ids` field to an empty list', async () => {
+        mockClient.request.mockResolvedValue({ ids: null });
+
+        const result = await removeTracksFromPlaylist(mockClient, {
+          playlistId: 'playlist-123',
+          trackIds: ['9'],
+        });
+
+        expect(result.ids).toEqual([]);
+        expect(result.success).toBe(true);
+      });
+
+      it('should use singular "track" for a single removal', async () => {
+        mockClient.request.mockResolvedValue({ ids: ['2'] });
+
+        const result = await removeTracksFromPlaylist(mockClient, {
+          playlistId: 'playlist-123',
+          trackIds: ['2'],
+        });
+
+        expect(result.message).toBe('Removed 1 track from playlist');
       });
     });
 
@@ -507,7 +600,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       mockClient.request.mockRejectedValue(new Error('Playlist not found'));
       
       await expect(
-        getPlaylist(mockClient, { id: 'non-existent-id' })
+        getPlaylist(mockClient, { playlistId: 'non-existent-id' })
       ).rejects.toThrow('Playlist not found');
     });
 
@@ -515,7 +608,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       mockClient.request.mockRejectedValue(new Error('Insufficient permissions'));
       
       await expect(
-        deletePlaylist(mockClient, { id: 'protected-playlist' })
+        deletePlaylist(mockClient, { playlistId: 'protected-playlist' })
       ).rejects.toThrow('Insufficient permissions');
     });
   });
@@ -536,7 +629,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
 
     it('should validate playlist ID format', async () => {
       await expect(
-        getPlaylist(mockClient, { id: '' })
+        getPlaylist(mockClient, { playlistId: '' })
       ).rejects.toThrow();
     });
 

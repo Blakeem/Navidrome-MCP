@@ -199,6 +199,14 @@ export class ScrobbleTracker {
     // Already tracking this exact song — either a concurrent property-change
     // handler hydrated, or the queue mutation didn't displace the current
     // track. No-op in either case.
+    //
+    // Accepted edge (intentionally NOT corrected): replaying the EXACT
+    // currently-playing song after it has already scrobbled this cycle will
+    // not start a fresh scrobble cycle — this early-return treats it as a
+    // no-op. This is a known, accepted limitation: first-play tracking and
+    // switch-away-then-back both behave correctly, and returning here leaves
+    // tracker state uncorrupted, so the only effect is the rare "scrobble the
+    // same song twice in a row" case isn't counted again.
     if (entry.songId !== null && entry.songId === this.currentSongId) return;
     this.reset();
     this.lastPlaylistPos = cachedPos;

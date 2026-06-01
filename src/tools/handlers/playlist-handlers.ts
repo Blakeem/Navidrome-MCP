@@ -67,6 +67,12 @@ const tools: Tool[] = [
           enum: ['ASC', 'DESC'],
           default: 'ASC',
         },
+        onlyWithPlayableTracks: {
+          type: 'boolean',
+          description:
+            'When true, return only playlists containing at least one track in the currently active libraries (useful when the user asks what they can play). Default false returns all playlists.',
+          default: false,
+        },
       },
     },
   },
@@ -76,12 +82,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        playlistId: {
           type: 'string',
-          description: 'The unique ID of the playlist',
+          description: 'The playlist ID, as returned by the `list_playlists` tool.',
         },
       },
-      required: ['id'],
+      required: ['playlistId'],
     },
   },
   {
@@ -113,9 +119,9 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        playlistId: {
           type: 'string',
-          description: 'The unique ID of the playlist to update',
+          description: 'The playlist ID, as returned by the `list_playlists` tool.',
         },
         name: {
           type: 'string',
@@ -130,7 +136,7 @@ const tools: Tool[] = [
           description: 'New public visibility setting',
         },
       },
-      required: ['id'],
+      required: ['playlistId'],
     },
   },
   {
@@ -139,12 +145,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        playlistId: {
           type: 'string',
-          description: 'The unique ID of the playlist to delete',
+          description: 'The playlist ID, as returned by the `list_playlists` tool.',
         },
       },
-      required: ['id'],
+      required: ['playlistId'],
     },
   },
   {

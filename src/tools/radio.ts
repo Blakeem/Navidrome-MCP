@@ -19,7 +19,7 @@ import { isHttpUrlScheme } from '../utils/network-safety.js';
 // Zod schemas for radio tool arguments — used instead of `args as { ... }` casts
 // to catch invalid inputs before they reach the Subsonic API.
 const RadioStationIdSchema = z.object({
-  id: z.string().min(1, 'Radio station ID is required'),
+  stationId: z.string().min(1, 'Radio station ID is required'),
 });
 
 // Per-station name/url validation is intentionally kept in the loop below so
@@ -474,7 +474,7 @@ export async function deleteRadioStation(
 
     logger.debug('Tool deleteRadioStation called with args:', params);
 
-    await client.subsonicRequest('/deleteInternetRadioStation', { id: params.id });
+    await client.subsonicRequest('/deleteInternetRadioStation', { id: params.stationId });
 
     // Drop the cached station snapshot — a subsequent get_radio_station(deleted-id)
     // would otherwise return the stale row and confuse the LLM.
@@ -515,10 +515,10 @@ export async function getRadioStation(
     // we'll get all stations and filter by ID. listRadioStations handles
     // the cache lookup when config is provided.
     const allStations = await listRadioStations(client, {}, config);
-    const station = allStations.stations.find(s => s.id === params.id);
+    const station = allStations.stations.find(s => s.id === params.stationId);
 
     if (!station) {
-      throw new Error(`Radio station with ID ${params.id} not found`);
+      throw new Error(`Radio station with ID ${params.stationId} not found`);
     }
 
     return station;
@@ -558,11 +558,11 @@ export async function playRadioStation(
   config?: Config
 ): Promise<PlayRadioStationResult> {
   try {
-    const { id } = RadioStationIdSchema.parse(args);
+    const { stationId } = RadioStationIdSchema.parse(args);
 
-    logger.debug('Tool playRadioStation called with args:', { id });
+    logger.debug('Tool playRadioStation called with args:', { stationId });
 
-    const station = await getRadioStation(client, { id }, config);
+    const station = await getRadioStation(client, { stationId }, config);
 
     if (typeof station.streamUrl !== 'string' || station.streamUrl.trim() === '') {
       throw new Error(`Radio station "${station.name}" has no stream URL`);

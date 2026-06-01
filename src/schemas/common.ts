@@ -30,13 +30,18 @@ export const IdSchema = z.object({
   id: z.string().min(1, 'ID is required').regex(ID_PATTERN, 'ID contains invalid characters'),
 });
 
-// Required ID with custom message
+// Required ID with custom message. Generic over the literal field name so the
+// computed key stays a precise `{ [field]: string }` shape rather than widening
+// to an index signature (which would trip noPropertyAccessFromIndexSignature /
+// noUncheckedIndexedAccess at every call site). The cast restores the literal
+// key that the `[fieldName]` computed-property syntax erases.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory; return type inferred by zod, explicit annotation would be unwieldy
-export const createIdSchema = (resourceType: string) => z.object({
-  id: z.string()
-    .min(1, `${resourceType} ID is required`)
-    .regex(ID_PATTERN, `${resourceType} ID contains invalid characters`),
-});
+export const createIdSchema = <F extends string = 'id'>(resourceType: string, fieldName: F = 'id' as F) =>
+  z.object({
+    [fieldName]: z.string()
+      .min(1, `${resourceType} ID is required`)
+      .regex(ID_PATTERN, `${resourceType} ID contains invalid characters`),
+  } as { [K in F]: z.ZodString });
 
 // Search query schema
 export const SearchQuerySchema = z.object({
@@ -176,8 +181,8 @@ export const SearchArtistsSchema = EnhancedSearchSchema.omit({ year: true }).ext
 });
 
 // Common validation schemas for different resource types
-export const PlaylistIdSchema = createIdSchema('Playlist');
-export const SongIdSchema = createIdSchema('Song');
-export const ArtistIdSchema = createIdSchema('Artist');
-export const AlbumIdSchema = createIdSchema('Album');
+export const PlaylistIdSchema = createIdSchema('Playlist', 'playlistId');
+export const SongIdSchema = createIdSchema('Song', 'songId');
+export const ArtistIdSchema = createIdSchema('Artist', 'artistId');
+export const AlbumIdSchema = createIdSchema('Album', 'albumId');
 export const TagIdSchema = createIdSchema('Tag');

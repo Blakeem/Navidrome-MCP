@@ -221,6 +221,19 @@ export class NavidromeClient {
     if (endpoint.includes('..')) {
       throw new Error('Endpoint must not contain path-traversal segments');
     }
+    // URL-encoded traversal (`%2e%2e`) survives the literal check above but
+    // Node normalizes it back to `..` before the request leaves the process.
+    // Decode and re-check; a malformed escape sequence is itself suspect, so
+    // reject it rather than letting it through.
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(endpoint);
+    } catch {
+      throw new Error('Endpoint contains a malformed percent-encoding sequence');
+    }
+    if (decoded.includes('..')) {
+      throw new Error('Endpoint must not contain path-traversal segments');
+    }
     if (/^https?:\/\//i.test(endpoint)) {
       throw new Error('Endpoint must be a path, not an absolute URL');
     }
@@ -247,14 +260,23 @@ export class NavidromeClient {
     const method = options.method ?? 'GET';
     const isIdempotent = method === 'GET' || method === 'HEAD';
 
+    // RequestInit.headers is HeadersInit, which can be a Headers instance, a
+    // [k, v][] tuple array, or a plain object. Object-spreading a Headers
+    // instance yields `{}` and silently drops the caller's headers, so merge
+    // via the Headers API to preserve every form. Caller headers win on
+    // collision (last write).
+    const merged = new Headers(defaultHeaders);
+    if (options.headers !== undefined) {
+      new Headers(options.headers).forEach((value, key) => {
+        merged.set(key, value);
+      });
+    }
+
     return fetchWithTimeout(
       `${this.baseUrl}/api${endpoint}`,
       {
         ...options,
-        headers: {
-          ...defaultHeaders,
-          ...options.headers,
-        },
+        headers: merged,
       },
       {
         timeoutMs: getNavidromeRequestTimeoutMs(),
@@ -288,6 +310,13 @@ export class NavidromeClient {
         // Body looked like JSON but didn't parse — fall through to text.
       }
     }
+    // KNOWN LATENT TRAP (left as-is per maintainer decision): this cast is only
+    // sound when `T` is `string` or `unknown` — i.e. callers that genuinely want
+    // the raw text/plain body (M3U export, etc.). A future typed caller such as
+    // `request<AlbumDTO[]>()` whose endpoint returns a non-JSON text/plain body
+    // would silently receive a raw string typed as `AlbumDTO[]`, with no parse
+    // error. No current caller hits that path; revisit if a typed JSON caller
+    // starts relying on the text/plain fallthrough.
     return text as T;
   }
 }

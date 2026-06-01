@@ -37,13 +37,21 @@ import { logger } from '../utils/logger.js';
 import { MAX_ALBUM_PAGES, MAX_ALBUM_TRACKS } from '../constants/defaults.js';
 
 interface PauseResult {
-  success: true;
-  paused: true;
+  success: boolean;
+  // Present only on a successful pause. Omitted when there was nothing to
+  // pause (no live mpv — e.g. the player was powered off), in which case
+  // `success` is false and `message` explains why.
+  paused?: true;
+  message?: string;
 }
 
 interface ResumeResult {
-  success: true;
-  paused: false;
+  success: boolean;
+  // Present only on a successful resume. Omitted when there was nothing to
+  // resume (no live mpv — e.g. the player was powered off), in which case
+  // `success` is false and `message` explains why.
+  paused?: false;
+  message?: string;
 }
 
 interface SetVolumeResult {
@@ -99,15 +107,18 @@ interface PlayPlaylistResult {
 }
 
 interface NextResult {
-  success: true;
+  success: boolean;
+  message?: string;
 }
 
 interface PreviousResult {
-  success: true;
+  success: boolean;
+  message?: string;
 }
 
 interface SeekResult {
-  success: true;
+  success: boolean;
+  message?: string;
 }
 
 interface NowPlayingResult {
@@ -172,7 +183,8 @@ interface RemoveFromPlayQueueResult {
 }
 
 interface PlayQueueIndexResult {
-  success: true;
+  success: boolean;
+  message?: string;
 }
 
 const SetVolumeSchema = z.object({
@@ -228,11 +240,18 @@ const PlayQueueIndexSchema = z.object({
 });
 
 /**
- * Pause local audio playback. Lazy-spawns mpv on first call.
+ * Pause local audio playback. Attaches to a live mpv but never spawns one:
+ * pausing a freshly-spawned, empty mpv is meaningless. If no mpv is running
+ * (e.g. the web player was powered off), there is nothing to pause — report
+ * that instead of resurrecting an empty player.
  */
 export async function pause(_args: unknown): Promise<PauseResult> {
   try {
     logger.debug('playback: pause');
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { success: false, message: 'Nothing to pause — no active playback.' };
+    }
     await playbackEngine.pause();
     return { success: true, paused: true };
   } catch (error) {
@@ -241,11 +260,19 @@ export async function pause(_args: unknown): Promise<PauseResult> {
 }
 
 /**
- * Resume local audio playback. Lazy-spawns mpv on first call.
+ * Resume local audio playback. Attaches to a live mpv but never spawns one:
+ * resuming against a freshly-spawned, empty mpv would just unpause silence.
+ * If no mpv is running (e.g. the web player was powered off, taking mpv with
+ * it), there is nothing to resume — report that instead of resurrecting an
+ * empty player. Start playback with a `play_*` tool to get audio back.
  */
 export async function resume(_args: unknown): Promise<ResumeResult> {
   try {
     logger.debug('playback: resume');
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { success: false, message: 'Nothing to resume — no active playback. Start something with a play tool.' };
+    }
     await playbackEngine.resume();
     return { success: true, paused: false };
   } catch (error) {
@@ -313,17 +340,26 @@ export async function playSongs(client: NavidromeClient, args: unknown): Promise
       logger.debug(`playback: shuffled song order: ${ordered.join(',')}`);
     }
 
-    // Best-effort metadata lookup so `get_play_queue` reports titles for
-    // every queue entry, not just the one mpv is currently spinning.
-    // Failures here don't block enqueue — the queue itself is the load-bearing
-    // operation; metadata is a UX nicety.
-    const metadata = await fetchSongMetadata(client, ordered);
+    // Resolve metadata AND scope to the active libraries in one pass. The
+    // `/song?id=<csv>&library_id=X` lookup drops IDs outside the active
+    // libraries, so the rows it returns ARE the play-eligible set. We then
+    // restrict the enqueue list to exactly those IDs (preserving the
+    // requested/shuffled order) so playback and queue metadata stay
+    // consistent — we never enqueue a song we couldn't resolve, avoiding a
+    // "plays but missing metadata" (or out-of-library) state.
+    const metadata = await fetchSongMetadata(client, ordered, { scopeToActiveLibraries: true });
+    const playable = new Set(metadata.map((m) => m.songId));
+    const enqueueIds = ordered.filter((id) => playable.has(id));
 
-    const { demoted } = await playbackEngine.enqueue(ordered, parsed.mode, metadata);
+    if (enqueueIds.length === 0) {
+      throw new Error('No playable songs in the active libraries for the requested IDs');
+    }
+
+    const { demoted } = await playbackEngine.enqueue(enqueueIds, parsed.mode, metadata);
 
     const out: PlaySongsResult = {
       success: true,
-      count: ordered.length,
+      count: enqueueIds.length,
     };
     if (demoted) out.demoted = true;
     return out;
@@ -653,7 +689,11 @@ async function fetchAlbumTrackIds(
       _order: 'ASC',
     });
     const endpoint = `/song?${params.toString()}`;
-    const { data, total } = await client.requestWithMeta<unknown>(endpoint);
+    // Scope to the active libraries so a multi-library setup never enqueues
+    // tracks from a deactivated library. When libraryManager isn't
+    // initialized or every library is active, this behaves like the
+    // unfiltered request.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(endpoint);
     if (page === 0) totalReported = total;
 
     if (!Array.isArray(data)) {
@@ -727,7 +767,10 @@ async function fetchPlaylistTrackIds(
       _end: String(start + MAX_ALBUM_TRACKS),
     });
     const endpoint = `/playlist/${encodeURIComponent(playlistId)}/tracks?${params.toString()}`;
-    const { data, total } = await client.requestWithMeta<unknown>(endpoint);
+    // Scope to the active libraries — `/playlist/{id}/tracks?library_id=X`
+    // filters tracks (and X-Total-Count reflects the filtered count), so a
+    // multi-library setup never enqueues tracks from a deactivated library.
+    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(endpoint);
     if (page === 0) totalReported = total;
 
     if (!Array.isArray(data)) {
@@ -788,6 +831,7 @@ async function fetchPlaylistTrackIds(
 async function fetchSongMetadata(
   client: NavidromeClient,
   songIds: readonly string[],
+  options: { scopeToActiveLibraries?: boolean } = {},
 ): Promise<QueueTrackMetadata[]> {
   if (songIds.length === 0) return [];
   const CHUNK_SIZE = 100;
@@ -804,7 +848,14 @@ async function fetchSongMetadata(
     params.set('_end', String(chunk.length));
     const endpoint = `/song?${params.toString()}`;
     try {
-      const data = await client.request<unknown>(endpoint);
+      // When scoping is requested (the enqueue path), `/song?...&library_id=X`
+      // drops songs outside the active libraries, so the returned rows ARE the
+      // play-eligible set. Otherwise (queue enrichment for already-playing
+      // tracks) we look up by id unfiltered so a track in a now-deactivated
+      // library still gets its title/artist.
+      const data = options.scopeToActiveLibraries === true
+        ? await client.requestWithLibraryFilter<unknown>(endpoint)
+        : await client.request<unknown>(endpoint);
       if (!Array.isArray(data)) continue;
       for (const track of data) {
         if (typeof track !== 'object' || track === null) continue;
@@ -828,11 +879,17 @@ async function fetchSongMetadata(
 }
 
 /**
- * Skip to the next track in mpv's playlist.
+ * Skip to the next track in mpv's playlist. Attach-only (never spawns): the
+ * play queue lives inside mpv, so with no live mpv there is no queue to
+ * navigate. Report an empty queue rather than spawning an empty player.
  */
 export async function next(_args: unknown): Promise<NextResult> {
   try {
     logger.debug('playback: next');
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { success: false, message: 'The play queue is empty — nothing to skip to. Start something with a play tool.' };
+    }
     await playbackEngine.next();
     return { success: true };
   } catch (error) {
@@ -841,11 +898,16 @@ export async function next(_args: unknown): Promise<NextResult> {
 }
 
 /**
- * Skip to the previous track in mpv's playlist.
+ * Skip to the previous track in mpv's playlist. Attach-only (never spawns) —
+ * same rationale as {@link next}.
  */
 export async function previous(_args: unknown): Promise<PreviousResult> {
   try {
     logger.debug('playback: previous');
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { success: false, message: 'The play queue is empty — nothing to skip to. Start something with a play tool.' };
+    }
     await playbackEngine.previous();
     return { success: true };
   } catch (error) {
@@ -854,7 +916,9 @@ export async function previous(_args: unknown): Promise<PreviousResult> {
 }
 
 /**
- * Seek within the currently playing track.
+ * Seek within the currently playing track. Attach-only (never spawns): there is
+ * nothing to seek within when no mpv is running, so report that rather than
+ * spawning an empty player (matches next/previous/resume/pause).
  */
 export async function seek(args: unknown): Promise<SeekResult> {
   let parsed: z.infer<typeof SeekSchema>;
@@ -866,6 +930,10 @@ export async function seek(args: unknown): Promise<SeekResult> {
 
   try {
     logger.debug(`playback: seek seconds=${parsed.seconds} mode=${parsed.mode}`);
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { success: false, message: 'Nothing to seek — no active playback.' };
+    }
     await playbackEngine.seek(parsed.seconds, parsed.mode);
     return { success: true };
   } catch (error) {
@@ -1168,6 +1236,13 @@ export async function playQueueIndex(args: unknown): Promise<PlayQueueIndexResul
 
   try {
     logger.debug(`playback: play_queue_index index=${parsed.index}`);
+    // Attach-only (never spawns): the queue lives in mpv, so with no live mpv
+    // there is no entry to jump to. Report an empty queue rather than spawning
+    // an empty player (matches next/previous).
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { success: false, message: 'The play queue is empty — nothing to jump to. Start something with a play tool.' };
+    }
     await playbackEngine.jumpToPlaylistEntry(parsed.index);
     return { success: true };
   } catch (error) {

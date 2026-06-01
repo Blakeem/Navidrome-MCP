@@ -33,12 +33,19 @@ export const createPaginationSchema = (
   order: OrderSchema,
 });
 
-// Specific pagination schemas for different resources
+// Specific pagination schemas for different resources.
+//
+// `onlyWithPlayableTracks` (default false) gates an extra per-playlist probe:
+// when true, `list_playlists` returns only playlists with >=1 track in the
+// currently active libraries. Default false preserves the full management view
+// (so the LLM can still add songs to empty/other-library playlists).
 export const PlaylistPaginationSchema = createPaginationSchema(
   DEFAULT_VALUES.PLAYLISTS_LIMIT,
   500,
   'name'
-);
+).extend({
+  onlyWithPlayableTracks: z.boolean().optional().default(false),
+});
 
 export const AlbumPaginationSchema = createPaginationSchema(
   DEFAULT_VALUES.ALBUMS_LIMIT,

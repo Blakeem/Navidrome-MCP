@@ -34,12 +34,12 @@ import {
 
 // User preferences validation
 export const StarItemSchema = z.object({
-  id: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
+  itemId: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
   type: ItemTypeSchema,
 });
 
 export const SetRatingSchema = z.object({
-  id: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
+  itemId: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
   type: ItemTypeSchema,
   rating: RatingSchema,
 });
@@ -52,7 +52,7 @@ export const CreatePlaylistSchema = z.object({
 });
 
 export const UpdatePlaylistSchema = z.object({
-  id: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required'),
   name: z.string().min(1).optional(),
   comment: z.string().optional(),
   public: OptionalBooleanSchema,
@@ -196,6 +196,15 @@ export const GetLyricsSchema = z.object({
   album: z.string().optional(),
   durationMs: z.number().min(0).optional(),
   id: z.string().optional(),
+});
+
+// Filter options discovery schema (get_filter_options tool).
+// The six filterType values mirror the FilterType union in
+// services/filter-cache-manager.ts. `limit` is clamped to [1,200]; a `limit`
+// of 0 (which would silently produce slice(0,0) → an empty list) is rejected.
+export const FilterOptionsSchema = z.object({
+  filterType: z.enum(['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods']),
+  limit: z.number().int().min(1).max(200).optional().default(50),
 });
 
 // Test connection schema

@@ -143,7 +143,10 @@ async function main(): Promise<void> {
     // Covers MCP-only mode and the spawn-failed case. Probe is loopback.
     if (config.features.playback) {
       let stopping = false;
-      const onExit = (): void => {
+      // Exit with the conventional 128 + signal number so a supervisor sees
+      // signal termination (SIGINT → 130, SIGTERM → 143) rather than a clean
+      // 0 that masks the fact we were killed. Teardown is identical for both.
+      const makeExit = (signo: number) => (): void => {
         if (stopping) return;
         stopping = true;
         void (async (): Promise<void> => {
@@ -156,11 +159,11 @@ async function main(): Promise<void> {
           } catch {
             /* best-effort */
           }
-          process.exit(0);
+          process.exit(128 + signo);
         })();
       };
-      process.once('SIGINT', onExit);
-      process.once('SIGTERM', onExit);
+      process.once('SIGINT', makeExit(2));
+      process.once('SIGTERM', makeExit(15));
     }
 
     const transport = new StdioServerTransport();

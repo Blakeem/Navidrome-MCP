@@ -55,7 +55,7 @@ export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
   const owner = rawPlaylist.ownerName ?? rawPlaylist.owner ?? '';
 
   const dto: PlaylistDTO = {
-    id: rawPlaylist.id,
+    playlistId: rawPlaylist.id,
     name: rawPlaylist.name || '',
     public: rawPlaylist.public || false,
     songCount: rawPlaylist.songCount || 0,

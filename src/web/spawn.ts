@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { probeHealthz } from './acquire.js';
+import { probeHealthz, type ProbeOutcome } from './acquire.js';
 
 /**
  * In-process double-spawn guard (spec §6.2): a transient probe miss must not
@@ -105,6 +105,18 @@ export async function ensureWebServerRunning(config: Config): Promise<WebServerS
     return 'unavailable';
   }
 
+  return spawnWebChild(config);
+}
+
+/**
+ * Spawn the `navidrome-web` IPC child and set the in-process `spawned` guard.
+ * Shared by the startup path ({@link ensureWebServerRunning}) and the
+ * respawn-on-play path ({@link ensureWebForPlayback}) so both launch the child
+ * identically. Assumes the caller has already probed and decided a spawn is
+ * warranted (port is free / `refused`). Best-effort and non-throwing: returns
+ * `'spawned'` on a successful launch, `'unavailable'` if `spawn` itself throws.
+ */
+function spawnWebChild(config: Config): WebServerStatus {
   const target = resolveLaunchTarget();
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -138,5 +150,75 @@ export async function ensureWebServerRunning(config: Config): Promise<WebServerS
   } catch (err) {
     logger.warn('failed to spawn navidrome-web:', err);
     return 'unavailable';
+  }
+}
+
+/**
+ * Injectable seam for {@link ensureWebForPlayback} — lets unit tests drive the
+ * probe/spawn decision without real sockets or child processes.
+ */
+export interface RespawnDeps {
+  probe: (port: number) => Promise<ProbeOutcome>;
+  spawn: (config: Config) => WebServerStatus;
+}
+
+const DEFAULT_RESPAWN_DEPS: RespawnDeps = { probe: probeHealthz, spawn: spawnWebChild };
+
+/**
+ * In-flight coalescer: two rapid play calls must not both probe-and-spawn. The
+ * first call's promise is shared until it settles, then cleared. (Cross-process
+ * double-spawn is already harmless via port-as-lock; this just keeps a single
+ * MCP process tidy.)
+ */
+let respawnInFlight: Promise<WebServerStatus> | null = null;
+
+/**
+ * Re-ensure the web player is up at the moment playback STARTS (respawn-on-play,
+ * the counterpart to the startup spawn in `index.ts`). Called from the play
+ * tool handlers BEFORE they enqueue, so the web UI is present to own + scrobble
+ * the play it's about to trigger.
+ *
+ * Unlike {@link ensureWebServerRunning}, this ALWAYS probes `/healthz` fresh and
+ * ignores the module-level `spawned` latch. That latch is set once at startup
+ * and only resets on a *spawn error* — so after the user powers the player off
+ * mid-session, the latch is stale-true and the startup function would wrongly
+ * short-circuit. A live probe is the only honest signal of whether the server
+ * is actually up.
+ *
+ * Gated on `features.playback && webui.enabled`: when the UI is disabled the MCP
+ * process owns mpv itself (and tears it down on exit), so we must NOT spawn a
+ * web player here. Outcomes:
+ * - `ours`    → already running, nothing to do.
+ * - `refused` → server is down (e.g. powered off) → spawn it.
+ * - `foreign` → port taken by another app → warn-skip (don't fight for it).
+ */
+export async function ensureWebForPlayback(
+  config: Config,
+  deps: RespawnDeps = DEFAULT_RESPAWN_DEPS,
+): Promise<WebServerStatus> {
+  if (!config.features.playback || !config.webui.enabled) return 'unavailable';
+  if (respawnInFlight) return respawnInFlight;
+
+  respawnInFlight = (async (): Promise<WebServerStatus> => {
+    const probe = await deps.probe(config.webui.port);
+    if (probe === 'ours') {
+      spawned = true;
+      return 'running';
+    }
+    if (probe === 'foreign') {
+      logger.warn(
+        `Web UI port ${config.webui.port} is in use by another application; not (re)starting the player.`,
+      );
+      return 'unavailable';
+    }
+    // refused → nobody listening (e.g. the player was powered off) → spawn.
+    logger.debug('respawn-on-play: web player not running, spawning');
+    return deps.spawn(config);
+  })();
+
+  try {
+    return await respawnInFlight;
+  } finally {
+    respawnInFlight = null;
   }
 }

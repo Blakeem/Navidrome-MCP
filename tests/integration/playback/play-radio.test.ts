@@ -51,7 +51,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
   // afterAll clearPlayQueue is registered globally via setup-cleanup.ts
 
   itPlayback('loads a radio station as a single-entry queue with songId: null', async () => {
-    const result = await playRadioStation({ id: stationId });
+    const result = await playRadioStation({ stationId });
 
     expect(result.success).toBe(true);
     // Note: response no longer echoes the input `id` on `station.id` — the LLM
@@ -79,7 +79,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
   });
 
   itPlayback('now_playing surfaces isRadio + radioStation name when radio is loaded', async () => {
-    const result = await playRadioStation({ id: stationId });
+    const result = await playRadioStation({ stationId });
 
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -96,7 +96,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
 
   itPlayback('play_songs replace while radio plays → radio replaced with songs', async () => {
     // Set up: radio is playing
-    await playRadioStation({ id: stationId });
+    await playRadioStation({ stationId });
     await waitFor(async () => (await nowPlaying()).queueLength === 1);
 
     // Action: replace with songs
@@ -117,7 +117,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
 
   itPlayback('play_songs APPEND while radio plays → demoted to replace; radio gone', async () => {
     // Set up: radio is playing
-    await playRadioStation({ id: stationId });
+    await playRadioStation({ stationId });
     await waitFor(async () => (await nowPlaying()).queueLength === 1);
 
     // Action: append songs (should be demoted to replace because of radio)
@@ -142,7 +142,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
     await waitFor(async () => (await nowPlaying()).queueLength === songIds.length);
 
     // Action: switch to radio
-    const result = await playRadioStation({ id: stationId });
+    const result = await playRadioStation({ stationId });
 
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -164,7 +164,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
 
   itPlayback('invalid station ID throws via ErrorFormatter', async () => {
     await expect(
-      playRadioStation({ id: 'this-station-id-does-not-exist-xyz12345' }),
+      playRadioStation({ stationId: 'this-station-id-does-not-exist-xyz12345' }),
     ).rejects.toThrow();
   });
 });
