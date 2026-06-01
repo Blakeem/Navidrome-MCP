@@ -100,6 +100,17 @@ export function probeHealthz(port: number): Promise<ProbeOutcome> {
   });
 }
 
+/**
+ * A real navidrome-web currently owns the web port (live loopback `/healthz`
+ * app-signature check). The single source of truth for "defer mpv + scrobble
+ * ownership to a web owner" — used by both the MCP teardown path (quit mpv only
+ * if no web owns it) and the scrobble verdict (MCP submits only if no web owns
+ * it). Keeping the predicate in one place stops the two sites from drifting.
+ */
+export async function webOwnerPresent(port: number): Promise<boolean> {
+  return (await probeHealthz(port)) === 'ours';
+}
+
 /** Bind an unstarted HTTP server, resolving `eaddrinuse` instead of throwing on
  * a lost race so the caller can re-probe (the race loser self-attaches). */
 function realBind(server: Server, port: number, host: string): Promise<'ok' | 'eaddrinuse'> {

@@ -33,14 +33,17 @@ import { probeHealthz, type ProbeOutcome } from './acquire.js';
 let spawned = false;
 
 /**
- * Result of `ensureWebServerRunning`, so the caller (MCP) can decide whether it
- * must run the scrobbler itself:
+ * Outcome of trying to bring the web player up:
  * - `running`     — a navidrome-web already owns the port (we attached/stood down).
  * - `spawned`     — we launched an IPC child that will become the owner.
- * - `unavailable` — the port is held by a FOREIGN process, or the spawn failed,
- *                   so NO web owner will exist → MCP must be the active host.
+ * - `unavailable` — the port is held by a FOREIGN process, or the spawn failed.
+ *
+ * Internal to this module (callers act on it but don't name the type). The
+ * scrobble decision no longer keys off this — it's a live per-track web-port
+ * probe (see `ScrobbleTracker` / `webOwnerPresent`) — so MCP startup ignores the
+ * return value; the respawn-on-play callers use it only for logging.
  */
-export type WebServerStatus = 'running' | 'spawned' | 'unavailable';
+type WebServerStatus = 'running' | 'spawned' | 'unavailable';
 
 interface LaunchTarget {
   command: string;

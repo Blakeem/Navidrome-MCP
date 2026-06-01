@@ -25,12 +25,11 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
 import { ScrobbleTracker } from './services/playback/scrobble-tracker.js';
-import { shouldMcpSubmit } from './services/playback/scrobble-election.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES } from './capabilities.js';
-import { ensureWebServerRunning, type WebServerStatus } from './web/spawn.js';
-import { probeHealthz } from './web/acquire.js';
+import { ensureWebServerRunning } from './web/spawn.js';
+import { webOwnerPresent } from './web/acquire.js';
 import { startConfigServer } from './config-app/server.js';
 import { registerDegradedTools } from './config-app/degraded-tools.js';
 import { openBrowser } from './utils/open-browser.js';
@@ -101,11 +100,11 @@ async function main(): Promise<void> {
     // CHILD so the child can react to this MCP's exit (stop with it by default,
     // or persist if webui.persistAfterMcpExit). Eager at startup, gated on
     // playback + webui.enabled. The spawn is best-effort and non-fatal — the MCP
-    // server stays up even if the player can't start (e.g. port conflict). Done
-    // BEFORE the scrobbler election because its result decides who scrobbles.
-    let webStatus: WebServerStatus = 'unavailable';
+    // server stays up even if the player can't start (e.g. port conflict). The
+    // return value no longer feeds the scrobble decision (that's now a live,
+    // per-track probe below), so we don't capture it.
     if (config.features.playback && config.webui.enabled) {
-      webStatus = await ensureWebServerRunning(config);
+      await ensureWebServerRunning(config);
     }
 
     // Auto-scrobble plays to Navidrome (Last.fm rules: now-playing on start,
@@ -113,18 +112,22 @@ async function main(): Promise<void> {
     // only). The tracker observes the shared mpv via the engine state stream,
     // so MCP- and web-initiated plays are tracked identically.
     //
-    // Single-submitter election (spec §6.4): exactly one process submits each
-    // mpv play. When a `navidrome-web` owner is running/spawned it is the
-    // submitter (the playback survivor — keeps scrobbling after MCP closes), so
-    // MCP stands down. MCP becomes the active host when there is NO web owner:
-    // MCP-only mode (webui disabled) OR the web server couldn't be brought up
-    // (foreign port / spawn failure) — otherwise plays would go unscrobbled.
-    const mcpIsActiveHost =
-      config.features.playback && (shouldMcpSubmit(config) || webStatus === 'unavailable');
-    if (mcpIsActiveHost) {
+    // Single-submitter rule (spec §6.4), evaluated LIVE per track rather than
+    // once from static config: exactly one process counts each mpv play. MCP
+    // ALWAYS attaches a tracker, but for each track it submits IFF no
+    // `navidrome-web` owns the port at that track's start (webOwnerPresent) —
+    // the same signal the mpv teardown below uses. A running web owner is the
+    // submitter (and the playback survivor that keeps scrobbling after MCP
+    // closes); MCP scrobbles whenever there's no web owner (MCP-only mode, a
+    // foreign/failed web, or a web that came up or went away mid-session). The
+    // tracker skips the in-flight track on attach, so handoffs don't double- or
+    // miss-count the track playing when ownership changes.
+    if (config.features.playback) {
       // Subscribe BEFORE adopting mpv so the tracker catches the initial state
       // emit (it hydrates without re-scrobbling the in-flight track).
-      const tracker = new ScrobbleTracker(client, playbackEngine);
+      const tracker = new ScrobbleTracker(client, playbackEngine, async () => {
+        return !(await webOwnerPresent(config.webui.port));
+      });
       tracker.attach();
       // Adopt an already-playing mpv (e.g. left by a prior session) so the
       // scrobbler sees real state immediately. Best-effort and never spawns mpv
@@ -151,8 +154,7 @@ async function main(): Promise<void> {
         stopping = true;
         void (async (): Promise<void> => {
           try {
-            const probe = await probeHealthz(config.webui.port);
-            if (probe !== 'ours') {
+            if (!(await webOwnerPresent(config.webui.port))) {
               await playbackEngine.quitMpv();
               logger.info('MCP exit: no web server owns mpv — quit it');
             }

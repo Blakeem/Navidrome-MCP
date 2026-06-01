@@ -72,12 +72,21 @@ export interface ScrobbleClient {
 export class ScrobbleTracker {
   private readonly client: ScrobbleClient;
   private readonly engine: ScrobbleEngine;
+  private readonly shouldSubmit: () => Promise<boolean>;
   private unsubscribe: (() => void) | null = null;
 
   private currentSongId: string | null = null;
   private currentDuration: number | null = null;
   private startedAtMs: number | null = null;
   private submitted = false;
+  // Per-play scrobble-ownership verdict, decided once at track start via the
+  // injected `shouldSubmit` check (a live web-port probe in the MCP process).
+  // Exactly one process counts each play: the web port owner always submits;
+  // MCP submits only when no web owner exists at this track's start. 'undecided'
+  // while the async check is in flight — maybeSubmit DEFERS rather than guessing,
+  // and resolveOwnership re-drives it once the verdict lands. Per-play, so
+  // reset() clears it (unlike the attach-lifetime `generation`/`lastPlaylistPos`).
+  private submitVerdict: 'undecided' | 'mine' | 'notMine' = 'undecided';
   // Latest mpv time-pos value observed for the current play, in seconds.
   // Tracked here (rather than read from the engine cache) so a stale
   // time-pos belonging to the previous track can't leak into the new
@@ -98,9 +107,22 @@ export class ScrobbleTracker {
   // under fast skips. Persists across reset() (attach-lifetime state).
   private generation = 0;
 
-  constructor(client: ScrobbleClient, engine: ScrobbleEngine) {
+  /**
+   * @param shouldSubmit Resolves to whether THIS process should count the play
+   *   it is about to start tracking. Called once per track (at track start).
+   *   Defaults to always-true: the web port owner is the unconditional submitter
+   *   (`web/main.ts`), and unit tests that don't exercise the election keep the
+   *   original behavior. MCP injects a live web-port probe so it defers to a
+   *   running navidrome-web.
+   */
+  constructor(
+    client: ScrobbleClient,
+    engine: ScrobbleEngine,
+    shouldSubmit: () => Promise<boolean> = () => Promise.resolve(true),
+  ) {
     this.client = client;
     this.engine = engine;
+    this.shouldSubmit = shouldSubmit;
   }
 
   /**
@@ -236,6 +258,13 @@ export class ScrobbleTracker {
     this.submitted = false;
     this.lastTimePos = null;
     this.currentDuration = null;
+    // Decide who counts this play, live, at track start. startTrackingTrack is
+    // always reached under a freshly-bumped `generation` (onPlaylistPos /
+    // maybeRehydrateAfterQueue), so `this.generation` is this track's token —
+    // capture it so a verdict that resolves after a skip can't latch onto the
+    // wrong track. now-playing below is intentionally NOT gated (see comment).
+    this.submitVerdict = 'undecided';
+    void this.resolveOwnership(this.generation);
     if (typeof duration === 'number' && duration > 0) {
       this.currentDuration = duration;
     } else {
@@ -247,7 +276,36 @@ export class ScrobbleTracker {
         this.currentDuration = cachedDuration;
       }
     }
+    // now-playing (submission=false) is intentionally NOT gated on the verdict:
+    // it overwrites the server's current now-playing (idempotent, last-writer-
+    // wins), so two processes both sending it is harmless — and gating it would
+    // stall the now-playing ping behind the probe for no benefit.
     this.sendNowPlaying(songId);
+  }
+
+  /**
+   * Resolve this track's scrobble-ownership verdict, then catch up if the
+   * threshold was already crossed while the check was in flight. Mirrors the
+   * `onDuration` catch-up: re-invoke `maybeSubmit(this.lastTimePos)` once the
+   * verdict lands. The post-await `gen !== this.generation` guard (same pattern
+   * as `hydrateAndStart`) drops a verdict for a track that has since been
+   * superseded by a skip, so it can't latch onto the new play.
+   */
+  private async resolveOwnership(gen: number): Promise<void> {
+    let mine = true;
+    try {
+      mine = await this.shouldSubmit();
+    } catch (err) {
+      // The probe never rejects in practice (probeHealthz always resolves), but
+      // the injected contract allows it. Default to submitting: a missed scrobble
+      // is less recoverable than a rare double, and an unreachable probe almost
+      // certainly means no web owner is up.
+      logger.warn(`scrobble: ownership check failed, defaulting to submit: ${String(err)}`);
+      mine = true;
+    }
+    if (gen !== this.generation) return; // superseded by a newer transition
+    this.submitVerdict = mine ? 'mine' : 'notMine';
+    if (mine) this.maybeSubmit(this.lastTimePos);
   }
 
   private onDuration(data: unknown): void {
@@ -272,6 +330,17 @@ export class ScrobbleTracker {
     if (typeof timePos !== 'number') return;
     if (timePos < this.currentDuration / 2 && timePos < MAX_THRESHOLD_SECONDS) return;
 
+    // Ownership gate (decided once per track in resolveOwnership). 'notMine':
+    // another process (the web port owner) counts this play — latch `submitted`
+    // so later time-pos ticks short-circuit cheaply. 'undecided': the probe is
+    // still in flight — DEFER without latching; resolveOwnership re-invokes
+    // maybeSubmit when the verdict lands. 'mine' falls through to submit.
+    if (this.submitVerdict === 'notMine') {
+      this.submitted = true;
+      return;
+    }
+    if (this.submitVerdict === 'undecided') return;
+
     // Set the flag BEFORE dispatching to prevent re-entry from a subsequent
     // time-pos tick before the async call resolves.
     this.submitted = true;
@@ -284,6 +353,7 @@ export class ScrobbleTracker {
     this.startedAtMs = null;
     this.submitted = false;
     this.lastTimePos = null;
+    this.submitVerdict = 'undecided';
     // lastPlaylistPos and generation are intentionally preserved across
     // reset() — they track attach-lifetime state, not per-play state.
   }

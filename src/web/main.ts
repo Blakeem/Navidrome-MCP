@@ -223,9 +223,11 @@ async function main(): Promise<void> {
   broadcasterRef = broadcaster;
   broadcaster.start();
 
-  // The web port owner is the elected scrobble submitter (spec §6.4). Subscribe
-  // BEFORE adopting mpv so the tracker catches the initial state emit (it
-  // hydrates without re-scrobbling the in-flight track).
+  // The web port owner is the elected scrobble submitter (spec §6.4): it keeps
+  // the default `shouldSubmit` (always true) and counts every play. MCP runs its
+  // own tracker but defers to us via a live web-port probe, so exactly one of us
+  // submits each play. Subscribe BEFORE adopting mpv so the tracker catches the
+  // initial state emit (it hydrates without re-scrobbling the in-flight track).
   if (config.features.playback) {
     new ScrobbleTracker(client, playbackEngine).attach();
     // Adopt an already-playing mpv left by a since-closed session (spec §8.6

@@ -449,3 +449,162 @@ describe('ScrobbleTracker', () => {
     expect(client.subsonicRequest).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Per-track scrobble-ownership election. The injected `shouldSubmit` decides,
+ * once at each track's start, whether THIS process counts the play. In MCP this
+ * is a live web-port probe (submit iff no navidrome-web owns the port); the web
+ * owner uses the default always-true. These tests pin the latch + deferral +
+ * race-guard behavior without real sockets.
+ */
+describe('ScrobbleTracker ownership election', () => {
+  let engine: FakeEngine;
+  let client: ReturnType<typeof createFakeClient>;
+  let tracker: ScrobbleTracker;
+
+  function startTracker(shouldSubmit: () => Promise<boolean>): void {
+    tracker = new ScrobbleTracker(client, engine, shouldSubmit);
+    tracker.attach();
+    // Prime the attach sentinel (idle initial state), as the engine would.
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: -1 });
+  }
+
+  beforeEach(() => {
+    engine = createFakeEngine();
+    client = createFakeClient();
+  });
+
+  afterEach(() => {
+    tracker.detach();
+  });
+
+  // Helper: did any call submit (submission=true) for the given song id?
+  function submittedIds(): string[] {
+    return client.subsonicRequest.mock.calls
+      .filter((c) => (c[1] as Record<string, string>).submission === 'true')
+      .map((c) => (c[1] as Record<string, string>).id);
+  }
+
+  it('(a) suppresses submission when a web owner is present at track start', async () => {
+    startTracker(() => Promise.resolve(false)); // a web owner owns the port
+    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    client.subsonicRequest.mockClear(); // drop the now-playing ping
+
+    // Cross 50% — but ownership is 'notMine', so nothing should submit.
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual([]);
+  });
+
+  it('(b) submits when no web owner is present at track start', async () => {
+    startTracker(() => Promise.resolve(true)); // MCP-only: nobody else
+    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('(c) web appears mid-session: in-flight track still submitted, next track suppressed', async () => {
+    // First track resolves 'mine' (no web yet); a web appears, so the second
+    // track's probe resolves 'notMine'.
+    const shouldSubmit = vi
+      .fn<[], Promise<boolean>>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    startTracker(shouldSubmit);
+    engine.setPlaylist([
+      { index: 0, songId: 'song-A', duration: 200 },
+      { index: 1, songId: 'song-B', duration: 200 },
+    ]);
+
+    // Track A — MCP owns it, submits.
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    // Track B — web is now up, MCP defers.
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('(d) defers a threshold crossed before the probe resolves, then catches up', async () => {
+    let resolveVerdict!: (v: boolean) => void;
+    const verdict = new Promise<boolean>((r) => {
+      resolveVerdict = r;
+    });
+    startTracker(() => verdict);
+    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    client.subsonicRequest.mockClear();
+
+    // Threshold crosses while the verdict is still 'undecided' — must defer
+    // (no submit, and the `submitted` latch must NOT be set).
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual([]);
+
+    // Verdict lands as 'mine' — resolveOwnership catches up.
+    resolveVerdict(true);
+    await flush();
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('(d2) a deferred verdict of notMine never submits', async () => {
+    let resolveVerdict!: (v: boolean) => void;
+    const verdict = new Promise<boolean>((r) => {
+      resolveVerdict = r;
+    });
+    startTracker(() => verdict);
+    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    resolveVerdict(false);
+    await flush();
+    expect(submittedIds()).toEqual([]);
+  });
+
+  it('(e) a verdict that resolves after a skip does not latch onto the new track', async () => {
+    // Track A's probe is deferred; track B's resolves immediately to 'mine'.
+    let resolveA!: (v: boolean) => void;
+    const pA = new Promise<boolean>((r) => {
+      resolveA = r;
+    });
+    let call = 0;
+    startTracker(() => {
+      call += 1;
+      return call === 1 ? pA : Promise.resolve(true);
+    });
+    engine.setPlaylist([
+      { index: 0, songId: 'song-A', duration: 200 },
+      { index: 1, songId: 'song-B', duration: 200 },
+    ]);
+
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 }); // A — verdict pending
+    await flush();
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 }); // skip to B — verdict 'mine'
+    await flush();
+
+    // Resolve A's stale verdict. The generation guard must drop it: it must not
+    // submit A nor disturb B's tracking.
+    resolveA(true);
+    await flush();
+
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual(['song-B']);
+  });
+});
