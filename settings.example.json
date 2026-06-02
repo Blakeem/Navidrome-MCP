@@ -10,11 +10,11 @@
   },
   "features": {
     "lastFmApiKey": null,
-    "radioBrowserUserAgent": null,
+    "radioBrowserUserAgent": "Navidrome-MCP",
     "radioBrowserBase": null,
-    "lyricsProvider": null,
-    "lrclibUserAgent": null,
-    "lrclibBase": null
+    "lyricsProvider": "lrclib",
+    "lrclibUserAgent": "Navidrome-MCP",
+    "lrclibBase": "https://lrclib.net"
   },
   "playback": {
     "mpvPath": null,

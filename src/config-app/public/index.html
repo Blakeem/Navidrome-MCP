@@ -40,14 +40,14 @@
 
       <section class="card">
         <h2>Music discovery — Last.fm <span class="opt">optional</span></h2>
-        <label>API key <span class="hint">enables similar artists/tracks, bios, charts</span>
+        <label>API key <span class="hint">enables similar artists/tracks, bios, charts — <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener noreferrer">get a free key here</a></span>
           <input id="lastFmApiKey" type="text" placeholder="(disabled)" />
         </label>
       </section>
 
       <section class="card">
         <h2>Internet radio <span class="opt">optional</span></h2>
-        <label>Radio Browser user agent <span class="hint">required to enable station discovery</span>
+        <label>Radio Browser user agent <span class="hint">identifies this app to Radio Browser — pre-filled to enable station discovery; clear it to disable radio</span>
           <input id="radioBrowserUserAgent" type="text" placeholder="(disabled)" />
         </label>
         <label>Radio Browser base URL <span class="hint">advanced — leave blank for auto mirror selection</span>
@@ -63,7 +63,7 @@
             <option value="lrclib">LRCLIB</option>
           </select>
         </label>
-        <label>LRCLIB user agent <span class="hint">required when provider is LRCLIB</span>
+        <label>LRCLIB user agent <span class="hint">required when provider is LRCLIB — pre-filled; clear it (or set provider to disabled) to turn lyrics off</span>
           <input id="lrclibUserAgent" type="text" />
         </label>
         <label>LRCLIB base URL <span class="hint">advanced — leave blank for default</span>

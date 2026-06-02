@@ -17,6 +17,7 @@
  */
 
 import { resolveMpvBinary } from '../services/playback/mpv-process.js';
+import { DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
 import type { RawConfigInput } from './schema.js';
 import type { SettingsFile } from './store.js';
 
@@ -91,8 +92,8 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
 
     lyricsProvider,
     lrclibUserAgent,
-    // null/blank falls through to the schema default (https://lrclib.net).
-    lrclibBase: nonEmpty(features.lrclibBase) ?? 'https://lrclib.net',
+    // null/blank falls through to the canonical LRCLIB endpoint.
+    lrclibBase: nonEmpty(features.lrclibBase) ?? DEFAULT_LRCLIB_BASE,
 
     ...(resolvedMpvPath !== null ? { mpvPath: resolvedMpvPath } : {}),
     playbackTranscodeFormat: nonEmpty(playback.transcodeFormat) ?? 'raw',

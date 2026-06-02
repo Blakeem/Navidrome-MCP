@@ -51,6 +51,9 @@
   "files": [
     "dist",
     "scripts/make-launcher.mjs",
+    "assets/navidrome-player.png",
+    "assets/navidrome-player.ico",
+    "assets/navidrome-player.icns",
     "README.md",
     "LICENSE",
     "package.json"

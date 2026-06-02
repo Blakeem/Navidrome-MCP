@@ -67,8 +67,20 @@ export const SUBSONIC_CLIENT_NAME = 'navidrome-mcp';
 /**
  * Default User-Agent string used for outbound HTTP calls when no
  * service-specific override is configured (Radio Browser, LRCLIB, etc.).
+ *
+ * Intentionally carries NO version suffix: the value is a stable identifier
+ * these services log to attribute traffic, not a build marker, and it doubles
+ * as the pre-filled default in the settings form — so it shouldn't churn (or
+ * need re-typing) on every release.
  */
-export const DEFAULT_USER_AGENT = 'Navidrome-MCP/1.0';
+export const DEFAULT_USER_AGENT = 'Navidrome-MCP';
+
+/**
+ * Canonical LRCLIB endpoint. The single source for the lyrics base URL: the
+ * settings-form default, the runtime schema default, and the blank-fallthrough
+ * in map-config all resolve here.
+ */
+export const DEFAULT_LRCLIB_BASE = 'https://lrclib.net';
 
 /**
  * Per-page size when expanding `play_albums` / `play_albums_search` requests.

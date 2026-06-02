@@ -63,6 +63,17 @@ describe('settings server seed/save', () => {
     expect(seed.navidrome.url).toBe('http://h:4533');
   });
 
+  it('serves recommended values for the optional radio/lyrics fields', async () => {
+    const base = await start();
+    const sug = await getJson(await fetch(`${base}/api/settings/suggestions`));
+    expect(sug['features.radioBrowserUserAgent']).toBe('Navidrome-MCP');
+    expect(sug['features.lyricsProvider']).toBe('lrclib');
+    expect(sug['features.lrclibUserAgent']).toBe('Navidrome-MCP');
+    expect(sug['features.lrclibBase']).toBe('https://lrclib.net');
+    // No suggestion for the radio base — blank means SRV auto mirror selection.
+    expect(sug['features.radioBrowserBase']).toBeUndefined();
+  });
+
   it('keeps the stored password when the form re-submits the mask sentinel', async () => {
     writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } }));
     const base = await start();

@@ -18,7 +18,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
-import { buildFormSeed } from '../config/seed.js';
+import { buildFormSeed, FORM_SUGGESTIONS } from '../config/seed.js';
 import { writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
 import { mapStoreToConfig } from '../config/map-config.js';
 import { ConfigSchema } from '../config/schema.js';
@@ -50,6 +50,10 @@ export async function handleSettingsRoute(
 ): Promise<boolean> {
   if (method === 'GET' && path === '/api/settings/seed') {
     handleSeed(res);
+    return true;
+  }
+  if (method === 'GET' && path === '/api/settings/suggestions') {
+    writeJson(res, 200, FORM_SUGGESTIONS);
     return true;
   }
   if (method === 'POST' && path === '/api/settings') {

@@ -20,6 +20,30 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readSettings, type SettingsFile } from './store.js';
+import { DEFAULT_USER_AGENT, DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
+
+/**
+ * Recommended values for the optional radio/lyrics fields that gate a feature
+ * on. Single source for two behaviours, keyed by the form's dotted field path
+ * (see `app.js` FIELDS):
+ *
+ *   - First run (no settings.json): `importFromLegacyEnv` pre-fills these into
+ *     the seed, so a fresh install gets working radio + lyrics without the user
+ *     hunting for what to type.
+ *   - Later runs (settings.json exists): the file is returned verbatim, and the
+ *     form surfaces these as non-intrusive "suggested" hints *beside* any field
+ *     the user left blank — never auto-filling, so a deliberate blank (e.g.
+ *     radio turned off) is preserved.
+ *
+ * `features.radioBrowserBase` is intentionally absent: blank there means
+ * SRV-based auto mirror selection, which is more robust than pinning a mirror.
+ */
+export const FORM_SUGGESTIONS = {
+  'features.radioBrowserUserAgent': DEFAULT_USER_AGENT,
+  'features.lyricsProvider': 'lrclib',
+  'features.lrclibUserAgent': DEFAULT_USER_AGENT,
+  'features.lrclibBase': DEFAULT_LRCLIB_BASE,
+} as const;
 
 /**
  * Compute the seed used to pre-fill the settings form.
@@ -29,7 +53,9 @@ import { readSettings, type SettingsFile } from './store.js';
  * - Otherwise, import a partial config from legacy sources so existing users
  *   only have to verify + submit rather than re-type: `process.env` (covers the
  *   MCP-client JSON env and the shell) merged with a legacy project-root `.env`
- *   (covers dev installs).
+ *   (covers dev installs). Optional radio/lyrics fields that gate a feature on
+ *   are pre-filled with working defaults (see `importFromLegacyEnv`) so a
+ *   fresh install gets functional features without hunting for values.
  *
  * This is import-only and never on the normal runtime path — `loadConfig()`
  * reads `settings.json` exclusively. Returns REAL values (including secrets);
@@ -74,11 +100,16 @@ function importFromLegacyEnv(): SettingsFile {
     },
     features: {
       lastFmApiKey: get('LASTFM_API_KEY') ?? null,
-      radioBrowserUserAgent: get('RADIO_BROWSER_USER_AGENT') ?? null,
+      // Radio + lyrics gating fields are pre-filled with the recommended
+      // defaults on first run (the values are the single-sourced FORM_SUGGESTIONS
+      // above, so the form's later-run "suggested" hints match exactly).
+      radioBrowserUserAgent: get('RADIO_BROWSER_USER_AGENT') ?? FORM_SUGGESTIONS['features.radioBrowserUserAgent'],
+      // Left blank by default: blank means SRV-based auto mirror selection, which
+      // is more robust than pinning one mirror that may go offline.
       radioBrowserBase: get('RADIO_BROWSER_BASE') ?? null,
-      lyricsProvider: get('LYRICS_PROVIDER') ?? null,
-      lrclibUserAgent: get('LRCLIB_USER_AGENT') ?? null,
-      lrclibBase: get('LRCLIB_BASE') ?? null,
+      lyricsProvider: get('LYRICS_PROVIDER') ?? FORM_SUGGESTIONS['features.lyricsProvider'],
+      lrclibUserAgent: get('LRCLIB_USER_AGENT') ?? FORM_SUGGESTIONS['features.lrclibUserAgent'],
+      lrclibBase: get('LRCLIB_BASE') ?? FORM_SUGGESTIONS['features.lrclibBase'],
     },
     playback: {
       mpvPath: get('MPV_PATH') ?? null,

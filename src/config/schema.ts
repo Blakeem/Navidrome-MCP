@@ -17,6 +17,7 @@
  */
 
 import { z } from 'zod';
+import { DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
 
 /**
  * The canonical runtime configuration shape. This is a *flat* projection of the
@@ -60,7 +61,7 @@ export const ConfigSchema = z.object({
   // Lyrics Configuration
   lyricsProvider: z.string().optional(),
   lrclibUserAgent: z.string().optional(),
-  lrclibBase: z.string().url().default('https://lrclib.net'),
+  lrclibBase: z.string().url().default(DEFAULT_LRCLIB_BASE),
 
   // Playback (mpv) Configuration
   mpvPath: z.string().optional(),

@@ -67,6 +67,12 @@ code { background: rgba(127, 127, 127, 0.15); padding: 0 4px; border-radius: 4px
 label { display: block; margin-bottom: 12px; font-size: 0.9rem; }
 label:last-child { margin-bottom: 0; }
 label .hint { display: block; color: var(--muted); font-weight: 400; font-size: 0.78rem; margin-top: 2px; }
+label .hint a { color: var(--accent); }
+label .suggest { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 4px; }
+.suggest-use {
+  background: none; border: none; padding: 0 0 0 2px;
+  color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline;
+}
 label .warn { display: block; color: var(--warn); font-weight: 400; font-size: 0.78rem; margin-top: 2px; }
 
 input[type="text"], input[type="url"], input[type="password"], input[type="number"], select {

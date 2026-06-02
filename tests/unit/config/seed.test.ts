@@ -16,6 +16,8 @@ import { buildFormSeed } from '../../../src/config/seed.js';
 const ENV_KEYS = [
   'NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD',
   'WEBUI_PORT', 'WEBUI_EXPOSE', 'DEBUG', 'LASTFM_API_KEY',
+  'RADIO_BROWSER_USER_AGENT', 'RADIO_BROWSER_BASE',
+  'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE',
 ];
 
 describe('buildFormSeed', () => {
@@ -55,6 +57,28 @@ describe('buildFormSeed', () => {
     expect(seed.navidrome?.url).toBe('http://env-only:4533');
     expect(seed.navidrome?.username).toBe('envuser');
     expect(seed.navidrome?.password).toBe('envpass');
+  });
+
+  it('pre-fills working radio + lyrics defaults on first run (no store, no env)', () => {
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    const seed = buildFormSeed();
+    // The fields that gate radio/lyrics ON get sensible defaults so a fresh
+    // install works without hunting for values.
+    expect(seed.features?.radioBrowserUserAgent).toBe('Navidrome-MCP');
+    expect(seed.features?.lyricsProvider).toBe('lrclib');
+    expect(seed.features?.lrclibUserAgent).toBe('Navidrome-MCP');
+    expect(seed.features?.lrclibBase).toBe('https://lrclib.net');
+    // Radio base stays blank → SRV auto mirror selection (not pinned).
+    expect(seed.features?.radioBrowserBase ?? null).toBeNull();
+  });
+
+  it('lets env override the pre-filled radio/lyrics defaults', () => {
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    process.env['RADIO_BROWSER_USER_AGENT'] = 'MyAgent';
+    process.env['LRCLIB_BASE'] = 'https://lrclib.example';
+    const seed = buildFormSeed();
+    expect(seed.features?.radioBrowserUserAgent).toBe('MyAgent');
+    expect(seed.features?.lrclibBase).toBe('https://lrclib.example');
   });
 
   it('coerces typed env vars (port int, expose/debug bool)', () => {

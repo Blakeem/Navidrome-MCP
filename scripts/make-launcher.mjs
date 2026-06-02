@@ -22,8 +22,10 @@
  * `navidrome-web` player, tailored to THIS machine:
  *   - Linux:   a `.desktop` entry (Desktop + ~/.local/share/applications)
  *   - macOS:   a `Navidrome Player.app` bundle on the Desktop
- *   - Windows: a `.vbs` script (Desktop + Start Menu) that launches with no
- *              console window
+ *   - Windows: a hidden-window `.vbs` runner (in %LOCALAPPDATA%) plus `.lnk`
+ *              shortcuts (Desktop + Start Menu) that carry the custom icon
+ *
+ * All three pick up the bundled icon from assets/ (see scripts/generate-icons.py).
  *
  * It bakes in absolute paths to the current `node` (process.execPath) and the
  * built `dist/web/main.js`, so the shortcut works without anything on PATH and
@@ -38,17 +40,32 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const APP_NAME = 'Navidrome Player';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-// scripts/ sits next to dist/ in both a dev clone and a published install.
+// scripts/ sits next to dist/ and assets/ in both a dev clone and a published install.
 const packageRoot = join(scriptDir, '..');
 const mainJs = join(packageRoot, 'dist', 'web', 'main.js');
+
+// Pre-rendered launcher icons (see scripts/generate-icons.py). Each is the same
+// art Lanczos-resampled for the platform's container; absent ones degrade
+// gracefully (Linux falls back to a theme icon, the others to no custom icon).
+const iconPng = join(packageRoot, 'assets', 'navidrome-player.png'); // Linux .desktop
+const iconIco = join(packageRoot, 'assets', 'navidrome-player.ico'); // Windows .lnk
+const iconIcns = join(packageRoot, 'assets', 'navidrome-player.icns'); // macOS bundle
 
 function fail(message) {
   console.error(`\n  ✗ ${message}\n`);
@@ -119,7 +136,9 @@ function makeLinux() {
     'Comment=Standalone Navidrome web player (controls local mpv)',
     // Quote both paths so spaces in either survive the Exec parser.
     `Exec="${nodePath}" "${mainJs}"`,
-    'Icon=multimedia-player',
+    // Absolute path to the bundled icon; fall back to a stock theme icon if the
+    // asset is missing (e.g. a partial checkout).
+    `Icon=${existsSync(iconPng) ? iconPng : 'multimedia-player'}`,
     'Terminal=false',
     'Categories=AudioVideo;Audio;Player;',
     'StartupNotify=false',
@@ -156,6 +175,16 @@ function makeMac() {
   const macosDir = join(appDir, 'Contents', 'MacOS');
   ensureDir(macosDir);
 
+  // Copy the icon into the bundle and reference it from Info.plist. Without
+  // CFBundleIconFile + a Resources/*.icns, the .app shows the generic bundle
+  // icon. The bundle stays self-contained, so moving it keeps the icon.
+  const hasIcon = existsSync(iconIcns);
+  if (hasIcon) {
+    const resourcesDir = join(appDir, 'Contents', 'Resources');
+    ensureDir(resourcesDir);
+    copyFileSync(iconIcns, join(resourcesDir, 'navidrome-player.icns'));
+  }
+
   const plist = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -173,6 +202,9 @@ function makeMac() {
     '  <string>APPL</string>',
     '  <key>CFBundleExecutable</key>',
     '  <string>launcher</string>',
+    ...(hasIcon
+      ? ['  <key>CFBundleIconFile</key>', '  <string>navidrome-player.icns</string>']
+      : []),
     '</dict>',
     '</plist>',
     '',
@@ -190,7 +222,56 @@ function makeMac() {
   return [appDir];
 }
 
-// ── Windows: hidden-window .vbs ─────────────────────────────────────────────
+// ── Windows: hidden-window .vbs runner + icon-bearing .lnk shortcuts ─────────
+
+/** A stable per-user home for the runner .vbs + its icon, so the .lnk shortcuts
+ *  on the Desktop/Start Menu have a fixed target that survives. */
+function windowsRunnerDir() {
+  const base = process.env['LOCALAPPDATA'] ?? process.env['APPDATA'] ?? '';
+  const dir = base.trim() !== '' ? join(base, 'navidrome-mcp') : packageRoot;
+  ensureDir(dir);
+  return dir;
+}
+
+/** Escape a string for embedding inside a VBScript double-quoted literal. */
+function vbsLiteral(value) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Create a Windows .lnk via the WScript.Shell COM object (always present on
+ * Windows). We drive it through a throwaway .vbs run with cscript, because the
+ * shortcut format is binary and there's no stdlib writer for it.
+ * Returns true on success.
+ */
+function createWindowsShortcut({ lnkPath, target, args, icon, description }) {
+  const lines = [
+    'Set sh = CreateObject("WScript.Shell")',
+    `Set lnk = sh.CreateShortcut(${vbsLiteral(lnkPath)})`,
+    `lnk.TargetPath = ${vbsLiteral(target)}`,
+  ];
+  if (args) lines.push(`lnk.Arguments = ${vbsLiteral(args)}`);
+  if (icon) lines.push(`lnk.IconLocation = ${vbsLiteral(`${icon}, 0`)}`);
+  if (description) lines.push(`lnk.Description = ${vbsLiteral(description)}`);
+  lines.push('lnk.WindowStyle = 7', 'lnk.Save', '');
+
+  const tmpVbs = join(tmpdir(), `nd-shortcut-${process.pid}.vbs`);
+  try {
+    writeFileSync(tmpVbs, lines.join('\r\n'));
+    // //nologo: no banner, //B: batch mode (suppress errors/prompts).
+    const res = spawnSync('cscript', ['//nologo', '//B', tmpVbs], { stdio: 'ignore' });
+    return res.status === 0 && existsSync(lnkPath);
+  } catch {
+    return false;
+  } finally {
+    try {
+      unlinkSync(tmpVbs);
+    } catch {
+      /* temp file already gone */
+    }
+  }
+}
+
 function makeWindows() {
   // The runtime command line is: "<node>" "<mainJs>". In a VBS string literal,
   // every " is doubled, and the whole literal is wrapped in ". WScript.Shell.Run
@@ -204,26 +285,73 @@ function makeWindows() {
     '',
   ].join('\r\n');
 
-  const written = [];
-  const fileName = `${APP_NAME}.vbs`;
+  // The runner .vbs lives in a stable dir (not on the Desktop) and is what the
+  // shortcuts point at. A bare .vbs can't carry a custom icon — only the .lnk
+  // can — so the Desktop/Start Menu entries are shortcuts, not copies.
+  const runnerDir = windowsRunnerDir();
+  const runnerVbs = join(runnerDir, `${APP_NAME}.vbs`);
+  writeFileSync(runnerVbs, content);
 
-  const deskFile = join(desktopDir(), fileName);
-  writeFileSync(deskFile, content);
-  written.push(deskFile);
-
-  // Start Menu → Programs, so it shows in the Start search.
-  const appData = process.env['APPDATA'];
-  if (appData && appData.trim() !== '') {
-    const startMenu = join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+  // Keep the icon next to the runner so the shortcut's IconLocation survives
+  // even if the package's assets/ dir is later removed.
+  let iconPath = existsSync(iconIco) ? iconIco : '';
+  if (iconPath) {
     try {
-      ensureDir(startMenu);
-      const startFile = join(startMenu, fileName);
-      writeFileSync(startFile, content);
-      written.push(startFile);
+      const localIcon = join(runnerDir, 'navidrome-player.ico');
+      copyFileSync(iconIco, localIcon);
+      iconPath = localIcon;
     } catch {
-      /* Start Menu may be locked down; the Desktop copy is enough */
+      /* fall back to referencing the asset in place */
     }
   }
+
+  // Launch via wscript.exe explicitly (rather than the .vbs file association,
+  // which a locked-down machine may have remapped to an editor).
+  const systemRoot = process.env['SystemRoot'] ?? 'C:\\Windows';
+  const wscript = join(systemRoot, 'System32', 'wscript.exe');
+
+  const shortcutDirs = [desktopDir()];
+  const appData = process.env['APPDATA'];
+  if (appData && appData.trim() !== '') {
+    shortcutDirs.push(join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs'));
+  }
+
+  const written = [];
+  let anyShortcut = false;
+  for (const dir of shortcutDirs) {
+    try {
+      ensureDir(dir);
+    } catch {
+      continue; // locked-down location; skip it
+    }
+    const lnkPath = join(dir, `${APP_NAME}.lnk`);
+    const ok = createWindowsShortcut({
+      lnkPath,
+      target: wscript,
+      args: `"${runnerVbs}"`,
+      icon: iconPath,
+      description: 'Standalone Navidrome web player (controls local mpv)',
+    });
+    if (ok) {
+      written.push(lnkPath);
+      anyShortcut = true;
+    } else {
+      // Shortcut creation unavailable (e.g. cscript blocked) — drop a plain,
+      // iconless .vbs copy so there's still a working launcher.
+      const fallback = join(dir, `${APP_NAME}.vbs`);
+      try {
+        writeFileSync(fallback, content);
+        written.push(fallback);
+      } catch {
+        /* nothing writable here; other locations may still succeed */
+      }
+    }
+  }
+
+  // Surface the runner itself only when no shortcut/copy landed anywhere, so the
+  // user still has something to double-click.
+  if (written.length === 0) written.push(runnerVbs);
+  else if (anyShortcut) written.push(`${runnerVbs} (runner)`);
 
   return written;
 }

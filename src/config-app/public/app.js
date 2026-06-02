@@ -105,6 +105,48 @@ function collect() {
   return out;
 }
 
+function isEmptyField(el) {
+  return el.value == null || String(el.value).trim() === '';
+}
+
+/*
+ * Surface recommended values beside any blank field that has one, WITHOUT
+ * touching the field. On first run the seed already pre-fills these (so the
+ * fields aren't empty and nothing shows); on later runs an existing config is
+ * left verbatim, so a deliberately-blank field just gets a gentle suggestion.
+ */
+function renderSuggestions(suggestions) {
+  for (const [path, id] of FIELDS) {
+    const value = suggestions[path];
+    if (value == null || value === '') continue;
+    const el = document.getElementById(id);
+    if (!el || !isEmptyField(el)) continue; // pre-filled / user value always wins
+    addSuggestion(el, value);
+  }
+}
+
+function addSuggestion(el, value) {
+  const wrap = document.createElement('span');
+  wrap.className = 'suggest';
+  wrap.appendChild(document.createTextNode(`Suggested: ${value} `));
+
+  const use = document.createElement('button');
+  use.type = 'button';
+  use.className = 'suggest-use';
+  use.textContent = 'use';
+  use.addEventListener('click', () => {
+    el.value = value;
+    wrap.remove();
+  });
+  wrap.appendChild(use);
+
+  // Outside the field: appended to the end of the field's <label>.
+  (el.closest('label') || el.parentNode).appendChild(wrap);
+
+  // If the user fills the field themselves, the suggestion is no longer useful.
+  el.addEventListener('input', () => { if (!isEmptyField(el)) wrap.remove(); });
+}
+
 function showStatus(message, kind) {
   const box = document.getElementById('status');
   box.textContent = message;
@@ -166,6 +208,14 @@ async function init() {
     if (res.ok) populate(await res.json());
   } catch (_) {
     showStatus('Could not load existing settings; starting blank.', 'err');
+  }
+  // Suggestions are optional polish: fetch after populate so we only annotate
+  // fields that ended up blank. A failure here must not break the form.
+  try {
+    const res = await fetch('/api/settings/suggestions');
+    if (res.ok) renderSuggestions(await res.json());
+  } catch (_) {
+    /* no suggestions — the form still works */
   }
   document.getElementById('test-btn').addEventListener('click', onTest);
   document.getElementById('settings-form').addEventListener('submit', onSave);
