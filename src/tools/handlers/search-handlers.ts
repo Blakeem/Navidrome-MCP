@@ -124,6 +124,11 @@ const tools: Tool[] = [
           type: 'boolean',
           description: 'Filter for starred/favorited items only',
         },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each result carries only identity fields (ids, title/name, artist, album, durationFormatted) to save context; set true for full per-item metadata (genres, year, rating, starred, path, bitrate, etc.).',
+          default: false,
+        },
       },
       required: [],
     },
@@ -204,6 +209,11 @@ const tools: Tool[] = [
         starred: {
           type: 'boolean',
           description: 'Filter for starred/favorited items only',
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each result carries only identity fields (ids, title/name, artist, album, durationFormatted) to save context; set true for full per-item metadata (genres, year, rating, starred, path, bitrate, etc.).',
+          default: false,
         },
       },
       required: [],
@@ -286,6 +296,11 @@ const tools: Tool[] = [
           type: 'boolean',
           description: 'Filter for starred/favorited items only',
         },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each result carries only identity fields (ids, title/name, artist, album, durationFormatted) to save context; set true for full per-item metadata (genres, year, rating, starred, path, bitrate, etc.).',
+          default: false,
+        },
       },
       required: [],
     },
@@ -361,6 +376,11 @@ const tools: Tool[] = [
         starred: {
           type: 'boolean',
           description: 'Filter for starred/favorited items only',
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each result carries only identity fields (ids, title/name, artist, album, durationFormatted) to save context; set true for full per-item metadata (genres, year, rating, starred, path, bitrate, etc.).',
+          default: false,
         },
       },
       required: [],

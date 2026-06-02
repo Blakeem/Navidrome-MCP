@@ -34,7 +34,7 @@ describe('listRecentlyPlayed', () => {
     expect(endpoint).not.toContain('addedDate');
   });
 
-  it('returns lastPlayed from each song.playDate', async () => {
+  it('returns lastPlayed from each song.playDate (verbose carries full metadata)', async () => {
     mockClient.requestWithLibraryFilter.mockResolvedValue([
       {
         id: 's1', title: 'Song1', artist: 'A', artistId: 'a',
@@ -43,10 +43,29 @@ describe('listRecentlyPlayed', () => {
       },
     ]);
 
-    const result = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 5 });
+    const result = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 5, verbose: true });
     expect(result.tracks).toHaveLength(1);
     expect(result.tracks[0]?.lastPlayed).toBe('2026-05-09T20:00:00Z');
     expect(result.tracks[0]?.playCount).toBe(3);
+  });
+
+  it('compact (default) keeps lastPlayed but drops secondary fields like playCount/path', async () => {
+    mockClient.requestWithLibraryFilter.mockResolvedValue([
+      {
+        id: 's1', title: 'Song1', artist: 'A', artistId: 'a',
+        album: 'Al', albumId: 'al', duration: 200, playCount: 3,
+        path: '/music/a/song1.flac',
+        playDate: '2026-05-09T20:00:00Z', createdAt: '2025-01-01T00:00:00Z',
+      },
+    ]);
+
+    const result = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 5 });
+    expect(result.tracks).toHaveLength(1);
+    // playDate is force-kept (it is the tool's purpose), so lastPlayed survives.
+    expect(result.tracks[0]?.lastPlayed).toBe('2026-05-09T20:00:00Z');
+    // Secondary fields are dropped in compact mode to save context.
+    expect(result.tracks[0]).not.toHaveProperty('playCount');
+    expect(result.tracks[0]).not.toHaveProperty('path');
   });
 
   it('drops never-played songs (null/missing playDate sorts to the end)', async () => {

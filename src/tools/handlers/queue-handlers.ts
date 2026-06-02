@@ -103,6 +103,11 @@ const tools: Tool[] = [
           enum: ['today', 'week', 'month', 'all'],
           default: 'all',
         },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each track carries only identity fields (plus lastPlayed) to save context; set true for full per-track metadata (genres, year, rating, path, etc.).',
+          default: false,
+        },
       },
     },
   },
@@ -136,6 +141,11 @@ const tools: Tool[] = [
           description: 'Minimum play count to include',
           minimum: 1,
           default: 1,
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each item carries only identity fields (plus playCount) to save context; set true for full per-item metadata (genres, year, rating, path, etc.).',
+          default: false,
         },
       },
     },

@@ -120,7 +120,7 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
     };
 
     // Output construction - aggregate results from all search types
-    const result = aggregateSearchResults(responses, totals, appliedFilters);
+    const result = aggregateSearchResults(responses, totals, appliedFilters, params.verbose);
 
     return result;
   } catch (error) {

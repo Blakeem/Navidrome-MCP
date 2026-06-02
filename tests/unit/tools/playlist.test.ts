@@ -117,12 +117,13 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
     });
 
     describe('getPlaylistTracks', () => {
-      it('should return valid track structure for existing playlists', async () => {
+      it('should return a compact track structure by default', async () => {
         // Get a playlist with tracks
         const listResult = await listPlaylists(liveClient, { limit: 10 });
         const playlistWithTracks = listResult.playlists.find(p => p.songCount > 0);
-        
+
         if (playlistWithTracks) {
+          // Default call — compact mode.
           const result = await getPlaylistTracks(liveClient, {
             playlistId: playlistWithTracks.playlistId,
             limit: 1
@@ -134,14 +135,48 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
 
           if (result.tracks.length > 0) {
             const track = result.tracks[0];
-            
-            // Required PlaylistTrackDTO fields
+
+            // Compact identity fields are always present.
             expect(track).toHaveProperty('id');
             expect(track).toHaveProperty('mediaFileId');
-            expect(track).toHaveProperty('playlistId');
             expect(track).toHaveProperty('title');
             expect(track).toHaveProperty('artist');
-            
+            expect(track).toHaveProperty('album');
+            expect(track).toHaveProperty('durationFormatted');
+
+            // Verbose-only fields are omitted in compact mode to save context.
+            expect(track).not.toHaveProperty('playlistId');
+            expect(track).not.toHaveProperty('path');
+            expect(track).not.toHaveProperty('duration');
+          }
+        }
+      });
+
+      it('should return full track metadata when verbose is true', async () => {
+        const listResult = await listPlaylists(liveClient, { limit: 10 });
+        const playlistWithTracks = listResult.playlists.find(p => p.songCount > 0);
+
+        if (playlistWithTracks) {
+          const result = await getPlaylistTracks(liveClient, {
+            playlistId: playlistWithTracks.playlistId,
+            limit: 1,
+            verbose: true
+          });
+
+          expect(result).toHaveProperty('tracks');
+          expect(Array.isArray(result.tracks)).toBe(true);
+
+          if (result.tracks.length > 0) {
+            const track = result.tracks[0];
+
+            // Identity fields plus the verbose-only fields are present.
+            expect(track).toHaveProperty('id');
+            expect(track).toHaveProperty('mediaFileId');
+            expect(track).toHaveProperty('title');
+            expect(track).toHaveProperty('artist');
+            expect(track).toHaveProperty('playlistId');
+            expect(track).toHaveProperty('duration');
+
             expect(track.playlistId).toBe(playlistWithTracks.playlistId);
           }
         }

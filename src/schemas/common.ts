@@ -97,6 +97,12 @@ export const SortSchema = z.string().optional().default('name');
 export const OptionalBooleanSchema = z.boolean().optional();
 export const RequiredBooleanSchema = z.boolean();
 
+// Verbosity flag for list/search tools. Default false = compact: tools return
+// only identity fields per item (ids, title/name, artist, album, duration) to
+// keep large array responses under the tool-result token cap. Set true to get
+// the full per-item metadata (path, genres, year, bitrate, rating, etc.).
+export const VerboseSchema = z.boolean().optional().default(false);
+
 // Enhanced search schema with filtering and sorting options
 export const EnhancedSearchSchema = SearchQuerySchema.extend({
   // Text-based filters (resolved to IDs internally)
@@ -155,6 +161,7 @@ export const SearchSongsSchema = EnhancedSearchSchema.extend({
     'title', 'artist', 'album', 'year', 'duration',
     'playCount', 'rating', 'recently_added', 'starred_at', 'random'
   ]).optional().default('title'),
+  verbose: VerboseSchema,
 });
 
 export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
@@ -165,6 +172,7 @@ export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
     'name', 'artist', 'year', 'songCount', 'duration',
     'playCount', 'rating', 'recently_added', 'starred_at', 'random'
   ]).optional().default('name'),
+  verbose: VerboseSchema,
 });
 
 // Artists have no year column in Navidrome, so the EnhancedSearchSchema's
@@ -178,6 +186,7 @@ export const SearchArtistsSchema = EnhancedSearchSchema.omit({ year: true }).ext
   sort: z.enum([
     'name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'
   ]).optional().default('name'),
+  verbose: VerboseSchema,
 });
 
 // Common validation schemas for different resource types

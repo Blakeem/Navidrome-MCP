@@ -165,9 +165,9 @@ export async function setRating(client: NavidromeClient, _config: Config, args: 
 
 export async function listStarredItems(client: NavidromeClient, args: unknown): Promise<ListStarredResult> {
   try {
-    const { type, limit, offset } = StarredItemsPaginationSchema.parse(args);
+    const { type, limit, offset, verbose } = StarredItemsPaginationSchema.parse(args);
 
-    logger.debug('Tool listStarredItems called with args:', { type, limit, offset });
+    logger.debug('Tool listStarredItems called with args:', { type, limit, offset, verbose });
     logger.info(`Listing starred ${type}`);
 
     const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
@@ -181,13 +181,16 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
       `${endpoint}?starred=true&_start=${offset}&_end=${offset + limit}&_sort=starredAt&_order=DESC`
     );
 
+    // Force-keep the starred state even in compact mode — it is the defining
+    // attribute of every item this tool returns.
+    const transformOptions = { verbose, keep: ['starred', 'starredAt'] };
     let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
     if (type === 'songs') {
-      items = transformSongsToDTO(response);
+      items = transformSongsToDTO(response, transformOptions);
     } else if (type === 'albums') {
-      items = transformAlbumsToDTO(response);
+      items = transformAlbumsToDTO(response, transformOptions);
     } else {
-      items = transformArtistsToDTO(response);
+      items = transformArtistsToDTO(response, transformOptions);
     }
 
     return {
@@ -228,10 +231,14 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
     // first (before slicing), so we know how many qualifying rows the window
     // actually held. `rawCount` is the raw row count from the server, used to
     // detect a saturated over-fetch window below.
+    // Transform verbosely for internal use: this tool reads rating/playCount/
+    // releaseYear off each DTO to build the compact RatedItem below, so it needs
+    // those fields present regardless of the (compact) default. The full DTOs are
+    // never returned — only the RatedItem projection is.
     let rawCount: number;
     let filtered: RatedItem[];
     if (type === 'songs') {
-      const songs = transformSongsToDTO(response);
+      const songs = transformSongsToDTO(response, { verbose: true });
       rawCount = songs.length;
       filtered = songs
         .filter(song => (song.rating ?? 0) >= minRating)
@@ -247,7 +254,7 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
           return item;
         });
     } else if (type === 'albums') {
-      const albums = transformAlbumsToDTO(response);
+      const albums = transformAlbumsToDTO(response, { verbose: true });
       rawCount = albums.length;
       filtered = albums
         .filter(album => (album.rating ?? 0) >= minRating)
@@ -263,7 +270,7 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
           return item;
         });
     } else {
-      const artists = transformArtistsToDTO(response);
+      const artists = transformArtistsToDTO(response, { verbose: true });
       rawCount = artists.length;
       filtered = artists
         .filter(artist => (artist.rating ?? 0) >= minRating)

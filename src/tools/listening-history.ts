@@ -54,9 +54,9 @@ interface MostPlayedResult {
 
 export async function listRecentlyPlayed(client: NavidromeClient, args: unknown): Promise<RecentlyPlayedResult> {
   try {
-    const { limit = 20, offset = 0, timeRange = 'all' } = RecentlyPlayedPaginationSchema.parse(args);
+    const { limit = 20, offset = 0, timeRange = 'all', verbose = false } = RecentlyPlayedPaginationSchema.parse(args);
 
-    logger.debug('Tool listRecentlyPlayed called with args:', { limit, offset, timeRange });
+    logger.debug('Tool listRecentlyPlayed called with args:', { limit, offset, timeRange, verbose });
     logger.info(`Getting recently played songs (${timeRange})`);
 
     // Compute the cutoff timestamp for client-side filtering. Navidrome's REST
@@ -93,7 +93,9 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
       `/song?_sort=playDate&_order=DESC&_start=${serverStart}&_end=${serverStart + fetchLimit}`
     );
 
-    const songs = transformSongsToDTO(response);
+    // Force-keep `playDate` even in compact mode: it is this tool's purpose
+    // (and the basis of the timeRange filter + the `lastPlayed` mirror below).
+    const songs = transformSongsToDTO(response, { verbose, keep: ['playDate'] });
 
     const tracks = songs
       .filter((song) => {
@@ -129,9 +131,9 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
 
 export async function listMostPlayed(client: NavidromeClient, args: unknown): Promise<MostPlayedResult> {
   try {
-    const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1 } = MostPlayedPaginationSchema.parse(args);
+    const { type = 'songs', limit = 20, offset = 0, minPlayCount = 1, verbose = false } = MostPlayedPaginationSchema.parse(args);
 
-    logger.debug('Tool listMostPlayed called with args:', { type, limit, offset, minPlayCount });
+    logger.debug('Tool listMostPlayed called with args:', { type, limit, offset, minPlayCount, verbose });
     logger.info(`Getting most played ${type} with minPlayCount: ${minPlayCount}`);
 
     const endpoint = type === 'songs' ? '/song' : type === 'albums' ? '/album' : '/artist';
@@ -153,17 +155,20 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
     // (durationFormatted, artistId/albumId, genres, year, rating, starred,
     // …) that every other song/album/artist tool produces. Apply the offset
     // AFTER the minPlayCount filter so pagination is honest.
+    // Force-keep `playCount` even in compact mode: it is this tool's purpose
+    // and the basis of the minPlayCount filter below.
+    const transformOptions = { verbose, keep: ['playCount'] };
     let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
     if (type === 'songs') {
-      items = transformSongsToDTO(response)
+      items = transformSongsToDTO(response, transformOptions)
         .filter((song) => (song.playCount ?? 0) >= minPlayCount)
         .slice(offset, offset + limit);
     } else if (type === 'albums') {
-      items = transformAlbumsToDTO(response)
+      items = transformAlbumsToDTO(response, transformOptions)
         .filter((album) => (album.playCount ?? 0) >= minPlayCount)
         .slice(offset, offset + limit);
     } else {
-      items = transformArtistsToDTO(response)
+      items = transformArtistsToDTO(response, transformOptions)
         .filter((artist) => (artist.playCount ?? 0) >= minPlayCount)
         .slice(offset, offset + limit);
     }

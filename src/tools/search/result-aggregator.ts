@@ -91,20 +91,23 @@ interface AggregatedSearchResult {
  *   the caller requested. This is split per content type here: the song/album
  *   slices keep all of them; the artist slice drops tag/year (which `/api/artist`
  *   ignores) so the reported `appliedFilters` is truthful for every slice.
+ * @param verbose - When false (default) each item carries only identity fields;
+ *   true restores full per-item metadata. Forwarded to every transformer.
  * @returns Aggregated search result with transformed DTOs and metadata
  */
 export function aggregateSearchResults(
   responses: ParallelSearchResponses,
   totals: ParallelSearchTotals,
-  appliedFilters: Record<string, string>
+  appliedFilters: Record<string, string>,
+  verbose = false
 ): AggregatedSearchResult {
   // Data collection - extract responses
   const { songsResponse, albumsResponse, artistsResponse } = responses;
 
   // Processing - transform responses to DTOs
-  const songs = transformSongsToDTO(songsResponse);
-  const albums = transformAlbumsToDTO(albumsResponse);
-  const artists = transformArtistsToDTO(artistsResponse);
+  const songs = transformSongsToDTO(songsResponse, { verbose });
+  const albums = transformAlbumsToDTO(albumsResponse, { verbose });
+  const artists = transformArtistsToDTO(artistsResponse, { verbose });
 
   // Resolve per-type totals — header value if available, else page size.
   const totalSongs = totals.songsTotal ?? songs.length;

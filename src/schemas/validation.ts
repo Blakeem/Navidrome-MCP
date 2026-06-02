@@ -27,6 +27,7 @@ import {
   OptionalStringArraySchema,
   NonEmptyStringArraySchema,
   OptionalBooleanSchema,
+  VerboseSchema,
   createLimitSchema,
   createTimeoutSchema,
   ID_PATTERN,
@@ -128,6 +129,7 @@ export const SearchAllSchema = EnhancedSearchSchema.extend({
   albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   offset: z.number().int().min(0).optional().default(0),
+  verbose: VerboseSchema,
 });
 
 // These are now imported from common.js to avoid duplication

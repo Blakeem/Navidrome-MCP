@@ -50,8 +50,9 @@ export interface PlaylistTrackDTO {
   id: number;
   /** Song ID */
   mediaFileId: string;
-  /** Playlist ID */
-  playlistId: string;
+  /** Playlist ID. Verbose-only — it is identical on every row (the caller
+      supplied it), so compact responses omit it to save context. */
+  playlistId?: string;
   /** Song title */
   title: string;
   /** Album name */
@@ -60,8 +61,9 @@ export interface PlaylistTrackDTO {
   artist: string;
   /** Album artist */
   albumArtist?: string;
-  /** Duration in seconds */
-  duration: number;
+  /** Duration in seconds. Verbose-only — `durationFormatted` carries the same
+      information in compact responses. */
+  duration?: number;
   /** Duration in human-readable format */
   durationFormatted: string;
   /** Bit rate */

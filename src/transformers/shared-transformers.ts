@@ -30,6 +30,40 @@ interface RawEntityWithGenres {
 }
 
 /**
+ * Controls how much per-item detail a transformer emits. The default
+ * (compact) mode emits only the identity fields each DTO needs to be
+ * recognized and acted on (ids, title/name, artist, album, durationFormatted),
+ * keeping large array responses well under the tool-result token cap. Verbose
+ * mode restores every field. `keep` force-emits specific fields in compact mode
+ * for tools whose entire purpose is a particular metric — e.g. `playCount` for
+ * list_most_played, `starred`/`starredAt` for list_starred_items.
+ */
+export interface TransformOptions {
+  /** When true, emit all fields. Default false (compact). */
+  verbose?: boolean;
+  /** Field names to force-emit even in compact mode. */
+  keep?: readonly string[];
+}
+
+/**
+ * Decide whether an optional/secondary field should be emitted given the
+ * transform options. A field is emitted when verbose is on OR it is explicitly
+ * named in `keep`. Identity fields never go through this gate — they are always
+ * emitted directly by each transformer.
+ *
+ * NOTE: `keep` must name the field a transformer actually gates on. For coupled
+ * fields that is the gate field, not the dependent one: `starredAt` is emitted
+ * inside the `shouldEmit('starred', …)` block, so force-keeping the starred
+ * state needs `keep: ['starred']`; `keep: ['starredAt']` alone emits nothing.
+ */
+export function shouldEmit(field: string, options?: TransformOptions): boolean {
+  if (options?.verbose === true) {
+    return true;
+  }
+  return options?.keep?.includes(field) ?? false;
+}
+
+/**
  * Parse a `MM:SS` formatted duration string into total seconds.
  * Returns 0 for any input that does not match the two-part `MM:SS` shape.
  * Inverse of {@link formatDuration}.

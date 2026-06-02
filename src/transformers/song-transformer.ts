@@ -17,7 +17,7 @@
  */
 
 import type { SongDTO } from '../types/index.js';
-import { formatDuration, extractGenre, extractAllGenres } from './shared-transformers.js';
+import { formatDuration, extractGenre, extractAllGenres, shouldEmit, type TransformOptions } from './shared-transformers.js';
 
 /**
  * Raw song data from Navidrome API
@@ -50,9 +50,13 @@ export interface RawSong {
 /**
  * Transform a raw song from Navidrome API to a clean DTO
  * @param rawSong Raw song data from API
+ * @param options Verbosity controls (see {@link TransformOptions}). Default
+ *   compact: only the identity block below is emitted; verbose/keep restore
+ *   the secondary fields.
  * @returns Clean song DTO for LLM consumption
  */
-export function transformToSongDTO(rawSong: RawSong): SongDTO {
+export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions): SongDTO {
+  // Identity block — always emitted (these are what makes a song actionable).
   const dto: SongDTO = {
     id: rawSong.id,
     title: rawSong.title || '',
@@ -63,42 +67,48 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
     durationFormatted: formatDuration(rawSong.duration),
   };
 
-  // Add optional fields only if they have values
+  // Secondary fields — emitted only in verbose mode (or when force-kept). Each
+  // is still added only if the source actually provides a value.
 
   // Only emit addedDate when the source actually provides it. Navidrome's REST
   // API always supplies `createdAt`; omitting (rather than fabricating `now`)
   // keeps the value honest for any row that doesn't, matching every other
   // optional field below.
-  if (rawSong.createdAt !== undefined && rawSong.createdAt !== '') {
+  if (shouldEmit('addedDate', options) && rawSong.createdAt !== undefined && rawSong.createdAt !== '') {
     dto.addedDate = rawSong.createdAt;
   }
-  const genre = extractGenre(rawSong);
-  if (genre !== undefined) {
-    dto.genre = genre;
+
+  if (shouldEmit('genre', options)) {
+    const genre = extractGenre(rawSong);
+    if (genre !== undefined) {
+      dto.genre = genre;
+    }
   }
 
-  const genres = extractAllGenres(rawSong);
-  if (genres !== undefined) {
-    dto.genres = genres;
+  if (shouldEmit('genres', options)) {
+    const genres = extractAllGenres(rawSong);
+    if (genres !== undefined) {
+      dto.genres = genres;
+    }
   }
 
-  if (rawSong.year !== undefined && rawSong.year > 0) {
+  if (shouldEmit('year', options) && rawSong.year !== undefined && rawSong.year > 0) {
     dto.year = rawSong.year;
   }
 
-  if (rawSong.path !== undefined) {
+  if (shouldEmit('path', options) && rawSong.path !== undefined) {
     dto.path = rawSong.path;
   }
 
-  if (rawSong.trackNumber !== undefined) {
+  if (shouldEmit('trackNumber', options) && rawSong.trackNumber !== undefined) {
     dto.trackNumber = rawSong.trackNumber;
   }
 
-  if (rawSong.playCount !== undefined) {
+  if (shouldEmit('playCount', options) && rawSong.playCount !== undefined) {
     dto.playCount = rawSong.playCount;
   }
 
-  if (rawSong.rating !== undefined && rawSong.rating > 0) {
+  if (shouldEmit('rating', options) && rawSong.rating !== undefined && rawSong.rating > 0) {
     dto.rating = rawSong.rating;
   }
 
@@ -106,24 +116,26 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
   // as a "last starred at" history field even after unstarring, so a
   // populated timestamp alone does NOT mean the item is currently starred.
   // Only echo `starredAt` when the boolean confirms the starred state.
-  if (rawSong.starred === true) {
-    dto.starred = true;
-    if (rawSong.starredAt !== undefined) {
-      dto.starredAt = rawSong.starredAt;
+  if (shouldEmit('starred', options)) {
+    if (rawSong.starred === true) {
+      dto.starred = true;
+      if (rawSong.starredAt !== undefined) {
+        dto.starredAt = rawSong.starredAt;
+      }
+    } else if (rawSong.starred === false) {
+      dto.starred = false;
     }
-  } else if (rawSong.starred === false) {
-    dto.starred = false;
   }
 
-  if (rawSong.playDate !== undefined && rawSong.playDate !== '') {
+  if (shouldEmit('playDate', options) && rawSong.playDate !== undefined && rawSong.playDate !== '') {
     dto.playDate = rawSong.playDate;
   }
 
-  if (rawSong.albumArtist !== undefined && rawSong.albumArtist !== '') {
+  if (shouldEmit('albumArtist', options) && rawSong.albumArtist !== undefined && rawSong.albumArtist !== '') {
     dto.albumArtist = rawSong.albumArtist;
   }
 
-  if (rawSong.albumArtistId !== undefined && rawSong.albumArtistId !== '') {
+  if (shouldEmit('albumArtistId', options) && rawSong.albumArtistId !== undefined && rawSong.albumArtistId !== '') {
     dto.albumArtistId = rawSong.albumArtistId;
   }
 
@@ -134,9 +146,10 @@ export function transformToSongDTO(rawSong: RawSong): SongDTO {
 /**
  * Transform an array of raw songs to DTOs
  * @param rawSongs Array of raw song data
+ * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
  * @returns Array of clean song DTOs
  */
-export function transformSongsToDTO(rawSongs: unknown): SongDTO[] {
+export function transformSongsToDTO(rawSongs: unknown, options?: TransformOptions): SongDTO[] {
   if (!Array.isArray(rawSongs)) {
     return [];
   }
@@ -147,6 +160,6 @@ export function transformSongsToDTO(rawSongs: unknown): SongDTO[] {
   // bad rows instead so one malformed entry doesn't lose every good one.
   return rawSongs
     .filter((song): song is RawSong => typeof song === 'object' && song !== null)
-    .map((song) => transformToSongDTO(song));
+    .map((song) => transformToSongDTO(song, options));
 }
 

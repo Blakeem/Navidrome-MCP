@@ -6,6 +6,10 @@
  * `starredAt` is only echoed when `starred === true`. Navidrome retains
  * a leftover `starredAt` after unstarring, so a populated timestamp
  * alone must NOT mark the item as starred in our DTOs.
+ *
+ * `starred`/`starredAt`/`addedDate` are verbose-gated fields, so every
+ * transform here runs with `{ verbose: true }` to exercise the derivation
+ * logic (compact mode drops these fields regardless of their raw value).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -27,7 +31,7 @@ describe('transformToSongDTO — starred state', () => {
       starred: true,
       starredAt: ISO_TIMESTAMP,
     };
-    const dto = transformToSongDTO(raw);
+    const dto = transformToSongDTO(raw, { verbose: true });
     expect(dto.starred).toBe(true);
     expect(dto.starredAt).toBe(ISO_TIMESTAMP);
   });
@@ -43,7 +47,7 @@ describe('transformToSongDTO — starred state', () => {
       starred: null,
       starredAt: ISO_TIMESTAMP,
     };
-    const dto = transformToSongDTO(raw);
+    const dto = transformToSongDTO(raw, { verbose: true });
     expect(dto.starred).toBeUndefined();
     expect(dto.starredAt).toBeUndefined();
   });
@@ -58,7 +62,7 @@ describe('transformToSongDTO — starred state', () => {
       albumId: 'b-1',
       starred: false,
     };
-    const dto = transformToSongDTO(raw);
+    const dto = transformToSongDTO(raw, { verbose: true });
     expect(dto.starred).toBe(false);
     expect(dto.starredAt).toBeUndefined();
   });
@@ -72,7 +76,7 @@ describe('transformToSongDTO — starred state', () => {
       album: 'B',
       albumId: 'b-1',
     };
-    const dto = transformToSongDTO(raw);
+    const dto = transformToSongDTO(raw, { verbose: true });
     expect(dto.starred).toBeUndefined();
     expect(dto.starredAt).toBeUndefined();
   });
@@ -89,7 +93,7 @@ describe('transformToSongDTO — addedDate', () => {
       albumId: 'b-1',
       createdAt: ISO_TIMESTAMP,
     };
-    const dto = transformToSongDTO(raw);
+    const dto = transformToSongDTO(raw, { verbose: true });
     expect(dto.addedDate).toBe(ISO_TIMESTAMP);
   });
 
@@ -102,7 +106,7 @@ describe('transformToSongDTO — addedDate', () => {
       album: 'B',
       albumId: 'b-1',
     };
-    const dto = transformToSongDTO(raw);
+    const dto = transformToSongDTO(raw, { verbose: true });
     expect(dto.addedDate).toBeUndefined();
   });
 
@@ -116,7 +120,7 @@ describe('transformToSongDTO — addedDate', () => {
       albumId: 'b-1',
       createdAt: '',
     };
-    const dto = transformToSongDTO(raw);
+    const dto = transformToSongDTO(raw, { verbose: true });
     expect(dto.addedDate).toBeUndefined();
   });
 });
@@ -132,7 +136,7 @@ describe('transformToAlbumDTO — starred state', () => {
       starred: true,
       starredAt: ISO_TIMESTAMP,
     };
-    const dto = transformToAlbumDTO(raw);
+    const dto = transformToAlbumDTO(raw, { verbose: true });
     expect(dto.starred).toBe(true);
     expect(dto.starredAt).toBe(ISO_TIMESTAMP);
   });
@@ -147,7 +151,7 @@ describe('transformToAlbumDTO — starred state', () => {
       starred: null,
       starredAt: ISO_TIMESTAMP,
     };
-    const dto = transformToAlbumDTO(raw);
+    const dto = transformToAlbumDTO(raw, { verbose: true });
     expect(dto.starred).toBeUndefined();
     expect(dto.starredAt).toBeUndefined();
   });
@@ -160,7 +164,7 @@ describe('transformToAlbumDTO — starred state', () => {
       artistId: 'a-1',
       songCount: 10,
     };
-    const dto = transformToAlbumDTO(raw);
+    const dto = transformToAlbumDTO(raw, { verbose: true });
     expect(dto.starred).toBeUndefined();
     expect(dto.starredAt).toBeUndefined();
   });
@@ -176,7 +180,7 @@ describe('transformToArtistDTO — starred state', () => {
       starred: true,
       starredAt: ISO_TIMESTAMP,
     };
-    const dto = transformToArtistDTO(raw);
+    const dto = transformToArtistDTO(raw, { verbose: true });
     expect(dto.starred).toBe(true);
     expect(dto.starredAt).toBe(ISO_TIMESTAMP);
   });
@@ -190,7 +194,7 @@ describe('transformToArtistDTO — starred state', () => {
       starred: null,
       starredAt: ISO_TIMESTAMP,
     };
-    const dto = transformToArtistDTO(raw);
+    const dto = transformToArtistDTO(raw, { verbose: true });
     expect(dto.starred).toBeUndefined();
     expect(dto.starredAt).toBeUndefined();
   });
@@ -202,7 +206,7 @@ describe('transformToArtistDTO — starred state', () => {
       albumCount: 5,
       songCount: 50,
     };
-    const dto = transformToArtistDTO(raw);
+    const dto = transformToArtistDTO(raw, { verbose: true });
     expect(dto.starred).toBeUndefined();
     expect(dto.starredAt).toBeUndefined();
   });
