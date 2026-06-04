@@ -26,9 +26,14 @@ import { writeError, writeJson } from '../http-helpers.js';
  * Idempotent / cacheless. Used for first-paint and as a fallback if the SSE
  * stream is briefly unavailable.
  */
-export async function handleNowPlaying(res: ServerResponse): Promise<void> {
+export async function handleNowPlaying(
+  res: ServerResponse,
+  client: NavidromeClient,
+): Promise<void> {
   try {
-    const body = await nowPlaying({});
+    // Pass the client so now_playing can resolve title/artist/album by songId
+    // after an MCP restart (empty engine cache), matching handleQueue.
+    const body = await nowPlaying({}, client);
     writeJson(res, 200, body);
   } catch (err) {
     writeError(res, 500, err instanceof Error ? err.message : 'unknown error');

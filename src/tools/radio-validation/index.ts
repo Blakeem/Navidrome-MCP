@@ -16,28 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Main validation function export
+// Public API for the radio-validation module. Only `validateRadioStream` is
+// consumed outside this directory (by radio-discovery, radio-handlers, radio).
+// The internal helpers (stream-detector / network-validator /
+// recommendation-engine) are imported directly by validation-core where
+// needed; re-exporting them here surfaced them as unused public exports
+// (ts-unused-exports), so they are intentionally NOT re-exported.
 export { validateRadioStream } from './validation-core.js';
-
-// Type exports for consumers who need them
-export type { AudioDetectionResult } from './stream-detector.js';
-export type { ValidationContext } from './network-validator.js';
-export type { StreamValidationResult } from './recommendation-engine.js';
-
-// Utility exports for advanced usage
-export {
-  isAudioContentType,
-  extractStreamingHeaders,
-  detectAudioFormat,
-  VALID_AUDIO_MIMES,
-  STREAMING_HEADERS,
-} from './stream-detector.js';
-
-export {
-  validateWithHead,
-  sampleAudioData,
-} from './network-validator.js';
-
-export {
-  generateRecommendations,
-} from './recommendation-engine.js';

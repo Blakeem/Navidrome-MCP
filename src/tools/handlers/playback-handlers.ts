@@ -432,7 +432,7 @@ const tools: Tool[] = [
   },
   {
     name: 'now_playing',
-    description: "Report the current local playback state — title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache; does NOT spawn mpv if it isn't already running. `duration` is reconciled against Navidrome's pre-scanned per-song metadata, so it's accurate from the first poll even for VBR streams where mpv would otherwise report a partial value during its scan.",
+    description: "Report the current local playback state — title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache; does NOT spawn mpv if it isn't already running. `title`/`artist`/`album` and `duration` are reconciled against Navidrome's per-song metadata (by songId), so they're accurate from the first poll — even during the brief track-load window where mpv would otherwise report the raw stream URL as the title, or a partial VBR duration during its scan.",
     inputSchema: {
       type: 'object',
       properties: {},
@@ -459,7 +459,7 @@ const tools: Tool[] = [
   },
   {
     name: 'shuffle_play_queue',
-    description: 'Randomize the order of items in the current live play queue. Does not change membership.',
+    description: 'Randomize the order of items in the current live play queue. Does not change membership. The currently-playing track keeps playing (it is not restarted) and is moved to the top of the queue; the rest of the queue is shuffled around it.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -468,7 +468,7 @@ const tools: Tool[] = [
   },
   {
     name: 'move_in_play_queue',
-    description: 'Move the play-queue entry at index `from` so that it takes the place of the entry at index `to`.',
+    description: 'Move the play-queue entry at index `from` so that it takes the place of the entry at index `to`. Reordering never changes what is currently playing — the play head stays on the same track (following it to its new index if it was the one moved).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -568,7 +568,7 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
         case 'seek':
           return seek(args);
         case 'now_playing':
-          return nowPlaying(args);
+          return nowPlaying(args, client);
         case 'get_play_queue':
           return getPlayQueue(client, args);
         case 'clear_play_queue':

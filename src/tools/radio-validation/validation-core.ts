@@ -225,20 +225,27 @@ export async function validateRadioStream(
       result.finalUrl = resolvedFinalUrl;
     }
 
+    // Extract streaming headers first — their presence (ICY/audiocast) is the
+    // strongest possible signal and changes how we interpret content-type and
+    // HTTP status below.
+    result.streamingHeaders = extractStreamingHeaders(finalResponse.headers);
+    result.validation.hasStreamingHeaders = Object.keys(result.streamingHeaders).length > 0;
+
     // Extract content type
     const contentType = finalResponse.headers.get('content-type');
     if (contentType !== null && contentType !== '') {
       result.contentType = contentType;
       result.validation.hasAudioContentType = isAudioContentType(contentType);
 
-      if (!result.validation.hasAudioContentType) {
+      // A non-audio content-type is only a problem when there are NO streaming
+      // headers to corroborate the stream. Icecast/Shoutcast mounts that reject
+      // our HEAD probe return an HTML error body (`text/html`) yet still echo
+      // the full ICY header set — flagging that as an error would be misleading
+      // for a stream we can positively identify from its `icy-*` headers.
+      if (!result.validation.hasAudioContentType && !result.validation.hasStreamingHeaders) {
         errors.push(`Non-audio content type: ${contentType}`);
       }
     }
-
-    // Extract streaming headers
-    result.streamingHeaders = extractStreamingHeaders(finalResponse.headers);
-    result.validation.hasStreamingHeaders = Object.keys(result.streamingHeaders).length > 0;
   }
 
   // Step 3: Detect audio format if we got data
@@ -256,11 +263,23 @@ export async function validateRadioStream(
     warnings.push('Could not sample audio data from stream');
   }
 
-  // Determine overall success
-  result.success = result.validation.httpAccessible &&
-                  (result.validation.hasAudioContentType ||
-                   result.validation.audioDataDetected ||
-                   result.validation.hasStreamingHeaders);
+  // Determine overall success.
+  //
+  // ICY/audiocast streaming headers (icy-br, icy-name, icy-metaint, ...) are
+  // emitted ONLY by Shoutcast/Icecast audio servers, so their presence is
+  // definitive proof of a real stream — even when the server rejects our HEAD
+  // probe with a non-2xx status. Many icecast mounts return 400/405 to HEAD
+  // while still echoing the ICY header set (e.g. walmradio on :8443), so
+  // gating on `httpAccessible` here produced false negatives on real, popular
+  // streams (Issue #7). Streaming headers are therefore sufficient on their own.
+  //
+  // Absent streaming headers, fall back to the conservative check: the endpoint
+  // must be HTTP-accessible AND look like audio (by content-type or sniffed
+  // magic bytes).
+  result.success =
+    result.validation.hasStreamingHeaders ||
+    (result.validation.httpAccessible &&
+      (result.validation.hasAudioContentType || result.validation.audioDataDetected));
 
   result.status = result.success ? 'valid' : (errors.length > 0 ? 'error' : 'invalid');
 

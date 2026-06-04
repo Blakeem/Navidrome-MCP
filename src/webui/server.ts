@@ -111,7 +111,7 @@ async function handleRequest(
 
   // --- API: snapshot reads ---
   if (method === 'GET' && path === '/api/now-playing') {
-    return handleNowPlaying(res);
+    return handleNowPlaying(res, deps.client);
   }
   if (method === 'GET' && path === '/api/queue') {
     return handleQueue(res, deps.client);

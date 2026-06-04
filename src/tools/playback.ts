@@ -942,12 +942,36 @@ export async function seek(args: unknown): Promise<SeekResult> {
 }
 
 /**
+ * True when a string is an http(s) URL. mpv's top-level `media-title` is the
+ * raw stream URL during the brief track-load window (before it reads file
+ * metadata), and our Subsonic stream URL carries the auth token (`t`) + salt
+ * (`s`). Such a value must never reach the LLM transcript — it's useless as a
+ * display title and a credential leak the project's sanitize-url policy
+ * forbids — so we detect and suppress it. Non-URL strings (real titles, ICY
+ * "Artist - Track" radio titles) pass through untouched.
+ */
+function looksLikeHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read current playback state from the engine's observed-property cache.
  * Does NOT trigger a lazy spawn — read tools never start mpv. Will
  * transparently attach to an already-running mpv (e.g. one that survived
  * an MCP restart) so the report reflects the actual playback state.
+ *
+ * `client` is optional and used only as a last-resort enrichment path: after
+ * an MCP restart the in-memory metadata cache is empty, so title/artist/album
+ * for the current track are resolved by a single Navidrome lookup. When the
+ * client is absent (e.g. the live-mpv integration helper), the in-session
+ * engine cache still supplies them.
  */
-export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
+export async function nowPlaying(_args: unknown, client?: NavidromeClient): Promise<NowPlayingResult> {
   try {
     await playbackEngine.ensureAttached();
     const status = playbackEngine.getStatus();
@@ -972,16 +996,20 @@ export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
     const duration = playbackEngine.getCachedProperty('duration');
     if (typeof duration === 'number') result.duration = duration;
 
+    // Never surface a URL-shaped media-title: during the track-load window mpv
+    // reports the raw stream URL (with auth token + salt) here. Suppress it and
+    // let the songId-based reconciliation below fill in the real title — the
+    // same way get_play_queue stays correct (see Issue #3).
     const title = playbackEngine.getCachedProperty('media-title');
-    if (typeof title === 'string') result.title = title;
+    if (typeof title === 'string' && !looksLikeHttpUrl(title)) result.title = title;
 
     const metadata = playbackEngine.getCachedProperty('metadata');
     if (typeof metadata === 'object' && metadata !== null) {
       const meta = metadata as Record<string, unknown>;
       const artist = pickFirstString(meta, ['artist', 'Artist', 'ARTIST', 'icy-name']);
       const album = pickFirstString(meta, ['album', 'Album', 'ALBUM']);
-      if (artist !== null) result.artist = artist;
-      if (album !== null) result.album = album;
+      if (artist !== null && !looksLikeHttpUrl(artist)) result.artist = artist;
+      if (album !== null && !looksLikeHttpUrl(album)) result.album = album;
     }
 
     // Surface radio context AND repair duration for VBR MP3s.
@@ -1019,10 +1047,18 @@ export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
     const needsDurationRepair =
       radioStation === null &&
       (result.duration === undefined || result.duration < 600);
+    // Title/artist/album still missing for a non-radio track — either mpv hadn't
+    // loaded file metadata yet, or we suppressed a URL-shaped media-title above.
+    // Resolve them by songId from the current queue entry, the same correctness
+    // path get_play_queue uses. Scoped to non-radio so radio (which has no
+    // album, and gets its title via ICY) doesn't force a getPlaylist every poll.
+    const needsMetadataRepair =
+      radioStation === null &&
+      (result.title === undefined || result.artist === undefined || result.album === undefined);
     if (
       typeof queueLength === 'number' &&
       queueLength > 0 &&
-      (needsRadioFallback || needsDurationRepair)
+      (needsRadioFallback || needsDurationRepair || needsMetadataRepair)
     ) {
       try {
         const playlist = await playbackEngine.getPlaylist();
@@ -1031,6 +1067,39 @@ export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
           // Radio fallback (only when session-scoped flag wasn't set)
           if (needsRadioFallback && current.songId === null) {
             result.isRadio = true;
+          }
+          // Metadata reconciliation by songId. getPlaylist already merged the
+          // engine's per-song cache and sanitized any URL, so current.title/
+          // artist/album are the authoritative display strings when present.
+          if (result.title === undefined && current.title !== undefined && !looksLikeHttpUrl(current.title)) {
+            result.title = current.title;
+          }
+          if (result.artist === undefined && current.artist !== undefined) {
+            result.artist = current.artist;
+          }
+          if (result.album === undefined && current.album !== undefined) {
+            result.album = current.album;
+          }
+          // Post-MCP-restart the engine cache is empty, so current.* may be
+          // blank. Fall back to a single Navidrome lookup for the current song
+          // (mirrors get_play_queue), bounded to one track so polling stays
+          // cheap. Gate on the ESSENTIAL fields only (title/artist) — a song
+          // that genuinely has no album would otherwise re-fetch every poll
+          // since album never resolves. Mirrors get_play_queue's `artist`
+          // trigger. Only when a client was supplied and a real songId exists.
+          if (
+            client !== undefined &&
+            current.songId !== null &&
+            (result.title === undefined || result.artist === undefined)
+          ) {
+            const [md] = await fetchSongMetadata(client, [current.songId]);
+            if (md !== undefined) {
+              // Seed the cache so subsequent polls are hits, no re-fetch.
+              playbackEngine.ingestQueueMetadata([md]);
+              if (result.title === undefined && md.title !== undefined && md.title !== '') result.title = md.title;
+              if (result.artist === undefined && md.artist !== undefined && md.artist !== '') result.artist = md.artist;
+              if (result.album === undefined && md.album !== undefined && md.album !== '') result.album = md.album;
+            }
           }
           // VBR duration repair: prefer the cached (Navidrome-sourced)
           // duration when mpv's reported duration is missing or noticeably
@@ -1048,6 +1117,13 @@ export async function nowPlaying(_args: unknown): Promise<NowPlayingResult> {
         // from mpv's cached properties.
       }
     }
+
+    // Defense-in-depth: under no circumstances let a credential-bearing,
+    // URL-shaped value escape in a display field (CLAUDE.md sanitize-url rule).
+    // Every assignment above is already guarded, but this is the final backstop.
+    if (result.title !== undefined && looksLikeHttpUrl(result.title)) delete result.title;
+    if (result.artist !== undefined && looksLikeHttpUrl(result.artist)) delete result.artist;
+    if (result.album !== undefined && looksLikeHttpUrl(result.album)) delete result.album;
 
     return result;
   } catch (error) {

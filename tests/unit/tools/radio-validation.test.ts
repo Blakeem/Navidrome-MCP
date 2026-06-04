@@ -282,6 +282,41 @@ describe('Radio Stream Validation', () => {
       expect(result.recommendations).toContain('Bitrate: 128kbps');
     });
 
+    it('treats ICY headers on a non-2xx HEAD response as a valid stream (Issue #7)', async () => {
+      // Icecast/Shoutcast mounts (e.g. walmradio on :8443) commonly reject HEAD
+      // with a 400 + HTML error body, yet still echo the full ICY header set.
+      // Those headers are definitive proof of a real audio stream, so validation
+      // must SUCCEED despite the non-2xx status — previously this false-negatived
+      // because success was gated on httpAccessible (2xx/206 only).
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        headers: new Headers({
+          'content-type': 'text/html; charset=utf-8',
+          'icy-name': 'Classic Vinyl HD',
+          'icy-br': '320',
+          'icy-genre': 'Lounge',
+        }),
+      });
+
+      const result = await validateRadioStream(mockClient, {
+        url: 'https://icecast.example.com:8443/classic',
+        timeout: 2000,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('valid');
+      expect(result.validation.hasStreamingHeaders).toBe(true);
+      // The non-2xx HEAD means httpAccessible is false; the ICY headers carry it.
+      expect(result.validation.httpAccessible).toBe(false);
+      expect(result.httpStatus).toBe(400);
+      // The HTML error body's content-type must NOT be flagged as an error.
+      expect(result.errors).toEqual([]);
+      // Conclusive ICY headers skip the audio-sampling GET — only the HEAD fires.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
     it('should work without streaming headers', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

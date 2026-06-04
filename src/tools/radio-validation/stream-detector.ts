@@ -19,15 +19,16 @@
 import { fileTypeFromBuffer } from 'file-type';
 import { stripHtml } from '../../utils/strip-html.js';
 
-// Audio format detection result
-export interface AudioDetectionResult {
+// Audio format detection result (module-private — only the return type of the
+// exported detectAudioFormat below; consumers get it via inference).
+interface AudioDetectionResult {
   readonly detected: boolean;
   readonly format?: string;
   readonly mime?: string;
 }
 
-// Valid audio MIME types
-export const VALID_AUDIO_MIMES = [
+// Valid audio MIME types (module-private — consumed only by isAudioContentType)
+const VALID_AUDIO_MIMES = [
   'audio/mpeg',
   'audio/mp3',
   'audio/aac',
@@ -43,8 +44,9 @@ export const VALID_AUDIO_MIMES = [
   'application/vnd.apple.mpegurl', // HLS
 ];
 
-// Streaming-specific headers to check
-export const STREAMING_HEADERS = [
+// Streaming-specific headers to check (module-private — consumed only by
+// extractStreamingHeaders)
+const STREAMING_HEADERS = [
   'icy-name',
   'icy-br',
   'icy-metaint',

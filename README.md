@@ -24,7 +24,7 @@ Browse and search songs, albums, artists, genres, and tags with rich filtering: 
 
 Audio plays through your machine's speakers, no browser or Navidrome web UI needed. Search and play in a single step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, *"add 10 random rock songs to whatever's already playing, shuffled"*. Three shuffle modes for albums (keep order, randomize album order, fully interleave tracks).
 
-The live queue is actively manipulable: move a track to the front and it starts playing, shuffle and the new top plays, remove the current track and the next one auto-advances. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. Plays scrobble back to Navidrome so your recently-played and play counts stay in sync with what you actually listen to through mpv. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
+The live queue is actively manipulable: reorder and shuffle tracks without interrupting what's playing — shuffle keeps the current song going and reshuffles the rest around it — and removing the current track auto-advances to the next. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. Plays scrobble back to Navidrome so your recently-played and play counts stay in sync with what you actually listen to through mpv. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
 
 This design is built for conversational control and pairs cleanly with voice transports (Whisper STT + TTS) to build a hands-free music device on a Raspberry Pi or always-on machine.
 
@@ -417,8 +417,8 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 | `playback_status` | Engine health probe (running, mpv version, idle) without spawning mpv |
 | `get_play_queue` | Snapshot of the live queue with metadata and current-track index |
 | `clear_play_queue` | Clear the queue and stop playback |
-| `shuffle_play_queue` | Randomize queue order (membership unchanged) |
-| `move_in_play_queue` | Move a queue entry between indices |
+| `shuffle_play_queue` | Randomize queue order (membership unchanged); the current track keeps playing and is lifted to the top |
+| `move_in_play_queue` | Move a queue entry between indices; never changes what's currently playing |
 | `remove_from_play_queue` | Remove an entry; mpv auto-advances if the current track is removed |
 | `play_queue_index` | Jump directly to the queue entry at the given index; does not reorder |
 

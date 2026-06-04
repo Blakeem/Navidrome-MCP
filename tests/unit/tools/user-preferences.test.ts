@@ -689,14 +689,17 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         expect(result.partial).toBe(false);
       });
 
-      it('an under-filled page over a SATURATED window reports hasMore=true, partial=true', async () => {
-        // limit=2/offset=0 -> fetchLimit=6. Return exactly 6 raw rows (saturated),
-        // but only 1 of them qualifies. We can only return 1 (< limit), and rows
-        // beyond the window were never examined -> partial, more may exist.
+      it('a saturated window with a visible rating cutoff is COMPLETE (hasMore=false, partial=false)', async () => {
+        // Regression for Issue #2. limit=2/offset=0 -> fetchLimit=6. Return exactly
+        // 6 raw rows (saturated), but only 1 qualifies; the other 5 are below
+        // minRating. Because the window is fetched sorted by rating DESC, seeing
+        // rows below the cutoff proves every unfetched row is also below it — the
+        // qualifying set is fully contained here. Previously this falsely reported
+        // hasMore=true/partial=true, making clients paginate forever.
         const rows = [
           { id: 'al0', name: 'A0', artist: 'A', rating: 5 }, // qualifies
           ...Array.from({ length: 5 }, (_, i) => ({
-            id: `lo${i}`, name: `Lo${i}`, artist: 'A', rating: 1, // filtered out
+            id: `lo${i}`, name: `Lo${i}`, artist: 'A', rating: 1, // below minRating
           })),
         ];
         mockClient.requestWithLibraryFilter.mockResolvedValue(rows);
@@ -705,6 +708,25 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         expect(result.count).toBe(1);
         expect(result.items.map(i => i.id)).toEqual(['al0']);
+        expect(result.hasMore).toBe(false);
+        expect(result.partial).toBe(false);
+      });
+
+      it('an under-filled page over a saturated all-qualifying window reports hasMore=true, partial=true', async () => {
+        // The only way the window can hide qualifying rows: it saturates the 500
+        // fetch cap with EVERY fetched row still qualifying (no rating cutoff seen).
+        // limit=2/offset=499 -> fetchLimit=min(501*3,500)=500. 500 qualifying rows,
+        // sliced at offset 499 -> 1 returned (< limit), and rows past 500 were
+        // never examined -> genuinely partial, more may exist.
+        const rows = Array.from({ length: 500 }, (_, i) => ({
+          id: `al${i}`, name: `A${i}`, artist: 'A', rating: 5,
+        }));
+        mockClient.requestWithLibraryFilter.mockResolvedValue(rows);
+
+        const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 499 });
+
+        expect(result.count).toBe(1);
+        expect(result.items.map(i => i.id)).toEqual(['al499']);
         expect(result.partial).toBe(true);
         expect(result.hasMore).toBe(true);
       });

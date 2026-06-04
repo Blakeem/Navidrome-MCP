@@ -212,7 +212,10 @@ export class SseBroadcaster {
     // unavailable" than to fall silent and leave the user wondering if
     // the MCP server has died.
     const [npResult, queueResult, statusResult] = await Promise.allSettled([
-      nowPlaying({}),
+      // Pass the client so now_playing can resolve title/artist/album by songId
+      // after an MCP restart (empty engine cache) — same enrichment the MCP
+      // tool path gets — instead of leaving the web UI's card blank.
+      nowPlaying({}, this.client),
       getPlayQueue(this.client, {}),
       playbackStatus({}),
     ]);

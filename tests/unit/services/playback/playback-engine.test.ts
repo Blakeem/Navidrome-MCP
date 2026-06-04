@@ -435,3 +435,85 @@ describe("enqueue('append') radio demotion", () => {
     expect(commands).not.toContain('playlist-clear');
   });
 });
+
+// ---------- Issue #4: movePlaylistEntry never hijacks the play head ----------
+
+describe('movePlaylistEntry play-head preservation (Issue #4)', () => {
+  it('issues only playlist-move — never set_property playlist-pos — for a from:0 move', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+
+    await playbackEngine.movePlaylistEntry(0, 4);
+
+    const moveCalls = ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move');
+    expect(moveCalls).toEqual([['playlist-move', 0, 4]]);
+
+    // The bug was an explicit `set_property playlist-pos 0` that overrode mpv's
+    // native play-head bookkeeping whenever index 0 was involved. mpv already
+    // keeps the playing entry current across a move, so the override is gone.
+    const posResets = ipc.command.mock.calls.filter(
+      (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
+    );
+    expect(posResets).toHaveLength(0);
+  });
+
+  it('also leaves the play head alone for a to:0 move', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+
+    await playbackEngine.movePlaylistEntry(3, 0);
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toEqual([
+      ['playlist-move', 3, 0],
+    ]);
+    const posResets = ipc.command.mock.calls.filter(
+      (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
+    );
+    expect(posResets).toHaveLength(0);
+  });
+});
+
+// ---------- Issue #5: shufflePlaylist keeps the current track playing ----------
+
+describe('shufflePlaylist play-head preservation (Issue #5)', () => {
+  it('lifts the post-shuffle current track to index 0 via playlist-move, not a playlist-pos reset', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    // After the shuffle, mpv reports the current track landed at index 3.
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'get_property' && args[1] === 'playlist-pos') return 3;
+      return null;
+    });
+
+    await playbackEngine.shufflePlaylist();
+
+    const kinds = ipc.command.mock.calls.map((c) => c[0]);
+    expect(kinds).toContain('playlist-shuffle');
+    // Current track lifted to the top WITHOUT restarting playback.
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toEqual([
+      ['playlist-move', 3, 0],
+    ]);
+    // The old restart-the-head bug must be gone.
+    const posResets = ipc.command.mock.calls.filter(
+      (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
+    );
+    expect(posResets).toHaveLength(0);
+  });
+
+  it('does not move when the current track already shuffled to index 0', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'get_property' && args[1] === 'playlist-pos') return 0;
+      return null;
+    });
+
+    await playbackEngine.shufflePlaylist();
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toHaveLength(0);
+  });
+});

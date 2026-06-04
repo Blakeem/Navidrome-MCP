@@ -639,21 +639,25 @@ class PlaybackEngine {
    * Randomize the order of items in the live playlist via mpv's native
    * `playlist-shuffle` command. Atomic on mpv's side. Lazy-spawns mpv.
    *
-   * Active-queue behavior: after the shuffle, the play head is reset to
-   * index 0 so the new top of queue starts playing. Without this, mpv's
-   * default keeps the previously-current track playing wherever it landed
-   * in the new order, which contradicts the "active queue" model where the
-   * queue's top reflects what's audibly playing. Setting `playlist-pos`
-   * preserves any existing pause state — paused stays paused.
+   * The currently-playing track keeps playing — shuffle must never restart
+   * playback on a random track (Issue #5). mpv natively keeps the playing
+   * entry current wherever it lands in the new order; we then lift that entry
+   * back to index 0 with `playlist-move` (which preserves what's playing — see
+   * {@link movePlaylistEntry}) so the queue's top still reflects what's
+   * audibly playing (active-queue model) while the *rest* of the queue is
+   * shuffled around it. Pause state is preserved throughout.
+   *
+   * The post-shuffle position is read fresh via IPC because the observed
+   * `playlist-pos` cache may not have caught up to the shuffle yet.
    */
   async shufflePlaylist(): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       await ipc.command('playlist-shuffle');
-      const count = this.getCachedProperty('playlist-count');
-      if (typeof count === 'number' && count > 0) {
-        await ipc.command('set_property', 'playlist-pos', 0);
+      const pos = await ipc.command('get_property', 'playlist-pos');
+      if (typeof pos === 'number' && pos > 0) {
+        await ipc.command('playlist-move', pos, 0);
       }
     });
     this.emitStateChange({ kind: 'queue' });
@@ -665,22 +669,21 @@ class PlaybackEngine {
    * indices and the message surfaces via `ErrorFormatter.toolExecution`.
    * Avoids races with concurrent queue mutations.
    *
-   * Active-queue behavior: when the move involves index 0 (either source
-   * or destination), the play head is reset to index 0 afterwards so the
-   * new top-of-queue starts playing. This covers two user expectations:
-   * moving a track TO the front should start playing it, and moving the
-   * currently-playing track FROM the front should make the new front
-   * track play. Other moves leave playback alone (lazy is fine when the
-   * top of queue isn't affected). Pause state is preserved.
+   * Reordering the queue NEVER changes what is currently playing. mpv tracks
+   * the play head by entry, not by fixed index: `playlist-move` keeps the
+   * playing track playing — it follows the moved entry to its new index when
+   * the current track is the one being moved, and otherwise stays on the same
+   * track (its index shifting only as entries slide around it). This matches
+   * every media player's queue-reorder behavior and Navidrome's own web UI.
+   *
+   * (Previously this force-set `playlist-pos = 0` whenever index 0 was the
+   * source or destination, which hijacked the play head onto whatever landed
+   * at the top — Issue #4. Removed: mpv's native bookkeeping is correct.)
    */
   async movePlaylistEntry(from: number, to: number): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
-      const ipc = this.requireIpc();
-      await ipc.command('playlist-move', from, to);
-      if (from === 0 || to === 0) {
-        await ipc.command('set_property', 'playlist-pos', 0);
-      }
+      await this.requireIpc().command('playlist-move', from, to);
     });
     this.emitStateChange({ kind: 'queue' });
   }

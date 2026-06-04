@@ -228,12 +228,69 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
 }
 
 /**
+ * Probe a single discovered station and attach its validation verdict. Never
+ * throws — a failed probe becomes an `isValid:false` result so one bad host
+ * can't sink the batch.
+ */
+async function probeStation(
+  client: NavidromeClient,
+  station: ExternalRadioStationDTO,
+): Promise<ExternalRadioStationDTO> {
+  try {
+    const validationResult = await validateRadioStream(client, {
+      url: station.playUrl,
+      timeout: DISCOVERY_VALIDATION_TIMEOUT,
+    });
+    return {
+      ...station,
+      validation: {
+        validated: true,
+        isValid: validationResult.success,
+        status: validationResult.success ? 'OK' : 'FAIL',
+        duration: validationResult.testDuration,
+      },
+    };
+  } catch {
+    return {
+      ...station,
+      validation: {
+        validated: true,
+        isValid: false,
+        status: 'FAIL',
+      },
+    };
+  }
+}
+
+/**
+ * Concurrency-control key for a station's probe: its `host:port`. Stations that
+ * share a host must be probed one-at-a-time (some servers — e.g. icecast hosting
+ * several popular mounts on one host:port — rate-limit concurrent connections
+ * per IP, which stalls and false-FAILs real streams; see Issue #7). Falls back
+ * to a per-station unique key when the URL can't be parsed, so an unparseable
+ * URL runs in its own lane rather than being lumped in with others.
+ */
+function stationHostKey(playUrl: string, index: number): string {
+  try {
+    return new URL(playUrl).host.toLowerCase();
+  } catch {
+    return `__unparseable_${index}`;
+  }
+}
+
+/**
  * Validate discovered radio stations.
  *
- * Validates the first 8 stations in parallel — each hits a different upstream
- * host so they're network-independent and serial processing buys nothing except
- * extra wall-clock time (8 × 2s timeout = 16s). Promise.all gives us ~2s total
- * for the batch instead of 16s worst-case.
+ * Probes the first 8 stations, bucketed by `host:port`: DIFFERENT hosts run
+ * fully in parallel (the common case — 8 distinct hosts — is as fast as before),
+ * while SAME-host stations run sequentially so we never open concurrent
+ * connections to a host that rate-limits per IP (Issue #7). Every bucket is
+ * launched at once, so a multi-station bucket starts its sequential chain
+ * immediately and the longest single chain bounds total wall-clock — the slow,
+ * clustered hosts surface and drain as early as possible.
+ *
+ * Results are written back by original index, so the caller's discovery order
+ * (e.g. sorted by votes) is preserved regardless of which bucket finishes first.
  *
  * Why 8: practical cap so we don't fan out to hundreds of hosts for large
  * result sets; Radio Browser's `hideBroken` filter already pre-screens for
@@ -247,40 +304,32 @@ async function validateDiscoveredStations(
   const stationsToValidate = stations.slice(0, maxValidations);
   const remainingStations = stations.slice(maxValidations);
 
-  // Validate in parallel — each station hits a different host so there is no
-  // shared rate-limit concern. Individual timeouts inside validateRadioStream
-  // ensure a slow host doesn't delay the whole batch beyond DISCOVERY_VALIDATION_TIMEOUT.
-  const validatedStations = await Promise.all(
-    stationsToValidate.map(async (station): Promise<ExternalRadioStationDTO> => {
-      try {
-        const validationResult = await validateRadioStream(client, {
-          url: station.playUrl,
-          timeout: DISCOVERY_VALIDATION_TIMEOUT,
-        });
-        return {
-          ...station,
-          validation: {
-            validated: true,
-            isValid: validationResult.success,
-            status: validationResult.success ? 'OK' : 'FAIL',
-            duration: validationResult.testDuration,
-          },
-        };
-      } catch {
-        return {
-          ...station,
-          validation: {
-            validated: true,
-            isValid: false,
-            status: 'FAIL',
-          },
-        };
+  // Bucket by host:port, carrying each station's original index so results can
+  // be slotted back in order.
+  const buckets = new Map<string, Array<{ index: number; station: ExternalRadioStationDTO }>>();
+  stationsToValidate.forEach((station, index) => {
+    const key = stationHostKey(station.playUrl, index);
+    const bucket = buckets.get(key);
+    if (bucket === undefined) {
+      buckets.set(key, [{ index, station }]);
+    } else {
+      bucket.push({ index, station });
+    }
+  });
+
+  // One lane per host, all launched concurrently; within a lane, probe one
+  // station at a time.
+  const results = new Array<ExternalRadioStationDTO>(stationsToValidate.length);
+  await Promise.all(
+    Array.from(buckets.values()).map(async (entries) => {
+      for (const { index, station } of entries) {
+        results[index] = await probeStation(client, station);
       }
-    })
+    }),
   );
 
   // Add remaining stations without validation
-  return [...validatedStations, ...remainingStations];
+  return [...results, ...remainingStations];
 }
 
 /**
@@ -370,11 +419,20 @@ export async function discoverRadioStations(
     };
 
     if (validatedCount > 0) {
+      const failedCount = validatedCount - workingCount;
+      // A FAIL here is a best-effort quick probe, not a verdict: probes run in
+      // parallel, so a slow TLS handshake or a host that throttles concurrent
+      // connections (e.g. several popular streams sharing one icecast host) can
+      // time out a station that actually works. Tell the caller to re-check a
+      // FAIL one-at-a-time with validate_radio_stream before discarding it.
+      const failNote = failedCount > 0
+        ? ' A "FAIL" is a best-effort parallel probe and can be a false negative for slow or rate-limiting hosts — re-check a FAIL with validate_radio_stream before discarding it.'
+        : '';
       result.validationSummary = {
         totalStations: stations.length,
         validatedStations: validatedCount,
         workingStations: workingCount,
-        message: `Auto-validated first ${validatedCount} stations: ${workingCount} working, ${validatedCount - workingCount} not working.`
+        message: `Auto-validated first ${validatedCount} stations: ${workingCount} working, ${failedCount} not working.${failNote}`,
       };
     }
     

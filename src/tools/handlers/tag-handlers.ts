@@ -44,7 +44,7 @@ const tools: Tool[] = [
         },
         tagValue: {
           type: 'string',
-          description: 'Optional tag value to match exactly (e.g., "Rock" for genre, "Album" for releasetype)',
+          description: 'Optional tag value filter. Matches as a case-insensitive PREFIX (starts-with), not an exact or substring match — e.g. "Alternative" also matches "Alternative Rock", "Alternative & Punk", "Alternative Metal", while "Rock" matches only "Rock" (not "Alternative Rock"). Pass the fullest leading value you can to narrow results (e.g. "Rock" for genre, "Album" for releasetype).',
         },
         limit: {
           type: 'number',

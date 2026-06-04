@@ -69,20 +69,23 @@ interface ListTopRatedResult {
    * Honest pagination signal for the client-side `minRating` filter.
    *
    * `minRating` is applied in memory over a bounded, capped over-fetch window
-   * (Navidrome has no `rating >= N` server filter — see {@link listTopRated}).
-   * So this tool cannot always guarantee a full `limit` of qualifying rows:
+   * fetched sorted by `rating DESC` (Navidrome has no `rating >= N` server
+   * filter — see {@link listTopRated}). Because the window is sorted by the same
+   * field we filter on, seeing any row below `minRating` proves the qualifying
+   * set is fully contained in the window. So:
    *
-   * - `hasMore: true`  — more qualifying rows are known/likely to exist beyond
-   *   this page (either already seen past `offset+limit` in the window, or the
-   *   over-fetch window was saturated so rows past it weren't examined). The
-   *   caller can page further (increase `offset`) but see `partial`.
-   * - `partial: true`  — the returned page may be INCOMPLETE: the over-fetch
-   *   window was saturated/capped and fewer than `limit` rows were returned, so
-   *   additional qualifying rows might exist beyond the examined window that this
-   *   single request couldn't reach. Treat the count as a lower bound. Deep
-   *   pagination past the window would need cursor-based deepening.
+   * - `hasMore: true`  — more qualifying rows exist past this page: either the
+   *   (complete) filtered set overflows `offset+limit`, or the over-fetch window
+   *   saturated while every fetched row still qualified, so unknown qualifying
+   *   rows may lie beyond it. The caller can page further (increase `offset`).
+   * - `partial: true`  — the returned page is a lower bound: the window
+   *   saturated, every fetched row qualified, and fewer than `limit` rows came
+   *   back, so additional qualifying rows might exist beyond the examined window.
+   *   Treat the count as a lower bound; deep pagination would need cursor-based
+   *   deepening. A complete qualifying set is never `partial`, even when empty.
    *
-   * Both default to `false` (a fully-served page within an unsaturated window).
+   * Both default to `false` (a complete page: result fully served, or the rating
+   * cutoff was observed inside the window).
    */
   hasMore: boolean;
   partial: boolean;
@@ -292,16 +295,28 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
 
     // Honest pagination signals (see ListTopRatedResult docs):
     // - The over-fetch window is "saturated" when the server returned as many
-    //   raw rows as we asked for — meaning rows beyond the window exist but were
-    //   never examined for the `minRating` cutoff.
+    //   raw rows as we asked for — so rows beyond the window exist but weren't
+    //   fetched.
     const windowSaturated = rawCount >= fetchLimit;
-    // - More qualifying rows are known to exist past this page if the filtered
-    //   window already overflows offset+limit, OR may exist beyond a saturated
-    //   window we couldn't see past.
-    const hasMore = filtered.length > offset + limit || windowSaturated;
-    // - The page is partial (a lower bound) when we couldn't fill `limit` AND the
-    //   window was saturated, so more qualifying rows may lie beyond it.
-    const partial = windowSaturated && transformedItems.length < limit;
+    // - KEY INSIGHT: the window is fetched sorted by `rating DESC`, the very
+    //   field `minRating` filters on. So if ANY fetched row fell below
+    //   `minRating` (filtered.length < rawCount), the rating cutoff lies INSIDE
+    //   the window: every unfetched row past it has rating <= the lowest
+    //   in-window rating, hence also below `minRating`. The qualifying set is
+    //   therefore fully contained in what we fetched — even if the window was
+    //   saturated. Only when the window saturated AND every fetched row still
+    //   qualified do unknown qualifying rows possibly lie beyond it.
+    const sawRatingCutoff = filtered.length < rawCount;
+    const qualifyingSetComplete = !windowSaturated || sawRatingCutoff;
+    // - When the qualifying set is complete, more rows exist past this page only
+    //   if our (complete) filtered set overflows offset+limit. Otherwise we hit
+    //   the fetch cap while still in qualifying territory, so more may exist.
+    const hasMore = qualifyingSetComplete
+      ? filtered.length > offset + limit
+      : true;
+    // - The page is a lower bound only when the set is incomplete AND we couldn't
+    //   fill `limit`. A complete set is never partial (even an empty one).
+    const partial = !qualifyingSetComplete && transformedItems.length < limit;
 
     return {
       count: transformedItems.length,
