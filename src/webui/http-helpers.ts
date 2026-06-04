@@ -41,6 +41,21 @@ export function writeError(res: ServerResponse, status: number, message: string)
 }
 
 /**
+ * Run a route action and map its result to an HTTP response with consistent
+ * error-to-status handling. Errors from the engine or the reused Zod schemas
+ * flow through as 500 with their message preserved. Shared by control and
+ * playlist routes so every web action behaves identically.
+ */
+export async function runAction(res: ServerResponse, action: () => Promise<unknown>): Promise<void> {
+  try {
+    const result = await action();
+    writeJson(res, 200, result);
+  } catch (err) {
+    writeError(res, 500, err instanceof Error ? err.message : 'unknown error');
+  }
+}
+
+/**
  * Read a JSON request body with a hard size cap. Empty bodies resolve to
  * `null` so caller can distinguish "no body provided" from "{}" — useful for
  * routes that accept no input. Beyond `MAX_BODY_BYTES`, the connection is

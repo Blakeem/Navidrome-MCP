@@ -36,7 +36,7 @@ import { nullIfGoZeroTime } from '../utils/go-time.js';
 /**
  * Get user details including library information with active status
  */
-async function getUserDetails(): Promise<UserDetailsDTO> {
+function getUserDetails(): UserDetailsDTO {
   try {
     if (!libraryManager.isInitialized()) {
       throw new Error('LibraryManager not initialized');
@@ -116,7 +116,7 @@ async function getUserDetails(): Promise<UserDetailsDTO> {
 /**
  * Set active libraries for the user session
  */
-async function setActiveLibraries(args: unknown): Promise<LibraryManagementResponse> {
+function setActiveLibraries(args: unknown): LibraryManagementResponse {
   try {
     const params = SetActiveLibrariesSchema.parse(args);
 
@@ -142,15 +142,11 @@ async function setActiveLibraries(args: unknown): Promise<LibraryManagementRespo
     logger.info(`Set active libraries: ${activeLibraries.map(lib => `${lib.name} (${lib.id})`).join(', ')}`);
     return result;
   } catch (error) {
-    const message = ErrorFormatter.toolExecution('set_active_libraries', error);
-    logger.error(message);
-
-    return {
-      success: false,
-      message,
-      activeLibraries: [],
-      totalCount: 0,
-    };
+    // Re-throw rather than returning a {success:false} payload: an MCP-200
+    // body with success:false reads as a successful call to the LLM. Throwing
+    // surfaces the failure as a tool error, matching getUserDetails above.
+    logger.error('Error setting active libraries:', error);
+    throw new Error(ErrorFormatter.toolExecution('set_active_libraries', error));
   }
 }
 
@@ -162,12 +158,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        songId: {
           type: 'string',
-          description: 'The unique ID of the song',
+          description: 'The song ID, as returned by search_songs or list_* tools.',
         },
       },
-      required: ['id'],
+      required: ['songId'],
     },
   },
   {
@@ -176,12 +172,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        albumId: {
           type: 'string',
-          description: 'The unique ID of the album',
+          description: 'The album ID, as returned by search_albums or list_* tools.',
         },
       },
-      required: ['id'],
+      required: ['albumId'],
     },
   },
   {
@@ -190,12 +186,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        artistId: {
           type: 'string',
-          description: 'The unique ID of the artist',
+          description: 'The artist ID, as returned by search_artists or list_* tools.',
         },
       },
-      required: ['id'],
+      required: ['artistId'],
     },
   },
   {
@@ -255,9 +251,9 @@ export function createLibraryToolCategory(client: NavidromeClient, _config: Conf
         case 'get_song_playlists':
           return await getSongPlaylists(client, args);
         case 'get_user_details':
-          return await getUserDetails();
+          return getUserDetails();
         case 'set_active_libraries':
-          return await setActiveLibraries(args);
+          return setActiveLibraries(args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }

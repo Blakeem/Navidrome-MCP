@@ -116,11 +116,15 @@ describe('getTagDistribution', () => {
   });
 
   it('returns distributions array + totalTagNames', async () => {
-    // requestWithLibraryFilter returns arrays of tags for each tag name
-    mockClient.requestWithLibraryFilter.mockResolvedValue([
-      makeTag({ tagName: 'genre', tagValue: 'Rock', songCount: 200, albumCount: 20 }),
-      makeTag({ id: 'g2', tagName: 'genre', tagValue: 'Pop', songCount: 100, albumCount: 10 }),
-    ]);
+    // The /tag fetch now goes through ...AndMeta; X-Total-Count (total) feeds
+    // uniqueValues. genre carries API counts, so no backfill calls are made.
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
+      data: [
+        makeTag({ tagName: 'genre', tagValue: 'Rock', songCount: 200, albumCount: 20 }),
+        makeTag({ id: 'g2', tagName: 'genre', tagValue: 'Pop', songCount: 100, albumCount: 10 }),
+      ],
+      total: 2,
+    });
 
     const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
       tagNames: ['genre'],
@@ -144,9 +148,18 @@ describe('getTagDistribution', () => {
   });
 
   it('skips tag names that return empty arrays', async () => {
-    mockClient.requestWithLibraryFilter
-      .mockResolvedValueOnce([])   // 'genre' returned nothing
-      .mockResolvedValueOnce([makeTag({ tagName: 'mood', tagValue: 'Happy', songCount: 50, albumCount: 5 })]);
+    // Route by endpoint: genre /tag empty, mood /tag returns one value, and
+    // mood (non-genre) backfill /album + /song calls resolve to total 0.
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
+      if (endpoint.includes('tag_name=genre')) return Promise.resolve({ data: [], total: 0 });
+      if (endpoint.includes('tag_name=mood')) {
+        return Promise.resolve({
+          data: [makeTag({ tagName: 'mood', tagValue: 'Happy', songCount: 50, albumCount: 5 })],
+          total: 1,
+        });
+      }
+      return Promise.resolve({ data: [], total: 0 }); // backfill /album, /song
+    });
 
     const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
       tagNames: ['genre', 'mood'],
@@ -158,7 +171,7 @@ describe('getTagDistribution', () => {
   });
 
   it('skips tag names that throw (e.g., 404 from Navidrome)', async () => {
-    mockClient.requestWithLibraryFilter.mockRejectedValue(new Error('404 not found'));
+    mockClient.requestWithLibraryFilterAndMeta.mockRejectedValue(new Error('404 not found'));
 
     const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
       tagNames: ['nonexistent_tag'],
@@ -175,7 +188,7 @@ describe('getTagDistribution', () => {
       tagValue: `Val${i}`,
       songCount: 100 - i,
     }));
-    mockClient.requestWithLibraryFilter.mockResolvedValue(tags);
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: tags, total: 20 });
 
     const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
       tagNames: ['genre'],

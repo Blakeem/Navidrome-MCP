@@ -13,7 +13,6 @@
  *     thing being mutated.
  *   - Probabilistic shuffle assertions allow ONE retry, matching A's pattern.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { beforeAll, beforeEach, expect, it } from 'vitest';
 import {

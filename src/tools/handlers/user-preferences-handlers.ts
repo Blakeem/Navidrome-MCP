@@ -39,9 +39,9 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        itemId: {
           type: 'string',
-          description: 'The unique ID of the item to star',
+          description: 'The ID of the item to star — a song, album, or artist ID matching the `type` field.',
         },
         type: {
           type: 'string',
@@ -49,7 +49,7 @@ const tools: Tool[] = [
           enum: ['song', 'album', 'artist'],
         },
       },
-      required: ['id', 'type'],
+      required: ['itemId', 'type'],
     },
   },
   {
@@ -58,9 +58,9 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        itemId: {
           type: 'string',
-          description: 'The unique ID of the item to unstar',
+          description: 'The ID of the item to unstar — a song, album, or artist ID matching the `type` field.',
         },
         type: {
           type: 'string',
@@ -68,7 +68,7 @@ const tools: Tool[] = [
           enum: ['song', 'album', 'artist'],
         },
       },
-      required: ['id', 'type'],
+      required: ['itemId', 'type'],
     },
   },
   {
@@ -77,9 +77,9 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        itemId: {
           type: 'string',
-          description: 'The unique ID of the item to rate',
+          description: 'The ID of the item to rate — a song, album, or artist ID matching the `type` field.',
         },
         type: {
           type: 'string',
@@ -93,7 +93,7 @@ const tools: Tool[] = [
           maximum: 5,
         },
       },
-      required: ['id', 'type', 'rating'],
+      required: ['itemId', 'type', 'rating'],
     },
   },
   {
@@ -119,6 +119,11 @@ const tools: Tool[] = [
           description: 'Number of items to skip for pagination',
           minimum: 0,
           default: 0,
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each item carries only identity fields (plus its starred state) to save context; set true for full per-item metadata (genres, year, rating, path, etc.).',
+          default: false,
         },
       },
       required: ['type'],

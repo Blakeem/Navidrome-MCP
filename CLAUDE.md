@@ -27,6 +27,24 @@ analysis, so tests importing a symbol keep it alive.
 See `tests/CLAUDE.md` for the testing strategy (live reads / mocked writes /
 mocked external APIs).
 
+### `no-unnecessary-condition` triage
+
+This rule flags a guard the *types* say is redundant. Before changing anything,
+decide which of three cases is true — **never blanket-`--fix` it**:
+
+1. **The guard is dead** (the value truly can't be null/falsy here) → delete it.
+2. **The type is lying** — the value really can be `null`/`undefined`/empty at
+   runtime, common with external Navidrome/Last.fm responses, but the type claims
+   it can't → **fix the type** (`| undefined`, or validate with zod). Don't delete
+   the guard. Prefer this over (3): an honest type protects the next change too.
+3. **Genuinely intentional and the rule can't see why** → suppress as a last resort:
+   `// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- <reason>`
+
+**Suppression discipline (enforced):** every `eslint-disable` must carry a
+`-- <reason>` (`require-description`), and stale/unused disables are a hard error
+(`reportUnusedDisableDirectives`) — so when you fix a lying type, its old
+suppression must come out. Reach for a disable only after ruling out (1) and (2).
+
 ---
 
 ## Application structure
@@ -62,16 +80,30 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 
 ## Environment
 
-Required env vars: `NAVIDROME_URL`, `NAVIDROME_USERNAME`, `NAVIDROME_PASSWORD`.
-Feature-gated: `LASTFM_API_KEY` (Last.fm tools), `RADIO_BROWSER_USER_AGENT`
-(radio discovery), `LYRICS_PROVIDER=lrclib` (lyrics), `MPV_PATH` /
-auto-detected (playback). `DEBUG=true` for verbose logging.
+Configuration lives in a single canonical **`settings.json`** store — the
+GUI-managed source of truth. **Runtime no longer reads `process.env`/`.env` for
+config**; env is consulted only once, to pre-fill the settings form on first run.
+Store path (mirrors `getDefaultIpcPath()`):
 
-Local config lives in `.env` (main) and `.env.test` (test runs). **Both files
-are populated and ready to use** — no need to ask the user for credentials.
-Pull values directly with `grep` (see curl recipe below) rather than
-`source .env`, because the file contains values with shell-special chars
-(parens in `RADIO_BROWSER_USER_AGENT`) that break `set -a; source`.
+- Linux: `${XDG_CONFIG_HOME:-~/.config}/navidrome-mcp/settings.json`
+- macOS: `~/Library/Application Support/navidrome-mcp/settings.json`
+- Windows: `%APPDATA%\navidrome-mcp\settings.json`
+
+`NAVIDROME_CONFIG_PATH` overrides the location (used by tests + portable installs).
+Shape: see `settings.example.json`. Required: `navidrome.{url,username,password}`.
+Feature-gated: `features.lastFmApiKey` (Last.fm), `features.radioBrowserUserAgent`
+(radio), `features.lyricsProvider=lrclib` + `features.lrclibUserAgent` (lyrics),
+`playback.mpvPath` / auto-detect (playback). `advanced.debug=true` for verbose logs.
+
+Edit it via the GUI: run `navidrome-config` (opens a loopback browser page), or it
+auto-opens on first run of an unconfigured MCP server. The form pre-fills from any
+legacy env/`.env`. After saving, **restart** the server to apply. A few low-level
+operational env vars remain env-only and out of the store: timeouts
+(`NAVIDROME_REQUEST_TIMEOUT_MS`, `NAVIDROME_AUTH_TIMEOUT_MS`), `XDG_RUNTIME_DIR`,
+and `NAVIDROME_CONFIG_PATH` (a *location* override, not a value override).
+
+Tests write a throwaway store via `NAVIDROME_CONFIG_PATH` (see `tests/CLAUDE.md`),
+so the suite never touches the real store.
 
 ---
 
@@ -96,13 +128,13 @@ The auth endpoint is `/auth/login` (NOT `/auth` or `/api/login`). The
 authenticated `/api/*` calls use the `X-ND-Authorization: Bearer <token>`
 header (NOT `Authorization`).
 
-Pull credentials from `.env` per-variable (avoids the `source .env` parse
-break on parens in `RADIO_BROWSER_USER_AGENT`):
+Pull credentials from the `settings.json` store via `jq`:
 
 ```bash
-export NAVIDROME_URL=$(grep '^NAVIDROME_URL=' .env | cut -d= -f2-)
-export NAVIDROME_USERNAME=$(grep '^NAVIDROME_USERNAME=' .env | cut -d= -f2-)
-export NAVIDROME_PASSWORD=$(grep '^NAVIDROME_PASSWORD=' .env | cut -d= -f2-)
+STORE="${NAVIDROME_CONFIG_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/navidrome-mcp/settings.json}"
+export NAVIDROME_URL=$(jq -r '.navidrome.url' "$STORE")
+export NAVIDROME_USERNAME=$(jq -r '.navidrome.username' "$STORE")
+export NAVIDROME_PASSWORD=$(jq -r '.navidrome.password' "$STORE")
 
 TOKEN=$(curl -s -X POST "$NAVIDROME_URL/auth/login" \
   -H "Content-Type: application/json" \

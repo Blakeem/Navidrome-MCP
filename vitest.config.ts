@@ -19,10 +19,14 @@ export default defineConfig({
       ],
     },
     include: ['tests/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
-    // Playback integration tests require a live mpv binary and run via
-    // `pnpm test:playback` against vitest.playback.config.ts. Excluded here
-    // so the default `pnpm test:run` stays mpv-free.
-    exclude: ['node_modules', 'dist', 'coverage', 'tests/integration/playback/**'],
+    // Integration suites (live-mpv playback + multi-process coordination) require
+    // a real mpv binary and/or spawn real child processes against a built dist/.
+    // They run via `pnpm test:playback` (vitest.playback.config.ts) and are
+    // excluded here so the default `pnpm test:run` stays fast and mpv-free.
+    exclude: ['node_modules', 'dist', 'coverage', 'tests/integration/**'],
+    // Provision a temp settings.json store (seeded from env/.env) before each
+    // test file, since runtime config now comes only from the store.
+    setupFiles: ['tests/helpers/setup-config-store.ts'],
     testTimeout: 10000,
     hookTimeout: 10000,
   },

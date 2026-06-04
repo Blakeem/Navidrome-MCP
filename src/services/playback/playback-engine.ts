@@ -55,6 +55,15 @@ const OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [10, 'eof-reached'],
 ];
 
+// Seek robustness. On a transcoded HTTP stream, mpv can intermittently reject a
+// seek ("error running command") when the demuxer/cache is momentarily settling
+// after prior transport churn (skips, pauses, earlier seeks). The seek is
+// otherwise valid — a brief wait + retry of the *same* command clears it,
+// without touching mpv's clock (so scrobble/now-playing position bookkeeping is
+// unaffected). Raw streams are fully seekable and never hit this path.
+const SEEK_MAX_ATTEMPTS = 4;
+const SEEK_RETRY_DELAY_MS = 250;
+
 /**
  * Snapshot of engine status, returned by tools.
  */
@@ -231,6 +240,33 @@ class PlaybackEngine {
   }
 
   /**
+   * Whether mpv is actively playing audio, derived purely from the cached
+   * observed properties (no IPC round-trip, no lazy spawn). A best-effort
+   * snapshot biased toward "playing" — NOT a general truth source for other
+   * features. (Formerly fed the idle reaper, which has since been removed; the
+   * web owner now unconditionally quits mpv on shutdown — spec §B.1.)
+   *
+   * Predicate: a live IPC connection AND `playlist-count > 0` AND
+   * `pause === false` AND `idle-active !== true` AND not end-of-file.
+   *
+   * **Biased toward "keep playing."** Each property is treated as "playing"
+   * unless it definitively says otherwise (`=== true` / `!== false`), so any
+   * not-yet-known value (`undefined` before `installObservers` primes it, or a
+   * transient gap) keeps mpv alive rather than risking killing a playing one.
+   * Consequently a radio stream (playlist-count === 1, never EOF) reads as
+   * perpetually playing — intended; such mpv instances are never auto-killed.
+   */
+  isPlaying(): boolean {
+    if (!this.isRunning()) return false;
+    const count = this.propertyCache.get('playlist-count');
+    if (typeof count !== 'number' || count <= 0) return false;
+    if (this.propertyCache.get('pause') !== false) return false;
+    if (this.propertyCache.get('idle-active') === true) return false;
+    if (this.propertyCache.get('eof-reached') === true) return false;
+    return true;
+  }
+
+  /**
    * Path to the mpv binary the engine will use, or null if unconfigured.
    */
   getMpvPath(): string | null {
@@ -402,6 +438,12 @@ class PlaybackEngine {
           // these via the change event shortly with the same values.
           this.propertyCache.set('playlist-count', 0);
           this.propertyCache.set('playlist-pos', null);
+          // Re-throwing exits withMutationLock before the success-path
+          // `emitStateChange` below runs, so subscribers (e.g. the SSE web-UI)
+          // would never learn the queue was just cleared. Emit the same queue
+          // event the success path emits, AFTER the clear/stop/cache-zero and
+          // BEFORE re-throwing, so the cleared state is broadcast even on failure.
+          this.emitStateChange({ kind: 'queue' });
           const reason = err instanceof Error ? err.message : String(err);
           throw new Error(`enqueue failed mid-sequence; queue was cleared and is now empty: ${reason}`);
         }
@@ -436,8 +478,9 @@ class PlaybackEngine {
     await this.ensureAttached();
     if (!this.isRunning()) return [];
 
-    const raw = await this.requireIpc().command('get_property', 'playlist');
-    if (!Array.isArray(raw)) return [];
+    const rawResult = await this.requireIpc().command('get_property', 'playlist');
+    if (!Array.isArray(rawResult)) return [];
+    const raw: unknown[] = rawResult;
 
     const entries: PlaylistEntry[] = [];
     for (let index = 0; index < raw.length; index++) {
@@ -596,21 +639,25 @@ class PlaybackEngine {
    * Randomize the order of items in the live playlist via mpv's native
    * `playlist-shuffle` command. Atomic on mpv's side. Lazy-spawns mpv.
    *
-   * Active-queue behavior: after the shuffle, the play head is reset to
-   * index 0 so the new top of queue starts playing. Without this, mpv's
-   * default keeps the previously-current track playing wherever it landed
-   * in the new order, which contradicts the "active queue" model where the
-   * queue's top reflects what's audibly playing. Setting `playlist-pos`
-   * preserves any existing pause state — paused stays paused.
+   * The currently-playing track keeps playing — shuffle must never restart
+   * playback on a random track (Issue #5). mpv natively keeps the playing
+   * entry current wherever it lands in the new order; we then lift that entry
+   * back to index 0 with `playlist-move` (which preserves what's playing — see
+   * {@link movePlaylistEntry}) so the queue's top still reflects what's
+   * audibly playing (active-queue model) while the *rest* of the queue is
+   * shuffled around it. Pause state is preserved throughout.
+   *
+   * The post-shuffle position is read fresh via IPC because the observed
+   * `playlist-pos` cache may not have caught up to the shuffle yet.
    */
   async shufflePlaylist(): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       await ipc.command('playlist-shuffle');
-      const count = this.getCachedProperty('playlist-count');
-      if (typeof count === 'number' && count > 0) {
-        await ipc.command('set_property', 'playlist-pos', 0);
+      const pos = await ipc.command('get_property', 'playlist-pos');
+      if (typeof pos === 'number' && pos > 0) {
+        await ipc.command('playlist-move', pos, 0);
       }
     });
     this.emitStateChange({ kind: 'queue' });
@@ -622,22 +669,21 @@ class PlaybackEngine {
    * indices and the message surfaces via `ErrorFormatter.toolExecution`.
    * Avoids races with concurrent queue mutations.
    *
-   * Active-queue behavior: when the move involves index 0 (either source
-   * or destination), the play head is reset to index 0 afterwards so the
-   * new top-of-queue starts playing. This covers two user expectations:
-   * moving a track TO the front should start playing it, and moving the
-   * currently-playing track FROM the front should make the new front
-   * track play. Other moves leave playback alone (lazy is fine when the
-   * top of queue isn't affected). Pause state is preserved.
+   * Reordering the queue NEVER changes what is currently playing. mpv tracks
+   * the play head by entry, not by fixed index: `playlist-move` keeps the
+   * playing track playing — it follows the moved entry to its new index when
+   * the current track is the one being moved, and otherwise stays on the same
+   * track (its index shifting only as entries slide around it). This matches
+   * every media player's queue-reorder behavior and Navidrome's own web UI.
+   *
+   * (Previously this force-set `playlist-pos = 0` whenever index 0 was the
+   * source or destination, which hijacked the play head onto whatever landed
+   * at the top — Issue #4. Removed: mpv's native bookkeeping is correct.)
    */
   async movePlaylistEntry(from: number, to: number): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
-      const ipc = this.requireIpc();
-      await ipc.command('playlist-move', from, to);
-      if (from === 0 || to === 0) {
-        await ipc.command('set_property', 'playlist-pos', 0);
-      }
+      await this.requireIpc().command('playlist-move', from, to);
     });
     this.emitStateChange({ kind: 'queue' });
   }
@@ -681,7 +727,28 @@ class PlaybackEngine {
    */
   async seek(seconds: number, mode: 'absolute' | 'relative'): Promise<void> {
     await this.ensureRunning();
-    await this.requireIpc().command('seek', seconds, mode);
+    const ipc = this.requireIpc();
+    for (let attempt = 1; attempt <= SEEK_MAX_ATTEMPTS; attempt++) {
+      try {
+        await ipc.command('seek', seconds, mode);
+        if (attempt > 1) {
+          logger.debug(`seek ${seconds} ${mode} succeeded on retry ${attempt}/${SEEK_MAX_ATTEMPTS}`);
+        }
+        return;
+      } catch (err) {
+        // Only the transient transcode-stream rejection ("error running command")
+        // is worth retrying — a brief wait + retry of the same command clears it
+        // without touching mpv's clock. Anything else (closed socket, command
+        // timeout, invalid args) is deterministic: rethrow at once rather than
+        // burning the remaining attempts (and their delays) on a failure that
+        // won't clear. The final attempt also rethrows, so the tool surfaces a
+        // clean error (graceful degradation).
+        const retryable = err instanceof Error && /error running command/i.test(err.message);
+        if (!retryable || attempt === SEEK_MAX_ATTEMPTS) throw err;
+        logger.debug(`seek ${seconds} ${mode} attempt ${attempt}/${SEEK_MAX_ATTEMPTS} failed, retrying: ${err.message}`);
+        await new Promise<void>((resolve) => setTimeout(resolve, SEEK_RETRY_DELAY_MS));
+      }
+    }
   }
 
   /**
@@ -833,7 +900,7 @@ class PlaybackEngine {
         return `client-api ${major}.${minor}.${patch}`;
       }
       if (fallback !== null && fallback !== undefined) {
-        return String(fallback);
+        return typeof fallback === 'string' ? fallback : JSON.stringify(fallback);
       }
     } catch {
       // ignore — no version available
@@ -881,14 +948,23 @@ class PlaybackEngine {
     // salted form means leaked URLs (access logs, etc.) cannot recover the
     // password, and getPlaylist() further sanitizes the URL before exposing
     // it to the LLM via get_play_queue.
+    // `format=raw` streams the original file untouched — best quality and, more
+    // importantly, fully byte-range seekable (mpv can jump anywhere). A real
+    // transcode (mp3/opus/...) is generated on demand and seeks less reliably,
+    // so it's opt-in for bandwidth-constrained setups. `maxBitRate` only applies
+    // when transcoding, so we omit it for raw to keep the URL honest.
+    const isRaw = this.config.playbackTranscodeFormat === 'raw';
+    const streamParams: Record<string, string> = isRaw
+      ? { id: songId, format: 'raw' }
+      : {
+          id: songId,
+          format: this.config.playbackTranscodeFormat,
+          maxBitRate: this.config.playbackTranscodeBitrate,
+        };
     const params = buildSubsonicAuthParams(
       this.config.navidromeUsername,
       this.config.navidromePassword,
-      {
-        id: songId,
-        format: this.config.playbackTranscodeFormat,
-        maxBitRate: this.config.playbackTranscodeBitrate,
-      },
+      streamParams,
     );
     // Trim a single trailing slash so we don't end up with `//rest/stream`.
     const base = this.config.navidromeUrl.replace(/\/+$/, '');
@@ -1122,14 +1198,33 @@ class PlaybackEngine {
   }
 
   /**
-   * Disconnect IPC from mpv. Does NOT kill the mpv process — mpv is intended
-   * to outlive the MCP server so playback persists across restarts. Use
-   * `pkill mpv` (or a future `stop_playback` tool) if you actually want to
-   * stop the audio.
+   * Quit the mpv PROCESS itself (not just our IPC socket), then tear down our
+   * IPC state. Used by the web port owner's shutdown and the MCP-only exit path
+   * (standalone-web spec §B.1). Distinct from `shutdown()`, which closes our
+   * connection but leaves mpv running — here we WANT mpv gone.
    *
-   * Idempotent.
+   * Sends `quit` over a **one-shot connection** to the well-known socket rather
+   * than reusing `this.ipc`. mpv accepts multiple concurrent IPC clients, and
+   * critically this still works when our live connection was already torn down
+   * by the engine's own release-on-signal handler (which can run before us when
+   * both fire on the same SIGINT/SIGTERM). Bounded + best-effort: a no-op if
+   * nothing is listening (mpv already gone / never started).
    */
-  async shutdown(): Promise<void> {
+  async quitMpv(): Promise<void> {
+    await quitMpvViaSocket(this.ipcPath);
+    this.shutdown();
+  }
+
+  /**
+   * Disconnect our IPC from mpv and reset all engine session state (cache,
+   * subscribers, version). Does NOT kill the mpv PROCESS — mpv is intended to
+   * outlive the MCP server so playback persists across restarts. Contrast with
+   * {@link quitMpv}, which sends `quit` to actually stop the audio before
+   * tearing down our connection.
+   *
+   * Idempotent; the engine can be restarted after an explicit shutdown.
+   */
+  shutdown(): void {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
 
@@ -1152,6 +1247,44 @@ class PlaybackEngine {
     // Allow restarting after an explicit shutdown
     this.shuttingDown = false;
   }
+}
+
+/**
+ * Send mpv `quit` over a one-shot connection to its IPC socket, independent of
+ * the engine's own (possibly already-closed) connection. mpv accepts multiple
+ * concurrent IPC clients, so this works alongside a live engine connection and
+ * still delivers when that connection was torn down by the release-on-signal
+ * handler. Bounded (~1s) and best-effort: resolves quietly when nothing is
+ * listening (mpv already gone / never started). Works for both the unix socket
+ * (POSIX) and the named pipe (Windows) that `getDefaultIpcPath()` returns.
+ */
+function quitMpvViaSocket(path: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const done = (): void => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    let sock: ReturnType<typeof createConnection>;
+    try {
+      sock = createConnection({ path });
+    } catch {
+      done();
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { sock.destroy(); } catch { /* noop */ }
+      done();
+    }, 1000);
+    timer.unref();
+    sock.once('error', () => { clearTimeout(timer); done(); });
+    sock.once('close', () => { clearTimeout(timer); done(); });
+    sock.once('connect', () => {
+      // `end()` flushes the command then half-closes; mpv reads `quit` and exits.
+      try { sock.end('{ "command": ["quit"] }\n'); } catch { /* noop */ }
+    });
+  });
 }
 
 /**

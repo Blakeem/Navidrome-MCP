@@ -128,6 +128,61 @@ describe('listMostPlayed — songs', () => {
   });
 });
 
+// ---- pagination honesty -----------------------------------------------------
+
+describe('listMostPlayed — pagination honesty', () => {
+  let mockClient: MockNavidromeClient;
+
+  beforeEach(() => {
+    mockClient = createMockClient();
+  });
+
+  // minPlayCount is applied client-side AFTER the fetch, so the server must NOT
+  // pre-skip with _start=offset (that would permanently drop qualifying
+  // high-playCount rows in global positions 0..offset-1). Fetch from _start=0
+  // and apply the offset in memory after filtering.
+  it('fetches from _start=0 (not _start=offset) and over-fetches (offset+limit)*3', async () => {
+    mockClient.requestWithLibraryFilter.mockResolvedValue([]);
+
+    await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'songs', limit: 10, offset: 20 });
+
+    const [endpoint] = mockClient.requestWithLibraryFilter.mock.calls[0]!;
+    expect(endpoint).toContain('_start=0');
+    expect(endpoint).not.toContain('_start=20');
+    // _end = (20 + 10) * 3 = 90
+    expect(endpoint).toContain('_end=90');
+  });
+
+  it('applies offset AFTER the minPlayCount filter so page 2 continues past page 1', async () => {
+    // 6 songs all above the minPlayCount threshold, sorted playCount DESC.
+    const songs = Array.from({ length: 6 }, (_, i) => makeSong({ id: `s${i}`, playCount: 10 - i }));
+    mockClient.requestWithLibraryFilter.mockResolvedValue(songs);
+
+    const page0 = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'songs', limit: 2, offset: 0, minPlayCount: 1 });
+    const page1 = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'songs', limit: 2, offset: 2, minPlayCount: 1 });
+
+    expect(page0.items.map(i => i.id)).toEqual(['s0', 's1']);
+    expect(page1.items.map(i => i.id)).toEqual(['s2', 's3']);
+  });
+
+  it('offset is applied to the FILTERED set, not the raw rows', async () => {
+    // s0 has playCount below threshold and must not consume an offset slot.
+    mockClient.requestWithLibraryFilter.mockResolvedValue([
+      makeSong({ id: 's0', playCount: 1 }),  // filtered out by minPlayCount: 5
+      makeSong({ id: 's1', playCount: 10 }),
+      makeSong({ id: 's2', playCount: 9 }),
+      makeSong({ id: 's3', playCount: 8 }),
+    ]);
+
+    const result = await listMostPlayed(mockClient as unknown as NavidromeClient, {
+      type: 'songs', limit: 1, offset: 1, minPlayCount: 5,
+    });
+
+    // Filtered set is [s1, s2, s3]; offset 1 -> s2.
+    expect(result.items.map(i => i.id)).toEqual(['s2']);
+  });
+});
+
 // ---- type="albums" ----------------------------------------------------------
 
 describe('listMostPlayed — albums', () => {

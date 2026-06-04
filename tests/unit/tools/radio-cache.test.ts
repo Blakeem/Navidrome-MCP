@@ -121,8 +121,8 @@ describe('radio station cache', () => {
 
     const config = makeConfig();
 
-    const a = await getRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-1' }, config);
-    const b = await getRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-2' }, config);
+    const a = await getRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-1' }, config);
+    const b = await getRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-2' }, config);
 
     expect(a.name).toBe('WBEZ');
     expect(b.name).toBe('NPR');
@@ -162,7 +162,7 @@ describe('radio station cache', () => {
     // listRadioStations switched to REST, but Subsonic remains the only
     // mutation surface Navidrome exposes for radio.
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
-    await deleteRadioStation(mockClient as unknown as NavidromeClient, { id: 'st-1' });
+    await deleteRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-1' });
     expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
 
     // Subsequent listRadioStations must refetch (post-invalidation)

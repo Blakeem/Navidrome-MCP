@@ -46,7 +46,13 @@ export function getDefaultIpcPath(): string {
   }
   // POSIX: prefer numeric uid for stability; fall back to USER env if unavailable
   const uidFn = (process as unknown as { getuid?: () => number }).getuid;
-  const uid = typeof uidFn === 'function' ? uidFn() : (process.env['USER'] ?? 'default');
+  // The numeric getuid() path is inherently safe; the USER env fallback is
+  // attacker-influenceable and gets interpolated into filesystem paths below,
+  // so scrub it to the same character set as the Windows USERNAME branch.
+  const uid =
+    typeof uidFn === 'function'
+      ? uidFn()
+      : (process.env['USER'] ?? 'default').replace(/[^A-Za-z0-9_-]/g, '_');
 
   const xdgRuntime = process.env['XDG_RUNTIME_DIR'];
   if (xdgRuntime !== undefined && xdgRuntime.trim() !== '') {
@@ -71,7 +77,7 @@ export function getDefaultIpcPath(): string {
 export function detectMpvBinary(): string | null {
   // 1. Explicit env override
   const override = process.env['MPV_PATH'];
-  if (override !== undefined && override !== null && override.trim() !== '') {
+  if (override !== undefined && override.trim() !== '') {
     const trimmed = override.trim();
     if (isExecutable(trimmed)) {
       return trimmed;
@@ -93,6 +99,28 @@ export function detectMpvBinary(): string | null {
   }
 
   return null;
+}
+
+/**
+ * Resolve the mpv binary from a store-provided value.
+ *
+ * The `settings.json` store is the source of truth for `playback.mpvPath`:
+ *   - An explicit path wins — validated for executability; a stale/non-executable
+ *     path returns `null` (and warns) so playback is disabled with a clear reason
+ *     rather than silently failing on first play.
+ *   - `null`/empty means "auto-detect" — falls back to `detectMpvBinary()` (which
+ *     honors the legacy `MPV_PATH` env, then a PATH lookup).
+ */
+export function resolveMpvBinary(explicitPath: string | null | undefined): string | null {
+  if (explicitPath !== undefined && explicitPath !== null && explicitPath.trim() !== '') {
+    const trimmed = explicitPath.trim();
+    if (isExecutable(trimmed)) {
+      return trimmed;
+    }
+    logger.warn(`Configured mpv path is not executable, disabling playback: ${trimmed}`);
+    return null;
+  }
+  return detectMpvBinary();
 }
 
 /**

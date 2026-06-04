@@ -58,7 +58,7 @@ export async function searchSongs(client: NavidromeClient, _config: Config, args
     const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/song?${searchParams}`);
 
     // Transform response to DTOs
-    const songs = transformSongsToDTO(data);
+    const songs = transformSongsToDTO(data, { verbose: params.verbose });
 
     logger.debug(`Song search completed: ${songs.length} of ${total ?? `${songs.length} (no header)`} results`);
 
@@ -105,7 +105,7 @@ export async function searchAlbums(client: NavidromeClient, _config: Config, arg
     const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${searchParams}`);
 
     // Transform response to DTOs
-    const albums = transformAlbumsToDTO(data);
+    const albums = transformAlbumsToDTO(data, { verbose: params.verbose });
 
     logger.debug(`Album search completed: ${albums.length} of ${total ?? `${albums.length} (no header)`} results`);
 
@@ -153,7 +153,7 @@ export async function searchArtists(client: NavidromeClient, _config: Config, ar
     const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${searchParams}`);
 
     // Transform response to DTOs
-    const artists = transformArtistsToDTO(data);
+    const artists = transformArtistsToDTO(data, { verbose: params.verbose });
 
     logger.debug(`Artist search completed: ${artists.length} of ${total ?? `${artists.length} (no header)`} results`);
 

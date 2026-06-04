@@ -36,7 +36,7 @@ export class ErrorFormatter {
    */
   static httpRequest(operation: string, response: Response, errorText?: string): string {
     const base = `API request failed: ${operation} - ${response.status} ${response.statusText}`;
-    return errorText !== null && errorText !== undefined && errorText !== '' ? `${base} - ${errorText}` : base;
+    return errorText !== undefined && errorText !== '' ? `${base} - ${errorText}` : base;
   }
 
   /**
@@ -75,7 +75,7 @@ export class ErrorFormatter {
    */
   static toolNotFound(resourceType: string, identifier?: string): string {
     const base = `${resourceType} not found`;
-    return identifier !== null && identifier !== undefined && identifier !== '' ? `${base}: ${identifier}` : base;
+    return identifier !== undefined && identifier !== '' ? `${base}: ${identifier}` : base;
   }
 
   /**
@@ -99,7 +99,7 @@ export class ErrorFormatter {
    */
   static authentication(details?: string): string {
     const base = 'Authentication failed';
-    return details !== null && details !== undefined && details !== '' ? `${base}: ${details}` : base;
+    return details !== undefined && details !== '' ? `${base}: ${details}` : base;
   }
 
   /**

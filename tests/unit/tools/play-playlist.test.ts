@@ -55,7 +55,7 @@ describe('play_playlist', () => {
   // ---------------------------------------------------------------------
 
   it('enqueues a small playlist (single page) with full metadata', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
 
     const result = await playPlaylist(client as never, {
       playlistId: 'pl-1',
@@ -65,7 +65,7 @@ describe('play_playlist', () => {
 
     expect(result.success).toBe(true);
     expect(result.count).toBe(12);
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(1);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
 
     const expectedIds = Array.from({ length: 12 }, (_, i) => `song-${i}`);
     const expectedMetadata = expectedIds.map((id, i) => ({
@@ -79,7 +79,7 @@ describe('play_playlist', () => {
   });
 
   it('uses mediaFileId as the song ID (not the playlist-row id)', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
       data: [
         { id: 1, mediaFileId: 'real-song-A' },
         { id: 2, mediaFileId: 'real-song-B' },
@@ -98,7 +98,7 @@ describe('play_playlist', () => {
   // ---------------------------------------------------------------------
 
   it('paginates a 1500-track playlist using X-Total-Count', async () => {
-    client.requestWithMeta
+    client.requestWithLibraryFilterAndMeta
       .mockResolvedValueOnce({ data: trackPage(0, 500), total: 1500 })
       .mockResolvedValueOnce({ data: trackPage(500, 500), total: 1500 })
       .mockResolvedValueOnce({ data: trackPage(1000, 500), total: 1500 });
@@ -107,9 +107,9 @@ describe('play_playlist', () => {
 
     expect(result.success).toBe(true);
     expect(result.count).toBe(1500);
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(3);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(3);
 
-    const calls = client.requestWithMeta.mock.calls.map((c) => c[0] as string);
+    const calls = client.requestWithLibraryFilterAndMeta.mock.calls.map((c) => c[0]);
     expect(calls[0]).toContain('_start=0');
     expect(calls[0]).toContain('_end=500');
     expect(calls[1]).toContain('_start=500');
@@ -124,7 +124,7 @@ describe('play_playlist', () => {
   });
 
   it('falls back to short-page heuristic when X-Total-Count is missing', async () => {
-    client.requestWithMeta
+    client.requestWithLibraryFilterAndMeta
       .mockResolvedValueOnce({ data: trackPage(0, 500), total: null })
       .mockResolvedValueOnce({ data: trackPage(500, 73), total: null });
 
@@ -132,15 +132,15 @@ describe('play_playlist', () => {
 
     expect(result.success).toBe(true);
     expect(result.count).toBe(573);
-    expect(client.requestWithMeta).toHaveBeenCalledTimes(2);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(2);
   });
 
   it('encodes the playlist ID in the request path', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 1), total: 1 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 1), total: 1 });
 
     await playPlaylist(client as never, { playlistId: 'has spaces/and?special' });
 
-    const endpoint = client.requestWithMeta.mock.calls[0]?.[0] as string;
+    const endpoint = client.requestWithLibraryFilterAndMeta.mock.calls[0]?.[0] as string;
     expect(endpoint).toContain('/playlist/has%20spaces%2Fand%3Fspecial/tracks');
   });
 
@@ -151,7 +151,7 @@ describe('play_playlist', () => {
   it('shuffle:true preserves the multiset but permutes order', async () => {
     // 50 distinct tracks gives Fisher-Yates plenty of room; the chance of
     // landing on the identity permutation is 1/50! — effectively zero.
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 50), total: 50 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 50), total: 50 });
 
     await playPlaylist(client as never, { playlistId: 'pl-shuf', shuffle: true });
 
@@ -162,7 +162,7 @@ describe('play_playlist', () => {
   });
 
   it('shuffle:false preserves the saved playlist order', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 10), total: 10 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 10), total: 10 });
 
     await playPlaylist(client as never, { playlistId: 'pl-keep', shuffle: false });
 
@@ -175,7 +175,7 @@ describe('play_playlist', () => {
   // ---------------------------------------------------------------------
 
   it("mode:'append' passes through to the engine", async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 3), total: 3 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 3), total: 3 });
 
     await playPlaylist(client as never, { playlistId: 'pl-app', mode: 'append' });
 
@@ -187,7 +187,7 @@ describe('play_playlist', () => {
   });
 
   it("mode defaults to 'replace' when omitted", async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 2), total: 2 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 2), total: 2 });
 
     await playPlaylist(client as never, { playlistId: 'pl-default' });
 
@@ -195,7 +195,7 @@ describe('play_playlist', () => {
   });
 
   it('surfaces engine demotion in the result', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: trackPage(0, 2), total: 2 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 2), total: 2 });
     enqueueMock.mockResolvedValueOnce({ demoted: true });
 
     const result = await playPlaylist(client as never, {
@@ -211,7 +211,7 @@ describe('play_playlist', () => {
   // ---------------------------------------------------------------------
 
   it('throws "Playlist has no tracks" for an empty playlist', async () => {
-    client.requestWithMeta.mockResolvedValueOnce({ data: [], total: 0 });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
 
     await expect(playPlaylist(client as never, { playlistId: 'pl-empty' })).rejects.toThrow(
       /Playlist has no tracks/,
@@ -223,11 +223,11 @@ describe('play_playlist', () => {
     await expect(playPlaylist(client as never, { playlistId: '' })).rejects.toThrow(
       /Playlist ID is required/,
     );
-    expect(client.requestWithMeta).not.toHaveBeenCalled();
+    expect(client.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
   });
 
   it('rejects when playlistId is missing entirely', async () => {
     await expect(playPlaylist(client as never, {})).rejects.toThrow();
-    expect(client.requestWithMeta).not.toHaveBeenCalled();
+    expect(client.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
   });
 });

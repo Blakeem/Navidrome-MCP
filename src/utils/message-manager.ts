@@ -85,7 +85,7 @@ STREAM VALIDATION RECOMMENDED
     this.shownMessages.add(messageKey);
 
     // Return custom message or template
-    if (customMessage !== null && customMessage !== undefined && customMessage !== '') {
+    if (customMessage !== undefined && customMessage !== '') {
       return customMessage;
     }
 
@@ -142,7 +142,7 @@ STREAM VALIDATION RECOMMENDED
     customMessage?: string
   ): string | null {
     const message = this.getMessage(messageKey, customMessage);
-    if (message === null || message === undefined || message === '') return null;
+    if (message === null || message === '') return null;
 
     let formatted = message;
     for (const [key, value] of Object.entries(values)) {

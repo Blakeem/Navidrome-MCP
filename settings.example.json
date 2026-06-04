@@ -1,0 +1,37 @@
+{
+  "navidrome": {
+    "url": "http://your-server:4533",
+    "username": "your_username",
+    "password": "your_password"
+  },
+  "library": {
+    "defaultLibraryIds": [],
+    "filterCacheEnabled": true
+  },
+  "features": {
+    "lastFmApiKey": null,
+    "radioBrowserUserAgent": "Navidrome-MCP",
+    "radioBrowserBase": null,
+    "lyricsProvider": "lrclib",
+    "lrclibUserAgent": "Navidrome-MCP",
+    "lrclibBase": "https://lrclib.net"
+  },
+  "playback": {
+    "mpvPath": null,
+    "transcodeFormat": "raw",
+    "transcodeBitrate": "192"
+  },
+  "webui": {
+    "enabled": true,
+    "port": 8808,
+    "host": "127.0.0.1",
+    "expose": false,
+    "autoOpenBrowser": false,
+    "persistAfterMcpExit": false
+  },
+  "advanced": {
+    "debug": false,
+    "cacheTtl": 300,
+    "tokenExpiry": 86400
+  }
+}

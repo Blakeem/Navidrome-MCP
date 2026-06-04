@@ -28,6 +28,10 @@ export interface SongDTO {
   artist: string;
   /** Artist ID for lookups */
   artistId: string;
+  /** Album artist (may differ from track artists) */
+  albumArtist?: string;
+  /** Album artist ID */
+  albumArtistId?: string;
   /** Album name */
   album: string;
   /** Album ID for lookups */
@@ -40,8 +44,9 @@ export interface SongDTO {
   year?: number;
   /** Duration in human-readable format (MM:SS) */
   durationFormatted: string;
-  /** ISO 8601 timestamp when added to library */
-  addedDate: string;
+  /** ISO 8601 timestamp when added to library. Omitted when the source row
+   *  lacks `createdAt` (rather than fabricated as "now") — treat absent as unknown. */
+  addedDate?: string;
   /** Full file path relative to library root */
   path?: string;
   /** Track number on album */

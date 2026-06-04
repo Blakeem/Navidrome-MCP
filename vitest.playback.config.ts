@@ -22,12 +22,15 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['tests/integration/playback/**/*.test.ts'],
+    include: [
+      'tests/integration/playback/**/*.test.ts',
+      'tests/integration/coordination/**/*.test.ts',
+    ],
     exclude: ['node_modules', 'dist', 'coverage'],
     // Registered once per test file. Adds an `afterAll` that clears mpv's
     // queue when the file's last test finishes, so `pnpm test:playback`
     // never leaves music playing on the host after the run exits.
-    setupFiles: ['tests/integration/playback/setup-cleanup.ts'],
+    setupFiles: ['tests/helpers/setup-config-store.ts', 'tests/integration/playback/setup-cleanup.ts'],
     // mpv is a single shared resource; concurrent test files would fight
     // over queue state. Run files sequentially.
     fileParallelism: false,
@@ -47,7 +50,10 @@ export default defineConfig({
     // re-initialized per file — which means a fresh /auth/login each time
     // and Navidrome's auth rate limiter (HTTP 429) kicks in.
     isolate: false,
-    testTimeout: 30000,
+    // Generous: the multi-process coordination tests chain several real
+    // child-process startups (each a Navidrome login + cache load) and waits,
+    // which run slow under the load of sibling tests in the single fork.
+    testTimeout: 90000,
     // Hook timeout is generous because beforeAll fetches test fixtures from
     // Navidrome (random-sort song search can take 10s+ on large libraries)
     // and may also auth against a cold cache.

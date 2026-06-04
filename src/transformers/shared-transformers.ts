@@ -30,6 +30,40 @@ interface RawEntityWithGenres {
 }
 
 /**
+ * Controls how much per-item detail a transformer emits. The default
+ * (compact) mode emits only the identity fields each DTO needs to be
+ * recognized and acted on (ids, title/name, artist, album, durationFormatted),
+ * keeping large array responses well under the tool-result token cap. Verbose
+ * mode restores every field. `keep` force-emits specific fields in compact mode
+ * for tools whose entire purpose is a particular metric — e.g. `playCount` for
+ * list_most_played, `starred`/`starredAt` for list_starred_items.
+ */
+export interface TransformOptions {
+  /** When true, emit all fields. Default false (compact). */
+  verbose?: boolean;
+  /** Field names to force-emit even in compact mode. */
+  keep?: readonly string[];
+}
+
+/**
+ * Decide whether an optional/secondary field should be emitted given the
+ * transform options. A field is emitted when verbose is on OR it is explicitly
+ * named in `keep`. Identity fields never go through this gate — they are always
+ * emitted directly by each transformer.
+ *
+ * NOTE: `keep` must name the field a transformer actually gates on. For coupled
+ * fields that is the gate field, not the dependent one: `starredAt` is emitted
+ * inside the `shouldEmit('starred', …)` block, so force-keeping the starred
+ * state needs `keep: ['starred']`; `keep: ['starredAt']` alone emits nothing.
+ */
+export function shouldEmit(field: string, options?: TransformOptions): boolean {
+  if (options?.verbose === true) {
+    return true;
+  }
+  return options?.keep?.includes(field) ?? false;
+}
+
+/**
  * Parse a `MM:SS` formatted duration string into total seconds.
  * Returns 0 for any input that does not match the two-part `MM:SS` shape.
  * Inverse of {@link formatDuration}.
@@ -41,6 +75,12 @@ export function parseDuration(durationFormatted: string): number {
   if (parts.length === 2) {
     const minutes = parseInt(parts[0] ?? '0', 10);
     const seconds = parseInt(parts[1] ?? '0', 10);
+    if (Number.isNaN(minutes) || Number.isNaN(seconds)) {
+      return 0;
+    }
+    if (minutes < 0 || seconds < 0) {
+      return 0;
+    }
     return minutes * 60 + seconds;
   }
   return 0;
@@ -52,7 +92,7 @@ export function parseDuration(durationFormatted: string): number {
  * @returns Formatted string like "3:45"
  */
 export function formatDuration(seconds?: number): string {
-  if (seconds === null || seconds === undefined || seconds <= 0) {
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
     return '0:00';
   }
 
@@ -69,13 +109,13 @@ export function formatDuration(seconds?: number): string {
 export function extractGenre(entity: RawEntityWithGenres): string | undefined {
   // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
-    const firstGenre = entity.genres[0];
-    if (firstGenre) {
-      return firstGenre.name;
+    const first = entity.genres.find(g => g.name !== '');
+    if (first) {
+      return first.name;
     }
   }
   // Fall back to genre string
-  if (entity.genre !== null && entity.genre !== undefined && entity.genre !== '') {
+  if (entity.genre !== undefined && entity.genre !== '') {
     return entity.genre;
   }
   return undefined;
@@ -89,10 +129,11 @@ export function extractGenre(entity: RawEntityWithGenres): string | undefined {
 export function extractAllGenres(entity: RawEntityWithGenres): string[] | undefined {
   // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
-    return entity.genres.map(g => g.name).filter(Boolean);
+    const names = entity.genres.map(g => g.name).filter(Boolean);
+    return names.length > 0 ? names : undefined;
   }
   // Fall back to single genre string as array
-  if (entity.genre !== null && entity.genre !== undefined && entity.genre !== '') {
+  if (entity.genre !== undefined && entity.genre !== '') {
     return [entity.genre];
   }
   return undefined;

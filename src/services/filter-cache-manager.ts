@@ -20,8 +20,17 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { FilterOptionsSchema } from '../schemas/index.js';
 
-export type FilterType = 'genres' | 'mediaTypes' | 'countries' | 'releaseTypes' | 'recordLabels' | 'moods';
+// Source of truth for the valid filter types within this module: the FilterType
+// union and the runtime list from getFilterTypes() both derive from it.
+// NOTE: the input-validation enum in FilterOptionsSchema (schemas/validation.ts)
+// is a SEPARATE, manually-kept-in-sync copy of these literals — it cannot import
+// from here without a schemas↔services cycle. Keep the two lists in agreement;
+// the unit tests assert the get_filter_options surface matches.
+const FILTER_TYPES = ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'] as const;
+
+export type FilterType = (typeof FILTER_TYPES)[number];
 
 interface GenreResponse {
   id: string;
@@ -92,7 +101,7 @@ class FilterCacheManager {
     // Store the client reference for use by ensureFresh() when cache is disabled.
     // Default to true (cache enabled) — only explicitly false disables it.
     this.client = client;
-    this.cacheEnabled = config.filterCacheEnabled !== false;
+    this.cacheEnabled = config.filterCacheEnabled;
 
     if (this.initialized && this.cacheEnabled) {
       logger.debug('FilterCacheManager already initialized');
@@ -171,6 +180,12 @@ class FilterCacheManager {
         return;
       }
 
+      // DEFERRED (accepted latent concurrency item): this clear-then-refill is
+      // not atomic — a concurrent reader could observe a half-rebuilt Map. It's
+      // mitigated today by the single-flight `refreshPromise` in ensureFresh(),
+      // so any caller that awaits a refresh never sees a torn Map. An atomic
+      // build-into-a-new-Map-then-swap is the eventual fix; left as-is per
+      // maintainer decision.
       this.genres.clear();
       this.genresOriginal.clear();
       for (const genre of genres) {
@@ -195,10 +210,10 @@ class FilterCacheManager {
    */
   private async loadTagsByType(client: NavidromeClient, tagType: string): Promise<void> {
     try {
-      // Get all tags and filter by tagName
-      const allTags = await client.requestWithLibraryFilter<TagResponse[]>('/tag');
-      
-      if (!Array.isArray(allTags)) {
+      // Fetch only the tags for this type (server filters by tag_name)
+      const tags = await client.requestWithLibraryFilter<TagResponse[]>(`/tag?tag_name=${encodeURIComponent(tagType)}`);
+
+      if (!Array.isArray(tags)) {
         logger.warn(`Invalid tags response for ${tagType}, skipping`);
         return;
       }
@@ -209,12 +224,16 @@ class FilterCacheManager {
         return;
       }
 
+      // DEFERRED (accepted latent concurrency item): same non-atomic
+      // clear-then-refill as loadGenres — a concurrent reader could see a
+      // half-rebuilt Map. Mitigated by the single-flight `refreshPromise` so
+      // awaited callers never observe the torn state; atomic swap left as-is
+      // per maintainer decision.
       targetCache.clear();
       const targetOriginalMap = this.getOriginalCaseMapForTagType(tagType);
       targetOriginalMap?.clear();
-      const filteredTags = allTags.filter(tag => tag.tagName === tagType);
 
-      for (const tag of filteredTags) {
+      for (const tag of tags) {
         if (tag.id && tag.tagValue) {
           // Store both exact case and lowercase for case-insensitive lookup
           targetCache.set(tag.tagValue, tag.id);
@@ -270,7 +289,6 @@ class FilterCacheManager {
       case 'releaseTypes': return this.releaseTypes;
       case 'recordLabels': return this.recordLabels;
       case 'moods': return this.moods;
-      default: throw new Error(`Unknown filter type: ${type}`);
     }
   }
 
@@ -285,7 +303,6 @@ class FilterCacheManager {
       case 'releaseTypes': return this.releaseTypesOriginal;
       case 'recordLabels': return this.recordLabelsOriginal;
       case 'moods': return this.moodsOriginal;
-      default: throw new Error(`Unknown filter type: ${type}`);
     }
   }
 
@@ -297,6 +314,11 @@ class FilterCacheManager {
       throw new Error('FilterCacheManager not initialized');
     }
 
+    // DEFERRED (accepted latent item): when the cache is disabled, resolve()
+    // does NOT itself assert freshness — it trusts that callers invoked
+    // ensureFresh() first. A freshness assertion here would make staleness
+    // impossible to miss, but the single-flight refresh already covers the
+    // real call paths; left as-is per maintainer decision.
     const cache = this.getCacheForType(type);
     
     // Try exact match first, then case-insensitive
@@ -321,7 +343,7 @@ class FilterCacheManager {
    * Get all available filter types
    */
   getFilterTypes(): FilterType[] {
-    return ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'];
+    return [...FILTER_TYPES];
   }
 
   /**
@@ -377,25 +399,10 @@ class FilterCacheManager {
     available: string[];
     total: number;
   }> {
-    // Basic validation for required filterType
-    if (typeof args !== 'object' || args === null) {
-      throw new Error('Invalid arguments: expected object');
-    }
-
-    const params = args as Record<string, unknown>;
-
-    if (typeof params['filterType'] !== 'string') {
-      throw new Error('filterType is required and must be a string');
-    }
-
-    const filterType = params['filterType'] as FilterType;
-    const limit = typeof params['limit'] === 'number' ? params['limit'] : 50;
-
-    // Validate filterType
-    const validTypes: FilterType[] = ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'];
-    if (!validTypes.includes(filterType)) {
-      throw new Error(`Invalid filterType '${filterType}'. Must be one of: ${validTypes.join(', ')}`);
-    }
+    // Validate via Zod: enforces filterType is one of the six valid values and
+    // clamps limit to [1,200] with a default of 50. This also closes the
+    // limit=0 → slice(0,0) → silently-empty bug (0 is now rejected as < min).
+    const { filterType, limit } = FilterOptionsSchema.parse(args);
 
     try {
       if (!this.isInitialized()) {
@@ -420,7 +427,7 @@ class FilterCacheManager {
         total: allOptions.length,
       };
     } catch (error) {
-      throw new Error(ErrorFormatter.toolExecution('getFilterOptions', error));
+      throw new Error(ErrorFormatter.toolExecution('get_filter_options', error));
     }
   }
 

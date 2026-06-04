@@ -40,6 +40,7 @@ function makeFakeIpc(): FakeIpc {
   ipc.callOrder = [];
   ipc.connect = vi.fn().mockResolvedValue(undefined);
   ipc.isConnected = vi.fn().mockReturnValue(true);
+  // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
   ipc.command = vi.fn(async (...args: unknown[]) => {
     const cmd = args[0] as string;
     if (cmd === 'get_property') {
@@ -49,6 +50,7 @@ function makeFakeIpc(): FakeIpc {
     ipc.callOrder.push({ kind: cmd });
     return null;
   });
+  // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC observeProperty interface
   ipc.observeProperty = vi.fn(async (_id: number, name: string) => {
     ipc.callOrder.push({ kind: 'observe', name });
     return undefined;
@@ -119,8 +121,8 @@ beforeEach(() => {
   playbackEngine.configure(baseConfig);
 });
 
-afterEach(async () => {
-  await playbackEngine.shutdown();
+afterEach(() => {
+  playbackEngine.shutdown();
   vi.clearAllMocks();
 });
 
@@ -171,6 +173,7 @@ describe('getPlaylist filename caching (H4)', () => {
 
     // get_property for 'playlist' is what getPlaylist calls. Make it return
     // the same entry twice across two getPlaylist invocations.
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
@@ -208,6 +211,7 @@ describe('getPlaylist filename caching (H4)', () => {
     (globalThis as unknown as { URL: typeof URL }).URL = CountingUrl as unknown as typeof URL;
 
     try {
+      // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
       ipc.command.mockImplementation(async (...args: unknown[]) => {
         if (args[0] === 'get_property' && args[1] === 'playlist') {
           callCount++;
@@ -238,6 +242,7 @@ describe('getPlaylist filename caching (H4)', () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
 
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
@@ -278,6 +283,7 @@ describe('getPlaylist filename caching (H4)', () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
 
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
@@ -305,6 +311,7 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
     // Reset the call recorder so we only see commands from the test below
     ipc.command.mockReset();
     let loadfileCount = 0;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'loadfile') {
@@ -337,6 +344,7 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
     ipc.command.mockReset();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       if (args[0] === 'loadfile') throw new Error('network blip during stream open');
       return null;
@@ -359,5 +367,153 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
     expect(commands).toContain('playlist-clear');
     expect(commands).toContain('loadfile');
     expect(commands).not.toContain('stop');
+  });
+});
+
+// ---------- radio → append demotion ----------
+
+describe("enqueue('append') radio demotion", () => {
+  it("demotes append to replace when the queue holds a radio stream", async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+
+    // Drive hasRadioStream() entirely through the IPC mock at the same seams
+    // the other unit tests use:
+    //   - get_property('playlist-count') > 0  → primes the cache so isRunning()
+    //     is true AND hasRadioStream()'s cheap cached-count check passes.
+    //   - get_property('playlist') returns a single radio entry whose filename
+    //     is non-HTTP, so the engine parses songId as null → the queue is seen
+    //     as containing a radio stream.
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'get_property' && args[1] === 'playlist-count') return 1;
+      if (cmd === 'get_property' && args[1] === 'playlist') {
+        return [{ filename: 'rtsp://radio.example/stream', current: true, playing: true }];
+      }
+      return null;
+    });
+
+    await playbackEngine.ensureRunning();
+
+    const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
+
+    // The append was demoted to replace because a radio stream was present.
+    expect(result).toEqual({ demoted: true });
+
+    // Observe the effective mode the way the other tests do — via the issued
+    // IPC commands. Replace-mode issues an explicit `playlist-clear`; a true
+    // append never clears the playlist. So the presence of playlist-clear is
+    // proof the effective mode became 'replace'.
+    const commands = ipc.command.mock.calls.map((c) => c[0] as string);
+    expect(commands).toContain('playlist-clear');
+  });
+
+  it("does NOT demote append when the queue holds only real songs", async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+
+    // playlist-count > 0 but every entry parses to a real songId (HTTP stream
+    // URL the engine built), so hasRadioStream() returns false and append stays
+    // append.
+    const songUrl = 'http://navidrome.test/rest/stream?id=song-existing&u=x&s=y&t=z';
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      const cmd = args[0] as string;
+      if (cmd === 'get_property' && args[1] === 'playlist-count') return 1;
+      if (cmd === 'get_property' && args[1] === 'playlist') {
+        return [{ filename: songUrl, current: true, playing: true }];
+      }
+      return null;
+    });
+
+    await playbackEngine.ensureRunning();
+
+    const result = await playbackEngine.enqueue(['song-1'], 'append');
+
+    expect(result).toEqual({ demoted: false });
+    // A genuine append never clears the playlist.
+    const commands = ipc.command.mock.calls.map((c) => c[0] as string);
+    expect(commands).not.toContain('playlist-clear');
+  });
+});
+
+// ---------- Issue #4: movePlaylistEntry never hijacks the play head ----------
+
+describe('movePlaylistEntry play-head preservation (Issue #4)', () => {
+  it('issues only playlist-move — never set_property playlist-pos — for a from:0 move', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+
+    await playbackEngine.movePlaylistEntry(0, 4);
+
+    const moveCalls = ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move');
+    expect(moveCalls).toEqual([['playlist-move', 0, 4]]);
+
+    // The bug was an explicit `set_property playlist-pos 0` that overrode mpv's
+    // native play-head bookkeeping whenever index 0 was involved. mpv already
+    // keeps the playing entry current across a move, so the override is gone.
+    const posResets = ipc.command.mock.calls.filter(
+      (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
+    );
+    expect(posResets).toHaveLength(0);
+  });
+
+  it('also leaves the play head alone for a to:0 move', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+
+    await playbackEngine.movePlaylistEntry(3, 0);
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toEqual([
+      ['playlist-move', 3, 0],
+    ]);
+    const posResets = ipc.command.mock.calls.filter(
+      (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
+    );
+    expect(posResets).toHaveLength(0);
+  });
+});
+
+// ---------- Issue #5: shufflePlaylist keeps the current track playing ----------
+
+describe('shufflePlaylist play-head preservation (Issue #5)', () => {
+  it('lifts the post-shuffle current track to index 0 via playlist-move, not a playlist-pos reset', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    // After the shuffle, mpv reports the current track landed at index 3.
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'get_property' && args[1] === 'playlist-pos') return 3;
+      return null;
+    });
+
+    await playbackEngine.shufflePlaylist();
+
+    const kinds = ipc.command.mock.calls.map((c) => c[0]);
+    expect(kinds).toContain('playlist-shuffle');
+    // Current track lifted to the top WITHOUT restarting playback.
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toEqual([
+      ['playlist-move', 3, 0],
+    ]);
+    // The old restart-the-head bug must be gone.
+    const posResets = ipc.command.mock.calls.filter(
+      (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
+    );
+    expect(posResets).toHaveLength(0);
+  });
+
+  it('does not move when the current track already shuffled to index 0', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'get_property' && args[1] === 'playlist-pos') return 0;
+      return null;
+    });
+
+    await playbackEngine.shufflePlaylist();
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toHaveLength(0);
   });
 });

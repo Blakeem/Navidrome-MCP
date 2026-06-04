@@ -54,7 +54,7 @@ export function stripHtml(input: string): string {
     .replace(/&apos;/g, "'")
     .replace(/&#(\d+);/g, (_match, code: string) => {
       const n = Number.parseInt(code, 10);
-      return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : _match;
+      return Number.isFinite(n) && n > 0 && n < 0x110000 && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : _match;
     });
 
   // Collapse runs of whitespace produced by tag/entity removal.

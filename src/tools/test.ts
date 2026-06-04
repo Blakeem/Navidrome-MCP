@@ -90,9 +90,9 @@ export async function testConnection(
         features: {
           lastfm: {
             enabled: hasLastFm,
-            description: hasLastFm 
+            description: hasLastFm
               ? 'Last.fm integration enabled - music discovery and recommendations available'
-              : 'Last.fm integration disabled - LASTFM_API_KEY not configured',
+              : 'Last.fm integration disabled - set features.lastFmApiKey in settings.json (run navidrome-config to edit)',
             tools: hasLastFm 
               ? ['get_similar_artists', 'get_similar_tracks', 'get_artist_info', 'get_top_tracks_by_artist', 'get_trending_music']
               : []
@@ -101,7 +101,7 @@ export async function testConnection(
             enabled: hasRadioBrowser,
             description: hasRadioBrowser
               ? 'Radio Browser integration enabled - internet radio station discovery available'
-              : 'Radio Browser integration disabled - RADIO_BROWSER_USER_AGENT not configured',
+              : 'Radio Browser integration disabled - set features.radioBrowserUserAgent in settings.json (run navidrome-config to edit)',
             tools: hasRadioBrowser
               ? ['discover_radio_stations', 'get_radio_filters', 'get_station_by_uuid', 'click_station', 'vote_station']
               : []
@@ -110,7 +110,7 @@ export async function testConnection(
             enabled: hasLyrics,
             description: hasLyrics
               ? 'Lyrics integration enabled via LRCLIB - synced and unsynced lyrics available'
-              : 'Lyrics integration disabled - LYRICS_PROVIDER and LRCLIB_USER_AGENT must be configured',
+              : 'Lyrics integration disabled - set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json (run navidrome-config to edit)',
             tools: hasLyrics
               ? ['get_lyrics']
               : []

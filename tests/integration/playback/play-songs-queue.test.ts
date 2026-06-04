@@ -199,9 +199,13 @@ describePlayback('play_songs + queue manipulation (live)', () => {
   // shuffle_play_queue
   // -------------------------------------------------------------------------
 
-  itPlayback('shuffle_play_queue preserves length, multiset, and resets head to 0', async () => {
+  itPlayback('shuffle_play_queue keeps the current track playing and lifts it to index 0', async () => {
+    // Issue #5: shuffle must NOT restart playback on a random track. The current
+    // track keeps playing and is lifted to the top; the rest is shuffled.
     const before = await getPlayQueue();
     const beforeIds = before.items.map((e) => e.songId);
+    const wasPlayingSongId = before.items.find((e) => e.isCurrent)?.songId;
+    expect(wasPlayingSongId).toBeTruthy();
 
     await shufflePlayQueue();
 
@@ -215,8 +219,14 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(after.length).toBe(before.length);
     expect(after.currentIndex).toBe(0);
 
+    // Membership (multiset) preserved...
     const afterIds = after.items.map((e) => e.songId);
     expect(new Set(afterIds)).toEqual(new Set(beforeIds));
+
+    // ...and the SAME track is still playing — not a random restart.
+    const current = after.items.find((e) => e.isCurrent);
+    expect(current?.songId).toBe(wasPlayingSongId);
+    expect(after.items[0]?.songId).toBe(wasPlayingSongId);
   });
 
   itPlayback('shuffle_play_queue preserves pause state across the shuffle', async () => {
@@ -255,58 +265,56 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(after.currentIndex).toBe(before.currentIndex);
   });
 
-  itPlayback('move_in_play_queue with to:0 lifts source to top and plays it', async () => {
+  itPlayback('move_in_play_queue with to:0 lifts source to top but keeps the current track playing', async () => {
+    // Issue #4: reordering the queue must NEVER change what is playing. Here we
+    // move a NON-current entry (index 3) to the top while index 0 is playing.
     const before = await getPlayQueue();
+    const wasPlayingSongId = before.items.find((e) => e.isCurrent)?.songId;
     const movedSongId = before.items[3]?.songId;
+    expect(wasPlayingSongId).toBeTruthy();
     expect(movedSongId).toBeTruthy();
+    expect(before.currentIndex).toBe(0);
 
     await moveInPlayQueue({ from: 3, to: 0 });
 
-    // mpv resets play head to 0 when the move involves index 0
-    await waitFor(async () => {
-      const np = await nowPlaying();
-      return np.queueIndex === 0;
-    });
-
+    // playlist-move is synchronous in mpv; get_play_queue reads live via IPC.
     const after = await getPlayQueue();
     expect(after.length).toBe(5);
+    // The moved track now sits at the top of the queue...
     expect(after.items[0]?.songId).toBe(movedSongId);
-    expect(after.currentIndex).toBe(0);
-
-    // The currently-flagged item is the moved one (defensive: also check
-    // via `isCurrent` flag instead of just `currentIndex`)
+    // ...but playback was NOT hijacked onto it. The play head followed the
+    // original current track to its new index (it slid from 0 to 1).
     const current = after.items.find((e) => e.isCurrent);
-    expect(current?.songId).toBe(movedSongId);
+    expect(current?.songId).toBe(wasPlayingSongId);
+    expect(current?.songId).not.toBe(movedSongId);
+    expect(after.currentIndex).toBe(1);
   });
 
-  itPlayback('move_in_play_queue with from:0 places source at destination and resets head', async () => {
+  itPlayback('move_in_play_queue with from:0 moves the current track and the play head follows it', async () => {
+    // Issue #4: moving the CURRENTLY-PLAYING entry (index 0) must keep that same
+    // track playing at its new index — not restart on whatever bubbles to 0.
     const before = await getPlayQueue();
-    const wasCurrentSongId = before.items[0]?.songId;
+    const wasPlayingSongId = before.items[0]?.songId;
     const wasIdx1SongId = before.items[1]?.songId;
-    expect(wasCurrentSongId).toBeTruthy();
+    expect(wasPlayingSongId).toBeTruthy();
     expect(wasIdx1SongId).toBeTruthy();
+    expect(before.currentIndex).toBe(0);
 
     await moveInPlayQueue({ from: 0, to: 4 });
 
-    await waitFor(async () => {
-      const np = await nowPlaying();
-      return np.queueIndex === 0;
-    });
-
     const after = await getPlayQueue();
     expect(after.length).toBe(5);
-    // mpv `playlist-move from to` (forward) inserts the moved entry BEFORE
-    // the entry currently at `to` — so for a 5-track queue with from:0, to:4
-    // the moved track lands at index 3 (the entry that was at 4 stays put).
-    // The originally-current track must still be present somewhere in the
-    // queue, just no longer at index 0.
-    const movedIndex = after.items.findIndex((e) => e.songId === wasCurrentSongId);
-    expect(movedIndex).toBeGreaterThan(0); // Moved away from index 0
-    expect(movedIndex).toBeLessThanOrEqual(4); // Within bounds
-    // Active-queue contract: queueIndex is 0
-    expect(after.currentIndex).toBe(0);
-    // What's playing now is the formerly-idx-1 track (it bubbled up to 0)
+    // mpv inserts the moved entry BEFORE the entry currently at `to` when
+    // from < to, so for from:0 to:4 in a 5-track queue the moved (current)
+    // track lands at index 3.
+    const current = after.items.find((e) => e.isCurrent);
+    // Same track still playing — the play head was never hijacked.
+    expect(current?.songId).toBe(wasPlayingSongId);
+    expect(after.currentIndex).toBe(3);
+    expect(after.items[3]?.songId).toBe(wasPlayingSongId);
+    // The formerly-idx-1 track bubbled up to the top but is NOT playing.
     expect(after.items[0]?.songId).toBe(wasIdx1SongId);
+    expect(after.items[0]?.isCurrent).toBe(false);
   });
 
   itPlayback('move_in_play_queue out of range throws via ErrorFormatter', async () => {

@@ -20,11 +20,26 @@ export const SINGLE_VALIDATION_TIMEOUT = 8000; // 8 seconds
 export const BATCH_VALIDATION_TIMEOUT = 3000; // 3 seconds
 
 /**
- * Timeout for discovery validation operations
- * Used when auto-validating discovered radio stations
- * Lower timeout for quick feedback when validating many discovered stations
+ * Timeout for discovery validation operations.
+ * Used when auto-validating discovered radio stations.
+ *
+ * Discovery validates the first N stations IN PARALLEL (see
+ * validateDiscoveredStations), so wall-clock is bounded by the single slowest
+ * probe, not the sum. The old 2000ms left only 1200ms for the HEAD probe
+ * (HEAD_TIMEOUT_RATIO 0.6), which a slow HTTPS/TLS handshake on a non-standard
+ * port (e.g. icecast on :8443) blows past, aborting the HEAD before its ICY
+ * headers arrive and false-negativing real streams (Issue #7). 3000ms gives the
+ * HEAD an 1800ms budget — comfortable headroom for slow TLS handshakes (observed
+ * ~800-1100ms standalone) — while capping discovery latency at 3s.
+ *
+ * NOTE: this does NOT cure every discovery false-negative. Some hosts serve
+ * multiple popular streams from one icecast host:port (e.g. walmradio's
+ * classic/jazz/jazz_opus all on :8443) and throttle concurrent connections from
+ * the same IP, so a parallel batch can still stall a few same-host probes to the
+ * timeout. Those streams validate fine one-at-a-time via `validate_radio_stream`
+ * — discovery's auto-validation is a best-effort quick sample, not authoritative.
  */
-export const DISCOVERY_VALIDATION_TIMEOUT = 2000; // 2 seconds
+export const DISCOVERY_VALIDATION_TIMEOUT = 3000; // 3 seconds
 
 /**
  * Maximum allowed timeout for any validation operation

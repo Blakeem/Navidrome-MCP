@@ -27,18 +27,20 @@ import {
   OptionalStringArraySchema,
   NonEmptyStringArraySchema,
   OptionalBooleanSchema,
+  VerboseSchema,
   createLimitSchema,
   createTimeoutSchema,
+  ID_PATTERN,
 } from './common.js';
 
 // User preferences validation
 export const StarItemSchema = z.object({
-  id: z.string().min(1),
+  itemId: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
   type: ItemTypeSchema,
 });
 
 export const SetRatingSchema = z.object({
-  id: z.string().min(1),
+  itemId: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
   type: ItemTypeSchema,
   rating: RatingSchema,
 });
@@ -51,14 +53,14 @@ export const CreatePlaylistSchema = z.object({
 });
 
 export const UpdatePlaylistSchema = z.object({
-  id: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required'),
   name: z.string().min(1).optional(),
   comment: z.string().optional(),
   public: OptionalBooleanSchema,
 });
 
 export const AddTracksToPlaylistSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
   songIds: OptionalStringArraySchema,
   albumIds: OptionalStringArraySchema,
   artistIds: OptionalStringArraySchema,
@@ -66,10 +68,22 @@ export const AddTracksToPlaylistSchema = z.object({
     albumId: z.string(),
     discNumber: z.number(),
   })).optional(),
+}).superRefine((val, ctx) => {
+  const hasContent =
+    (val.songIds?.length ?? 0) > 0 ||
+    (val.albumIds?.length ?? 0) > 0 ||
+    (val.artistIds?.length ?? 0) > 0 ||
+    (val.discs?.length ?? 0) > 0;
+  if (!hasContent) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one of songIds, albumIds, artistIds, or discs must be provided',
+    });
+  }
 });
 
 export const RemoveTracksFromPlaylistSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
   trackIds: NonEmptyStringArraySchema,
 });
 
@@ -79,16 +93,27 @@ export const RemoveTracksFromPlaylistSchema = z.object({
 // returns 500 from Navidrome, so the schema enforces >= 1 with a friendly message
 // (see Batch 2 #1 fix).
 export const ReorderPlaylistTrackSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
-  trackId: z.string().min(1, 'Track ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
+  trackId: z.string().min(1, 'Track ID is required').regex(ID_PATTERN, 'Track ID contains invalid characters'),
   insert_before: z.number().int().min(1, 'insert_before must be a 1-based position (use 1 for the first slot)'),
 });
 
 // Saved queue (Navidrome cross-device sync) validation
 export const SaveQueueSchema = z.object({
   songIds: StringArraySchema,
-  current: z.number().min(0).optional().default(0),
-  position: z.number().min(0).optional().default(0),
+  current: z.number().int().min(0).optional().default(0),
+  position: z.number().int().min(0).optional().default(0),
+}).superRefine((val, ctx) => {
+  // `current` is a 0-based index into `songIds`. Allow 0 even when songIds is
+  // empty (covers the empty-queue / clear case), but otherwise it must point at
+  // a real track — current >= songIds.length would desync the saved queue.
+  if (val.current > 0 && val.current >= val.songIds.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['current'],
+      message: `current must be less than songIds.length (${val.songIds.length})`,
+    });
+  }
 });
 
 // Search validation schemas - import enhanced schemas from common.js
@@ -104,6 +129,7 @@ export const SearchAllSchema = EnhancedSearchSchema.extend({
   albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   offset: z.number().int().min(0).optional().default(0),
+  verbose: VerboseSchema,
 });
 
 // These are now imported from common.js to avoid duplication
@@ -167,11 +193,20 @@ export const TrendingMusicSchema = z.object({
 
 // Lyrics validation schema
 export const GetLyricsSchema = z.object({
-  title: z.string(),
-  artist: z.string(),
+  title: z.string().min(1),
+  artist: z.string().min(1),
   album: z.string().optional(),
   durationMs: z.number().min(0).optional(),
   id: z.string().optional(),
+});
+
+// Filter options discovery schema (get_filter_options tool).
+// The six filterType values mirror the FilterType union in
+// services/filter-cache-manager.ts. `limit` is clamped to [1,200]; a `limit`
+// of 0 (which would silently produce slice(0,0) → an empty list) is rejected.
+export const FilterOptionsSchema = z.object({
+  filterType: z.enum(['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods']),
+  limit: z.number().int().min(1).max(200).optional().default(50),
 });
 
 // Test connection schema

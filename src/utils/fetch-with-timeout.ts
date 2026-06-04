@@ -74,7 +74,7 @@ export class FetchTimeoutError extends Error {
  */
 function readTimeoutEnv(envName: string, fallback: number): number {
   const raw = process.env[envName];
-  if (raw === undefined || raw === null || raw === '') {
+  if (raw === undefined || raw === '') {
     return fallback;
   }
   const parsed = Number.parseInt(raw, 10);

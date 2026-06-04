@@ -25,6 +25,20 @@ import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
 /**
+ * Raster image MIME types we'll proxy + cache. SVG (`image/svg+xml`) is
+ * intentionally excluded: it can embed script, so a long-cached SVG served
+ * same-origin would be a stored-XSS risk. Anything outside this set is
+ * treated as an upstream error rather than forwarded.
+ */
+const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/avif',
+]);
+
+/**
  * GET /api/cover/:id — Proxy the Subsonic `getCoverArt.view` endpoint.
  *
  * Credentials stay server-side (built per-request with a fresh salt; the
@@ -87,7 +101,21 @@ export async function handleCover(
   // and instruct the browser to cache aggressively — album art rarely changes
   // and re-fetching it on every UI snapshot would be wasteful, especially on
   // a phone.
-  const contentType = upstream.headers.get('content-type') ?? 'application/octet-stream';
+  //
+  // MIME allowlist (BEFORE the long Cache-Control): the upstream type is
+  // forwarded verbatim and cached for 24h, so a non-image body (e.g. a
+  // text/html error page) would otherwise become a long-lived, cacheable
+  // stored-XSS vector. Reject anything that isn't a known raster image type.
+  // svg+xml is deliberately excluded — SVG can carry inline script, so even
+  // though Navidrome shouldn't emit it for cover art, we don't proxy it.
+  const rawType = upstream.headers.get('content-type') ?? '';
+  const baseType = rawType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  if (!ALLOWED_IMAGE_TYPES.has(baseType)) {
+    logger.debug(`webui: cover proxy rejected non-image content-type "${rawType}" for id=${id}`);
+    writeError(res, 502, 'Upstream returned a non-image cover');
+    return;
+  }
+  const contentType = baseType;
   const headers: Record<string, string> = {
     'Content-Type': contentType,
     'Cache-Control': 'public, max-age=86400',
@@ -99,7 +127,7 @@ export async function handleCover(
   // Stream the body through. Convert the WHATWG ReadableStream to a Node
   // Readable; piping streams is preferable to buffering because some album
   // art (animated, high-res) can be several MB.
-  const nodeStream = Readable.fromWeb(upstream.body as Parameters<typeof Readable.fromWeb>[0]);
+  const nodeStream = Readable.fromWeb(upstream.body);
   nodeStream.on('error', (err) => {
     logger.debug(`webui: cover stream error for id=${id}: ${err.message}`);
     if (!res.writableEnded) res.end();

@@ -17,7 +17,7 @@
  */
 
 import type { AlbumDTO } from '../types/index.js';
-import { formatDuration, extractGenre, extractAllGenres } from './shared-transformers.js';
+import { formatDuration, extractGenre, extractAllGenres, shouldEmit, type TransformOptions } from './shared-transformers.js';
 
 /**
  * Raw album data from Navidrome API
@@ -87,9 +87,11 @@ function pickYear(...candidates: Array<number | undefined>): number | undefined 
 /**
  * Transform a raw album from Navidrome API to a clean DTO
  * @param rawAlbum Raw album data from API
+ * @param options Verbosity controls (see {@link TransformOptions}). Default
+ *   compact: only the identity block is emitted; verbose/keep restore the rest.
  * @returns Clean album DTO for LLM consumption
  */
-export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
+export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptions): AlbumDTO {
   // The REST `/api/album` listing leaves the top-level `artist` field unset;
   // only `albumArtist` is populated. Fall back to `albumArtist` so the DTO
   // never carries an empty `artist` string when there's a perfectly good
@@ -97,6 +99,7 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
   const artist = pickString(rawAlbum.artist, rawAlbum.albumArtist) ?? '';
   const artistId = pickString(rawAlbum.artistId, rawAlbum.albumArtistId) ?? '';
 
+  // Identity block — always emitted.
   const dto: AlbumDTO = {
     id: rawAlbum.id,
     name: rawAlbum.name || '',
@@ -106,11 +109,12 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
     durationFormatted: formatDuration(rawAlbum.duration),
   };
 
-  if (rawAlbum.albumArtist !== undefined) {
+  // Secondary fields — verbose-gated (or force-kept).
+  if (shouldEmit('albumArtist', options) && rawAlbum.albumArtist !== undefined && rawAlbum.albumArtist !== '') {
     dto.albumArtist = rawAlbum.albumArtist;
   }
 
-  if (rawAlbum.albumArtistId !== undefined) {
+  if (shouldEmit('albumArtistId', options) && rawAlbum.albumArtistId !== undefined && rawAlbum.albumArtistId !== '') {
     dto.albumArtistId = rawAlbum.albumArtistId;
   }
 
@@ -118,36 +122,42 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
   // maxOriginalYear / minOriginalYear (original release date). Prefer the
   // explicit `releaseYear` if a caller already normalised it; otherwise use
   // the latest release year, falling back to the earliest, then the original.
-  const releaseYear = pickYear(
-    rawAlbum.releaseYear,
-    rawAlbum.maxYear,
-    rawAlbum.minYear,
-    rawAlbum.maxOriginalYear,
-    rawAlbum.minOriginalYear,
-  );
-  if (releaseYear !== undefined) {
-    dto.releaseYear = releaseYear;
+  if (shouldEmit('releaseYear', options)) {
+    const releaseYear = pickYear(
+      rawAlbum.releaseYear,
+      rawAlbum.maxYear,
+      rawAlbum.minYear,
+      rawAlbum.maxOriginalYear,
+      rawAlbum.minOriginalYear,
+    );
+    if (releaseYear !== undefined) {
+      dto.releaseYear = releaseYear;
+    }
   }
 
-  const genre = extractGenre(rawAlbum);
-  if (genre !== undefined) {
-    dto.genre = genre;
+  if (shouldEmit('genre', options)) {
+    const genre = extractGenre(rawAlbum);
+    if (genre !== undefined) {
+      dto.genre = genre;
+    }
   }
 
-  const genres = extractAllGenres(rawAlbum);
-  if (genres !== undefined) {
-    dto.genres = genres;
+  if (shouldEmit('genres', options)) {
+    const genres = extractAllGenres(rawAlbum);
+    if (genres !== undefined) {
+      dto.genres = genres;
+    }
   }
 
-  if (rawAlbum.compilation !== undefined) {
+  if (shouldEmit('compilation', options) && rawAlbum.compilation !== undefined) {
     dto.compilation = rawAlbum.compilation;
   }
 
-  if (rawAlbum.playCount !== undefined) {
+  if (shouldEmit('playCount', options) && rawAlbum.playCount !== undefined) {
     dto.playCount = rawAlbum.playCount;
   }
 
-  if (rawAlbum.rating !== undefined) {
+  if (shouldEmit('rating', options) && rawAlbum.rating !== undefined && rawAlbum.rating > 0) {
     dto.rating = rawAlbum.rating;
   }
 
@@ -155,13 +165,15 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
   // as a "last starred at" history field even after unstarring, so a
   // populated timestamp alone does NOT mean the item is currently starred.
   // Only echo `starredAt` when the boolean confirms the starred state.
-  if (rawAlbum.starred === true) {
-    dto.starred = true;
-    if (rawAlbum.starredAt !== undefined && rawAlbum.starredAt !== null) {
-      dto.starredAt = rawAlbum.starredAt;
+  if (shouldEmit('starred', options)) {
+    if (rawAlbum.starred === true) {
+      dto.starred = true;
+      if (rawAlbum.starredAt !== undefined) {
+        dto.starredAt = rawAlbum.starredAt;
+      }
+    } else if (rawAlbum.starred === false) {
+      dto.starred = false;
     }
-  } else if (rawAlbum.starred === false) {
-    dto.starred = false;
   }
 
   return dto;
@@ -170,12 +182,19 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum): AlbumDTO {
 /**
  * Transform an array of raw albums to DTOs
  * @param rawAlbums Array of raw album data
+ * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
  * @returns Array of clean album DTOs
  */
-export function transformAlbumsToDTO(rawAlbums: unknown): AlbumDTO[] {
+export function transformAlbumsToDTO(rawAlbums: unknown, options?: TransformOptions): AlbumDTO[] {
   if (!Array.isArray(rawAlbums)) {
     return [];
   }
 
-  return rawAlbums.map((album) => transformToAlbumDTO(album as RawAlbum));
+  // Guard each element: Navidrome can return null / non-object entries on
+  // certain API errors. The `as RawAlbum` cast would pass TS but crash the
+  // single-item transformer at runtime, aborting the whole batch. Drop the
+  // bad rows instead so one malformed entry doesn't lose every good one.
+  return rawAlbums
+    .filter((album): album is RawAlbum => typeof album === 'object' && album !== null)
+    .map((album) => transformToAlbumDTO(album, options));
 }

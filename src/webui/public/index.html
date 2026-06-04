@@ -23,9 +23,24 @@
         <span class="conn-dot"></span>
         <span class="conn-label">Connecting&hellip;</span>
       </span>
+      <button type="button" class="ghost-btn" id="open-playlists" aria-label="Play a playlist">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm12-.5V8h4V6h-6v8.05A3.5 3.5 0 1 0 15 17.5z"/>
+        </svg>
+      </button>
       <button type="button" class="ghost-btn" id="open-network-info" aria-label="Show network info">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm-1 17.93A8 8 0 0 1 4.07 13H7a14 14 0 0 0 1.46 6.93ZM11 11H4.07A8 8 0 0 1 11 4.07Zm0-6.93V11H8.5C8.61 8.34 9.5 5.85 11 4.07ZM13 4.07c1.5 1.78 2.39 4.27 2.5 6.93H13Zm0 8.93h2.5c-.11 2.66-1 5.15-2.5 6.93Zm0 8.93V13h2.93A14 14 0 0 1 13 19.93ZM19.93 13H17a14 14 0 0 0-1.46-6.93A8 8 0 0 1 19.93 13Zm0-2H17V4.07A8 8 0 0 1 19.93 11Z"/>
+        </svg>
+      </button>
+      <button type="button" class="ghost-btn" id="open-settings" aria-label="Player settings" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.24-1.12.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.42.32.61.22l2.39-.96c.5.38 1.04.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.24 1.12-.56 1.62-.94l2.39.96c.19.1.47.02.61-.22l1.92-3.32a.5.5 0 0 0-.12-.64ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
+        </svg>
+      </button>
+      <button type="button" class="ghost-btn danger" id="power-btn" aria-label="Stop and shut down the player" hidden>
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M13 3h-2v10h2V3zm4.83 2.17-1.42 1.42A6.99 6.99 0 0 1 19 12a7 7 0 1 1-11.41-5.41L6.17 5.17A9 9 0 1 0 21 12a8.98 8.98 0 0 0-3.17-6.83z"/>
         </svg>
       </button>
     </div>
@@ -119,10 +134,53 @@
     <section class="queue" aria-label="Play queue">
       <header class="queue-header">
         <h3>Queue <span class="queue-count" id="queue-count">0</span></h3>
+        <button type="button" class="ghost-btn small" id="clear-queue" aria-label="Clear the queue and stop playback">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M6 7h12v2H6zm2 3h8l-.7 9.07A1 1 0 0 1 14.3 20H9.7a1 1 0 0 1-1-.93L8 10zm2-6h4l1 2h3v2H5V6h3l1-2z"/>
+          </svg>
+        </button>
       </header>
       <ol class="queue-list" id="queue-list"></ol>
     </section>
   </main>
+
+  <dialog id="settings-dialog" class="modal">
+    <form method="dialog" class="modal-content">
+      <h2>Player Settings</h2>
+      <p class="modal-help">These apply to this local machine only.</p>
+      <label class="check">
+        <input type="checkbox" id="set-persist" />
+        <span>Keep playing after the MCP server closes <span class="modal-hint">the player + mpv survive when you close the AI; otherwise they stop with it</span></span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="set-autoopen" />
+        <span>Open in browser when the MCP server starts <span class="modal-hint">applies on next start</span></span>
+      </label>
+      <p class="modal-hint" id="settings-status"></p>
+      <menu class="modal-actions">
+        <button type="button" class="btn-secondary" id="settings-save">Save</button>
+        <button type="submit" class="primary-btn">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="playlists-dialog" class="modal">
+    <form method="dialog" class="modal-content">
+      <h2>Play a Playlist</h2>
+      <div class="playlist-options">
+        <fieldset class="pl-mode">
+          <label><input type="radio" name="pl-mode" value="replace" checked /> <span>Replace queue</span></label>
+          <label><input type="radio" name="pl-mode" value="append" /> <span>Add to queue</span></label>
+        </fieldset>
+        <label class="pl-shuffle"><input type="checkbox" id="pl-shuffle" /> <span>Shuffle</span></label>
+      </div>
+      <p class="modal-hint" id="playlists-status"></p>
+      <ul class="network-list playlist-list" id="playlists-list"></ul>
+      <menu class="modal-actions">
+        <button type="submit" class="primary-btn">Close</button>
+      </menu>
+    </form>
+  </dialog>
 
   <dialog id="network-info-dialog" class="modal">
     <form method="dialog" class="modal-content">

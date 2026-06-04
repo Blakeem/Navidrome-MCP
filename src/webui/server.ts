@@ -29,8 +29,11 @@ import type { SseBroadcaster } from './broadcaster.js';
 import { writeError } from './http-helpers.js';
 import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
+import { handleHealth } from './routes/health.js';
 import { handleNetworkInfo } from './routes/network-info.js';
+import { handleListPlaylists, handlePlayPlaylist } from './routes/playlists.js';
 import {
+  handleClear,
   handleNext,
   handlePause,
   handlePlayQueueIndex,
@@ -39,6 +42,12 @@ import {
   handleSeek,
   handleVolume,
 } from './routes/controls.js';
+import {
+  handleGetPlayerSettings,
+  handlePlayerState,
+  handleSetPlayerSettings,
+  handleShutdown,
+} from './routes/player.js';
 import { handleNowPlaying, handleQueue } from './routes/snapshot.js';
 import { handleStatic } from './routes/static-files.js';
 
@@ -46,12 +55,15 @@ interface ServerDeps {
   config: Config;
   client: NavidromeClient;
   broadcaster: SseBroadcaster;
+  /** Tear down the player (stop mpv + exit) — invoked by POST /api/shutdown. */
+  shutdown: () => void;
 }
 
 /**
  * Build the underlying HTTP server. Listen/close lifecycle is owned by the
- * caller (`WebUIServer.bind/stop`) — this factory returns an unstarted
- * instance so tests can drive it independently if needed.
+ * caller (`acquireOrAttach` in `src/web/acquire.ts`, driven by the standalone
+ * `navidrome-web` entry) — this factory returns an unstarted instance so the
+ * acquire/port-as-lock logic can bind it (or discard it) as needed.
  *
  * The dispatcher is a flat if-chain rather than a route table: ten endpoints
  * is below the threshold where pattern abstraction pays for itself, and a
@@ -91,9 +103,15 @@ async function handleRequest(
   const path = parsed.pathname;
   const method = req.method ?? 'GET';
 
+  // --- Health signature (port-as-lock coexistence) ---
+  if (method === 'GET' && path === '/healthz') {
+    handleHealth(req, res, deps.config);
+    return;
+  }
+
   // --- API: snapshot reads ---
   if (method === 'GET' && path === '/api/now-playing') {
-    return handleNowPlaying(res);
+    return handleNowPlaying(res, deps.client);
   }
   if (method === 'GET' && path === '/api/queue') {
     return handleQueue(res, deps.client);
@@ -112,6 +130,7 @@ async function handleRequest(
   if (method === 'POST' && path === '/api/controls/seek')       return handleSeek(req, res);
   if (method === 'POST' && path === '/api/controls/volume')     return handleVolume(req, res);
   if (method === 'POST' && path === '/api/controls/play-index') return handlePlayQueueIndex(req, res);
+  if (method === 'POST' && path === '/api/controls/clear')      return handleClear(res);
 
   // --- API: network info ---
   if (method === 'GET' && path === '/api/network-info') {
@@ -119,9 +138,27 @@ async function handleRequest(
     return;
   }
 
+  // --- API: playlists ---
+  if (method === 'GET'  && path === '/api/playlists')      return handleListPlaylists(res, deps.client);
+  if (method === 'POST' && path === '/api/playlists/play') return handlePlayPlaylist(req, res, deps.client);
+
+  // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
+  if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res); return; }
+  if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res); return; }
+  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res);
+  if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
+
   // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {
-    const id = decodeURIComponent(path.slice('/api/cover/'.length));
+    // A malformed percent-sequence (e.g. /api/cover/%GG) makes
+    // decodeURIComponent throw a URIError; that's a client error, not a 500.
+    let id: string;
+    try {
+      id = decodeURIComponent(path.slice('/api/cover/'.length));
+    } catch {
+      writeError(res, 400, 'Malformed cover id');
+      return;
+    }
     return handleCover(res, deps.config, id);
   }
 

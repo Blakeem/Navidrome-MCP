@@ -56,11 +56,11 @@ export class AuthManager {
   }
 
   async getToken(): Promise<string> {
-    if (this.token === null || this.token === undefined || this.token === '' || this.tokenExpiry === null || this.tokenExpiry === undefined || this.tokenExpiry <= new Date()) {
+    if (this.token === null || this.token === '' || this.tokenExpiry === null || this.tokenExpiry <= new Date()) {
       await this.authenticate();
     }
 
-    if (this.token === null || this.token === undefined || this.token === '') {
+    if (this.token === null || this.token === '') {
       throw new Error(ErrorFormatter.authentication('token not available after authentication'));
     }
 
@@ -95,7 +95,17 @@ export class AuthManager {
       throw new Error(ErrorFormatter.authentication(`${response.status} ${response.statusText}`));
     }
 
-    const data = (await response.json()) as { token: string };
+    let data: { token: string };
+    try {
+      data = (await response.json()) as { token: string };
+    } catch {
+      // 200 OK but body wasn't valid JSON (empty body, HTML error page from a
+      // proxy, etc.) — surface with auth context instead of a bare SyntaxError.
+      throw new Error(ErrorFormatter.authentication('invalid JSON in /auth/login response'));
+    }
+    if (typeof data.token !== 'string' || data.token === '') {
+      throw new Error(ErrorFormatter.authentication('server returned no token'));
+    }
     this.token = data.token;
     this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
     logger.debug('Authentication successful');

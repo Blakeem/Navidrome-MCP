@@ -98,17 +98,17 @@ describe('PlaybackEngine signal handlers (H6)', () => {
 
     installedSigintListeners = process
       .listeners('SIGINT')
-      .filter((ln) => !beforeInt.has(ln)) as NodeJS.SignalsListener[];
+      .filter((ln) => !beforeInt.has(ln));
     installedSigtermListeners = process
       .listeners('SIGTERM')
-      .filter((ln) => !beforeTerm.has(ln)) as NodeJS.SignalsListener[];
+      .filter((ln) => !beforeTerm.has(ln));
   });
 
-  afterAll(async () => {
+  afterAll(() => {
     process.exitCode = originalExitCode;
     for (const ln of installedSigintListeners) process.removeListener('SIGINT', ln);
     for (const ln of installedSigtermListeners) process.removeListener('SIGTERM', ln);
-    await playbackEngine.shutdown();
+    playbackEngine.shutdown();
     vi.restoreAllMocks();
   });
 

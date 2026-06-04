@@ -44,6 +44,19 @@
     netHelp: $('network-info-help'),
     netList: $('network-info-list'),
     netHint: $('network-info-hint'),
+    openPlaylists: $('open-playlists'),
+    plDialog: $('playlists-dialog'),
+    plList: $('playlists-list'),
+    plStatus: $('playlists-status'),
+    plShuffle: $('pl-shuffle'),
+    clearQueue: $('clear-queue'),
+    openSettings: $('open-settings'),
+    setDialog: $('settings-dialog'),
+    setPersist: $('set-persist'),
+    setAutoOpen: $('set-autoopen'),
+    setStatus: $('settings-status'),
+    settingsSave: $('settings-save'),
+    powerBtn: $('power-btn'),
   };
 
   // ---------- state ----------
@@ -51,6 +64,11 @@
     nowPlaying: null,
     queue: { items: [], length: 0 },
     status: null,
+    // Whether this browser is the local (loopback) machine — fetched once from
+    // /api/player-state. Gates the local-only gear + power affordances.
+    isLocal: false,
+    // Latest process-global player flags from the SSE snapshot.
+    player: { hasLiveParent: false, persist: false },
     // Position interpolation: last server-reported values + the wall-clock
     // when we received them. The animation loop derives the displayed
     // position from these so the progress bar moves smoothly between
@@ -135,14 +153,23 @@
 
   // ---------- SSE ----------
   let eventSource = null;
+  let sseStopped = false; // set when we deliberately close (e.g. power-off)
+  function closeEventSource() {
+    sseStopped = true;
+    if (eventSource !== null) {
+      try { eventSource.close(); } catch { /* noop */ }
+      eventSource = null;
+    }
+  }
   function connect() {
     setConnState('connecting');
     if (eventSource !== null) {
       try { eventSource.close(); } catch { /* noop */ }
     }
     eventSource = new EventSource('/api/events');
-    eventSource.onopen = () => setConnState('connected');
+    eventSource.onopen = () => { if (!sseStopped) setConnState('connected'); };
     eventSource.onerror = () => {
+      if (sseStopped) return; // we shut down on purpose; keep the terminal state
       // EventSource flips to readyState=CONNECTING during the auto-reconnect
       // grace; treat that as "connecting" so the dot pulses yellow rather
       // than going red. Only show "offline" if the browser gave up entirely
@@ -164,19 +191,33 @@
   }
 
   // ---------- snapshot application ----------
-  function applySnapshot({ nowPlaying, queue, status }) {
+  function applySnapshot({ nowPlaying, queue, status, player }) {
     state.nowPlaying = nowPlaying ?? null;
     state.queue = queue ?? { items: [], length: 0 };
     state.status = status ?? null;
+    if (player) state.player = player;
     renderTrackInfo();
     renderQueue();
     renderPlayState();
     renderVolume();
     rebaseProgress();
     renderCover();
+    updateLocalControls();
     // Auto-scroll the queue so the currently-playing row is on-screen.
     // Called LAST so the DOM reflects the snapshot before we measure.
     ensureCurrentVisible();
+  }
+
+  // Show/hide the loopback-only affordances. Gear shows for any local client;
+  // power shows for a local client only when the server won't be auto-closed by
+  // an MCP (no live parent, or persistence on). Mirrors computePlayerFlags on
+  // the server. Recomputed each snapshot so it flips live when MCP disconnects
+  // or persist is toggled.
+  function updateLocalControls() {
+    const canEditSettings = state.isLocal;
+    const canPowerOff = state.isLocal && (!state.player.hasLiveParent || state.player.persist);
+    setHidden(els.openSettings, !canEditSettings);
+    setHidden(els.powerBtn, !canPowerOff);
   }
 
   // Scroll the queue list so the .current row is visible, but ONLY when
@@ -583,6 +624,142 @@
         console.warn('webui: network-info fetch failed', err);
       }
     });
+
+    els.openPlaylists.addEventListener('click', async () => {
+      els.plStatus.textContent = 'Loading playlists…';
+      els.plList.replaceChildren();
+      if (typeof els.plDialog.showModal === 'function') els.plDialog.showModal();
+      try {
+        const res = await fetch('/api/playlists');
+        if (!res.ok) {
+          // Non-2xx (e.g. 500 from runAction) — show an error, not the
+          // misleading "No playlists found" an empty-array fallback would give.
+          console.warn('webui: /api/playlists failed', res.status);
+          els.plStatus.textContent = 'Could not load playlists.';
+          return;
+        }
+        const data = await res.json();
+        renderPlaylists(data.playlists ?? []);
+      } catch (err) {
+        console.warn('webui: playlists fetch failed', err);
+        els.plStatus.textContent = 'Could not load playlists.';
+      }
+    });
+
+    els.clearQueue.addEventListener('click', () => {
+      const count = state.queue?.length ?? (state.queue?.items?.length ?? 0);
+      if (count > 0 && !window.confirm('Clear the queue and stop playback?')) return;
+      post('/api/controls/clear');
+    });
+
+    els.openSettings.addEventListener('click', async () => {
+      els.setStatus.textContent = '';
+      try {
+        const res = await fetch('/api/player/settings');
+        if (res.ok) {
+          const s = await res.json();
+          els.setPersist.checked = s.persistAfterMcpExit === true;
+          els.setAutoOpen.checked = s.autoOpenBrowser === true;
+        }
+      } catch (err) {
+        console.warn('webui: player settings fetch failed', err);
+      }
+      if (typeof els.setDialog.showModal === 'function') els.setDialog.showModal();
+    });
+
+    els.settingsSave.addEventListener('click', async () => {
+      els.setStatus.textContent = 'Saving…';
+      try {
+        const res = await fetch('/api/player/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            persistAfterMcpExit: els.setPersist.checked,
+            autoOpenBrowser: els.setAutoOpen.checked,
+          }),
+        });
+        if (res.ok) {
+          const s = await res.json();
+          // Reflect the live persist value immediately so the power button
+          // appears/disappears without waiting for the next snapshot.
+          state.player = { ...state.player, persist: s.persistAfterMcpExit === true };
+          updateLocalControls();
+          els.setStatus.textContent = 'Saved.';
+        } else {
+          els.setStatus.textContent = 'Could not save settings.';
+        }
+      } catch (err) {
+        console.warn('webui: save player settings failed', err);
+        els.setStatus.textContent = 'Could not save settings.';
+      }
+    });
+
+    els.powerBtn.addEventListener('click', async () => {
+      if (!window.confirm('Stop playback and shut down the player? You will need to reopen or restart it to use it again.')) return;
+      // Close the SSE stream first so its auto-reconnect doesn't flip the UI back
+      // to "Connecting…" (and clobber the terminal state) once the server exits.
+      closeEventSource();
+      try {
+        await fetch('/api/shutdown', { method: 'POST' });
+      } catch {
+        /* the server tears down mid-request; an error here is expected */
+      }
+      setConnState('disconnected');
+      document.body.classList.add('player-stopped');
+    });
+  }
+
+  function selectedMode() {
+    const checked = els.plDialog.querySelector('input[name="pl-mode"]:checked');
+    return checked ? checked.value : 'replace';
+  }
+
+  async function playPlaylist(id, name) {
+    els.plStatus.textContent = `Starting “${name}”…`;
+    try {
+      const res = await fetch('/api/playlists/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playlistId: id, mode: selectedMode(), shuffle: els.plShuffle.checked }),
+      });
+      if (res.ok) {
+        els.plDialog.close();
+      } else {
+        const text = await res.text().catch(() => '');
+        console.warn('webui: play playlist failed', res.status, text);
+        els.plStatus.textContent = 'Could not start that playlist.';
+      }
+    } catch (err) {
+      console.warn('webui: play playlist failed', err);
+      els.plStatus.textContent = 'Could not start that playlist.';
+    }
+  }
+
+  function renderPlaylists(playlists) {
+    if (!playlists.length) {
+      els.plStatus.textContent = 'No playlists found.';
+      els.plList.replaceChildren();
+      return;
+    }
+    els.plStatus.textContent = '';
+    els.plList.replaceChildren(...playlists.map((pl) => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'playlist-item';
+      const head = document.createElement('span');
+      head.className = 'pl-name';
+      head.textContent = pl.name;
+      const meta = document.createElement('span');
+      meta.className = 'pl-meta';
+      const count = typeof pl.songCount === 'number' ? `${pl.songCount} track${pl.songCount === 1 ? '' : 's'}` : '';
+      meta.textContent = pl.durationFormatted ? `${count} · ${pl.durationFormatted}` : count;
+      btn.appendChild(head);
+      btn.appendChild(meta);
+      btn.addEventListener('click', () => void playPlaylist(pl.playlistId, pl.name));
+      li.appendChild(btn);
+      return li;
+    }));
   }
 
   function renderNetworkInfo(info) {
@@ -619,8 +796,22 @@
   }
 
   // ---------- bootstrap ----------
+  async function fetchLocalFlag() {
+    try {
+      const res = await fetch('/api/player-state');
+      if (res.ok) {
+        const s = await res.json();
+        state.isLocal = s.isLocal === true;
+        updateLocalControls();
+      }
+    } catch (err) {
+      console.warn('webui: player-state fetch failed', err);
+    }
+  }
+
   function bootstrap() {
     bindControls();
+    void fetchLocalFlag();
     connect();
     requestAnimationFrame(tickProgress);
   }

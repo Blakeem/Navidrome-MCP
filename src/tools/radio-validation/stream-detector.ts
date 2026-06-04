@@ -19,15 +19,16 @@
 import { fileTypeFromBuffer } from 'file-type';
 import { stripHtml } from '../../utils/strip-html.js';
 
-// Audio format detection result
-export interface AudioDetectionResult {
+// Audio format detection result (module-private — only the return type of the
+// exported detectAudioFormat below; consumers get it via inference).
+interface AudioDetectionResult {
   readonly detected: boolean;
   readonly format?: string;
   readonly mime?: string;
 }
 
-// Valid audio MIME types
-export const VALID_AUDIO_MIMES = [
+// Valid audio MIME types (module-private — consumed only by isAudioContentType)
+const VALID_AUDIO_MIMES = [
   'audio/mpeg',
   'audio/mp3',
   'audio/aac',
@@ -43,8 +44,9 @@ export const VALID_AUDIO_MIMES = [
   'application/vnd.apple.mpegurl', // HLS
 ];
 
-// Streaming-specific headers to check
-export const STREAMING_HEADERS = [
+// Streaming-specific headers to check (module-private — consumed only by
+// extractStreamingHeaders)
+const STREAMING_HEADERS = [
   'icy-name',
   'icy-br',
   'icy-metaint',
@@ -60,7 +62,7 @@ export const STREAMING_HEADERS = [
  * Check if content type indicates audio
  */
 export function isAudioContentType(contentType: string | null): boolean {
-  if (contentType === null || contentType === undefined || contentType === '') return false;
+  if (contentType === null || contentType === '') return false;
 
   const normalized = contentType.toLowerCase();
   return VALID_AUDIO_MIMES.some(mime => normalized.includes(mime));
@@ -96,7 +98,7 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
   try {
     const fileType = await fileTypeFromBuffer(buffer);
 
-    if (fileType?.mime?.startsWith('audio/') === true) {
+    if (fileType?.mime.startsWith('audio/') === true) {
       return {
         detected: true,
         format: fileType.ext,
@@ -113,9 +115,13 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
     ];
 
     for (const sig of signatures) {
+      // A buffer shorter than the signature can never match — an absent byte
+      // (i >= buffer.length) must count as a mismatch, not a wildcard, so a
+      // 1-byte [0xFF] sample doesn't falsely match MP3/AAC/OGG.
+      if (buffer.length < sig.bytes.length) continue;
       let matches = true;
       for (let i = 0; i < sig.bytes.length; i++) {
-        if (buffer[i] !== undefined && buffer[i] !== sig.bytes[i]) {
+        if (buffer[i] !== sig.bytes[i]) {
           matches = false;
           break;
         }

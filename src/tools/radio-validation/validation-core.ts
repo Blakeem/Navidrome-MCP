@@ -133,6 +133,7 @@ export async function validateRadioStream(
   let headError: string | null = null;
   let buffer: Uint8Array | null = null;
   let headers: Headers | null = null;
+  let sampledStatus: number | null = null;
   let sampleError: string | null = null;
   let resolvedFinalUrl: string | null = null;
   // Hoisted to function scope so the post-validation warning logic (~line 243)
@@ -149,7 +150,7 @@ export async function validateRadioStream(
       resolvedFinalUrl = headResult.finalUrl;
     }
 
-    if (headError !== null && headError !== undefined && headError !== '') {
+    if (headError !== null && headError !== '') {
       warnings.push(headError);
     }
 
@@ -159,10 +160,10 @@ export async function validateRadioStream(
       const streamHeaders = extractStreamingHeaders(headResponse.headers);
 
       // If we have clear audio content-type OR streaming headers, we can skip audio sampling
-      const hasAudioContentType = contentType !== null && contentType !== undefined && contentType !== '' && isAudioContentType(contentType);
+      const hasAudioContentType = contentType !== null && contentType !== '' && isAudioContentType(contentType);
       const hasStreamingHeaders = Object.keys(streamHeaders).length > 0;
 
-      if (hasAudioContentType === true || hasStreamingHeaders === true) {
+      if (hasAudioContentType || hasStreamingHeaders) {
         skipAudioSampling = true;
         // Headers were conclusive — no need to sample audio data.
         // We intentionally do NOT synthesize a fake buffer here; that would
@@ -181,9 +182,10 @@ export async function validateRadioStream(
       const remainingTime = params.timeout - elapsed;
 
       if (remainingTime > 1000 && !overallController.signal.aborted) {
-        const sampleResult = await sampleAudioData(params.url, remainingTime, params.followRedirects);
+        const sampleResult = await sampleAudioData(params.url, remainingTime, params.followRedirects, overallController.signal);
         buffer = sampleResult.buffer;
         headers = sampleResult.headers ?? headResponse?.headers ?? null;
+        sampledStatus = sampleResult.httpStatus ?? null;
         sampleError = sampleResult.error;
         if (resolvedFinalUrl === null && sampleResult.finalUrl !== params.url) {
           resolvedFinalUrl = sampleResult.finalUrl;
@@ -202,36 +204,48 @@ export async function validateRadioStream(
     clearTimeout(overallTimeoutId);
   }
 
-  if (sampleError !== null && sampleError !== undefined && sampleError !== '' && headResponse === null) {
+  if (sampleError !== null && sampleError !== '' && headResponse === null) {
     errors.push(sampleError);
     result.status = 'error';
   }
 
-  // Use whichever response we got
-  const finalResponse = headResponse ?? (headers !== null && headers !== undefined ? { headers, ok: true, status: 200 } : null);
+  // Use whichever response we got. The status may be absent when HEAD failed
+  // and sampling produced headers but no real HTTP status — track it separately
+  // so we never write a bogus 0 into result.httpStatus.
+  const finalStatus: number | null = headResponse?.status ?? sampledStatus;
+  const finalResponse = headResponse ?? (headers !== null ? { headers, status: finalStatus } : null);
 
   if (finalResponse) {
-    result.httpStatus = finalResponse.status || 200;
-    result.validation.httpAccessible = true;
+    if (finalStatus !== null) {
+      result.httpStatus = finalStatus;
+      result.validation.httpAccessible = (finalStatus >= 200 && finalStatus < 300) || finalStatus === 206;
+    }
 
     if (resolvedFinalUrl !== null) {
       result.finalUrl = resolvedFinalUrl;
     }
 
+    // Extract streaming headers first — their presence (ICY/audiocast) is the
+    // strongest possible signal and changes how we interpret content-type and
+    // HTTP status below.
+    result.streamingHeaders = extractStreamingHeaders(finalResponse.headers);
+    result.validation.hasStreamingHeaders = Object.keys(result.streamingHeaders).length > 0;
+
     // Extract content type
     const contentType = finalResponse.headers.get('content-type');
-    if (contentType !== null && contentType !== undefined && contentType !== '') {
+    if (contentType !== null && contentType !== '') {
       result.contentType = contentType;
       result.validation.hasAudioContentType = isAudioContentType(contentType);
 
-      if (!result.validation.hasAudioContentType) {
+      // A non-audio content-type is only a problem when there are NO streaming
+      // headers to corroborate the stream. Icecast/Shoutcast mounts that reject
+      // our HEAD probe return an HTML error body (`text/html`) yet still echo
+      // the full ICY header set — flagging that as an error would be misleading
+      // for a stream we can positively identify from its `icy-*` headers.
+      if (!result.validation.hasAudioContentType && !result.validation.hasStreamingHeaders) {
         errors.push(`Non-audio content type: ${contentType}`);
       }
     }
-
-    // Extract streaming headers
-    result.streamingHeaders = extractStreamingHeaders(finalResponse.headers);
-    result.validation.hasStreamingHeaders = Object.keys(result.streamingHeaders).length > 0;
   }
 
   // Step 3: Detect audio format if we got data
@@ -243,17 +257,29 @@ export async function validateRadioStream(
     if (!audioFormat.detected && result.validation.hasAudioContentType) {
       warnings.push('Could not detect audio format from data sample');
     }
-  } else if (result.validation.httpAccessible === true && !skipAudioSampling) {
+  } else if (result.validation.httpAccessible && !skipAudioSampling) {
     // Only warn about missing samples when sampling was actually attempted —
     // when headers are conclusive we deliberately skip the body read.
     warnings.push('Could not sample audio data from stream');
   }
 
-  // Determine overall success
-  result.success = result.validation.httpAccessible &&
-                  (result.validation.hasAudioContentType ||
-                   result.validation.audioDataDetected ||
-                   result.validation.hasStreamingHeaders);
+  // Determine overall success.
+  //
+  // ICY/audiocast streaming headers (icy-br, icy-name, icy-metaint, ...) are
+  // emitted ONLY by Shoutcast/Icecast audio servers, so their presence is
+  // definitive proof of a real stream — even when the server rejects our HEAD
+  // probe with a non-2xx status. Many icecast mounts return 400/405 to HEAD
+  // while still echoing the ICY header set (e.g. walmradio on :8443), so
+  // gating on `httpAccessible` here produced false negatives on real, popular
+  // streams (Issue #7). Streaming headers are therefore sufficient on their own.
+  //
+  // Absent streaming headers, fall back to the conservative check: the endpoint
+  // must be HTTP-accessible AND look like audio (by content-type or sniffed
+  // magic bytes).
+  result.success =
+    result.validation.hasStreamingHeaders ||
+    (result.validation.httpAccessible &&
+      (result.validation.hasAudioContentType || result.validation.audioDataDetected));
 
   result.status = result.success ? 'valid' : (errors.length > 0 ? 'error' : 'invalid');
 

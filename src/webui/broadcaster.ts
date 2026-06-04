@@ -23,6 +23,7 @@ import {
   type StateChangeEvent,
 } from '../services/playback/playback-engine.js';
 import { getPlayQueue, nowPlaying, playbackStatus } from '../tools/playback.js';
+import { getPersist, hasLiveParent } from '../web/player-runtime.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -126,7 +127,12 @@ export class SseBroadcaster {
     res.on('close', () => { this.clients.delete(res); });
 
     const snapshot = await this.buildSnapshot();
-    if (snapshot !== null) this.writeToClient(res, snapshot);
+    // Re-check membership: the client may have disconnected during the await
+    // (the 'close' handler above already removed it). Writing to a socket
+    // that's gone is harmless but pointless; gating on `clients.has(res)`
+    // also avoids racing a concurrent broadcast() that snapshotted the set
+    // while this client was half-closed.
+    if (snapshot !== null && this.clients.has(res)) this.writeToClient(res, snapshot);
   }
 
   /** Number of currently-connected SSE clients. Used for diagnostics. */
@@ -206,7 +212,10 @@ export class SseBroadcaster {
     // unavailable" than to fall silent and leave the user wondering if
     // the MCP server has died.
     const [npResult, queueResult, statusResult] = await Promise.allSettled([
-      nowPlaying({}),
+      // Pass the client so now_playing can resolve title/artist/album by songId
+      // after an MCP restart (empty engine cache) — same enrichment the MCP
+      // tool path gets — instead of leaving the web UI's card blank.
+      nowPlaying({}, this.client),
       getPlayQueue(this.client, {}),
       playbackStatus({}),
     ]);
@@ -222,7 +231,12 @@ export class SseBroadcaster {
       return null;
     }
 
-    return JSON.stringify({ nowPlaying: np, queue, status });
+    // `player` carries process-global lifecycle state so the frontend can
+    // recompute the power-button visibility live (it flips the instant MCP
+    // disconnects or persist is toggled). It is NOT per-peer — the client
+    // combines this with its own `isLocal` (one-time /api/player-state fetch).
+    const player = { hasLiveParent: hasLiveParent(), persist: getPersist() };
+    return JSON.stringify({ nowPlaying: np, queue, status, player });
   }
 }
 

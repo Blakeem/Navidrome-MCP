@@ -67,6 +67,12 @@ const tools: Tool[] = [
           enum: ['ASC', 'DESC'],
           default: 'ASC',
         },
+        onlyWithPlayableTracks: {
+          type: 'boolean',
+          description:
+            'When true, return only playlists containing at least one track in the currently active libraries (useful when the user asks what they can play). Default false returns all playlists.',
+          default: false,
+        },
       },
     },
   },
@@ -76,12 +82,12 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        playlistId: {
           type: 'string',
-          description: 'The unique ID of the playlist',
+          description: 'The playlist ID, as returned by the `list_playlists` tool.',
         },
       },
-      required: ['id'],
+      required: ['playlistId'],
     },
   },
   {
@@ -113,9 +119,9 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        playlistId: {
           type: 'string',
-          description: 'The unique ID of the playlist to update',
+          description: 'The playlist ID, as returned by the `list_playlists` tool.',
         },
         name: {
           type: 'string',
@@ -130,7 +136,7 @@ const tools: Tool[] = [
           description: 'New public visibility setting',
         },
       },
-      required: ['id'],
+      required: ['playlistId'],
     },
   },
   {
@@ -139,17 +145,17 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        id: {
+        playlistId: {
           type: 'string',
-          description: 'The unique ID of the playlist to delete',
+          description: 'The playlist ID, as returned by the `list_playlists` tool.',
         },
       },
-      required: ['id'],
+      required: ['playlistId'],
     },
   },
   {
     name: 'get_playlist_tracks',
-    description: 'Get all tracks in a playlist (supports JSON or M3U export). Response shape is discriminated by `format`: JSON mode returns `{ format: "json", tracks, total }` with each track exposing both an `id` (1-based playlist position used for reordering/removing) and a `mediaFileId` (actual song ID for playback/metadata). M3U mode returns `{ format: "m3u", m3uContent }` — the raw .m3u text payload (no tracks/total arrays, since they would be redundant with the playlist body).',
+    description: 'Get all tracks in a playlist (supports JSON or M3U export). Response shape is discriminated by `format`: JSON mode returns `{ format: "json", tracks, total }` with each track exposing both an `id` (1-based playlist position used for reordering/removing) and a `mediaFileId` (actual song ID for playback/metadata). M3U mode returns `{ format: "m3u", m3uContent }` — the raw .m3u text payload (no tracks/total arrays, since they would be redundant with the playlist body).\n\nBy default each track is compact (id, mediaFileId, title, artist, album, durationFormatted) to keep large playlists under the response size cap. Set `verbose: true` for full per-track metadata (path, bitRate, raw duration, playlistId, trackNumber, year, genre, albumArtist).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -175,6 +181,11 @@ const tools: Tool[] = [
           description: 'Output format: json for structured data, m3u for playlist file',
           enum: ['json', 'm3u'],
           default: 'json',
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each track carries only identity fields (id, mediaFileId, title, artist, album, durationFormatted) to save context; set true for full per-track metadata (path, bitRate, raw duration, playlistId, trackNumber, year, genre, albumArtist).',
+          default: false,
         },
       },
       required: ['playlistId'],

@@ -170,6 +170,67 @@ interface EnhancedSearchResult {
 export type SearchEndpoint = 'song' | 'album' | 'artist';
 
 /**
+ * Tag/year filters that `/api/artist` silently ignores (no such columns on the
+ * artist table). Empirically confirmed against the live server: appending any
+ * of these to `/api/artist` leaves X-Total-Count unchanged, so they are no-ops.
+ * We use this set to (a) avoid sending dead params to `/api/artist` and (b)
+ * avoid reporting them in `appliedFilters` over an unfiltered artist set.
+ *
+ * The values are the *resolved* URL keys (`genre_id`, …) plus `year`; the
+ * matching `appliedFilters` display keys (`genre`, …) are handled separately
+ * via {@link ARTIST_UNSUPPORTED_APPLIED_KEYS}.
+ */
+const ARTIST_UNSUPPORTED_RESOLVED_KEYS: ReadonlySet<string> = new Set([
+  'genre_id',
+  'media_id',
+  'releasecountry_id',
+  'releasetype_id',
+  'recordlabel_id',
+  'mood_id',
+  'year',
+]);
+
+/**
+ * `appliedFilters` display keys that correspond to filters `/api/artist`
+ * ignores — the human-readable counterparts of {@link ARTIST_UNSUPPORTED_RESOLVED_KEYS}.
+ */
+const ARTIST_UNSUPPORTED_APPLIED_KEYS: ReadonlySet<string> = new Set([
+  'genre',
+  'mediaType',
+  'country',
+  'releaseType',
+  'recordLabel',
+  'mood',
+  'year',
+]);
+
+/**
+ * Drop filter keys that the target endpoint silently ignores. Today only
+ * `/api/artist` needs this (it honors none of the tag/year filters); song and
+ * album pass through unchanged. Returns a new object — the input is not mutated.
+ *
+ * @param filters - Resolved URL params (`genre_id` → uuid) or applied display
+ *   names (`genre` → 'Rock'); pass the matching `applied` flag so the correct
+ *   key set is used.
+ * @param endpoint - Target Navidrome endpoint.
+ * @param applied - `true` when filtering an `appliedFilters` (display-name)
+ *   map, `false` when filtering a `resolvedFilters` (URL-param) map.
+ */
+export function stripUnsupportedFilters(
+  filters: Record<string, string>,
+  endpoint: SearchEndpoint,
+  applied: boolean
+): Record<string, string> {
+  if (endpoint !== 'artist') return filters;
+  const unsupported = applied ? ARTIST_UNSUPPORTED_APPLIED_KEYS : ARTIST_UNSUPPORTED_RESOLVED_KEYS;
+  const kept: Record<string, string> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (!unsupported.has(key)) kept[key] = value;
+  }
+  return kept;
+}
+
+/**
  * Map a user-facing sort key to the column name Navidrome actually
  * sorts on for the given endpoint. Navidrome's `/api/album` does not
  * have a `year` column (it has `maxYear`/`minYear`), so `_sort=year`
@@ -197,7 +258,13 @@ export async function buildEnhancedSearchParams(
   endpoint: SearchEndpoint
 ): Promise<EnhancedSearchResult> {
   // Process text-based filters first (may refresh from Navidrome when cache is disabled)
-  const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
+  const { resolvedFilters: rawResolved, appliedFilters: rawApplied } = await resolveTextFilters(params);
+
+  // Drop filters the endpoint silently ignores (today: tag/year on /api/artist).
+  // This stops both sending dead params AND reporting them as applied over an
+  // unfiltered result set — see stripUnsupportedFilters.
+  const resolvedFilters = stripUnsupportedFilters(rawResolved, endpoint, false);
+  const appliedFilters = stripUnsupportedFilters(rawApplied, endpoint, true);
 
   // Build URLSearchParams for API request
   const searchParams = new URLSearchParams();
@@ -234,8 +301,9 @@ export async function buildEnhancedSearchParams(
 
   // Single-year filter. Navidrome's /api/album?year=N matches albums whose
   // [minYear, maxYear] contains N; /api/song?year=N matches the exact year
-  // column; /api/artist silently ignores it.
-  if (params.year !== undefined) {
+  // column; /api/artist silently ignores it, so don't send it there (and it is
+  // already omitted from SearchArtistsSchema).
+  if (params.year !== undefined && endpoint !== 'artist') {
     searchParams.set('year', params.year.toString());
   }
 

@@ -17,6 +17,7 @@
  */
 
 import type { ArtistDTO } from '../types/index.js';
+import { shouldEmit, type TransformOptions } from './shared-transformers.js';
 
 /**
  * Raw artist data from Navidrome API
@@ -38,31 +39,41 @@ export interface RawArtist {
 /**
  * Transform a raw artist from Navidrome API to a clean DTO
  * @param rawArtist Raw artist data from API
+ * @param options Verbosity controls (see {@link TransformOptions}). Default
+ *   compact: only the identity block is emitted; verbose/keep restore the rest.
  * @returns Clean artist DTO for LLM consumption
  */
-export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
+export function transformToArtistDTO(rawArtist: RawArtist, options?: TransformOptions): ArtistDTO {
+  // Identity block — always emitted.
   const dto: ArtistDTO = {
     id: rawArtist.id,
     name: rawArtist.name || '',
     albumCount: rawArtist.albumCount || 0,
     songCount: rawArtist.songCount || 0,
-    // Default to 0 explicitly. Navidrome omits `playCount` entirely for
-    // never-played artists (only emits the field for playCount > 0), which
-    // made sort=playCount results ambiguous: an LLM couldn't distinguish
-    // "never played" from "field unavailable". An explicit zero is the
-    // unambiguous representation.
-    playCount: rawArtist.playCount ?? 0,
   };
 
-  if (rawArtist.genres !== undefined) {
-    dto.genres = rawArtist.genres;
+  // Default to 0 explicitly when emitted. Navidrome omits `playCount` entirely
+  // for never-played artists (only emits the field for playCount > 0), which
+  // made sort=playCount results ambiguous: an LLM couldn't distinguish "never
+  // played" from "field unavailable". An explicit zero is the unambiguous
+  // representation. Gated so compact output (where playCount is irrelevant)
+  // stays lean; list_most_played force-keeps it.
+  if (shouldEmit('playCount', options)) {
+    dto.playCount = rawArtist.playCount ?? 0;
   }
 
-  if (rawArtist.biography !== undefined) {
+  if (shouldEmit('genres', options) && rawArtist.genres !== undefined) {
+    const filtered = rawArtist.genres.filter(g => g.length > 0);
+    if (filtered.length > 0) {
+      dto.genres = filtered;
+    }
+  }
+
+  if (shouldEmit('biography', options) && rawArtist.biography !== undefined && rawArtist.biography !== '') {
     dto.biography = rawArtist.biography;
   }
 
-  if (rawArtist.rating !== undefined) {
+  if (shouldEmit('rating', options) && rawArtist.rating !== undefined && rawArtist.rating > 0) {
     dto.rating = rawArtist.rating;
   }
 
@@ -70,13 +81,15 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
   // as a "last starred at" history field even after unstarring, so a
   // populated timestamp alone does NOT mean the item is currently starred.
   // Only echo `starredAt` when the boolean confirms the starred state.
-  if (rawArtist.starred === true) {
-    dto.starred = true;
-    if (rawArtist.starredAt !== undefined && rawArtist.starredAt !== null) {
-      dto.starredAt = rawArtist.starredAt;
+  if (shouldEmit('starred', options)) {
+    if (rawArtist.starred === true) {
+      dto.starred = true;
+      if (rawArtist.starredAt !== undefined) {
+        dto.starredAt = rawArtist.starredAt;
+      }
+    } else if (rawArtist.starred === false) {
+      dto.starred = false;
     }
-  } else if (rawArtist.starred === false) {
-    dto.starred = false;
   }
 
   return dto;
@@ -85,12 +98,19 @@ export function transformToArtistDTO(rawArtist: RawArtist): ArtistDTO {
 /**
  * Transform an array of raw artists to DTOs
  * @param rawArtists Array of raw artist data
+ * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
  * @returns Array of clean artist DTOs
  */
-export function transformArtistsToDTO(rawArtists: unknown): ArtistDTO[] {
+export function transformArtistsToDTO(rawArtists: unknown, options?: TransformOptions): ArtistDTO[] {
   if (!Array.isArray(rawArtists)) {
     return [];
   }
 
-  return rawArtists.map((artist) => transformToArtistDTO(artist as RawArtist));
+  // Guard each element: Navidrome can return null / non-object entries on
+  // certain API errors. The `as RawArtist` cast would pass TS but crash the
+  // single-item transformer at runtime, aborting the whole batch. Drop the
+  // bad rows instead so one malformed entry doesn't lose every good one.
+  return rawArtists
+    .filter((artist): artist is RawArtist => typeof artist === 'object' && artist !== null)
+    .map((artist) => transformToArtistDTO(artist, options));
 }

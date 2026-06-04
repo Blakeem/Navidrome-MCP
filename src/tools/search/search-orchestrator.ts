@@ -26,6 +26,7 @@ import { resolveTextFilters } from './filter-resolver.js';
 import {
   buildContentTypeParams,
   aggregateSearchResults,
+  type AppliedFiltersByType,
   type ParallelSearchResponses,
   type ParallelSearchTotals,
 } from './result-aggregator.js';
@@ -50,13 +51,13 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
   totalAlbums: number;
   totalSongs: number;
   totalResults: number;
-  appliedFilters?: Record<string, string>;
+  appliedFilters?: AppliedFiltersByType;
 }> {
-  // Data collection - parse and validate input parameters
-  const params = SearchAllSchema.parse(args);
-  logger.debug('Tool searchAll called with args:', params);
-
   try {
+    // Data collection - parse and validate input parameters
+    const params = SearchAllSchema.parse(args);
+    logger.debug('Tool searchAll called with args:', params);
+
     // Processing - resolve text-based filters to IDs (may refresh from Navidrome when cache is disabled)
     const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
 
@@ -102,7 +103,7 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${contentTypeParams.albumParams}`)
         : Promise.resolve(empty()),
       params.artistCount > 0
-        ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${contentTypeParams.artistParams}`)
+        ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${contentTypeParams.artistParams}&role=maincredit`)
         : Promise.resolve(empty()),
     ]);
 
@@ -119,7 +120,7 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
     };
 
     // Output construction - aggregate results from all search types
-    const result = aggregateSearchResults(responses, totals, appliedFilters);
+    const result = aggregateSearchResults(responses, totals, appliedFilters, params.verbose);
 
     return result;
   } catch (error) {

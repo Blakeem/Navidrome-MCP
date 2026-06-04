@@ -18,9 +18,10 @@
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import { SaveQueueSchema } from '../schemas/validation.js';
+import { SaveQueueSchema } from '../schemas/index.js';
 import { formatDuration } from '../transformers/shared-transformers.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
+import { ErrorFormatter } from '../utils/error-formatter.js';
 
 /** Raw shape returned by Navidrome's `/queue` GET endpoint. */
 interface RawQueueTrack {
@@ -69,84 +70,96 @@ interface ClearSavedQueueResult {
 }
 
 export async function getSavedQueue(client: NavidromeClient, _args: unknown): Promise<SavedQueueResult> {
-  logger.info('Getting saved queue from Navidrome server');
+  try {
+    logger.info('Getting saved queue from Navidrome server');
 
-  const response = await client.request<{ current?: number; position?: number; items?: RawQueueTrack[]; updatedAt?: string }>('/queue');
+    const response = await client.request<{ current?: number; position?: number; items?: RawQueueTrack[]; updatedAt?: string } | null | undefined>('/queue');
 
-  if (response === null || response === undefined || Object.keys(response).length === 0) {
-    return {
-      current: 0,
-      position: 0,
-      trackCount: 0,
-      tracks: [],
-      // Cleared/never-saved queues have no meaningful `updatedAt`; expose
-      // null rather than the Go zero-time sentinel that Navidrome returns
-      // here in the same code path.
-      updatedAt: null,
-      message: 'Saved queue is empty',
-      queue: null,
-    };
-  }
-
-  return {
-    current: response.current ?? 0,
-    position: response.position ?? 0,
-    trackCount: response.items?.length ?? 0,
-    tracks: (response.items ?? []).map((track: RawQueueTrack) => {
-      const duration = track.duration ?? 0;
+    if (response === null || response === undefined || Object.keys(response).length === 0) {
       return {
-        id: track.id,
-        title: track.title ?? '',
-        artist: track.artist ?? '',
-        album: track.album ?? '',
-        // Keep both representations: raw seconds for math, formatted M:SS
-        // for display. Matches every other song-bearing tool response.
-        duration,
-        durationFormatted: formatDuration(duration),
+        current: 0,
+        position: 0,
+        trackCount: 0,
+        tracks: [],
+        // Cleared/never-saved queues have no meaningful `updatedAt`; expose
+        // null rather than the Go zero-time sentinel that Navidrome returns
+        // here in the same code path.
+        updatedAt: null,
+        message: 'Saved queue is empty',
+        queue: null,
       };
-    }),
-    // Map Go's zero-time sentinel ('0001-01-01T00:00:00Z') AND empty strings
-    // to null so a freshly-cleared (or never-saved) queue doesn't surface a
-    // fake 1-Jan-0001 timestamp OR an empty-string placeholder. Same Go
-    // zero-time convention library.ts uses for library createdAt/updatedAt.
-    updatedAt: response.updatedAt === '' ? null : nullIfGoZeroTime(response.updatedAt ?? null),
-  };
+    }
+
+    return {
+      current: response.current ?? 0,
+      position: response.position ?? 0,
+      trackCount: response.items?.length ?? 0,
+      tracks: (response.items ?? []).map((track: RawQueueTrack) => {
+        const duration = track.duration ?? 0;
+        return {
+          id: track.id,
+          title: track.title ?? '',
+          artist: track.artist ?? '',
+          album: track.album ?? '',
+          // Keep both representations: raw seconds for math, formatted M:SS
+          // for display. Matches every other song-bearing tool response.
+          duration,
+          durationFormatted: formatDuration(duration),
+        };
+      }),
+      // Map Go's zero-time sentinel ('0001-01-01T00:00:00Z') AND empty strings
+      // to null so a freshly-cleared (or never-saved) queue doesn't surface a
+      // fake 1-Jan-0001 timestamp OR an empty-string placeholder. Same Go
+      // zero-time convention library.ts uses for library createdAt/updatedAt.
+      updatedAt: response.updatedAt === '' ? null : nullIfGoZeroTime(response.updatedAt ?? null),
+    };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('get_saved_queue', error));
+  }
 }
 
 export async function saveQueue(client: NavidromeClient, args: unknown): Promise<SaveQueueResult> {
-  const { songIds, current = 0, position = 0 } = SaveQueueSchema.parse(args);
+  try {
+    const { songIds, current = 0, position = 0 } = SaveQueueSchema.parse(args);
 
-  logger.debug('Tool saveQueue called with args:', { songIdCount: songIds.length, current, position });
-  logger.info(`Saving queue with ${songIds.length} tracks to Navidrome server`);
+    logger.debug('Tool saveQueue called with args:', { songIdCount: songIds.length, current, position });
+    logger.info(`Saving queue with ${songIds.length} tracks to Navidrome server`);
 
-  await client.request('/queue', {
-    method: 'POST',
-    body: JSON.stringify({
-      ids: songIds,
-      current,
-      position,
-    }),
-  });
+    await client.request('/queue', {
+      method: 'POST',
+      body: JSON.stringify({
+        ids: songIds,
+        current,
+        position,
+      }),
+    });
 
-  // Note: `current` (LLM-supplied) is not echoed back. trackCount is derived
-  // from songIds.length and is genuinely useful confirmation of how many
-  // tracks were sent.
-  return {
-    success: true,
-    message: `Saved queue updated with ${songIds.length} tracks`,
-    trackCount: songIds.length,
-  };
+    // Note: `current` (LLM-supplied) is not echoed back. trackCount is derived
+    // from songIds.length and is genuinely useful confirmation of how many
+    // tracks were sent.
+    return {
+      success: true,
+      message: `Saved queue updated with ${songIds.length} tracks`,
+      trackCount: songIds.length,
+    };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('save_queue', error));
+  }
 }
 
 export async function clearSavedQueue(client: NavidromeClient, _args: unknown): Promise<ClearSavedQueueResult> {
-  logger.info('Clearing saved queue on Navidrome server');
+  try {
+    logger.info('Clearing saved queue on Navidrome server');
 
-  await client.request('/queue', {
-    method: 'DELETE',
-  });
+    await client.request('/queue', {
+      method: 'DELETE',
+    });
 
-  return {
-    success: true,
-    message: 'Saved queue cleared',
-  };
+    return {
+      success: true,
+      message: 'Saved queue cleared',
+    };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('clear_saved_queue', error));
+  }
 }

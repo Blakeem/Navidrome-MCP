@@ -22,6 +22,8 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { DEFAULT_VALUES } from '../../constants/defaults.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { logger } from '../../utils/logger.js';
+import { ensureWebForPlayback } from '../../web/spawn.js';
 
 // Import tool functions
 import {
@@ -100,12 +102,13 @@ function getRadioTools(config: Config): Tool[] {
       inputSchema: {
         type: 'object',
         properties: {
-          id: {
+          stationId: {
             type: 'string',
-            description: 'The unique ID of the radio station to delete',
+            minLength: 1,
+            description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
           },
         },
-        required: ['id'],
+        required: ['stationId'],
       },
     },
     {
@@ -114,12 +117,13 @@ function getRadioTools(config: Config): Tool[] {
       inputSchema: {
         type: 'object',
         properties: {
-          id: {
+          stationId: {
             type: 'string',
-            description: 'The unique ID of the radio station',
+            minLength: 1,
+            description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
           },
         },
-        required: ['id'],
+        required: ['stationId'],
       },
     },
     {
@@ -161,12 +165,12 @@ function getRadioTools(config: Config): Tool[] {
       inputSchema: {
         type: 'object',
         properties: {
-          id: {
+          stationId: {
             type: 'string',
-            description: 'The unique ID of the radio station to play',
+            description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
           },
         },
-        required: ['id'],
+        required: ['stationId'],
       },
     });
   }
@@ -266,6 +270,7 @@ function getRadioTools(config: Config): Tool[] {
           properties: {
             stationUuid: {
               type: 'string',
+              minLength: 1,
               description: 'The unique UUID of the radio station',
             },
           },
@@ -280,6 +285,7 @@ function getRadioTools(config: Config): Tool[] {
           properties: {
             stationUuid: {
               type: 'string',
+              minLength: 1,
               description: 'The unique UUID of the radio station',
             },
           },
@@ -294,6 +300,7 @@ function getRadioTools(config: Config): Tool[] {
           properties: {
             stationUuid: {
               type: 'string',
+              minLength: 1,
               description: 'The unique UUID of the radio station',
             },
           },
@@ -321,6 +328,15 @@ export function createRadioToolCategory(client: NavidromeClient, config: Config)
         case 'get_radio_station':
           return await getRadioStation(client, args, config);
         case 'play_radio_station':
+          // Respawn-on-play (see PLAYBACK_STARTERS in playback-handlers.ts):
+          // starting a radio stream loads new content, so re-ensure the web
+          // player is up to own + scrobble it. Gated on webui.enabled internally.
+          // Best-effort — never block playback if the (re)spawn fails.
+          try {
+            await ensureWebForPlayback(config);
+          } catch (err) {
+            logger.warn('respawn-on-play: ensureWebForPlayback failed, continuing with playback:', err);
+          }
           return await playRadioStation(client, args, config);
         case 'validate_radio_stream':
           return await validateRadioStream(client, args);

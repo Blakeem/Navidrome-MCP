@@ -18,14 +18,14 @@
 
 import { z } from 'zod';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
-import { createLimitSchema, ItemListTypeSchema, OffsetSchema, OrderSchema } from './common.js';
+import { createLimitSchema, ID_PATTERN, ItemListTypeSchema, OffsetSchema, OrderSchema, VerboseSchema } from './common.js';
 
 // Base pagination schema factory
 export const createPaginationSchema = (
   limitDefault: number,
   maxLimit = 500,
   sortDefault = 'name'
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory; return type inferred by zod, explicit annotation would be unwieldy
 ) => z.object({
   limit: createLimitSchema(1, maxLimit, limitDefault),
   offset: OffsetSchema,
@@ -33,12 +33,19 @@ export const createPaginationSchema = (
   order: OrderSchema,
 });
 
-// Specific pagination schemas for different resources
+// Specific pagination schemas for different resources.
+//
+// `onlyWithPlayableTracks` (default false) gates an extra per-playlist probe:
+// when true, `list_playlists` returns only playlists with >=1 track in the
+// currently active libraries. Default false preserves the full management view
+// (so the LLM can still add songs to empty/other-library playlists).
 export const PlaylistPaginationSchema = createPaginationSchema(
   DEFAULT_VALUES.PLAYLISTS_LIMIT,
   500,
   'name'
-);
+).extend({
+  onlyWithPlayableTracks: z.boolean().optional().default(false),
+});
 
 export const AlbumPaginationSchema = createPaginationSchema(
   DEFAULT_VALUES.ALBUMS_LIMIT,
@@ -69,10 +76,11 @@ export const GenrePaginationSchema = createPaginationSchema(
 );
 
 export const PlaylistTracksPaginationSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAYLIST_TRACKS_LIMIT),
   offset: OffsetSchema,
   format: z.enum(['json', 'm3u']).optional().default('json'),
+  verbose: VerboseSchema,
 });
 
 // User preferences pagination — type accepts singular or plural (see ItemListTypeSchema in common.ts)
@@ -80,11 +88,12 @@ export const StarredItemsPaginationSchema = z.object({
   type: ItemListTypeSchema,
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.STARRED_ITEMS_LIMIT),
   offset: OffsetSchema,
+  verbose: VerboseSchema,
 });
 
 export const TopRatedItemsPaginationSchema = z.object({
   type: ItemListTypeSchema,
-  minRating: z.number().min(1).max(5).optional().default(4),
+  minRating: z.number().int().min(1).max(5).optional().default(4),
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.TOP_RATED_LIMIT),
   offset: OffsetSchema,
 });
@@ -94,6 +103,7 @@ export const RecentlyPlayedPaginationSchema = z.object({
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.RECENTLY_PLAYED_LIMIT),
   offset: OffsetSchema,
   timeRange: z.enum(['today', 'week', 'month', 'all']).optional().default('all'),
+  verbose: VerboseSchema,
 });
 
 export const MostPlayedPaginationSchema = z.object({
@@ -101,6 +111,7 @@ export const MostPlayedPaginationSchema = z.object({
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.MOST_PLAYED_LIMIT),
   offset: OffsetSchema,
   minPlayCount: z.number().min(1).optional().default(1),
+  verbose: VerboseSchema,
 });
 
 // Tag pagination
@@ -112,11 +123,12 @@ export const TagsPaginationSchema = z.object({
   tagName: z.string().optional(),
 });
 
-// Search pagination (smaller limits for performance)
+// Search pagination (smaller limits for performance). `.int()` for the same
+// reason as createLimitSchema — these counts become Navidrome pagination params.
 export const SearchPaginationSchema = z.object({
-  artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-  albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-  songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  artistCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  albumCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  songCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
 });
 
 export const SimpleSearchPaginationSchema = z.object({

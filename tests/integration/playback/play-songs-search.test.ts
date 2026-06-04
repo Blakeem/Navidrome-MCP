@@ -14,7 +14,6 @@
  *   - Probabilistic shuffle assertions allow ONE retry, matching A's
  *     play-songs-queue.test.ts pattern.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { beforeAll, beforeEach, expect } from 'vitest';
 import {

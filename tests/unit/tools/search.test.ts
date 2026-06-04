@@ -28,7 +28,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
   beforeAll(async () => {
     if (shouldSkipLiveTests()) {
-      console.log(`Skipping live tests: ${getSkipReason()}`);
+      console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
     // Load configuration and create shared client for live testing
@@ -373,7 +373,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       }
     });
 
-    it('should handle network timeouts gracefully', async () => {
+    it('should handle network timeouts gracefully', () => {
       // This test would require mocking network conditions
       // For now, just verify the functions exist and are callable
       expect(typeof searchAll).toBe('function');

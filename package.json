@@ -1,6 +1,6 @@
 {
   "name": "navidrome-mcp",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "MCP server for interacting with Navidrome music server",
   "type": "module",
   "main": "dist/index.js",
@@ -15,8 +15,8 @@
     "test:all": "pnpm test:run && pnpm check:all",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src --ext .ts",
-    "lint:fix": "eslint src --ext .ts --fix",
+    "lint": "eslint src tests --ext .ts",
+    "lint:fix": "eslint src tests --ext .ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
@@ -24,7 +24,8 @@
     "check:all": "pnpm lint && pnpm typecheck && pnpm check:dead-code",
     "prepare": "pnpm build",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
-    "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts"
+    "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts",
+    "make:launcher": "node scripts/make-launcher.mjs"
   },
   "keywords": [
     "mcp",
@@ -49,12 +50,19 @@
   },
   "files": [
     "dist",
+    "scripts/make-launcher.mjs",
+    "assets/navidrome-player.png",
+    "assets/navidrome-player.ico",
+    "assets/navidrome-player.icns",
     "README.md",
     "LICENSE",
     "package.json"
   ],
   "bin": {
-    "navidrome-mcp": "./dist/index.js"
+    "navidrome-mcp": "./dist/index.js",
+    "navidrome-config": "./dist/config-app/main.js",
+    "navidrome-web": "./dist/web/main.js",
+    "navidrome-web-shortcut": "./scripts/make-launcher.mjs"
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {
@@ -62,11 +70,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
-    "dotenv": "^16.4.7",
     "file-type": "^19.5.0",
     "zod": "^4.1.4"
   },
   "devDependencies": {
+    "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",
     "@eslint/js": "^9.34.0",
     "@types/node": "^24.3.0",
     "@typescript-eslint/eslint-plugin": "^8.41.0",
@@ -75,6 +83,7 @@
     "@vitest/ui": "^3.2.4",
     "eslint": "^9.34.0",
     "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-unicorn": "^64.0.0",
     "nodemon": "^3.1.10",
     "prettier": "^3.6.2",
     "ts-unused-exports": "^11.0.1",

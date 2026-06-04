@@ -19,7 +19,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
 
   beforeAll(async () => {
     if (shouldSkipLiveTests()) {
-      console.log(`Skipping live tests: ${getSkipReason()}`);
+      console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
     // Use shared client and config for connection testing (avoids rate limiting)
@@ -112,26 +112,26 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(result).toHaveProperty('serverInfo');
       
       const features = result.serverInfo.features;
-      
-      // Verify feature detection matches config
-      // These should match what's actually configured in the environment
-      if (process.env.LASTFM_API_KEY) {
+
+      // Verify feature detection matches the resolved config (settings.json is
+      // the source of truth — no longer process.env).
+      if (config.features.lastfm) {
         expect(features.lastfm.enabled).toBe(true);
         expect(features.lastfm.tools.length).toBeGreaterThan(0);
       } else {
         expect(features.lastfm.enabled).toBe(false);
         expect(features.lastfm.tools.length).toBe(0);
       }
-      
-      if (process.env.RADIO_BROWSER_USER_AGENT) {
+
+      if (config.features.radioBrowser) {
         expect(features.radioBrowser.enabled).toBe(true);
         expect(features.radioBrowser.tools.length).toBeGreaterThan(0);
       } else {
         expect(features.radioBrowser.enabled).toBe(false);
         expect(features.radioBrowser.tools.length).toBe(0);
       }
-      
-      if (process.env.LYRICS_PROVIDER) {
+
+      if (config.features.lyrics) {
         expect(features.lyrics.enabled).toBe(true);
         expect(features.lyrics.tools.length).toBeGreaterThan(0);
       } else {

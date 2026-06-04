@@ -153,6 +153,59 @@ describe('discoverRadioStations', () => {
     expect(typeof station.votes).toBe('number');
     expect(typeof station.clickCount).toBe('number');
   });
+
+  it('serializes probes per host but runs different hosts in parallel, preserving order (Issue #7)', async () => {
+    // 4 stations: three share one host:port (hostA:8443), one is on hostB.
+    // hostA is the icecast-style cluster that rate-limits concurrent IPs.
+    const stationList = [
+      makeStation({ stationuuid: 'a1', name: 'A-one',    url: 'http://hosta.test:8443/one',   url_resolved: 'http://hosta.test:8443/one' }),
+      makeStation({ stationuuid: 'b1', name: 'B-stream', url: 'http://hostb.test/stream',      url_resolved: 'http://hostb.test/stream' }),
+      makeStation({ stationuuid: 'a2', name: 'A-two',    url: 'http://hosta.test:8443/two',   url_resolved: 'http://hosta.test:8443/two' }),
+      makeStation({ stationuuid: 'a3', name: 'A-three',  url: 'http://hosta.test:8443/three', url_resolved: 'http://hosta.test:8443/three' }),
+    ];
+
+    // Track in-flight probes per host (and overall) to prove the concurrency model.
+    const active = new Map<string, number>();
+    const maxPerHost = new Map<string, number>();
+    let totalActive = 0;
+    let maxTotalActive = 0;
+
+    global.fetch = vi.fn(async (input: unknown): Promise<Response> => {
+      const url = typeof input === 'string' ? input : String(input);
+      if (url.includes('/json/stations/search')) {
+        return { ok: true, status: 200, json: () => Promise.resolve(stationList), headers: new Headers() } as unknown as Response;
+      }
+      // A station probe (HEAD). Record concurrency, then resolve as a 400 + ICY
+      // headers — the icecast-reject-HEAD shape that our validator treats as valid.
+      const host = new URL(url).host;
+      const nowHost = (active.get(host) ?? 0) + 1;
+      active.set(host, nowHost);
+      maxPerHost.set(host, Math.max(maxPerHost.get(host) ?? 0, nowHost));
+      totalActive += 1;
+      maxTotalActive = Math.max(maxTotalActive, totalActive);
+      await new Promise((r) => setTimeout(r, 30));
+      active.set(host, (active.get(host) ?? 1) - 1);
+      totalActive -= 1;
+      return {
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        headers: new Headers({ 'icy-name': 'Cluster Stream', 'icy-br': '128' }),
+      } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    const result = await discoverRadioStations(makeConfig(), mockClient as unknown as NavidromeClient, { limit: 10 });
+
+    // Order preserved (discovery order, not bucket-completion order).
+    expect(result.stations.map((s) => s.name)).toEqual(['A-one', 'B-stream', 'A-two', 'A-three']);
+    // Same-host probes never overlapped — hostA saw at most one in-flight probe.
+    expect(maxPerHost.get('hosta.test:8443')).toBe(1);
+    // Different hosts DID run concurrently — hostA and hostB overlapped.
+    expect(maxTotalActive).toBeGreaterThanOrEqual(2);
+    // All four validated successfully (400 + ICY headers ⇒ valid).
+    expect(result.stations.every((s) => s.validation?.isValid === true)).toBe(true);
+  });
 });
 
 // ---- getRadioFilters --------------------------------------------------------

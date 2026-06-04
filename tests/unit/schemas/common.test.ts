@@ -12,7 +12,9 @@ import {
   IdSchema,
   ItemListTypeSchema,
   ItemTypeSchema,
+  OffsetSchema,
   createIdSchema,
+  createLimitSchema,
 } from '../../../src/schemas/common.js';
 
 describe('IdSchema', () => {
@@ -86,6 +88,40 @@ describe('ItemListTypeSchema (plural normalization)', () => {
   it('rejects unknown values', () => {
     expect(() => ItemListTypeSchema.parse('playlist')).toThrow();
     expect(() => ItemListTypeSchema.parse('genres')).toThrow();
+  });
+});
+
+describe('createLimitSchema / OffsetSchema integer enforcement', () => {
+  // A non-integer limit/offset becomes `_start`/`_end` in the Navidrome REST
+  // URL; Navidrome silently drops a fractional pagination param and returns
+  // the ENTIRE unpaginated result set. These must be rejected at validation.
+  it('accepts integer limits within range', () => {
+    const schema = createLimitSchema(1, 500, 100);
+    expect(schema.parse(50)).toBe(50);
+    expect(schema.parse(undefined)).toBe(100); // default applied
+  });
+
+  it('rejects fractional limits', () => {
+    const schema = createLimitSchema(1, 500, 100);
+    expect(() => schema.parse(50.5)).toThrow();
+  });
+
+  it('rejects fractional limits on the no-default variant', () => {
+    const schema = createLimitSchema(1, 500);
+    expect(() => schema.parse(50.5)).toThrow();
+  });
+
+  it('still enforces min/max bounds', () => {
+    const schema = createLimitSchema(1, 500, 100);
+    expect(() => schema.parse(0)).toThrow();
+    expect(() => schema.parse(501)).toThrow();
+  });
+
+  it('accepts integer offsets and rejects fractional ones', () => {
+    expect(OffsetSchema.parse(20)).toBe(20);
+    expect(OffsetSchema.parse(undefined)).toBe(0); // default applied
+    expect(() => OffsetSchema.parse(20.5)).toThrow();
+    expect(() => OffsetSchema.parse(-1)).toThrow();
   });
 });
 

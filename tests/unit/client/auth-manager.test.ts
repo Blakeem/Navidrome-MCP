@@ -15,14 +15,14 @@ import type { Config } from '../../../src/config.js';
 const mockFetch = vi.fn() as MockedFunction<typeof fetch>;
 global.fetch = mockFetch;
 
-function makeConfig(overrides: Partial<Config> = {}): Config {
+function makeConfig(): Config {
   return {
     navidromeUrl: 'http://test:4533',
     navidromeUsername: 'tester',
     navidromePassword: 'pw',
     tokenExpiry: 86400,
     debug: false,
-  } as unknown as Config & typeof overrides;
+  } as unknown as Config;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

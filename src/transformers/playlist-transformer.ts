@@ -55,7 +55,7 @@ export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
   const owner = rawPlaylist.ownerName ?? rawPlaylist.owner ?? '';
 
   const dto: PlaylistDTO = {
-    id: rawPlaylist.id,
+    playlistId: rawPlaylist.id,
     name: rawPlaylist.name || '',
     public: rawPlaylist.public || false,
     songCount: rawPlaylist.songCount || 0,
@@ -63,19 +63,19 @@ export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
     owner,
   };
 
-  if (rawPlaylist.ownerId !== undefined) {
+  if (rawPlaylist.ownerId !== undefined && rawPlaylist.ownerId !== '') {
     dto.ownerId = rawPlaylist.ownerId;
   }
 
-  if (rawPlaylist.comment !== undefined) {
+  if (rawPlaylist.comment !== undefined && rawPlaylist.comment !== '') {
     dto.comment = rawPlaylist.comment;
   }
 
-  if (rawPlaylist.createdAt !== undefined) {
+  if (rawPlaylist.createdAt !== undefined && rawPlaylist.createdAt !== '') {
     dto.createdAt = rawPlaylist.createdAt;
   }
 
-  if (rawPlaylist.updatedAt !== undefined) {
+  if (rawPlaylist.updatedAt !== undefined && rawPlaylist.updatedAt !== '') {
     dto.updatedAt = rawPlaylist.updatedAt;
   }
 
@@ -92,5 +92,11 @@ export function transformPlaylistsToDTO(rawPlaylists: unknown): PlaylistDTO[] {
     return [];
   }
 
-  return rawPlaylists.map((playlist) => transformToPlaylistDTO(playlist as RawPlaylist));
+  // Guard each element: Navidrome can return null / non-object entries on
+  // certain API errors. The `as RawPlaylist` cast would pass TS but crash the
+  // single-item transformer at runtime, aborting the whole batch. Drop the
+  // bad rows instead so one malformed entry doesn't lose every good one.
+  return rawPlaylists
+    .filter((playlist): playlist is RawPlaylist => typeof playlist === 'object' && playlist !== null)
+    .map((playlist) => transformToPlaylistDTO(playlist));
 }

@@ -57,9 +57,21 @@ export function isPrivateOrLocalIp(ip: string): boolean {
   if (trimmed === '') return true;
 
   // IPv4-mapped IPv6 (::ffff:a.b.c.d): pull out the IPv4 and re-check.
-  const v4Address = trimmed.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  const lowerTrimmed = trimmed.toLowerCase();
+  const v4Address = lowerTrimmed.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
   if (v4Address !== undefined) {
     return isPrivateOrLocalIpv4(v4Address);
+  }
+
+  // IPv4-mapped IPv6 in hex-group form (::ffff:7f00:1 == 127.0.0.1,
+  // ::ffff:a9fe:a9fe == 169.254.169.254): reassemble the embedded 32 bits into
+  // a dotted-quad and re-check, so these don't slip past as "public" (SSRF gap).
+  const hexMapped = lowerTrimmed.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMapped !== null) {
+    const hi = parseInt(hexMapped[1] ?? '', 16);
+    const lo = parseInt(hexMapped[2] ?? '', 16);
+    const dotted = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+    return isPrivateOrLocalIpv4(dotted);
   }
 
   // Strip IPv6 zone id (fe80::1%eth0) before classification.

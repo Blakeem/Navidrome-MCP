@@ -5,13 +5,12 @@
  * no tools go missing and all expected tools are registered.
  */
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
-import { loadConfig } from '../../../src/config.js';
 import { logger } from '../../../src/utils/logger.js';
 import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
-import { shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
+import { makeTestConfig } from '../../helpers/test-config.js';
 
 // Import category factory functions for comprehensive tool validation
 import { createTestToolCategory } from '../../../src/tools/test.js';
@@ -134,21 +133,18 @@ describe('Tools Registry - Tool Count Verification', () => {
   let config: Config;
 
   beforeAll(async () => {
-    // For deterministic testing, always use a consistent configuration.
-    // vi.stubEnv records the original value and restores it on vi.unstubAllEnvs()
-    // (called in afterAll), so no subsequent test sees these fabricated values.
-    vi.stubEnv('NAVIDROME_URL', 'http://deterministic-test:4533');
-    vi.stubEnv('NAVIDROME_USERNAME', 'test-user');
-    vi.stubEnv('NAVIDROME_PASSWORD', 'test-password');
-    vi.stubEnv('LASTFM_API_KEY', 'test-lastfm-key');
-    vi.stubEnv('RADIO_BROWSER_USER_AGENT', 'Test-Agent/1.0');
-    vi.stubEnv('LYRICS_PROVIDER', 'lrclib');
-    // Force mpv detection to fail so the playback feature is deterministically
-    // disabled regardless of whether mpv is installed on the host machine.
-    vi.stubEnv('MPV_PATH', '/nonexistent/path/to/mpv');
-
-    // Load config with deterministic environment
-    config = await loadConfig();
+    // Build a deterministic Config directly (no store/env resolution) so this
+    // test is independent of the developer's real settings and of whether mpv
+    // is installed. Mirrors the original intent: optional discovery features
+    // enabled, playback disabled (the playback tool set is exercised by the
+    // playback integration suite).
+    config = makeTestConfig({
+      features: { lastfm: true, radioBrowser: true, lyrics: true, playback: false },
+      lastFmApiKey: 'test-lastfm-key',
+      radioBrowserUserAgent: 'Test-Agent/1.0',
+      lyricsProvider: 'lrclib',
+      lrclibUserAgent: 'Test-Agent/1.0',
+    });
 
     // Always use mock client for deterministic tool registry testing
     // since we're using a fake URL for consistency
@@ -156,12 +152,6 @@ describe('Tools Registry - Tool Count Verification', () => {
     liveClient = createMockClient() as any; // Tool registry only needs client interface for creation
 
     logger.debug(`Using deterministic configuration - Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}, playback=${config.features.playback}`);
-  });
-
-  afterAll(() => {
-    // Restore all env vars stubbed in beforeAll so downstream tests in the
-    // same worker see their real environment (not the fabricated test values).
-    vi.unstubAllEnvs();
   });
 
   // Helper function to build expected tool list based on feature configuration
@@ -188,7 +178,7 @@ describe('Tools Registry - Tool Count Verification', () => {
   }
 
   describe('Tool Registration', () => {
-    it('should register exactly the expected tools for current configuration', async () => {
+    it('should register exactly the expected tools for current configuration', () => {
       // Create registry and register all categories
       const registry = new ToolRegistry();
 
@@ -225,15 +215,15 @@ describe('Tools Registry - Tool Count Verification', () => {
 
       // Log detailed comparison for debugging
       if (missingTools.length > 0 || unexpectedTools.length > 0) {
-        console.log(`\nTool registration mismatch:`);
-        console.log(`Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
-        console.log(`Expected ${expectedToolNames.length} tools, got ${actualToolNames.length}`);
+        console.error(`\nTool registration mismatch:`);
+        console.error(`Features: lastfm=${config.features.lastfm}, lyrics=${config.features.lyrics}, radioBrowser=${config.features.radioBrowser}`);
+        console.error(`Expected ${expectedToolNames.length} tools, got ${actualToolNames.length}`);
 
         if (missingTools.length > 0) {
-          console.log(`Missing tools (${missingTools.length}):`, missingTools);
+          console.error(`Missing tools (${missingTools.length}):`, missingTools);
         }
         if (unexpectedTools.length > 0) {
-          console.log(`Unexpected tools (${unexpectedTools.length}):`, unexpectedTools);
+          console.error(`Unexpected tools (${unexpectedTools.length}):`, unexpectedTools);
         }
       }
 
@@ -253,7 +243,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       });
     });
 
-    it('should register all core tools regardless of feature flags', async () => {
+    it('should register all core tools regardless of feature flags', () => {
       // Create registry with only core categories (no conditional features)
       const registry = new ToolRegistry();
 
@@ -273,8 +263,8 @@ describe('Tools Registry - Tool Count Verification', () => {
       const missingCoreTools = EXPECTED_CORE_TOOLS.filter(toolName => !actualToolNames.includes(toolName));
 
       if (missingCoreTools.length > 0) {
-        console.log('Missing core tools:', missingCoreTools);
-        console.log('Actual tools:', actualToolNames.sort());
+        console.error('Missing core tools:', missingCoreTools);
+        console.error('Actual tools:', actualToolNames.sort());
       }
 
       expect(missingCoreTools).toEqual([]);
@@ -283,7 +273,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       expect(actualToolNames.length).toBeGreaterThanOrEqual(EXPECTED_CORE_TOOLS.length);
     });
 
-    it('should conditionally include Last.fm tools based on feature flag', async () => {
+    it('should conditionally include Last.fm tools based on feature flag', () => {
       const registry = new ToolRegistry();
 
       // Register core categories
@@ -307,7 +297,6 @@ describe('Tools Registry - Tool Count Verification', () => {
       // Validate Last.fm tools presence based on feature flag
       const actualLastFmTools = actualToolNames.filter(name => EXPECTED_LASTFM_TOOLS.includes(name));
       const missingLastFmTools = EXPECTED_LASTFM_TOOLS.filter(name => !actualToolNames.includes(name));
-      const unexpectedLastFmTools = actualLastFmTools.filter(name => !EXPECTED_LASTFM_TOOLS.includes(name));
 
       if (config.features.lastfm) {
         // When enabled, all Last.fm tools should be present
@@ -319,7 +308,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
     });
 
-    it('should conditionally include lyrics tools based on feature flag', async () => {
+    it('should conditionally include lyrics tools based on feature flag', () => {
       const registry = new ToolRegistry();
 
       // Register core categories
@@ -356,7 +345,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
     });
 
-    it('should have unique tool names and match expected configuration', async () => {
+    it('should have unique tool names and match expected configuration', () => {
       // Create registry with all possible tools
       const registry = new ToolRegistry();
 

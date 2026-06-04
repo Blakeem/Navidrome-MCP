@@ -50,22 +50,37 @@ interface RawPlaylistTrack {
 }
 
 /**
- * Transform raw playlist track data to DTO
+ * Transform raw playlist track data to DTO.
+ *
+ * Compact (default): only the identity fields needed to recognize and act on a
+ * track — `id` (1-based playlist position for reorder/remove), `mediaFileId`
+ * (song id for playback), `title`, `artist`, `album`, `durationFormatted`. This
+ * keeps large playlists well under the tool-result token cap. Verbose restores
+ * the rest (the heavy `path`, plus `playlistId`, raw `duration`, `bitRate`,
+ * `albumArtist`, `trackNumber`, `year`, `genre`).
  */
-function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackDTO {
+function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, verbose: boolean): PlaylistTrackDTO {
   const dto: PlaylistTrackDTO = {
     id: rawTrack.id,
     mediaFileId: rawTrack.mediaFileId ?? String(rawTrack.id),
-    playlistId: rawTrack.playlistId,
     title: rawTrack.title ?? '',
     album: rawTrack.album ?? '',
     artist: rawTrack.artist ?? '',
-    duration: rawTrack.duration ?? 0,
     durationFormatted: formatDuration(rawTrack.duration),
   };
 
-  // Add optional fields only if they have values
-  if (rawTrack.albumArtist !== null && rawTrack.albumArtist !== undefined && rawTrack.albumArtist !== '') {
+  if (!verbose) {
+    return dto;
+  }
+
+  // Verbose-only fields. `playlistId` is identical on every row (the caller
+  // passed it in) and the raw `duration` duplicates `durationFormatted`, so
+  // both are omitted from compact responses; the rest are added only if the
+  // source actually provides a value.
+  dto.playlistId = rawTrack.playlistId;
+  dto.duration = rawTrack.duration ?? 0;
+
+  if (rawTrack.albumArtist !== undefined && rawTrack.albumArtist !== '') {
     dto.albumArtist = rawTrack.albumArtist;
   }
 
@@ -73,7 +88,7 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
     dto.bitRate = rawTrack.bitRate;
   }
 
-  if (rawTrack.path !== null && rawTrack.path !== undefined && rawTrack.path !== '') {
+  if (rawTrack.path !== undefined && rawTrack.path !== '') {
     dto.path = rawTrack.path;
   }
 
@@ -85,7 +100,7 @@ function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack): PlaylistTrackD
     dto.year = rawTrack.year;
   }
 
-  if (rawTrack.genre !== null && rawTrack.genre !== undefined && rawTrack.genre !== '') {
+  if (rawTrack.genre !== undefined && rawTrack.genre !== '') {
     dto.genre = rawTrack.genre;
   }
 
@@ -147,12 +162,12 @@ export async function getPlaylistTracks(client: NavidromeClient, args: unknown):
     if (params.format === 'm3u') {
       return {
         format: 'm3u',
-        m3uContent: typeof data === 'string' ? data : String(data ?? ''),
+        m3uContent: typeof data === 'string' ? data : '',
       };
     }
 
     const tracks = Array.isArray(data)
-      ? data.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack))
+      ? data.map((track: unknown) => transformToPlaylistTrackDTO(track as RawPlaylistTrack, params.verbose))
       : [];
 
     return {

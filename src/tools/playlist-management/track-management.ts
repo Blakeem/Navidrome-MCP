@@ -36,17 +36,17 @@ import { logger } from '../../utils/logger.js';
  * Add tracks to a playlist
  */
 export async function addTracksToPlaylist(client: NavidromeClient, args: unknown): Promise<AddTracksToPlaylistResponse> {
-  const params = AddTracksToPlaylistSchema.parse(args);
-  logger.debug('Tool addTracksToPlaylist called with args:', params);
-
   try {
+    const params = AddTracksToPlaylistSchema.parse(args);
+    logger.debug('Tool addTracksToPlaylist called with args:', params);
+
     const requestBody: AddTracksToPlaylistRequest = {};
     if (params.songIds !== undefined) requestBody.ids = params.songIds;
     if (params.albumIds !== undefined) requestBody.albumIds = params.albumIds;
     if (params.artistIds !== undefined) requestBody.artistIds = params.artistIds;
     if (params.discs !== undefined) requestBody.discs = params.discs;
 
-    const response = await client.request<{ added: number }>(
+    const response = await client.request<{ added?: number }>(
       `/playlist/${encodeURIComponent(params.playlistId)}/tracks`,
       {
         method: 'POST',
@@ -55,11 +55,19 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
       },
     );
 
+    // The response is typed `{ added: number }`, but Navidrome may omit the
+    // field on some responses — guard it. Reaching here means the HTTP call
+    // was acknowledged, so the operation succeeded regardless of count; a
+    // zero count is a no-op (every requested track was already present),
+    // conveyed via the message rather than `success: false`.
     const addedCount = response.added ?? 0;
     return {
       added: addedCount,
-      message: `Successfully added ${addedCount} track${addedCount !== 1 ? 's' : ''} to playlist`,
-      success: addedCount > 0,
+      message:
+        addedCount > 0
+          ? `Added ${addedCount} track${addedCount !== 1 ? 's' : ''} to playlist`
+          : 'No new tracks added — all requested tracks are already in the playlist',
+      success: true,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('add_tracks_to_playlist', error));
@@ -71,22 +79,29 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
  * Remove tracks from a playlist
  */
 export async function removeTracksFromPlaylist(client: NavidromeClient, args: unknown): Promise<RemoveTracksFromPlaylistResponse> {
-  const params = RemoveTracksFromPlaylistSchema.parse(args);
-  logger.debug('Tool removeTracksFromPlaylist called with args:', params);
-
   try {
+    const params = RemoveTracksFromPlaylistSchema.parse(args);
+    logger.debug('Tool removeTracksFromPlaylist called with args:', params);
+
     const queryParams = new URLSearchParams();
     params.trackIds.forEach(id => queryParams.append('id', id));
 
-    const response = await client.request<{ ids: string[] }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
+    const response = await client.request<{ ids?: string[] | null }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
       method: 'DELETE',
     });
 
-    const removedIds = response.ids ?? params.trackIds;
+    // Reaching here means the DELETE was acknowledged, so the operation
+    // succeeded regardless of how many tracks actually matched; a zero count
+    // is a no-op (none of the specified tracks were in the playlist),
+    // conveyed via the message rather than `success: false`.
+    const removedIds = response.ids ?? [];
     return {
       ids: removedIds,
-      message: `Successfully removed ${removedIds.length} track${removedIds.length !== 1 ? 's' : ''} from playlist`,
-      success: removedIds.length > 0,
+      message:
+        removedIds.length > 0
+          ? `Removed ${removedIds.length} track${removedIds.length !== 1 ? 's' : ''} from playlist`
+          : 'No tracks removed — none of the specified tracks were in the playlist',
+      success: true,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('remove_tracks_from_playlist', error));
@@ -103,10 +118,10 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
  * (Batch 2 #29) instead of issuing another round-trip just to enrich it.
  */
 export async function reorderPlaylistTrack(client: NavidromeClient, args: unknown): Promise<ReorderPlaylistTrackResponse> {
-  const params = ReorderPlaylistTrackSchema.parse(args);
-  logger.debug('Tool reorderPlaylistTrack called with args:', params);
-
   try {
+    const params = ReorderPlaylistTrackSchema.parse(args);
+    logger.debug('Tool reorderPlaylistTrack called with args:', params);
+
     const requestBody: ReorderPlaylistTrackRequest = {
       insert_before: params.insert_before.toString(),
     };
