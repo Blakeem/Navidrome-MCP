@@ -191,6 +191,62 @@ export const TrendingMusicSchema = z.object({
   page: z.number().min(1).optional().default(1),
 });
 
+// MusicBrainz release-group vocabulary (subset relevant to discographies);
+// see docs/musicbrainz-api.md §8. Values are lowercase — MB's `type=` browse
+// filter accepts them lowercase, and secondary types are lowercased on parse.
+const MbPrimaryTypeSchema = z.enum(['album', 'ep', 'single']);
+const MbSecondaryTypeSchema = z.enum([
+  'live',
+  'compilation',
+  'soundtrack',
+  'remix',
+  'dj-mix',
+  'demo',
+  'mixtape/street',
+  'interview',
+  'audiobook',
+  'audio drama',
+  'spokenword',
+  'field recording',
+]);
+
+export const GetArtistAlbumsSchema = z.object({
+  artist: z.string().min(1).optional(),
+  mbid: z.string().uuid().optional(),
+  includeTypes: z.array(MbPrimaryTypeSchema).min(1).optional().default(['album']),
+  excludeSecondary: z.array(MbSecondaryTypeSchema).optional()
+    .default(['live', 'compilation', 'soundtrack', 'remix', 'dj-mix', 'demo']),
+  onlyMissing: OptionalBooleanSchema.default(false),
+  includeUnverified: OptionalBooleanSchema.default(false),
+  verbose: VerboseSchema,
+}).superRefine((value, ctx) => {
+  if (value.artist === undefined && value.mbid === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Either artist (name) or mbid (MusicBrainz artist ID) is required',
+      path: ['artist'],
+    });
+  }
+});
+
+// Single-album deep dive (get_album_info): tracklist, year/type, genres, wiki,
+// popularity, library membership. `mbid` is a MusicBrainz RELEASE-GROUP MBID —
+// exactly what get_artist_albums emits per album. See docs/ARTIST-ALBUMS-SPEC.md §9.
+export const GetAlbumInfoSchema = z.object({
+  artist: z.string().min(1).optional(),
+  album: z.string().min(1).optional(),
+  mbid: z.string().uuid().optional(),
+  verbose: VerboseSchema,
+}).superRefine((value, ctx) => {
+  if (value.mbid === undefined && (value.artist === undefined || value.album === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Either mbid (MusicBrainz release-group ID) or both artist and album are required',
+      path: ['album'],
+    });
+  }
+});
+
 // Lyrics validation schema
 export const GetLyricsSchema = z.object({
   title: z.string().min(1),

@@ -50,6 +50,10 @@ export const ConfigSchema = z.object({
 
   // API Keys and External Service Configuration
   lastFmApiKey: z.string().optional(),
+  // MusicBrainz requires a meaningful User-Agent (https://musicbrainz.org/doc/MusicBrainz_API).
+  // Optional: absent falls back to DEFAULT_MUSICBRAINZ_USER_AGENT. No feature flag —
+  // MusicBrainz needs no API key, so it is always available.
+  musicBrainzUserAgent: z.string().optional(),
   radioBrowserUserAgent: z.string().optional(),
   // Set only when the user explicitly provides a Radio Browser base in the
   // store — bypasses SRV resolution and pins to the chosen mirror. Production

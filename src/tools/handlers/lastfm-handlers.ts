@@ -29,6 +29,8 @@ import {
   getArtistInfo,
   getTopTracksByArtist,
   getTrendingMusic,
+  getArtistAlbums,
+  getAlbumInfo,
 } from '../lastfm-discovery.js';
 
 // Tool definitions for LastFM discovery category
@@ -147,10 +149,96 @@ const tools: Tool[] = [
       required: ['type'],
     },
   },
+  {
+    name: 'get_artist_albums',
+    description:
+      "Get an artist's full discography with release types/years (MusicBrainz), genres and popularity " +
+      '(Last.fm), and an inLibrary flag for each album (Navidrome). Answers "what full albums by X am I ' +
+      'missing?" in one call (use onlyMissing). Defaults to studio albums only; for electronic/synthwave ' +
+      'artists where EPs are first-class releases consider includeTypes: ["album","ep"].',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        artist: {
+          type: 'string',
+          description: 'Artist name. Required unless mbid is given.',
+        },
+        mbid: {
+          type: 'string',
+          description: 'MusicBrainz artist MBID (UUID); skips artist name resolution.',
+        },
+        includeTypes: {
+          type: 'array',
+          items: { type: 'string', enum: ['album', 'ep', 'single'] },
+          description: 'MusicBrainz primary release types to include.',
+          default: ['album'],
+        },
+        excludeSecondary: {
+          type: 'array',
+          items: {
+            type: 'string',
+            enum: [
+              'live', 'compilation', 'soundtrack', 'remix', 'dj-mix', 'demo',
+              'mixtape/street', 'interview', 'audiobook', 'audio drama', 'spokenword', 'field recording',
+            ],
+          },
+          description: 'MusicBrainz secondary types to drop. Pass [] to keep everything (live albums, compilations, remix albums, ...).',
+          default: ['live', 'compilation', 'soundtrack', 'remix', 'dj-mix', 'demo'],
+        },
+        onlyMissing: {
+          type: 'boolean',
+          description: 'Return only albums NOT in the Navidrome library.',
+          default: false,
+        },
+        includeUnverified: {
+          type: 'boolean',
+          description: 'Also include long-tail Last.fm-only albums MusicBrainz lacks (typeUnverified: true).',
+          default: false,
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'Add raw playcount, Last.fm URL, and MusicBrainz disambiguation per album. No extra requests.',
+          default: false,
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'get_album_info',
+    description:
+      'Deep-dive on ONE album: full tracklist with durations, release year/type, genres, wiki summary, ' +
+      "Last.fm popularity, and whether it's in the Navidrome library. The natural follow-up to " +
+      "get_artist_albums — pass that result's album mbid (a MusicBrainz release-group ID) or artist+album " +
+      'names. Works for albums NOT in the library (the discovery case); for owned albums get_album works too.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        artist: {
+          type: 'string',
+          description: 'Artist name. Required together with album unless mbid is given.',
+        },
+        album: {
+          type: 'string',
+          description: 'Album title. Required together with artist unless mbid is given.',
+        },
+        mbid: {
+          type: 'string',
+          description: 'MusicBrainz release-group MBID (UUID) — e.g. the mbid field from get_artist_albums output.',
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'Add full wiki text, Last.fm URL, full tag list, and tracklist release provenance. No extra requests.',
+          default: false,
+        },
+      },
+      required: [],
+    },
+  },
 ];
 
-// Factory function for creating LastFM tool category with dependencies  
-export function createLastFmToolCategory(_client: NavidromeClient, config: Config): ToolCategory {
+// Factory function for creating LastFM tool category with dependencies
+export function createLastFmToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
@@ -165,6 +253,10 @@ export function createLastFmToolCategory(_client: NavidromeClient, config: Confi
           return await getTopTracksByArtist(config, args);
         case 'get_trending_music':
           return await getTrendingMusic(config, args);
+        case 'get_artist_albums':
+          return await getArtistAlbums(client, config, args);
+        case 'get_album_info':
+          return await getAlbumInfo(client, config, args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(`Last.fm ${name}`));
       }

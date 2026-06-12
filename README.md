@@ -368,6 +368,8 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `get_artist_info` | Artist biography and tags |
 | `get_top_tracks_by_artist` | Top tracks for an artist |
 | `get_trending_music` | Trending artists, tracks, and tags from Last.fm charts |
+| `get_artist_albums` | Full discography with release types/years (MusicBrainz), genres + popularity (Last.fm), and an in-library flag per album — "what albums by X am I missing?" |
+| `get_album_info` | Single-album deep dive: tracklist with durations, year/type, genres, wiki summary, popularity, and library membership — works for albums you don't own |
 
 ### Lyrics (requires the LRCLIB provider, set in the settings page)
 

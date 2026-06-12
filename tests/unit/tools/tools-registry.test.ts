@@ -93,6 +93,8 @@ const EXPECTED_LASTFM_TOOLS = [
   'get_artist_info',
   'get_top_tracks_by_artist',
   'get_trending_music',
+  'get_artist_albums',
+  'get_album_info',
 ];
 
 const EXPECTED_LYRICS_TOOLS = [

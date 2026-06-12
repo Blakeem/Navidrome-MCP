@@ -49,6 +49,7 @@ export const SettingsFileSchema = z.object({
   }).optional(),
   features: z.object({
     lastFmApiKey: z.string().nullish(),
+    musicBrainzUserAgent: z.string().nullish(),
     radioBrowserUserAgent: z.string().nullish(),
     radioBrowserBase: z.string().nullish(),
     lyricsProvider: z.string().nullish(),

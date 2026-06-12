@@ -10,6 +10,7 @@
   },
   "features": {
     "lastFmApiKey": null,
+    "musicBrainzUserAgent": "Navidrome-MCP (https://github.com/Blakeem/Navidrome-MCP)",
     "radioBrowserUserAgent": "Navidrome-MCP",
     "radioBrowserBase": null,
     "lyricsProvider": "lrclib",
