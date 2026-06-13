@@ -74,9 +74,16 @@ export function resetRadioBrowserResolverCache(): void {
  * Without this, a mirror that goes into maintenance immediately after caching
  * stays the active pick for up to CACHE_TTL_MS — so every subsequent radio
  * tool call fails for the rest of the cache window. Idempotent and cheap.
+ *
+ * Also drops any in-flight SRV resolution: without this, a resolution started
+ * by a concurrent call would complete after invalidation and re-cache a result
+ * with a fresh 1h TTL, silently undoing the invalidation. Clearing `inflight`
+ * forces the next getRadioBrowserBase() to start a fresh resolution. A caller
+ * already holding the in-flight promise reference still receives its result.
  */
 export function invalidateRadioBrowserBase(): void {
   cached = null;
+  inflight = null;
 }
 
 /**

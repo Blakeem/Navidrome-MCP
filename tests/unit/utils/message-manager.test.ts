@@ -80,18 +80,32 @@ describe('MessageManager', () => {
 
     it('should return null for unknown template without custom message', () => {
       const message = messageManager.getMessage('unknown.message.key');
-      
+
       expect(message).toBeNull();
-      
-      // Should still be marked as shown
+
+      // A second probe of the same unknown key still returns null.
       const secondMessage = messageManager.getMessage('unknown.message.key');
       expect(secondMessage).toBeNull();
+    });
+
+    it('does not consume the one-time slot when an unknown key resolves to null', () => {
+      // Regression: probing an unknown key with no custom message previously
+      // marked it as shown, permanently silencing a later call that DOES
+      // supply a custom message. The slot must only be consumed when a real
+      // message is delivered.
+      const probe = messageManager.getMessage('probe.only.key');
+      expect(probe).toBeNull();
+      expect(messageManager.hasShownMessage('probe.only.key')).toBe(false);
+
+      const custom = messageManager.getMessage('probe.only.key', 'now with a custom message');
+      expect(custom).toBe('now with a custom message');
+      expect(messageManager.hasShownMessage('probe.only.key')).toBe(true);
     });
 
     it('should accept custom message for unknown template', () => {
       const customMessage = 'This is a new message type';
       const message = messageManager.getMessage('new.message.type', customMessage);
-      
+
       expect(message).toBe(customMessage);
     });
   });

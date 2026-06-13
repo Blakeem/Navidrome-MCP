@@ -81,15 +81,21 @@ STREAM VALIDATION RECOMMENDED
       return null;
     }
 
-    // Mark as shown
-    this.shownMessages.add(messageKey);
+    // Resolve the message first — custom message takes precedence over template.
+    const resolved =
+      customMessage !== undefined && customMessage !== ''
+        ? customMessage
+        : (this.messageTemplates.get(messageKey) ?? null);
 
-    // Return custom message or template
-    if (customMessage !== undefined && customMessage !== '') {
-      return customMessage;
+    // Only consume the one-time slot when a real message is actually returned;
+    // probing an unknown key (no template, no custom message) must not silence
+    // a later call that does supply a custom message.
+    if (resolved !== null && resolved !== '') {
+      this.shownMessages.add(messageKey);
+      return resolved;
     }
 
-    return this.messageTemplates.get(messageKey) ?? null;
+    return null;
   }
 
   /**

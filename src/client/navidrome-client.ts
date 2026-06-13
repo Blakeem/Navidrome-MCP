@@ -202,7 +202,12 @@ export class NavidromeClient {
       throw new Error(ErrorFormatter.subsonicApi(response));
     }
 
-    const data = await response.json() as { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
+    let data: { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
+    try {
+      data = await response.json() as { 'subsonic-response'?: { status?: string; error?: { message?: string } } };
+    } catch {
+      throw new Error(ErrorFormatter.subsonicResponse('invalid JSON in Subsonic response'));
+    }
 
     if (data['subsonic-response']?.status !== 'ok') {
       throw new Error(ErrorFormatter.subsonicResponse(data['subsonic-response']?.error?.message));
@@ -294,7 +299,12 @@ export class NavidromeClient {
 
     const contentType = response.headers.get('content-type');
     if (contentType?.includes('application/json') === true) {
-      return response.json() as Promise<T>;
+      const text = await response.text();
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        throw new Error(ErrorFormatter.httpRequest('navidrome API', response, 'invalid JSON in response body'));
+      }
     }
 
     // Navidrome's POST /playlist/{id}/tracks (and /song/{id}/playlists) return

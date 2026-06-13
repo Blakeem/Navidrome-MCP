@@ -21,6 +21,8 @@
  * Provides consistent error messages across the MCP application
  */
 
+import { sanitizeFilename } from './sanitize-url.js';
+
 export class ErrorFormatter {
   /**
    * Extract message from unknown error type
@@ -183,6 +185,6 @@ export class ErrorFormatter {
    * Format validation stream/URL errors
    */
   static streamValidation(url: string, issue: string): string {
-    return `Stream validation failed: ${url} - ${issue}`;
+    return `Stream validation failed: ${sanitizeFilename(url)} - ${issue}`;
   }
 }

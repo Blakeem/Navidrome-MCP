@@ -119,15 +119,21 @@ describe('redact()', () => {
       expect(result).toContain('"host":"localhost"');
     });
 
-    it('passes through nested object structure without crashing', () => {
-      // Object-leaf string values are NOT individually credential-checked —
-      // only serialized representations are. This documents that structural
-      // path: the `password` key with leaf value `'myplaintextpwd'` flows
-      // through the walker without redaction. Any caller logging an object
-      // gets util.format serialization first, which IS regex-checked.
+    it('redacts string-leaf values under sensitive keys in nested objects', () => {
+      // Key-aware walker: a string leaf carries no key context for the regex
+      // passes, so the walker redacts by key name. A `password` key with leaf
+      // value `'myplaintextpwd'` is replaced with <REDACTED> regardless of type.
       const input = { config: { password: 'myplaintextpwd' } };
       const result = redact(input) as { config: { password: string } };
-      expect(result.config.password).toBe('myplaintextpwd');
+      expect(result.config.password).toBe('<REDACTED>');
+    });
+
+    it('passes through non-sensitive object keys unchanged', () => {
+      // Only keys matching the sensitive-name set are redacted; ordinary keys
+      // (even ones whose value happens to contain the word "password") survive.
+      const input = { title: 'my password song' };
+      const result = redact(input) as { title: string };
+      expect(result.title).toBe('my password song');
     });
 
     it('redacts "password" field when embedded in a serialized object string', () => {

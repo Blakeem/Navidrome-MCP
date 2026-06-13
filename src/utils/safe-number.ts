@@ -26,6 +26,10 @@
  *                 Defaults to `0`.
  */
 export function safeNumber(value: unknown, fallback = 0): number {
+  // Number(null), Number(undefined) (NaN), and Number('') all coerce to a
+  // finite 0 or NaN that the JSDoc says should be the fallback. Guard these
+  // explicitly so a non-zero sentinel fallback isn't silently turned into 0.
+  if (value === null || value === undefined || value === '') return fallback;
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
