@@ -99,6 +99,55 @@ describe('buildContentTypeParams (searchAll) — artist params', () => {
   });
 });
 
+describe('buildContentTypeParams (searchAll) — cross-type sort field mapping', () => {
+  it("maps sort:'title' to _sort=name for album/artist and _sort=title for song", () => {
+    const { songParams, albumParams, artistParams } = buildContentTypeParams({
+      artistCount: 5,
+      albumCount: 5,
+      songCount: 5,
+      query: '',
+      offset: 0,
+      resolvedFilters: {},
+      sort: 'title',
+    });
+
+    expect(songParams).toContain('_sort=title');
+    expect(albumParams).toContain('_sort=name');
+    expect(artistParams).toContain('_sort=name');
+  });
+
+  it("maps sort:'album' to _sort=name for album/artist and _sort=album for song", () => {
+    const { songParams, albumParams, artistParams } = buildContentTypeParams({
+      artistCount: 5,
+      albumCount: 5,
+      songCount: 5,
+      query: '',
+      offset: 0,
+      resolvedFilters: {},
+      sort: 'album',
+    });
+
+    expect(songParams).toContain('_sort=album');
+    expect(albumParams).toContain('_sort=name');
+    expect(artistParams).toContain('_sort=name');
+  });
+
+  it("maps sort:'year' to _sort=maxYear for album and _sort=year for song", () => {
+    const { songParams, albumParams } = buildContentTypeParams({
+      artistCount: 5,
+      albumCount: 5,
+      songCount: 5,
+      query: '',
+      offset: 0,
+      resolvedFilters: {},
+      sort: 'year',
+    });
+
+    expect(songParams).toContain('_sort=year');
+    expect(albumParams).toContain('_sort=maxYear');
+  });
+});
+
 describe('aggregateSearchResults (searchAll) — per-type appliedFilters truthfulness', () => {
   const emptyResponses: ParallelSearchResponses = {
     songsResponse: [],

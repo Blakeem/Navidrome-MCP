@@ -66,8 +66,10 @@ import {
 } from '../playback.js';
 
 // Upper bound for the `year` filter, mirroring EnhancedSearchSchema in
-// src/schemas/common.ts (`y <= new Date().getFullYear() + 1`). Computed at
-// module load so the JSON Schema `maximum` matches the Zod refine.
+// src/schemas/common.ts (`y <= new Date().getFullYear() + 1`). Computed once at
+// module load; the published JSON Schema `maximum` can lag the Zod refine by one
+// day across a New-Year boundary if the process runs past midnight Dec 31 — an
+// accepted edge, since Zod remains the authoritative validator.
 const MAX_YEAR = new Date().getFullYear() + 1;
 
 // Tool definitions for the playback category (Stage 2 + Stage 3 + Stage 4 — 18 tools).
@@ -473,12 +475,12 @@ const tools: Tool[] = [
       type: 'object',
       properties: {
         from: {
-          type: 'number',
+          type: 'integer',
           minimum: 0,
           description: 'Source index of the entry to move.',
         },
         to: {
-          type: 'number',
+          type: 'integer',
           minimum: 0,
           description: 'Destination index for the entry.',
         },
@@ -494,7 +496,7 @@ const tools: Tool[] = [
       type: 'object',
       properties: {
         index: {
-          type: 'number',
+          type: 'integer',
           minimum: 0,
           description: 'Index of the play-queue entry to remove.',
         },
@@ -510,7 +512,7 @@ const tools: Tool[] = [
       type: 'object',
       properties: {
         index: {
-          type: 'number',
+          type: 'integer',
           minimum: 0,
           description: 'Zero-based queue index of the entry to play.',
         },

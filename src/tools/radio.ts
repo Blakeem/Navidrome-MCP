@@ -181,11 +181,10 @@ export async function listRadioStations(
             streamUrl: row.streamUrl,
             // nullIfGoZeroTime guards against Navidrome rows that somehow
             // came through without a real timestamp (would be the Go zero
-            // value). createdAt/updatedAt are required strings in the DTO,
-            // so fall back to "" when the server gave us nothing — callers
-            // already null-check via `=== ''` for absent timestamps.
-            createdAt: nullIfGoZeroTime(row.createdAt) ?? '',
-            updatedAt: nullIfGoZeroTime(row.updatedAt) ?? '',
+            // value), returning null so the DTO honestly signals an absent
+            // timestamp instead of a misleading sentinel date.
+            createdAt: nullIfGoZeroTime(row.createdAt),
+            updatedAt: nullIfGoZeroTime(row.updatedAt),
           };
 
           if (row.homePageUrl !== undefined && row.homePageUrl !== '') {

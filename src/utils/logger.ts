@@ -170,8 +170,11 @@ export function redact(value: unknown, depth: number = 0): unknown {
       });
     }
     if ('cause' in value && value.cause !== undefined) {
+      // Bound the cause-chain recursion: the Error branch sits above the
+      // depth guard at line 183, so without this an unbounded or circular
+      // `.cause` chain would recurse until the V8 stack overflows.
       Object.defineProperty(redacted, 'cause', {
-        value: redact(value.cause, depth + 1),
+        value: depth + 1 < MAX_REDACT_DEPTH ? redact(value.cause, depth + 1) : value.cause,
         configurable: true,
         writable: true,
       });

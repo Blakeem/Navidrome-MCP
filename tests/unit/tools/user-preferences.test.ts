@@ -586,12 +586,13 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
     });
 
     it('should handle empty starred items list gracefully', async () => {
-      mockClient.request.mockResolvedValue([]);
-      
+      mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+
       const result = await listStarredItems(mockClient, { type: 'songs' });
-      
+
       expect(result.items).toEqual([]);
       expect(result.count).toBe(0);
+      expect(result.hasMore).toBe(false);
     });
 
     it('should handle empty top-rated items list gracefully', async () => {

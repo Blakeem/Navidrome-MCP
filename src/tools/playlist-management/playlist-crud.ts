@@ -153,8 +153,23 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
       _sort: params.sort,
       _order: params.order,
     });
-    const { data } = await client.requestWithMeta<unknown>(`/playlist?${queryParams.toString()}`);
+    const { data, total } = await client.requestWithMeta<unknown>(`/playlist?${queryParams.toString()}`);
     const allPlaylists = transformPlaylistsToDTO(data);
+
+    // The playable-only view pulls a hard-capped candidate window
+    // (PLAYLIST_FETCH_MAX). If the server holds more playlists than that, rows
+    // beyond the cap are never fetched, filtered, or counted — so the returned
+    // total understates the true filtered count. Warn so the truncation is at
+    // least visible in logs.
+    if (
+      (total !== null && total > PLAYLIST_FETCH_MAX) ||
+      allPlaylists.length >= PLAYLIST_FETCH_MAX
+    ) {
+      logger.warn(
+        `list_playlists playable-only candidate set was truncated at PLAYLIST_FETCH_MAX (${PLAYLIST_FETCH_MAX}); ` +
+          `server reports ${total ?? 'unknown'} total playlists — results and total may be incomplete.`
+      );
+    }
 
     // Optimization: when the active libraries cover everything (or the
     // library manager isn't initialized), a probe would match the same rows

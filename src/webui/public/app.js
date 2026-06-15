@@ -550,6 +550,10 @@
     // Seek: snap on release. Using 'input' would fire continuously while the
     // user drags and spam mpv with seek commands.
     els.seek.addEventListener('pointerdown', () => { state.seekDragging = true; });
+    // If the drag is cancelled or the pointer is lifted outside the slider, the
+    // 'change' event may never fire — reset the flag so tickProgress resumes.
+    els.seek.addEventListener('pointercancel', () => { state.seekDragging = false; });
+    els.seek.addEventListener('pointerup', () => { state.seekDragging = false; });
     els.seek.addEventListener('input', (ev) => {
       // While dragging, show the would-be position locally so the time label
       // tracks the thumb without hitting the server.
@@ -575,6 +579,8 @@
     // feeling of immediate response without 60 RPS.
     let volTimer = null;
     els.volume.addEventListener('pointerdown', () => { state.volumeDragging = true; });
+    els.volume.addEventListener('pointercancel', () => { state.volumeDragging = false; });
+    els.volume.addEventListener('pointerup', () => { state.volumeDragging = false; });
     els.volume.addEventListener('input', (ev) => {
       const v = Number(ev.target.value);
       setProgressVar(els.volume, v);
@@ -615,6 +621,7 @@
     els.openNetwork.addEventListener('click', async () => {
       try {
         const res = await fetch('/api/network-info');
+        if (!res.ok) { console.warn('webui: network-info fetch failed', res.status); return; }
         const info = await res.json();
         renderNetworkInfo(info);
         if (typeof els.netDialog.showModal === 'function') {

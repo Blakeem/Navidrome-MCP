@@ -101,7 +101,10 @@ legacy env/`.env`. After saving, **restart** the server to apply. A few low-leve
 operational env vars remain env-only and out of the store: timeouts
 (`NAVIDROME_REQUEST_TIMEOUT_MS`, `NAVIDROME_AUTH_TIMEOUT_MS`,
 `EXTERNAL_API_TIMEOUT_MS`), `XDG_RUNTIME_DIR`,
-and `NAVIDROME_CONFIG_PATH` (a *location* override, not a value override).
+`NAVIDROME_CONFIG_PATH` (a *location* override, not a value override),
+and `NAVIDROME_DEV` (a dev-only launch-routing override that forces spawning
+`src/web/main.ts` via tsx instead of the compiled `dist/web/main.js` — not
+application config).
 
 Tests write a throwaway store via `NAVIDROME_CONFIG_PATH` (see `tests/CLAUDE.md`),
 so the suite never touches the real store.

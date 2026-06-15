@@ -52,6 +52,10 @@ export function stripHtml(input: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
+    .replace(/&#[xX]([0-9a-fA-F]+);/g, (_match, hex: string) => {
+      const n = Number.parseInt(hex, 16);
+      return Number.isFinite(n) && n > 0 && n < 0x110000 && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : _match;
+    })
     .replace(/&#(\d+);/g, (_match, code: string) => {
       const n = Number.parseInt(code, 10);
       return Number.isFinite(n) && n > 0 && n < 0x110000 && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : _match;

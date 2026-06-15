@@ -215,7 +215,10 @@ const PlaySongsSearchSchema = SearchSongsSchema.extend({
   shuffle: z.boolean().default(false),
 });
 
-const PlayPlaylistSchema = z.object({
+// Exported so the webui route boundary (handlePlayPlaylist) can re-validate the
+// request body up front and return HTTP 400 for malformed input, instead of
+// letting the ZodError flow through runAction as a generic 500.
+export const PlayPlaylistSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required'),
   mode: QueueModeSchema,
   shuffle: z.boolean().default(false),
@@ -959,6 +962,14 @@ function looksLikeHttpUrl(value: string): boolean {
   }
 }
 
+// Tracks the queue position for which VBR duration repair has already been
+// applied from the cache. Once repaired, `now_playing` polls for that same
+// track skip the per-poll getPlaylist() IPC instead of firing it forever just
+// because a normal sub-10-minute track stays below the 600s threshold. Resets
+// when the queue position changes (next/prev/auto-advance), at which point the
+// new track gets one repair pass.
+let durationRepairedForKey: string | null = null;
+
 /**
  * Read current playback state from the engine's observed-property cache.
  * Does NOT trigger a lazy spawn — read tools never start mpv. Will
@@ -1044,8 +1055,17 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
       result.radioStation = radioStation;
     }
     const needsRadioFallback = radioStation === null;
+    // Cheap, pre-getPlaylist track identity: the queue position. When repair has
+    // already been applied for the current position, don't re-fire getPlaylist()
+    // every poll just because a normal track's duration stays under 600s. The
+    // key resets automatically when the position changes (track advance/skip).
+    const repairKey =
+      typeof queueIndex === 'number' ? `idx:${String(queueIndex)}` : null;
+    const alreadyRepaired =
+      repairKey !== null && durationRepairedForKey === repairKey;
     const needsDurationRepair =
       radioStation === null &&
+      !alreadyRepaired &&
       (result.duration === undefined || result.duration < 600);
     // Title/artist/album still missing for a non-radio track — either mpv hadn't
     // loaded file metadata yet, or we suppressed a URL-shaped media-title above.
@@ -1054,7 +1074,7 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
     // album, and gets its title via ICY) doesn't force a getPlaylist every poll.
     const needsMetadataRepair =
       radioStation === null &&
-      (result.title === undefined || result.artist === undefined || result.album === undefined);
+      (result.title === undefined || result.artist === undefined);
     if (
       typeof queueLength === 'number' &&
       queueLength > 0 &&
@@ -1104,12 +1124,21 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
           // VBR duration repair: prefer the cached (Navidrome-sourced)
           // duration when mpv's reported duration is missing or noticeably
           // smaller than the authoritative value.
-          if (
-            current.duration !== undefined &&
-            current.duration > 0 &&
-            (result.duration === undefined || current.duration > result.duration + 5)
-          ) {
-            result.duration = current.duration;
+          if (current.duration !== undefined && current.duration > 0) {
+            // The cache holds the authoritative (Navidrome-sourced) duration for
+            // this entry. Prefer it whenever mpv's value is missing or noticeably
+            // smaller (early-VBR window); otherwise mpv has already settled.
+            if (result.duration === undefined || current.duration > result.duration + 5) {
+              result.duration = current.duration;
+            }
+            // Either way we've reconciled against the authoritative number, so
+            // mark this queue position done: subsequent polls skip the
+            // getPlaylist() IPC until the track changes (position moves). When
+            // the cache is not yet warm (no duration) we leave it unmarked and
+            // retry on the next poll.
+            if (repairKey !== null) {
+              durationRepairedForKey = repairKey;
+            }
           }
         }
       } catch {

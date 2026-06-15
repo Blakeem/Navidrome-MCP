@@ -46,8 +46,8 @@ export interface PlaylistDTO {
  * DTO for individual tracks within a playlist
  */
 export interface PlaylistTrackDTO {
-  /** Track position ID in playlist */
-  id: number;
+  /** Track position ID in playlist (1-based position, stringified) */
+  id: string;
   /** Song ID */
   mediaFileId: string;
   /** Playlist ID. Verbose-only — it is identical on every row (the caller
@@ -147,7 +147,7 @@ export interface RemoveTracksFromPlaylistResponse {
  * Request DTO for reordering a track in a playlist
  */
 export interface ReorderPlaylistTrackRequest {
-  /** New position (0-based index) as string */
+  /** New 1-based position (as string): the track is inserted before the row at this position. Use 1 for the first slot; N+1 to append. Passing 0 returns HTTP 500. */
   insert_before: string;
 }
 

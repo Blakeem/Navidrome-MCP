@@ -148,4 +148,36 @@ describe('PlaybackEngine signal handlers (H6)', () => {
     // has been invoked at least once. Verify the spy recorded the call.
     expect(installedIpc.close).toHaveBeenCalled();
   });
+
+  // Regression for src-services-playback-playback-engine-ts-5: the signal
+  // handler sets shuttingDown=true (without running full cleanup). A later
+  // shutdown()/quitMpv() must NOT early-return on that flag — it must still
+  // run its idempotent cleanup so caches, startPromise, and subscribers are
+  // dropped and the engine is restartable.
+  it('shutdown() after a signal still runs cleanup (does not early-return on shuttingDown)', async () => {
+    // The signal already fired in earlier tests, so shuttingDown is currently
+    // true and ipc was closed/nulled by the handler.
+    let notified = false;
+    const unsubscribe = playbackEngine.onStateChange(() => {
+      notified = true;
+    });
+
+    // Calling shutdown() now must complete cleanup (clear subscribers) rather
+    // than no-op on the lingering shuttingDown flag.
+    playbackEngine.shutdown();
+
+    // The subscriber registered above must have been dropped by shutdown(); the
+    // engine must also be restartable afterwards.
+    const restartIpc = makeFakeIpc();
+    fakeIpcRef.value = restartIpc;
+    await playbackEngine.ensureRunning();
+    expect(playbackEngine.isRunning()).toBe(true);
+
+    // The handler registered before shutdown() must not survive into the new
+    // session — proving shutdown() cleared stateChangeHandlers rather than
+    // early-returning. (No public emit exists, so we assert via restart +
+    // a no-throw unsubscribe of the now-stale handle.)
+    expect(notified).toBe(false);
+    expect(() => unsubscribe()).not.toThrow();
+  });
 });

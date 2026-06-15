@@ -60,8 +60,20 @@ interface RawPlaylistTrack {
  * `albumArtist`, `trackNumber`, `year`, `genre`).
  */
 function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, verbose: boolean): PlaylistTrackDTO {
+  // When Navidrome omits mediaFileId we fall back to the 1-based playlist
+  // position (rawTrack.id). That value is NOT a song/media-file id, so anything
+  // that later looks up or plays this track by mediaFileId will resolve the
+  // wrong song (or nothing). Surface the contract violation rather than letting
+  // the substitution corrupt downstream lookups silently.
+  if (rawTrack.mediaFileId === undefined || rawTrack.mediaFileId === '') {
+    logger.warn(
+      `Playlist track missing mediaFileId (playlistId=${rawTrack.playlistId}, position=${String(rawTrack.id)}); ` +
+        `using playlist-position id as a fallback — possible Navidrome API contract violation.`
+    );
+  }
+
   const dto: PlaylistTrackDTO = {
-    id: rawTrack.id,
+    id: String(rawTrack.id),
     mediaFileId: rawTrack.mediaFileId ?? String(rawTrack.id),
     title: rawTrack.title ?? '',
     album: rawTrack.album ?? '',
@@ -140,10 +152,10 @@ type GetPlaylistTracksResponse =
  * `m3uContent`. The original args are captured in the DEBUG log.
  */
 export async function getPlaylistTracks(client: NavidromeClient, args: unknown): Promise<GetPlaylistTracksResponse> {
-  const params = PlaylistTracksPaginationSchema.parse(args);
-  logger.debug('Tool getPlaylistTracks called with args:', params);
-
   try {
+    const params = PlaylistTracksPaginationSchema.parse(args);
+    logger.debug('Tool getPlaylistTracks called with args:', params);
+
     const queryParams = new URLSearchParams({
       _start: params.offset.toString(),
       _end: (params.offset + params.limit).toString(),

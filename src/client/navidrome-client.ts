@@ -293,7 +293,10 @@ export class NavidromeClient {
 
   private async parseResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
-      const errorText = await response.text();
+      // Cap the raw error body before it flows to the LLM via toolExecution: a
+      // proxy's large HTML 5xx page (server version/OS/path info) or a 4xx body
+      // referencing internal paths would otherwise reach the context unbounded.
+      const errorText = (await response.text()).slice(0, 512);
       throw new Error(ErrorFormatter.httpRequest('navidrome API', response, errorText));
     }
 

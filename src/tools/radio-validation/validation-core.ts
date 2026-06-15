@@ -182,7 +182,11 @@ export async function validateRadioStream(
       const remainingTime = params.timeout - elapsed;
 
       if (remainingTime > 1000 && !overallController.signal.aborted) {
-        const sampleResult = await sampleAudioData(params.url, remainingTime, params.followRedirects, overallController.signal);
+        // Reuse the final URL HEAD already resolved (when it followed redirects)
+        // so the GET doesn't re-traverse the whole redirect chain — duplicating
+        // DNS lookups and private-IP/SSRF checks. followRedirects stays as-is; it
+        // harmlessly no-ops when the URL is already terminal.
+        const sampleResult = await sampleAudioData(resolvedFinalUrl ?? params.url, remainingTime, params.followRedirects, overallController.signal);
         buffer = sampleResult.buffer;
         headers = sampleResult.headers ?? headResponse?.headers ?? null;
         sampledStatus = sampleResult.httpStatus ?? null;
@@ -207,6 +211,11 @@ export async function validateRadioStream(
   if (sampleError !== null && sampleError !== '' && headResponse === null) {
     errors.push(sampleError);
     result.status = 'error';
+  } else if (headResponse !== null && sampleError !== null && sampleError !== '') {
+    // HEAD succeeded but sampling failed with a real error — surface it as a
+    // warning (not an error, to preserve the HEAD-succeeded severity) so the
+    // diagnostic isn't silently dropped.
+    warnings.push(sampleError);
   }
 
   // Use whichever response we got. The status may be absent when HEAD failed

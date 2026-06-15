@@ -18,6 +18,7 @@
 
 import {
   closeSync,
+  fchmodSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -118,7 +119,9 @@ export function readSettings(): SettingsFile | null {
  * default perms, even momentarily):
  *   1. write to a uniquely-named temp file in the SAME directory (so the final
  *      `rename` is atomic — cross-device renames are not),
- *   2. `fchmod 0600` BEFORE writing any bytes (no default-perms window),
+ *   2. `fchmod 0600` on the open fd BEFORE writing any bytes — umask-proof,
+ *      so there is no default-perms window (openSync's mode arg alone is
+ *      masked by the process umask and is not sufficient),
  *   3. write + `fsync` the fd (rename is atomic but does not flush contents),
  *   4. `rename()` over the target.
  *
@@ -133,6 +136,10 @@ export function writeSettings(settings: SettingsFile): void {
   const tmpPath = `${path}.${process.pid}.${Math.floor(performance.now() * 1000).toString(36)}.tmp`;
   const fd = openSync(tmpPath, 'wx', 0o600);
   try {
+    // Enforce owner-only perms via the open fd, independent of the process
+    // umask (openSync's mode arg is applied as mode & ~umask, so a non-standard
+    // umask could otherwise strip the owner-write bit). No-op on Windows.
+    fchmodSync(fd, 0o600);
     // Any failure after the tmp file is opened — write/fsync (e.g. disk-full)
     // or the final rename — must remove the tmp file so a partial file holding
     // plaintext credentials is never left orphaned on disk.

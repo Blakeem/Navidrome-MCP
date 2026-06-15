@@ -58,6 +58,10 @@ interface CacheEntry {
 
 let cached: CacheEntry | null = null;
 let inflight: Promise<string> | null = null;
+// Bumped by every invalidation. A resolution captures the generation it started
+// under and only writes to `cached` if the generation still matches — so an
+// invalidation that races an in-flight resolution wins.
+let cacheGeneration = 0;
 
 /**
  * Reset cached state. Test-only — never called from production code.
@@ -65,6 +69,7 @@ let inflight: Promise<string> | null = null;
 export function resetRadioBrowserResolverCache(): void {
   cached = null;
   inflight = null;
+  cacheGeneration = 0;
 }
 
 /**
@@ -75,15 +80,18 @@ export function resetRadioBrowserResolverCache(): void {
  * stays the active pick for up to CACHE_TTL_MS — so every subsequent radio
  * tool call fails for the rest of the cache window. Idempotent and cheap.
  *
- * Also drops any in-flight SRV resolution: without this, a resolution started
- * by a concurrent call would complete after invalidation and re-cache a result
- * with a fresh 1h TTL, silently undoing the invalidation. Clearing `inflight`
- * forces the next getRadioBrowserBase() to start a fresh resolution. A caller
- * already holding the in-flight promise reference still receives its result.
+ * Also drops any in-flight SRV resolution and bumps a generation token: without
+ * the token, a resolution started by a concurrent call would complete after
+ * invalidation and re-cache its (now stale) result with a fresh 1h TTL,
+ * silently undoing the invalidation. The bumped generation makes that late
+ * resolution's cache write a no-op. Clearing `inflight` also forces the next
+ * getRadioBrowserBase() to start a fresh resolution. A caller already holding
+ * the in-flight promise reference still receives its result.
  */
 export function invalidateRadioBrowserBase(): void {
   cached = null;
   inflight = null;
+  cacheGeneration += 1;
 }
 
 /**
@@ -108,9 +116,15 @@ export async function getRadioBrowserBase(override?: string): Promise<string> {
     return inflight;
   }
 
+  // Snapshot the generation this resolution starts under; if an invalidation
+  // bumps it mid-flight, the writes below become no-ops so we don't re-cache a
+  // mirror that was just invalidated.
+  const gen = cacheGeneration;
   inflight = resolveBaseFromSrv()
     .then((base) => {
-      cached = { base, expiresAt: Date.now() + CACHE_TTL_MS };
+      if (gen === cacheGeneration) {
+        cached = { base, expiresAt: Date.now() + CACHE_TTL_MS };
+      }
       return base;
     })
     .catch((error: unknown) => {
@@ -119,7 +133,9 @@ export async function getRadioBrowserBase(override?: string): Promise<string> {
       // for unexpected resolver bugs; cache the fallback briefly so we don't
       // hammer DNS on every call when something is very wrong.
       logger.warn('Radio Browser SRV resolution threw unexpectedly; using fallback', error);
-      cached = { base: RADIO_BROWSER_FALLBACK_BASE, expiresAt: Date.now() + CACHE_TTL_MS };
+      if (gen === cacheGeneration) {
+        cached = { base: RADIO_BROWSER_FALLBACK_BASE, expiresAt: Date.now() + CACHE_TTL_MS };
+      }
       return RADIO_BROWSER_FALLBACK_BASE;
     })
     .finally(() => {

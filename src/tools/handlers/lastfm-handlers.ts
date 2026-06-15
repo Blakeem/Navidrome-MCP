@@ -170,6 +170,7 @@ const tools: Tool[] = [
         includeTypes: {
           type: 'array',
           items: { type: 'string', enum: ['album', 'ep', 'single'] },
+          minItems: 1,
           description: 'MusicBrainz primary release types to include.',
           default: ['album'],
         },

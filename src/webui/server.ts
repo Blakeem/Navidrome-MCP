@@ -76,6 +76,12 @@ export function createServer(deps: ServerDeps): Server {
       logger.error('webui: unhandled handler error:', err);
       if (!res.headersSent) {
         writeError(res, 500, 'Internal server error');
+      } else if (!res.writableEnded) {
+        try {
+          res.end();
+        } catch {
+          /* already ended */
+        }
       }
     });
   });

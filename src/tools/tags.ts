@@ -309,9 +309,10 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
       }
     }
 
+    const filteredDistributions = distributions.filter((dist) => dist.uniqueValues > 0);
     return {
-      distributions: distributions.filter((dist) => dist.uniqueValues > 0),
-      totalTagNames: distributions.length,
+      distributions: filteredDistributions,
+      totalTagNames: filteredDistributions.length,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_tag_distribution', error));

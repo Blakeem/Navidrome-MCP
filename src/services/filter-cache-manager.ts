@@ -137,6 +137,10 @@ class FilterCacheManager {
     const totalFilters = this.genresOriginal.size + this.mediaTypesOriginal.size + this.countriesOriginal.size +
                         this.releaseTypesOriginal.size + this.recordLabelsOriginal.size + this.moodsOriginal.size;
 
+    if (totalFilters === 0) {
+      logger.warn('FilterCacheManager loaded 0 filter options after the startup fetch — Navidrome may have been unreachable; filter-based search will stay empty until the cache is refreshed.');
+    }
+
     logger.info(`FilterCacheManager loaded ${totalFilters} filter options across 6 types`);
     logger.debug(`Filter counts: genres=${this.genresOriginal.size}, media=${this.mediaTypesOriginal.size}, countries=${this.countriesOriginal.size}, releaseTypes=${this.releaseTypesOriginal.size}, labels=${this.recordLabelsOriginal.size}, moods=${this.moodsOriginal.size}`);
   }
@@ -210,8 +214,12 @@ class FilterCacheManager {
    */
   private async loadTagsByType(client: NavidromeClient, tagType: string): Promise<void> {
     try {
-      // Fetch only the tags for this type (server filters by tag_name)
-      const tags = await client.requestWithLibraryFilter<TagResponse[]>(`/tag?tag_name=${encodeURIComponent(tagType)}`);
+      // Fetch only the tags for this type (server filters by tag_name).
+      // Pass an explicit large _end window so the full tag set is loaded —
+      // without it Navidrome applies its server-side default page size and a
+      // library with many tag values (labels, moods, etc.) would be silently
+      // truncated. Verified /tag honors _start/_end like /album and /song.
+      const tags = await client.requestWithLibraryFilter<TagResponse[]>(`/tag?tag_name=${encodeURIComponent(tagType)}&_start=0&_end=1000`);
 
       if (!Array.isArray(tags)) {
         logger.warn(`Invalid tags response for ${tagType}, skipping`);
@@ -399,12 +407,13 @@ class FilterCacheManager {
     available: string[];
     total: number;
   }> {
-    // Validate via Zod: enforces filterType is one of the six valid values and
-    // clamps limit to [1,200] with a default of 50. This also closes the
-    // limit=0 → slice(0,0) → silently-empty bug (0 is now rejected as < min).
-    const { filterType, limit } = FilterOptionsSchema.parse(args);
-
     try {
+      // Validate via Zod: enforces filterType is one of the six valid values and
+      // clamps limit to [1,200] with a default of 50. This also closes the
+      // limit=0 → slice(0,0) → silently-empty bug (0 is now rejected as < min).
+      // Parsing inside the try routes any ZodError through ErrorFormatter below.
+      const { filterType, limit } = FilterOptionsSchema.parse(args);
+
       if (!this.isInitialized()) {
         throw new Error('Filter cache manager not initialized. Please wait for server startup to complete.');
       }

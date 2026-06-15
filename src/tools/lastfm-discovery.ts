@@ -16,6 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
@@ -55,6 +56,20 @@ interface LastFmArtist {
   match: number;
   url: string;
   mbid: string | null;
+}
+
+/**
+ * Collapse a ZodError into a single concise, LLM-actionable sentence.
+ *
+ * The tool JSON Schemas advertise `required: []` (the real constraints are
+ * conditional — artist OR mbid, etc.), so the LLM can legitimately call with
+ * missing identifiers. Rather than forwarding Zod's raw issue-array message
+ * (a noisy blob), surface the schema's own issue messages when present, or the
+ * caller-provided rule summary as a fallback.
+ */
+function formatZodIssues(error: z.ZodError, fallback: string): string {
+  const messages = error.issues.map((issue) => issue.message).filter((m) => m !== '');
+  return messages.length > 0 ? messages.join('; ') : fallback;
 }
 
 // Input echoes (artist, originalTrack, type/page/perPage) are intentionally
@@ -305,7 +320,7 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
       url: typeof artistInfo['url'] === 'string' ? artistInfo['url'] : '',
       listeners: safeNumber(stats?.['listeners']),
       playcount: safeNumber(stats?.['playcount']),
-      biography: typeof bioSummary === 'string' ? bioSummary.replace(/<[^>]*>/g, '') : null,
+      biography: typeof bioSummary === 'string' ? stripWikiHtml(bioSummary) : null,
       tags: ((tags?.['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>) => ({
         name: typeof t['name'] === 'string' ? t['name'] : '',
         url: typeof t['url'] === 'string' ? t['url'] : '',
@@ -521,12 +536,33 @@ export function clearArtistAlbumsCachesForTests(): void {
   lastFmTopAlbumsCache.clear();
 }
 
+// Per-cache in-flight fetch maps, so a burst of concurrent calls for the same
+// key coalesces into a single external request (MusicBrainz enforces 1 req/s).
+const inflightByCache = new WeakMap<Cache<unknown>, Map<string, Promise<unknown>>>();
+
 async function cachedOr<T>(cache: Cache<T>, key: string, fetcher: () => Promise<T>): Promise<T> {
   const hit = cache.get(key);
   if (hit !== undefined) return hit;
-  const value = await fetcher();
-  cache.set(key, value);
-  return value;
+
+  let inflight = inflightByCache.get(cache as Cache<unknown>);
+  if (inflight === undefined) {
+    inflight = new Map<string, Promise<unknown>>();
+    inflightByCache.set(cache as Cache<unknown>, inflight);
+  }
+
+  const existing = inflight.get(key);
+  if (existing !== undefined) return existing as Promise<T>;
+
+  const p = fetcher()
+    .then((value) => {
+      cache.set(key, value);
+      return value;
+    })
+    .finally(() => {
+      inflight.delete(key);
+    });
+  inflight.set(key, p);
+  return p;
 }
 
 // --- Last.fm branch ---------------------------------------------------------
@@ -972,6 +1008,15 @@ export async function getArtistAlbums(
       ...(notes.length > 0 ? { note: notes.join(' ') } : {}),
     };
   } catch (error) {
+    // Surface a clean, LLM-actionable message for input-contract violations
+    // (the JSON Schema advertises required:[] but the conditional rule needs
+    // artist OR mbid) instead of letting a raw Zod issue-array blob through.
+    if (error instanceof z.ZodError) {
+      throw new Error(ErrorFormatter.toolExecution(
+        'get_artist_albums',
+        new Error(formatZodIssues(error, 'get_artist_albums requires at least one of: artist (name) or mbid (MusicBrainz id).')),
+      ));
+    }
     throw new Error(ErrorFormatter.toolExecution('get_artist_albums', error));
   }
 }
@@ -1314,6 +1359,15 @@ export async function getAlbumInfo(
       ...(notes.length > 0 ? { note: notes.join(' ') } : {}),
     };
   } catch (error) {
+    // Surface a clean, LLM-actionable message for input-contract violations
+    // (the JSON Schema advertises required:[] but the conditional rule needs
+    // mbid OR both artist and album) instead of a raw Zod issue-array blob.
+    if (error instanceof z.ZodError) {
+      throw new Error(ErrorFormatter.toolExecution(
+        'get_album_info',
+        new Error(formatZodIssues(error, 'get_album_info requires either mbid, or both artist and album.')),
+      ));
+    }
     throw new Error(ErrorFormatter.toolExecution('get_album_info', error));
   }
 }

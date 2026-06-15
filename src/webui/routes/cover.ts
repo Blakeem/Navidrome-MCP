@@ -21,6 +21,7 @@ import { Readable } from 'node:stream';
 import type { Config } from '../../config.js';
 import { IdSchema } from '../../schemas/common.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
+import { fetchWithTimeout, getNavidromeRequestTimeoutMs } from '../../utils/fetch-with-timeout.js';
 import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
@@ -75,7 +76,15 @@ export async function handleCover(
 
   let upstream: Response;
   try {
-    upstream = await fetch(url);
+    upstream = await fetchWithTimeout(
+      url,
+      {},
+      {
+        timeoutMs: getNavidromeRequestTimeoutMs(),
+        retryPolicy: 'safe',
+        operationLabel: 'cover-art fetch',
+      },
+    );
   } catch (err) {
     // Network failure reaching Navidrome — surface a discreet 502 so the
     // UI can render a placeholder without making the user think the server
@@ -94,6 +103,7 @@ export async function handleCover(
       'Cache-Control': 'no-store',
     });
     res.end(JSON.stringify({ error: `Upstream returned ${upstream.status}` }));
+    upstream.body?.cancel().catch(() => undefined);
     return;
   }
 

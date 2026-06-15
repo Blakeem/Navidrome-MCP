@@ -83,7 +83,7 @@ export async function testConnection(
       const hasLyrics = config.features.lyrics;
 
       result.serverInfo = {
-        url: 'Connected to Navidrome',
+        url: config.navidromeUrl,
         authenticated: true,
         timestamp: new Date().toISOString(),
         version: getPackageVersion(),

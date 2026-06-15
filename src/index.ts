@@ -75,11 +75,22 @@ async function main(): Promise<void> {
       openBrowser(settings.url);
       registerDegradedTools(server, settings.url);
 
-      const stopSettings = (): void => {
-        void settings.close();
+      // Mirror the happy-path handlers: close the config server, then exit with
+      // the conventional 128 + signal number. StdioServerTransport keeps stdin
+      // referenced, so without an explicit exit the process would linger after a
+      // signal until the MCP host escalates to SIGKILL. Best-effort: exit even
+      // if close() rejects.
+      const stopSettings = (signo: number) => (): void => {
+        void (async (): Promise<void> => {
+          try {
+            await settings.close();
+          } finally {
+            process.exit(128 + signo);
+          }
+        })();
       };
-      process.once('SIGINT', stopSettings);
-      process.once('SIGTERM', stopSettings);
+      process.once('SIGINT', stopSettings(2));
+      process.once('SIGTERM', stopSettings(15));
 
       const transport = new StdioServerTransport();
       await server.connect(transport);
@@ -90,7 +101,7 @@ async function main(): Promise<void> {
     // Shared bootstrap: resolves config, authenticates the client, primes the
     // library/filter caches, and configures the playback engine. Identical for
     // the MCP server and the future standalone web server.
-    const { config, client } = await createRuntime();
+    const { config, client } = await createRuntime(state.config);
 
     registerTools(server, client, config);
     registerResources(server, client);

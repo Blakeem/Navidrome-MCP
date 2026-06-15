@@ -26,10 +26,10 @@ export interface RadioStationDTO {
   name: string;
   /** Optional homepage URL */
   homePageUrl?: string;
-  /** ISO 8601 timestamp when created */
-  createdAt: string;
-  /** ISO 8601 timestamp when last updated */
-  updatedAt: string;
+  /** ISO 8601 timestamp when created or null if the server never populated it (Go zero-time) */
+  createdAt: string | null;
+  /** ISO 8601 timestamp when last updated or null if the server never populated it (Go zero-time) */
+  updatedAt: string | null;
 }
 
 /** Response from creating a radio station */

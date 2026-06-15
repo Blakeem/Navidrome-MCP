@@ -406,4 +406,38 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     expect(result.synced).toBeDefined();
     expect(result.synced?.length).toBeGreaterThan(0);
   });
+
+  it('getLyrics parses 3-digit millisecond LRC timestamps (does not silently drop them)', async () => {
+    // LRC permits 3-digit milliseconds (e.g. [00:09.123]) alongside the more
+    // common 2-digit centiseconds. Community-sourced LRCLIB lyrics mix both.
+    // Regression: the old regex required exactly 2 fractional digits, so any
+    // ms-precision line failed to match and was silently dropped from `synced`.
+    const lrclibResponse = {
+      id: 456,
+      trackName: 'Precise',
+      artistName: 'Test Artist',
+      albumName: 'Test Album',
+      duration: 120,
+      instrumental: false,
+      plainLyrics: 'Line one\nLine two',
+      // Mixed precision: centiseconds (.05), milliseconds (.123), milliseconds (.500)
+      syncedLyrics: '[00:01.05]Line one\n[00:09.123]Line two\n[00:10.500]Line three',
+    };
+    global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(200, lrclibResponse));
+
+    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const config = makeMockConfig();
+
+    const result = await getLyrics(config, { title: 'Precise', artist: 'Test Artist' });
+
+    // All three lines must survive — none dropped due to precision mismatch.
+    expect(result.synced).toBeDefined();
+    expect(result.synced).toHaveLength(3);
+    // .05  centiseconds → 1s + 50ms  = 1050ms
+    expect(result.synced?.[0]).toMatchObject({ timeMs: 1050, text: 'Line one' });
+    // .123 milliseconds → 9s + 123ms = 9123ms (treated as ms, not cs*10)
+    expect(result.synced?.[1]).toMatchObject({ timeMs: 9123, text: 'Line two' });
+    // .500 milliseconds → 10s + 500ms = 10500ms
+    expect(result.synced?.[2]).toMatchObject({ timeMs: 10500, text: 'Line three' });
+  });
 });

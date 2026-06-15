@@ -93,7 +93,7 @@ describe('listRadioStations', () => {
     expect(result.stations[0]!.createdAt).not.toBe(result.stations[1]!.createdAt);
   });
 
-  it('maps Go zero-time timestamps to empty strings', async () => {
+  it('maps Go zero-time timestamps to null', async () => {
     mockClient.request.mockResolvedValue(
       makeRestList([
         { id: 'st-1', name: 'A', streamUrl: 'http://a.test/', createdAt: '0001-01-01T00:00:00Z', updatedAt: '0001-01-01T00:00:00Z' },
@@ -102,8 +102,8 @@ describe('listRadioStations', () => {
 
     const result = await listRadioStations(mockClient as unknown as NavidromeClient, {});
 
-    expect(result.stations[0]!.createdAt).toBe('');
-    expect(result.stations[0]!.updatedAt).toBe('');
+    expect(result.stations[0]!.createdAt).toBeNull();
+    expect(result.stations[0]!.updatedAt).toBeNull();
   });
 
   it('returns empty list when REST response is empty', async () => {

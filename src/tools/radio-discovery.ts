@@ -542,8 +542,9 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     const rejected = outcomes.filter((o): o is PromiseRejectedResult => o.status === 'rejected');
     const allFailed = outcomes.length > 0 && rejected.length === outcomes.length;
     if (allFailed) {
-      invalidateRadioBrowserBase();
-      throw new Error(ErrorFormatter.toolExecution('getRadioFilters', rejected[0]?.reason));
+      throw rejected[0]?.reason instanceof Error
+        ? rejected[0].reason
+        : new Error(String(rejected[0]?.reason));
     }
     for (const o of rejected) {
       logger.debug('getRadioFilters sub-fetch failed:', o.reason);

@@ -152,7 +152,9 @@ STREAM VALIDATION RECOMMENDED
 
     let formatted = message;
     for (const [key, value] of Object.entries(values)) {
-      formatted = formatted.replace(new RegExp(`{{${key}}}`, 'g'), String(value));
+      // Plain split/join avoids a RegExp built from a caller-controlled key,
+      // which could throw a SyntaxError or over-match on regex metacharacters.
+      formatted = formatted.split(`{{${key}}}`).join(String(value));
     }
     return formatted;
   }

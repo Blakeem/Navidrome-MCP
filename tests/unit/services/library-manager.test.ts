@@ -64,9 +64,9 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
 
   beforeEach(() => {
     // The singleton persists across tests; reset for isolation. `reset()`
-    // is also responsible for nulling the singleton handle so subsequent
-    // `getInstance()` calls (none in these tests, but defense-in-depth)
-    // would rebuild cleanly.
+    // clears the exported instance's internal state (userInfo, active library
+    // ids, initialized flag, in-flight init promise). It does not rebuild the
+    // singleton — every importer keeps the same `libraryManager` instance.
     libraryManager.reset();
     mockClient = createMockClient();
     // Silence stderr noise from the decoder's intentional error logs.
@@ -207,9 +207,14 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockRejectedValue(new Error('HTTP 500'));
 
+      // ErrorFormatter.toolExecution dedupes nested wrapping (see
+      // src-tools-3-1): loadUserLibraries already wraps the HTTP 500 with its
+      // own tool-name prefix, so the outer initialize() wrapper preserves that
+      // innermost meaningful message rather than stacking a second prefix. The
+      // caller still sees a clear, rethrown error naming the failure site.
       await expect(
         libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
-      ).rejects.toThrow(/LibraryManager\.initialize/);
+      ).rejects.toThrow(/Tool 'loadUserLibraries' failed: HTTP 500/);
 
       expect(libraryManager.isInitialized()).toBe(false);
     });

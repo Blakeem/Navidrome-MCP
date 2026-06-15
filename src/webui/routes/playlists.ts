@@ -18,7 +18,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
-import { playPlaylist } from '../../tools/playback.js';
+import { playPlaylist, PlayPlaylistSchema } from '../../tools/playback.js';
 import { listPlaylists } from '../../tools/playlist-management/playlist-crud.js';
 import { readJsonBody, runAction, writeError } from '../http-helpers.js';
 
@@ -61,5 +61,18 @@ export async function handlePlayPlaylist(
     writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
     return;
   }
-  return runAction(res, () => playPlaylist(client, body));
+
+  // Re-validate at the route boundary so a malformed request (missing
+  // playlistId, wrong types, null body) returns HTTP 400 — a client input
+  // error — rather than the generic 500 that runAction maps every thrown
+  // error to. The impl re-parses with the same schema, so the contract cannot
+  // drift.
+  const validation = PlayPlaylistSchema.safeParse(body);
+  if (!validation.success) {
+    const message = validation.error.issues.map((issue) => issue.message).join('; ');
+    writeError(res, 400, message !== '' ? message : 'invalid request body');
+    return;
+  }
+
+  return runAction(res, () => playPlaylist(client, validation.data));
 }
