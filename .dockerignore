@@ -1,0 +1,27 @@
+# Keep the build context small and reproducible: deps and build output are
+# produced inside the image, never copied from the host.
+node_modules
+dist
+coverage
+
+# VCS / editor / CI
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Local dev + secrets — must never leak into an image layer.
+.env
+.env.*
+settings.json
+*.local.json
+.claude
+
+# Docs / meta not needed at runtime
+*.md
+!README.md
+
+# OS cruft
+.DS_Store
+Thumbs.db

@@ -207,6 +207,24 @@ variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http
 > `host` to a specific interface. Keep the default `stdio` transport unless you
 > specifically need remote access.
 
+#### Running in Docker
+
+A [`Dockerfile`](Dockerfile) is included for exactly this HTTP-transport use case. The
+image reads its config from a mounted `settings.json` (it points
+`NAVIDROME_CONFIG_PATH` at `/config/settings.json`), so create one with the
+`transport.type` set to `http`, then mount it:
+
+```bash
+docker build -t navidrome-mcp .
+docker run --rm -p 3000:3000 \
+  -v "$PWD/settings.json:/config/settings.json:ro" \
+  navidrome-mcp
+```
+
+The MCP endpoint is then at `http://localhost:3000/mcp`. The container runs as a
+non-root user and ships a healthcheck against the endpoint. (mpv playback isn't included
+in the image — it's meant as a headless, networked MCP server.)
+
 ### Installing mpv (optional)
 
 mpv is a lightweight, cross-platform media player. When detected at startup, the server registers an additional set of playback tools so audio streams through your machine's speakers. Without it, the server still manages your library and Navidrome's saved queue; it just doesn't produce audio.
