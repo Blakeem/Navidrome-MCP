@@ -95,6 +95,31 @@ describe('config resolution', () => {
       expect((await loadConfig()).webui.host).toBe('127.0.0.1');
     });
 
+    it('defaults the transport to stdio on 0.0.0.0:3000 when unset', async () => {
+      write(BASE);
+      const c = await loadConfig();
+      expect(c.transport).toEqual({ type: 'stdio', host: '0.0.0.0', port: 3000 });
+    });
+
+    it('maps an explicit http transport block', async () => {
+      write({ ...BASE, transport: { type: 'http', host: '127.0.0.1', port: 9000 } });
+      const c = await loadConfig();
+      expect(c.transport).toEqual({ type: 'http', host: '127.0.0.1', port: 9000 });
+    });
+
+    it('falls back to 0.0.0.0 when transport host is blank', async () => {
+      write({ ...BASE, transport: { type: 'http', host: '   ' } });
+      const c = await loadConfig();
+      expect(c.transport.host).toBe('0.0.0.0');
+      expect(c.transport.port).toBe(3000);
+    });
+
+    it('rejects an unknown transport type', async () => {
+      write({ ...BASE, transport: { type: 'websocket' } });
+      // SettingsFileSchema rejects the bad enum → store reads as unconfigured.
+      expect(await resolveConfigState()).toEqual({ configured: false });
+    });
+
     it('requires BOTH provider and user agent to enable lyrics', async () => {
       write({ ...BASE, features: { lyricsProvider: 'lrclib' } });
       expect((await loadConfig()).features.lyrics).toBe(false);

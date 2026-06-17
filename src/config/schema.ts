@@ -37,6 +37,21 @@ export const ConfigSchema = z.object({
   cacheTtl: z.number().positive().default(300),
   tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
 
+  // MCP Transport Configuration — how the MCP server exposes itself to clients.
+  // 'stdio' (default) is the classic local-process transport every desktop MCP
+  // client speaks; nothing binds a socket. 'http' serves the MCP Streamable HTTP
+  // transport on `host:port` so the server can run as a long-lived process
+  // (e.g. a container in a cluster) that remote clients connect to over HTTP —
+  // removing the need to wrap it in an external bridge like `supergateway`.
+  // `host` defaults to 0.0.0.0 because choosing 'http' is itself the opt-in to
+  // network exposure (the local-only default lives in 'stdio'); secure it with
+  // network policy / a reverse proxy. The MCP endpoint is served at `/mcp`.
+  transport: z.object({
+    type: z.enum(['stdio', 'http']).default('stdio'),
+    host: z.string().default('0.0.0.0'),
+    port: z.number().int().min(1).max(65535).default(3000),
+  }),
+
   // Library Configuration
   defaultLibraryIds: z.array(z.number()).optional(),
 

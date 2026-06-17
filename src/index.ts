@@ -20,7 +20,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createRuntime } from './bootstrap.js';
-import { resolveConfigState } from './config.js';
+import { resolveConfigState, type Config } from './config.js';
+import { startHttpTransport } from './transport/http.js';
+import type { NavidromeClient } from './client/navidrome-client.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
@@ -42,6 +44,29 @@ process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection:', reason);
 });
 
+/**
+ * Build a fully-configured MCP {@link Server}: a fresh instance with all tools
+ * and resources registered against the shared, already-authenticated client.
+ *
+ * Factored out because the Streamable HTTP transport is stateful and needs one
+ * Server per session, while stdio needs exactly one — both call this so the two
+ * paths register an identical surface.
+ */
+function createConfiguredServer(client: NavidromeClient, config: Config): Server {
+  const server = new Server(
+    {
+      name: 'navidrome-mcp',
+      version: getPackageVersion(),
+    },
+    {
+      capabilities: MCP_CAPABILITIES,
+    }
+  );
+  registerTools(server, client, config);
+  registerResources(server, client);
+  return server;
+}
+
 async function main(): Promise<void> {
   try {
     // Add startup diagnostics for troubleshooting. Config now comes from the
@@ -50,16 +75,6 @@ async function main(): Promise<void> {
     logger.debug('Starting Navidrome MCP Server...');
     logger.debug('Node version:', process.version);
     logger.debug('Platform:', process.platform);
-
-    const server = new Server(
-      {
-        name: 'navidrome-mcp',
-        version: getPackageVersion(),
-      },
-      {
-        capabilities: MCP_CAPABILITIES,
-      }
-    );
 
     // First-run / degraded mode: when settings.json has no usable Navidrome URL
     // we cannot build a client. Instead of crashing, start the loopback settings
@@ -73,6 +88,13 @@ async function main(): Promise<void> {
         `Navidrome MCP is not configured. Open the settings page to set it up: ${settings.url}`
       );
       openBrowser(settings.url);
+
+      // Setup mode is inherently local + interactive, so it always uses stdio
+      // (the HTTP transport is opt-in for a configured, headless deployment).
+      const server = new Server(
+        { name: 'navidrome-mcp', version: getPackageVersion() },
+        { capabilities: MCP_CAPABILITIES }
+      );
       registerDegradedTools(server, settings.url);
 
       // Mirror the happy-path handlers: close the config server, then exit with
@@ -102,9 +124,6 @@ async function main(): Promise<void> {
     // library/filter caches, and configures the playback engine. Identical for
     // the MCP server and the future standalone web server.
     const { config, client } = await createRuntime(state.config);
-
-    registerTools(server, client, config);
-    registerResources(server, client);
 
     // Standalone web player (spec §6). Instead of an in-process server, MCP
     // spawns the SAME `navidrome-web` process it would run standalone, as an IPC
@@ -179,10 +198,38 @@ async function main(): Promise<void> {
       process.once('SIGTERM', makeExit(15));
     }
 
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    // Bind the configured transport. HTTP serves remote clients over a socket
+    // (one MCP Server per session); stdio serves the single local-process client
+    // the same way it always has.
+    if (config.transport.type === 'http') {
+      const http = await startHttpTransport({
+        host: config.transport.host,
+        port: config.transport.port,
+        createMcpServer: () => createConfiguredServer(client, config),
+      });
 
-    logger.info('Navidrome MCP Server started successfully');
+      // Stop accepting connections on a graceful signal. The playback teardown
+      // handlers above (when registered) already own process.exit; when playback
+      // is off, exit here so the bound socket doesn't keep the process alive.
+      const stopHttp = (signo: number) => (): void => {
+        void (async (): Promise<void> => {
+          try {
+            await http.close();
+          } finally {
+            if (!config.features.playback) process.exit(128 + signo);
+          }
+        })();
+      };
+      process.once('SIGINT', stopHttp(2));
+      process.once('SIGTERM', stopHttp(15));
+
+      logger.info(`Navidrome MCP Server listening on ${http.url} (Streamable HTTP)`);
+    } else {
+      const transport = new StdioServerTransport();
+      const server = createConfiguredServer(client, config);
+      await server.connect(transport);
+      logger.info('Navidrome MCP Server started successfully');
+    }
   } catch (error) {
     // Provide detailed error information for debugging
     logger.error('Failed to start Navidrome MCP Server');

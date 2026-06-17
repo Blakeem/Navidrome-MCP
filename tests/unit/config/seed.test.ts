@@ -18,6 +18,7 @@ const ENV_KEYS = [
   'WEBUI_PORT', 'WEBUI_EXPOSE', 'DEBUG', 'LASTFM_API_KEY',
   'RADIO_BROWSER_USER_AGENT', 'RADIO_BROWSER_BASE',
   'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE',
+  'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT',
 ];
 
 describe('buildFormSeed', () => {
@@ -79,6 +80,31 @@ describe('buildFormSeed', () => {
     const seed = buildFormSeed();
     expect(seed.features?.radioBrowserUserAgent).toBe('MyAgent');
     expect(seed.features?.lrclibBase).toBe('https://lrclib.example');
+  });
+
+  it('defaults the transport to stdio when no env is set', () => {
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    const seed = buildFormSeed();
+    expect(seed.transport?.type).toBe('stdio');
+    expect(seed.transport?.port).toBe(3000);
+    expect(seed.transport?.host ?? null).toBeNull();
+  });
+
+  it('imports the http transport from env vars', () => {
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    process.env['MCP_TRANSPORT'] = 'http';
+    process.env['MCP_HTTP_HOST'] = '0.0.0.0';
+    process.env['MCP_HTTP_PORT'] = '8080';
+    const seed = buildFormSeed();
+    expect(seed.transport?.type).toBe('http');
+    expect(seed.transport?.host).toBe('0.0.0.0');
+    expect(seed.transport?.port).toBe(8080);
+  });
+
+  it('ignores an unrecognized MCP_TRANSPORT value (falls back to stdio)', () => {
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    process.env['MCP_TRANSPORT'] = 'bogus';
+    expect(buildFormSeed().transport?.type).toBe('stdio');
   });
 
   it('coerces typed env vars (port int, expose/debug bool)', () => {

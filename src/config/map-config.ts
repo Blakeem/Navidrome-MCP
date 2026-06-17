@@ -42,6 +42,7 @@ function nonEmpty(value: string | null | undefined): string | undefined {
  */
 export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
   const nav = settings.navidrome ?? {};
+  const transport = settings.transport ?? {};
   const features = settings.features ?? {};
   const playback = settings.playback ?? {};
   const webui = settings.webui ?? {};
@@ -75,6 +76,12 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
     debug: advanced.debug ?? false,
     cacheTtl: advanced.cacheTtl ?? 300,
     tokenExpiry: advanced.tokenExpiry ?? 86400,
+
+    transport: {
+      type: transport.type ?? 'stdio',
+      host: nonEmpty(transport.host) ?? '0.0.0.0',
+      port: transport.port ?? 3000,
+    },
 
     defaultLibraryIds,
 

@@ -89,11 +89,19 @@ function importFromLegacyEnv(): SettingsFile {
   const cacheTtl = toInt(get('CACHE_TTL'), 300);
   const tokenExpiry = toInt(get('TOKEN_EXPIRY'), 86400);
 
+  const transportType = get('MCP_TRANSPORT') === 'http' ? 'http' : 'stdio';
+  const transportPort = toInt(get('MCP_HTTP_PORT'), 3000);
+
   return {
     navidrome: {
       url: get('NAVIDROME_URL') ?? '',
       username: get('NAVIDROME_USERNAME') ?? '',
       password: get('NAVIDROME_PASSWORD') ?? '',
+    },
+    transport: {
+      type: transportType,
+      host: get('MCP_HTTP_HOST') ?? null,
+      port: transportPort,
     },
     library: {
       defaultLibraryIds,

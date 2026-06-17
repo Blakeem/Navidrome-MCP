@@ -156,8 +156,56 @@ save.
 - **mpv path:** point at the mpv binary if it's not on `PATH`; blank auto-detects.
 - **Transcode format:** defaults to `raw` (streams the original file untouched for best quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
 - **Web UI** (port / host / expose / enabled / auto-open browser): configures the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
+- **Transport** (type / host / port): how the server exposes the MCP protocol itself. Defaults to `stdio` (the standard local-process transport every desktop client uses). Set `type` to `http` to serve the [Streamable HTTP transport](#running-over-http-containers--remote-clients) instead — for running the server as a long-lived process that remote clients connect to over the network.
 
 Features turn on automatically when their settings are present. Restart your MCP client after saving.
+
+### Running over HTTP (containers / remote clients)
+
+By default the server speaks MCP over **stdio**: the client launches it as a child
+process and talks to it over stdin/stdout. That's ideal for a desktop client on the same
+machine, but it can't be reached over a network.
+
+Setting the transport to **`http`** makes the server bind a socket and serve the MCP
+[Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
+at `/mcp` instead. This lets you run it as a standalone, always-on process — for example
+a container in the same Kubernetes namespace as Navidrome — and point networked MCP
+clients at it directly, with no external `supergateway`/`mcp-proxy` bridge.
+
+Add a `transport` block to your `settings.json`:
+
+```json
+"transport": {
+  "type": "http",
+  "host": "0.0.0.0",
+  "port": 3000
+}
+```
+
+The MCP endpoint is then served at `http://<host>:<port>/mcp`. Point an HTTP-capable MCP
+client at that URL:
+
+```json
+{
+  "mcpServers": {
+    "navidrome": {
+      "type": "http",
+      "url": "http://your-host:3000/mcp"
+    }
+  }
+}
+```
+
+On first run the settings form also pre-fills the transport from these environment
+variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http`),
+`MCP_HTTP_HOST`, and `MCP_HTTP_PORT`.
+
+> **Security:** `host` defaults to `0.0.0.0` because choosing HTTP is itself the opt-in to
+> network exposure, and the server has **no built-in authentication**. Anyone who can reach
+> the port can drive your Navidrome library. Restrict access with a Kubernetes
+> NetworkPolicy, a firewall, or a reverse proxy that adds authentication/TLS — or bind
+> `host` to a specific interface. Keep the default `stdio` transport unless you
+> specifically need remote access.
 
 ### Installing mpv (optional)
 
@@ -195,7 +243,7 @@ Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `
 
 ### A Note on ChatGPT Desktop
 
-ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and isn't compatible with local stdio servers like this one. You can bridge a stdio server to HTTPS with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), but for a self-hosted music server it's simpler to use Claude Desktop, Claude Code, Cursor, or another client with native stdio support.
+ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and isn't compatible with local stdio servers. This server can now serve MCP directly over HTTP — see [Running over HTTP](#running-over-http-containers--remote-clients) — so you can host it behind a reverse proxy that terminates TLS instead of reaching for an external bridge like [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). For a self-hosted music server, though, it's still simplest to use Claude Desktop, Claude Code, Cursor, or another client with native stdio support.
 
 ## MPV Remote (Web UI)
 

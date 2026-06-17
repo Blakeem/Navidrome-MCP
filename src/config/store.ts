@@ -44,6 +44,11 @@ export const SettingsFileSchema = z.object({
     username: z.string().optional(),
     password: z.string().optional(),
   }).optional(),
+  transport: z.object({
+    type: z.enum(['stdio', 'http']).optional(),
+    host: z.string().nullish(),
+    port: z.number().int().min(1).max(65535).optional(),
+  }).optional(),
   library: z.object({
     defaultLibraryIds: z.array(z.number()).optional(),
     filterCacheEnabled: z.boolean().optional(),

@@ -4,6 +4,11 @@
     "username": "your_username",
     "password": "your_password"
   },
+  "transport": {
+    "type": "stdio",
+    "host": "0.0.0.0",
+    "port": 3000
+  },
   "library": {
     "defaultLibraryIds": [],
     "filterCacheEnabled": true

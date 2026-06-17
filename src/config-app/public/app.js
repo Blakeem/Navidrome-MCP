@@ -13,6 +13,9 @@ const FIELDS = [
   ['navidrome.password', 'password', 'string'],
   ['library.defaultLibraryIds', 'defaultLibraries', 'csvIntArray'],
   ['library.filterCacheEnabled', 'filterCacheEnabled', 'bool', true],
+  ['transport.type', 'transportType', 'string', 'stdio'],
+  ['transport.host', 'transportHost', 'stringOrNull'],
+  ['transport.port', 'transportPort', 'int', 3000],
   ['features.lastFmApiKey', 'lastFmApiKey', 'stringOrNull'],
   ['features.musicBrainzUserAgent', 'musicBrainzUserAgent', 'stringOrNull'],
   ['features.radioBrowserUserAgent', 'radioBrowserUserAgent', 'stringOrNull'],
@@ -64,7 +67,10 @@ function populate(seed) {
         el.value = raw == null ? '' : String(raw);
         break;
       default: // string | stringOrNull
-        el.value = raw == null ? '' : String(raw);
+        // Fall back to the declared default when the seed has no value, so a
+        // <select> (e.g. transport.type) lands on a valid option instead of an
+        // empty/-1 selection. Text inputs without a default just stay blank.
+        el.value = raw == null ? (dflt == null ? '' : String(dflt)) : String(raw);
     }
   }
 }
