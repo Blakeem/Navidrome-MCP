@@ -82,6 +82,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     // `/mcp` is the protocol endpoint; query strings are ignored. `req.url` is
     // always a path here (origin-form), so a prefix check on the pathname is
     // sufficient.
+    const method = req.method ?? 'GET';
     const path = (req.url ?? '/').split('?')[0];
 
     if (path === HEALTH_PATH) {
@@ -93,6 +94,14 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       }
       return;
     }
+
+    const startedAt = Date.now();
+    res.once('finish', () => {
+      const sid = headerValue(req, 'mcp-session-id');
+      const session = sid !== undefined ? ` [session ${sid}]` : '';
+      const elapsed = Date.now() - startedAt;
+      logger.info(`HTTP ${method} ${path} -> ${String(res.statusCode)} (${String(elapsed)}ms)${session}`);
+    });
 
     if (path !== MCP_PATH) {
       writeError(res, 404, `Not found. The MCP endpoint is ${MCP_PATH}.`);
