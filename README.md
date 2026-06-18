@@ -196,6 +196,10 @@ client at that URL:
 }
 ```
 
+In HTTP mode the server also exposes an unauthenticated liveness endpoint at
+`GET /healthz` (returns `200 {"status":"ok"}`) for container/orchestrator health
+checks — it reports only that the HTTP server is up, and performs no Navidrome call.
+
 On first run the settings form also pre-fills the transport from these environment
 variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http`),
 `MCP_HTTP_HOST`, and `MCP_HTTP_PORT`.

@@ -27,6 +27,9 @@ import { logger } from '../utils/logger.js';
 /** The single HTTP path the MCP Streamable HTTP transport is served on. */
 const MCP_PATH = '/mcp';
 
+/** Unauthenticated liveness endpoint for container/orchestrator health checks. */
+const HEALTH_PATH = '/healthz';
+
 /** A running HTTP transport: where clients connect, and how to stop it. */
 export interface HttpTransport {
   url: string;
@@ -76,9 +79,21 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   });
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // Only `/mcp` is served; query strings are ignored. `req.url` is always a
-    // path here (origin-form), so a prefix check on the pathname is sufficient.
+    // `/mcp` is the protocol endpoint; query strings are ignored. `req.url` is
+    // always a path here (origin-form), so a prefix check on the pathname is
+    // sufficient.
     const path = (req.url ?? '/').split('?')[0];
+
+    if (path === HEALTH_PATH) {
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ status: 'ok' }));
+      } else {
+        writeError(res, 405, 'Method Not Allowed');
+      }
+      return;
+    }
+
     if (path !== MCP_PATH) {
       writeError(res, 404, `Not found. The MCP endpoint is ${MCP_PATH}.`);
       return;

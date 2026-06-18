@@ -133,4 +133,17 @@ describe('Streamable HTTP transport', () => {
     const res = await fetch(`http://${base.host}/nope`, { method: 'GET' });
     expect(res.status).toBe(404);
   });
+
+  it('serves a 200 health check at /healthz', async () => {
+    const base = endpoint(handle);
+    const res = await fetch(`http://${base.host}/healthz`, { method: 'GET' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'ok' });
+  });
+
+  it('rejects a non-GET method on /healthz', async () => {
+    const base = endpoint(handle);
+    const res = await fetch(`http://${base.host}/healthz`, { method: 'POST' });
+    expect(res.status).toBe(405);
+  });
 });
