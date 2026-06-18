@@ -43,8 +43,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}},value=${{ steps.ctx.outputs.ref }}
+            type=semver,pattern={{major}},value=${{ steps.ctx.outputs.ref }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.ctx.outputs.ref }}
+            type=semver,pattern={{version}},value=${{ steps.ctx.outputs.ref }}
           flavor: |
             latest=${{ github.event_name == 'release' && 'auto' || 'false' }}
 
