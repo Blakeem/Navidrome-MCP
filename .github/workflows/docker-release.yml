@@ -1,4 +1,4 @@
-name: Build and push Docker image to GHCR
+name: Build and push Docker image
 
 on:
   release:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing git tag / version to build and push (e.g. v2.1.0)'
+        description: 'Image tag to build and push (e.g. v2.1.0)'
         required: true
 
 jobs:
@@ -23,8 +23,6 @@ jobs:
 
       - name: Checkout code
         uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.ctx.outputs.ref }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
