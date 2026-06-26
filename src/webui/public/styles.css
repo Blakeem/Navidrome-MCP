@@ -675,6 +675,42 @@ body.player-stopped::after {
   font-size: 0.9rem;
 }
 
+/* ---------- modal tabs ---------- */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border, var(--surface-2));
+}
+.modal-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 8px 14px;
+  font-size: 0.92rem;
+  cursor: pointer;
+  min-height: 40px;
+}
+.modal-tab:hover { color: var(--text); }
+.modal-tab.is-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* A hidden pane is collapsed via the native [hidden] attribute. */
+.modal-pane[hidden] { display: none; }
+
+/* Starred action row: side-by-side play buttons (two on the songs tab, three
+   on the albums tab). `flex-wrap` lets the third button drop to a new line on
+   narrow viewports instead of overflowing the modal. */
+.starred-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
 /* ---------- playlist picker ---------- */
 .playlist-options {
   display: flex;

@@ -49,6 +49,19 @@
     plList: $('playlists-list'),
     plStatus: $('playlists-status'),
     plShuffle: $('pl-shuffle'),
+    plTabPlaylists: $('pl-tab-playlists'),
+    plTabStarred: $('pl-tab-starred'),
+    plTabAlbums: $('pl-tab-albums'),
+    plPanePlaylists: $('pl-pane-playlists'),
+    plPaneStarred: $('pl-pane-starred'),
+    plPaneAlbums: $('pl-pane-albums'),
+    starredStatus: $('starred-status'),
+    starredPlayOrder: $('starred-play-order'),
+    starredPlayShuffle: $('starred-play-shuffle'),
+    albumsStatus: $('albums-status'),
+    albumsPlayOrder: $('albums-play-order'),
+    albumsPlayShuffleAlbums: $('albums-play-shuffle-albums'),
+    albumsPlayShuffleSongs: $('albums-play-shuffle-songs'),
     clearQueue: $('clear-queue'),
     openSettings: $('open-settings'),
     setDialog: $('settings-dialog'),
@@ -632,7 +645,20 @@
       }
     });
 
+    els.plTabPlaylists.addEventListener('click', () => switchTab('playlists'));
+    els.plTabStarred.addEventListener('click', () => switchTab('starred'));
+    els.plTabAlbums.addEventListener('click', () => switchTab('albums'));
+    els.starredPlayOrder.addEventListener('click', () => void playStarred(false));
+    els.starredPlayShuffle.addEventListener('click', () => void playStarred(true));
+    els.albumsPlayOrder.addEventListener('click', () => void playStarredAlbums('none'));
+    els.albumsPlayShuffleAlbums.addEventListener('click', () => void playStarredAlbums('albums'));
+    els.albumsPlayShuffleSongs.addEventListener('click', () => void playStarredAlbums('songs'));
+
     els.openPlaylists.addEventListener('click', async () => {
+      // Always reopen on the Playlists tab and reset the starred hints.
+      switchTab('playlists');
+      els.starredStatus.textContent = 'Play all of your hearted songs, least-recently-played first.';
+      els.albumsStatus.textContent = 'Play all of your hearted albums, least-recently-played first.';
       els.plStatus.textContent = 'Loading playlists…';
       els.plList.replaceChildren();
       if (typeof els.plDialog.showModal === 'function') els.plDialog.showModal();
@@ -716,9 +742,81 @@
     });
   }
 
+  function switchTab(name) {
+    // Drive every tab/pane pair from one map so adding a tab is a single entry.
+    const tabs = {
+      playlists: { tab: els.plTabPlaylists, pane: els.plPanePlaylists },
+      starred: { tab: els.plTabStarred, pane: els.plPaneStarred },
+      albums: { tab: els.plTabAlbums, pane: els.plPaneAlbums },
+    };
+    for (const [key, { tab, pane }] of Object.entries(tabs)) {
+      const active = key === name;
+      tab.classList.toggle('is-active', active);
+      pane.hidden = !active;
+    }
+  }
+
   function selectedMode() {
     const checked = els.plDialog.querySelector('input[name="pl-mode"]:checked');
     return checked ? checked.value : 'replace';
+  }
+
+  function starredMode() {
+    const checked = els.plDialog.querySelector('input[name="starred-mode"]:checked');
+    return checked ? checked.value : 'replace';
+  }
+
+  async function playStarred(shuffle) {
+    els.starredStatus.textContent = shuffle ? 'Shuffling your starred songs…' : 'Starting your starred songs…';
+    try {
+      const res = await fetch('/api/starred/songs/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: starredMode(), shuffle }),
+      });
+      if (res.ok) {
+        els.plDialog.close();
+      } else {
+        const text = await res.text().catch(() => '');
+        console.warn('webui: play starred songs failed', res.status, text);
+        els.starredStatus.textContent = text.includes('No starred songs')
+          ? 'You have no starred songs yet. Heart some tracks first.'
+          : 'Could not start your starred songs.';
+      }
+    } catch (err) {
+      console.warn('webui: play starred songs failed', err);
+      els.starredStatus.textContent = 'Could not start your starred songs.';
+    }
+  }
+
+  function albumsMode() {
+    const checked = els.plDialog.querySelector('input[name="albums-mode"]:checked');
+    return checked ? checked.value : 'replace';
+  }
+
+  async function playStarredAlbums(shuffle) {
+    els.albumsStatus.textContent = shuffle === 'none'
+      ? 'Starting your starred albums…'
+      : 'Shuffling your starred albums…';
+    try {
+      const res = await fetch('/api/starred/albums/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: albumsMode(), shuffle }),
+      });
+      if (res.ok) {
+        els.plDialog.close();
+      } else {
+        const text = await res.text().catch(() => '');
+        console.warn('webui: play starred albums failed', res.status, text);
+        els.albumsStatus.textContent = text.includes('No starred albums')
+          ? 'You have no starred albums yet. Heart some albums first.'
+          : 'Could not start your starred albums.';
+      }
+    } catch (err) {
+      console.warn('webui: play starred albums failed', err);
+      els.albumsStatus.textContent = 'Could not start your starred albums.';
+    }
   }
 
   async function playPlaylist(id, name) {

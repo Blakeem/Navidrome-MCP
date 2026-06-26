@@ -31,7 +31,7 @@ import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
 import { handleHealth } from './routes/health.js';
 import { handleNetworkInfo } from './routes/network-info.js';
-import { handleListPlaylists, handlePlayPlaylist } from './routes/playlists.js';
+import { handleListPlaylists, handlePlayPlaylist, handlePlayStarredAlbums, handlePlayStarredSongs } from './routes/playlists.js';
 import {
   handleClear,
   handleNext,
@@ -147,6 +147,8 @@ async function handleRequest(
   // --- API: playlists ---
   if (method === 'GET'  && path === '/api/playlists')      return handleListPlaylists(res, deps.client);
   if (method === 'POST' && path === '/api/playlists/play') return handlePlayPlaylist(req, res, deps.client);
+  if (method === 'POST' && path === '/api/starred/songs/play') return handlePlayStarredSongs(req, res, deps.client);
+  if (method === 'POST' && path === '/api/starred/albums/play') return handlePlayStarredAlbums(req, res, deps.client);
 
   // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
   if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res); return; }
