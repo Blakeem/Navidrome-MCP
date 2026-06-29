@@ -17,10 +17,6 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Resolve version
-        id: ctx
-        run: echo "ref=${{ inputs.tag || github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
-
       - name: Checkout code
         uses: actions/checkout@v5
 
@@ -43,11 +39,13 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{major}},value=${{ steps.ctx.outputs.ref }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.ctx.outputs.ref }}
-            type=semver,pattern={{version}},value=${{ steps.ctx.outputs.ref }}
+            type=semver,pattern={{major}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
           flavor: |
             latest=${{ github.event_name == 'release' && 'auto' || 'false' }}
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
 
       - name: Build and push image
         uses: docker/build-push-action@v6
