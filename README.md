@@ -172,13 +172,14 @@ at `/mcp` instead. This lets you run it as a standalone, always-on process — f
 a container in the same Kubernetes namespace as Navidrome — and point networked MCP
 clients at it directly, with no external `supergateway`/`mcp-proxy` bridge.
 
-Add a `transport` block to your `settings.json`:
+Add a `transport` block to your `settings.json`. `host` defaults to `127.0.0.1`
+(loopback only); set `expose: true` to bind all interfaces (`0.0.0.0`) so a remote or in-cluster client can reach it; an explicit `host` overrides this:
 
 ```json
 "transport": {
   "type": "http",
-  "host": "0.0.0.0",
-  "port": 3000
+  "port": 3000,
+  "expose": true
 }
 ```
 
@@ -202,21 +203,22 @@ checks — it reports only that the HTTP server is up, and performs no Navidrome
 
 On first run the settings form also pre-fills the transport from these environment
 variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http`),
-`MCP_HTTP_HOST`, and `MCP_HTTP_PORT`.
+`MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_EXPOSE` (`true` to bind all interfaces).
 
-> **Security:** `host` defaults to `0.0.0.0` because choosing HTTP is itself the opt-in to
-> network exposure, and the server has **no built-in authentication**. Anyone who can reach
-> the port can drive your Navidrome library. Restrict access with a Kubernetes
-> NetworkPolicy, a firewall, or a reverse proxy that adds authentication/TLS — or bind
-> `host` to a specific interface. Keep the default `stdio` transport unless you
-> specifically need remote access.
+> **Security:** the HTTP transport binds **loopback (`127.0.0.1`) by default** and has **no
+> built-in authentication** — the server holds an already-authenticated Navidrome session,
+> so an open port is full library control with no credential. Exposing it beyond localhost
+> is a deliberate opt-in (`expose: true`, or an explicit non-loopback `host`). When you do,
+> restrict access with a Kubernetes NetworkPolicy, a firewall, or a reverse proxy that adds
+> authentication/TLS. Keep the default `stdio` transport unless you specifically need remote
+> access.
 
 #### Running in Docker
 
 A [`Dockerfile`](Dockerfile) is included for exactly this HTTP-transport use case. The
 image reads its config from a mounted `settings.json` (it points
-`NAVIDROME_CONFIG_PATH` at `/config/settings.json`), so create one with the
-`transport.type` set to `http`, then mount it:
+`NAVIDROME_CONFIG_PATH` at `/config/settings.json`), so create one with `transport.type`
+set to `http` and `transport.expose: true` — a container must bind `0.0.0.0` (not the default loopback) to be reachable through the published port — then mount it:
 
 ```bash
 docker build -t navidrome-mcp .
@@ -225,9 +227,8 @@ docker run --rm -p 3000:3000 \
   navidrome-mcp
 ```
 
-The MCP endpoint is then at `http://localhost:3000/mcp`. The container runs as a
-non-root user and ships a healthcheck against the endpoint. (mpv playback isn't included
-in the image — it's meant as a headless, networked MCP server.)
+The MCP endpoint is then at `http://localhost:3000/mcp`, with the `GET /healthz` liveness endpoint available for an orchestrator probe. The container runs as a non-root user. (mpv
+playback isn't included in the image — it's meant as a headless, networked MCP server.)
 
 ### Installing mpv (optional)
 

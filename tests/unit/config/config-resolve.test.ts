@@ -95,23 +95,37 @@ describe('config resolution', () => {
       expect((await loadConfig()).webui.host).toBe('127.0.0.1');
     });
 
-    it('defaults the transport to stdio on 0.0.0.0:3000 when unset', async () => {
+    it('defaults the transport to stdio on loopback:3000 when unset', async () => {
       write(BASE);
       const c = await loadConfig();
-      expect(c.transport).toEqual({ type: 'stdio', host: '0.0.0.0', port: 3000 });
+      expect(c.transport).toEqual({ type: 'stdio', host: '127.0.0.1', port: 3000, expose: false });
     });
 
     it('maps an explicit http transport block', async () => {
-      write({ ...BASE, transport: { type: 'http', host: '127.0.0.1', port: 9000 } });
+      write({ ...BASE, transport: { type: 'http', host: '10.0.0.5', port: 9000 } });
       const c = await loadConfig();
-      expect(c.transport).toEqual({ type: 'http', host: '127.0.0.1', port: 9000 });
+      expect(c.transport).toEqual({ type: 'http', host: '10.0.0.5', port: 9000, expose: false });
     });
 
-    it('falls back to 0.0.0.0 when transport host is blank', async () => {
+    it('stays on loopback when host is blank and expose is unset', async () => {
       write({ ...BASE, transport: { type: 'http', host: '   ' } });
       const c = await loadConfig();
-      expect(c.transport.host).toBe('0.0.0.0');
+      expect(c.transport.host).toBe('127.0.0.1');
       expect(c.transport.port).toBe(3000);
+    });
+
+    it('flips the bind to 0.0.0.0 when expose is set and no explicit host', async () => {
+      write({ ...BASE, transport: { type: 'http', expose: true } });
+      const c = await loadConfig();
+      expect(c.transport.host).toBe('0.0.0.0');
+      expect(c.transport.expose).toBe(true);
+    });
+
+    it('lets an explicit transport host win over expose', async () => {
+      write({ ...BASE, transport: { type: 'http', expose: true, host: '127.0.0.1' } });
+      expect((await loadConfig()).transport.host).toBe('127.0.0.1');
+      write({ ...BASE, transport: { type: 'http', expose: false, host: '1.2.3.4' } });
+      expect((await loadConfig()).transport.host).toBe('1.2.3.4');
     });
 
     it('rejects an unknown transport type', async () => {

@@ -48,6 +48,7 @@ export const SettingsFileSchema = z.object({
     type: z.enum(['stdio', 'http']).optional(),
     host: z.string().nullish(),
     port: z.number().int().min(1).max(65535).optional(),
+    expose: z.boolean().optional(),
   }).optional(),
   library: z.object({
     defaultLibraryIds: z.array(z.number()).optional(),

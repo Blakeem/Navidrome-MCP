@@ -102,6 +102,7 @@ function importFromLegacyEnv(): SettingsFile {
       type: transportType,
       host: get('MCP_HTTP_HOST') ?? null,
       port: transportPort,
+      expose: get('MCP_HTTP_EXPOSE') === 'true',
     },
     library: {
       defaultLibraryIds,

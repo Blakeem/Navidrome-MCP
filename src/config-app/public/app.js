@@ -16,6 +16,7 @@ const FIELDS = [
   ['transport.type', 'transportType', 'string', 'stdio'],
   ['transport.host', 'transportHost', 'stringOrNull'],
   ['transport.port', 'transportPort', 'int', 3000],
+  ['transport.expose', 'transportExpose', 'bool', false],
   ['features.lastFmApiKey', 'lastFmApiKey', 'stringOrNull'],
   ['features.musicBrainzUserAgent', 'musicBrainzUserAgent', 'stringOrNull'],
   ['features.radioBrowserUserAgent', 'radioBrowserUserAgent', 'stringOrNull'],

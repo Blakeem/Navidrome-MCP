@@ -43,13 +43,17 @@ export const ConfigSchema = z.object({
   // transport on `host:port` so the server can run as a long-lived process
   // (e.g. a container in a cluster) that remote clients connect to over HTTP —
   // removing the need to wrap it in an external bridge like `supergateway`.
-  // `host` defaults to 0.0.0.0 because choosing 'http' is itself the opt-in to
-  // network exposure (the local-only default lives in 'stdio'); secure it with
-  // network policy / a reverse proxy. The MCP endpoint is served at `/mcp`.
+  // The MCP endpoint is served at `/mcp`.
+  //
+  // Mirrors the webui exposure model (see below): `host=127.0.0.1` keeps the
+  // endpoint on localhost only. Setting `expose=true` forces the bind to
+  // `0.0.0.0` so a remote/cluster client can reach it; an explicit `host`
+  // overrides this.
   transport: z.object({
     type: z.enum(['stdio', 'http']).default('stdio'),
-    host: z.string().default('0.0.0.0'),
+    host: z.string().default('127.0.0.1'),
     port: z.number().int().min(1).max(65535).default(3000),
+    expose: z.boolean().default(false),
   }),
 
   // Library Configuration

@@ -46,13 +46,17 @@
             <option value="http">http (Streamable HTTP)</option>
           </select>
         </label>
-        <label>Bind host <span class="hint">http only — blank means <code>0.0.0.0</code> (all interfaces)</span>
-          <input id="transportHost" type="text" placeholder="0.0.0.0" />
+        <label>Bind host <span class="hint">http only — blank stays on <code>127.0.0.1</code> (loopback) unless "Expose" is set</span>
+          <input id="transportHost" type="text" placeholder="127.0.0.1" />
         </label>
         <label>Port <span class="hint">http only</span>
           <input id="transportPort" type="number" min="1" max="65535" placeholder="3000" />
         </label>
-        <p class="hint"><span class="warn">http has no built-in auth</span> — anyone who can reach the port controls your library. Restrict access with a firewall, network policy, or an authenticating reverse proxy.</p>
+        <label class="check">
+          <input id="transportExpose" type="checkbox" />
+          <span>Expose on network <span class="warn">binds <code>0.0.0.0</code> (all interfaces) — http has no auth, so anyone who can reach the port gets full library control</span></span>
+        </label>
+        <p class="hint">Leave http unexposed unless you front it with a firewall, network policy, or an authenticating reverse proxy. Setting an explicit bind host overrides this.</p>
       </section>
 
       <section class="card">

@@ -69,6 +69,12 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
   const explicitHost = nonEmpty(webui.host);
   const host = explicitHost ?? (expose ? '0.0.0.0' : '127.0.0.1');
 
+  // transport host: same model as the webui above — loopback by default, an
+  // explicit host wins, and `expose` is the deliberate opt-in to 0.0.0.0.
+  const transportExpose = transport.expose ?? false;
+  const transportExplicitHost = nonEmpty(transport.host);
+  const transportHost = transportExplicitHost ?? (transportExpose ? '0.0.0.0' : '127.0.0.1');
+
   return {
     navidromeUrl: nav.url ?? '',
     navidromeUsername: nav.username ?? '',
@@ -79,8 +85,9 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
 
     transport: {
       type: transport.type ?? 'stdio',
-      host: nonEmpty(transport.host) ?? '0.0.0.0',
+      host: transportHost,
       port: transport.port ?? 3000,
+      expose: transportExpose,
     },
 
     defaultLibraryIds,
