@@ -53,7 +53,7 @@ export class ToolRegistry {
       if (tool) {
         try {
           const result = await category.handleToolCall(name, args);
-          logger.info(`tool ${name} ok (${Date.now() - start}ms)`);
+          logger.debug(`tool ${name} ok (${Date.now() - start}ms)`);
           return result;
         } catch (err) {
           logger.warn(`tool ${name} failed (${Date.now() - start}ms):`, err);
