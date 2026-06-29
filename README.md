@@ -205,14 +205,32 @@ client at that URL (add the `Authorization` header if you set a token):
 }
 ```
 
+**DNS-rebinding protection** is always on for the HTTP transport: requests whose
+`Host` header isn't allow-listed are rejected, so a malicious web page can't drive the
+server through your browser even on loopback. The loopback aliases and the bound
+`host:port` are accepted automatically. If you reach the server through a reverse proxy
+or a Kubernetes Service, add the external `host:port` your clients use to
+`transport.allowedHosts` (otherwise legitimate requests get rejected), e.g.:
+
+```json
+"transport": {
+  "type": "http",
+  "expose": true,
+  "allowedHosts": ["navidrome-mcp.media.svc.cluster.local:3000", "mcp.example.com"]
+}
+```
+
+Set `transport.allowedOrigins` only for browser clients (it gates the `Origin` header).
+
 In HTTP mode the server also exposes an unauthenticated liveness endpoint at
 `GET /healthz` (returns `200 {"status":"ok"}`) for container/orchestrator health
 checks — it reports only that the HTTP server is up, and performs no Navidrome call.
 
 On first run the settings form also pre-fills the transport from these environment
 variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http`),
-`MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), and
-`MCP_HTTP_AUTH_TOKEN`.
+`MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces),
+`MCP_HTTP_AUTH_TOKEN`, and `MCP_HTTP_ALLOWED_HOSTS` / `MCP_HTTP_ALLOWED_ORIGINS`
+(comma-separated).
 
 > **Security:** the HTTP transport binds **loopback (`127.0.0.1`) by default** and is
 > **unauthenticated unless you set `transport.authToken`** — the server holds an

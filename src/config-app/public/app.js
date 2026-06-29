@@ -18,6 +18,8 @@ const FIELDS = [
   ['transport.port', 'transportPort', 'int', 3000],
   ['transport.expose', 'transportExpose', 'bool', false],
   ['transport.authToken', 'transportAuthToken', 'stringOrNull'],
+  ['transport.allowedHosts', 'transportAllowedHosts', 'csvStringArray'],
+  ['transport.allowedOrigins', 'transportAllowedOrigins', 'csvStringArray'],
   ['features.lastFmApiKey', 'lastFmApiKey', 'stringOrNull'],
   ['features.musicBrainzUserAgent', 'musicBrainzUserAgent', 'stringOrNull'],
   ['features.radioBrowserUserAgent', 'radioBrowserUserAgent', 'stringOrNull'],
@@ -65,6 +67,9 @@ function populate(seed) {
       case 'csvIntArray':
         el.value = Array.isArray(raw) ? raw.join(',') : '';
         break;
+      case 'csvStringArray':
+        el.value = Array.isArray(raw) ? raw.join(', ') : '';
+        break;
       case 'int':
         el.value = raw == null ? '' : String(raw);
         break;
@@ -105,6 +110,12 @@ function collect() {
           .split(',')
           .map((t) => parseInt(t.trim(), 10))
           .filter((n) => Number.isFinite(n));
+        break;
+      case 'csvStringArray':
+        value = el.value
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t) => t !== '');
         break;
       default:
         value = el.value;

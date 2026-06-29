@@ -48,6 +48,19 @@ interface HttpTransportOptions {
    */
   authToken?: string | undefined;
   /**
+   * Extra `Host` header values to accept for DNS-rebinding protection, on top of
+   * the loopback + bound `host:port` set derived automatically. A deployment
+   * reached through a proxy / k8s Service must list the external `host:port`
+   * clients actually use (the protection matches the literal `Host` header).
+   */
+  allowedHosts?: string[] | undefined;
+  /**
+   * Allowed `Origin` header values (browser clients only). When set, requests
+   * with a missing or non-listed Origin are rejected; left unset, Origin is not
+   * checked (non-browser MCP clients send none).
+   */
+  allowedOrigins?: string[] | undefined;
+  /**
    * Builds a fresh, fully-configured MCP {@link Server} for a new session. The
    * Streamable HTTP transport is stateful — one transport (and one Server) per
    * client session — so this is invoked once per `initialize`, sharing the
@@ -75,7 +88,12 @@ interface HttpTransportOptions {
  * `/mcp` request; without one, front it with a reverse proxy / network policy.
  */
 export async function startHttpTransport(options: HttpTransportOptions): Promise<HttpTransport> {
-  const { host, port, authToken, createMcpServer } = options;
+  const { host, port, authToken, allowedOrigins, createMcpServer } = options;
+
+  // Computed after listen() (so the ephemeral `port: 0` case resolves to the
+  // real bound port) and read when each per-session transport is constructed —
+  // safe because requests only arrive after listen resolves.
+  let allowedHosts: string[] = [];
 
   // Active sessions keyed by the SDK-generated session id. A transport removes
   // itself here on close (DELETE, client disconnect, or transport error) so the
@@ -172,6 +190,12 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: (): string => randomUUID(),
+      // DNS-rebinding protection: reject requests whose Host (and, if configured,
+      // Origin) header isn't allow-listed, blocking a malicious web page from
+      // driving this server through the victim's browser even on loopback.
+      enableDnsRebindingProtection: true,
+      allowedHosts,
+      ...(allowedOrigins !== undefined ? { allowedOrigins } : {}),
       onsessioninitialized: (sid): void => {
         transports.set(sid, transport);
         logger.debug(`MCP HTTP session initialized: ${sid}`);
@@ -227,6 +251,17 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   // tests). Report a loopback-friendly host when bound to a wildcard address.
   const address = httpServer.address();
   const boundPort = typeof address === 'object' && address !== null ? address.port : port;
+
+  // Allow-list the bound host:port plus the loopback aliases a local client may
+  // send, then add any operator-configured externals (proxy / Service names).
+  const portStr = String(boundPort);
+  allowedHosts = [
+    ...new Set([
+      ...[host, '127.0.0.1', 'localhost', '[::1]'].map((h) => `${h}:${portStr}`),
+      ...(options.allowedHosts ?? []),
+    ]),
+  ];
+
   const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
   const url = `http://${displayHost}:${String(boundPort)}${MCP_PATH}`;
   return { url, close };

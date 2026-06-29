@@ -15,6 +15,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { request as httpRequest } from 'node:http';
 import { startHttpTransport, type HttpTransport } from '../../../src/transport/http.js';
 
 /**
@@ -48,6 +49,43 @@ function makeServer(): Server {
 /** Parse `http://host:port/mcp` back into a URL for the client transport. */
 function endpoint(handle: HttpTransport): URL {
   return new URL(handle.url);
+}
+
+/**
+ * POST an MCP `initialize` to `/mcp` with an explicit `Host` header — `fetch`
+ * forbids overriding Host, so we go through the low-level http client to exercise
+ * DNS-rebinding protection. Resolves with the response status.
+ */
+function postInitWithHost(handle: HttpTransport, hostHeader: string): Promise<number> {
+  const url = endpoint(handle);
+  const body = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'c', version: '0' } },
+  });
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      {
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: '/mcp',
+        method: 'POST',
+        headers: {
+          Host: hostHeader,
+          'Content-Type': 'application/json',
+          Accept: 'application/json, text/event-stream',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode ?? 0));
+      },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
 }
 
 describe('Streamable HTTP transport', () => {
@@ -145,6 +183,49 @@ describe('Streamable HTTP transport', () => {
     const base = endpoint(handle);
     const res = await fetch(`http://${base.host}/healthz`, { method: 'POST' });
     expect(res.status).toBe(405);
+  });
+});
+
+describe('Streamable HTTP transport — DNS-rebinding protection', () => {
+  it('rejects a request with a foreign Host header (403)', async () => {
+    const handle = await startHttpTransport({
+      host: '127.0.0.1',
+      port: 0,
+      createMcpServer: () => makeServer(),
+    });
+    try {
+      expect(await postInitWithHost(handle, 'evil.example.com:1234')).toBe(403);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('accepts the bound loopback host automatically', async () => {
+    const handle = await startHttpTransport({
+      host: '127.0.0.1',
+      port: 0,
+      createMcpServer: () => makeServer(),
+    });
+    try {
+      const port = endpoint(handle).port;
+      expect(await postInitWithHost(handle, `127.0.0.1:${port}`)).toBe(200);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('accepts an operator-configured external host', async () => {
+    const handle = await startHttpTransport({
+      host: '127.0.0.1',
+      port: 0,
+      allowedHosts: ['mcp.example.com:8080'],
+      createMcpServer: () => makeServer(),
+    });
+    try {
+      expect(await postInitWithHost(handle, 'mcp.example.com:8080')).toBe(200);
+    } finally {
+      await handle.close();
+    }
   });
 });
 

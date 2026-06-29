@@ -62,6 +62,12 @@
             <button type="button" id="transportAuthTokenGen" class="btn secondary">Generate</button>
           </span>
         </label>
+        <label>Allowed hosts <span class="hint">http only — DNS-rebinding protection is always on; loopback and the bound <code>host:port</code> are allowed automatically. Behind a proxy / k8s Service, list the external <code>host:port</code> clients use, comma-separated (e.g. <code>mcp.example.com:3000</code>).</span>
+          <input id="transportAllowedHosts" type="text" placeholder="(auto)" />
+        </label>
+        <label>Allowed origins <span class="hint">http only — only needed for browser clients; comma-separated <code>Origin</code> values to accept</span>
+          <input id="transportAllowedOrigins" type="text" placeholder="(none)" />
+        </label>
         <p class="hint">Leave http unexposed unless you set an auth token, or front it with a firewall, network policy, or an authenticating reverse proxy. Setting an explicit bind host overrides the expose toggle.</p>
       </section>
 

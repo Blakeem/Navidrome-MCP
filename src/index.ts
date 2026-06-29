@@ -220,6 +220,8 @@ async function main(): Promise<void> {
         host: config.transport.host,
         port: config.transport.port,
         authToken: config.transport.authToken,
+        allowedHosts: config.transport.allowedHosts,
+        allowedOrigins: config.transport.allowedOrigins,
         createMcpServer: () => createConfiguredServer(client, config),
       });
 

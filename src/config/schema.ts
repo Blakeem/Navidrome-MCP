@@ -54,12 +54,19 @@ export const ConfigSchema = z.object({
   // must present `Authorization: Bearer <token>`. Left unset the endpoint is
   // unauthenticated — fine for loopback or a network-policy-locked pod, but the
   // server warns loudly if it binds a non-loopback address without one.
+  //
+  // DNS-rebinding protection is always on for the HTTP transport. The loopback
+  // and bound `host:port` are accepted automatically; a deployment reached
+  // through a proxy / k8s Service must add the external `host:port` clients use
+  // to `allowedHosts`. `allowedOrigins` is only needed for browser clients.
   transport: z.object({
     type: z.enum(['stdio', 'http']).default('stdio'),
     host: z.string().default('127.0.0.1'),
     port: z.number().int().min(1).max(65535).default(3000),
     expose: z.boolean().default(false),
     authToken: z.string().optional(),
+    allowedHosts: z.array(z.string()).optional(),
+    allowedOrigins: z.array(z.string()).optional(),
   }),
 
   // Library Configuration

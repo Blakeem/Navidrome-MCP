@@ -32,6 +32,13 @@ function nonEmpty(value: string | null | undefined): string | undefined {
   return trimmed === '' ? undefined : trimmed;
 }
 
+/** Trim a string list, drop blanks, and collapse an empty result to `undefined`. */
+function cleanList(value: readonly (string | null | undefined)[] | null | undefined): string[] | undefined {
+  if (value === null || value === undefined) return undefined;
+  const cleaned = value.map((v) => v?.trim()).filter((v): v is string => v !== undefined && v !== '');
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 /**
  * Project the nested store into the flat `RawConfigInput` that `ConfigSchema`
  * validates. The single place the nested→flat translation lives, shared by
@@ -89,6 +96,8 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
       port: transport.port ?? 3000,
       expose: transportExpose,
       authToken: nonEmpty(transport.authToken),
+      allowedHosts: cleanList(transport.allowedHosts),
+      allowedOrigins: cleanList(transport.allowedOrigins),
     },
 
     defaultLibraryIds,
