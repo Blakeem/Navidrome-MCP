@@ -30,6 +30,14 @@ const MCP_PATH = '/mcp';
 /** Unauthenticated liveness endpoint for container/orchestrator health checks. */
 const HEALTH_PATH = '/healthz';
 
+/**
+ * Body cap for the MCP endpoint. Generous compared with the web UI's 16 KB
+ * control routes — a real tool call (e.g. `add_tracks_to_playlist` with many
+ * ids) can be sizeable — but still bounded so a client can't make us buffer
+ * arbitrary input. Bodies over this are rejected with 400.
+ */
+const MCP_MAX_BODY_BYTES = 4 * 1024 * 1024;
+
 /** A running HTTP transport: where clients connect, and how to stop it. */
 export interface HttpTransport {
   url: string;
@@ -166,7 +174,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     // pre-parsed body as the third arg, so it does not re-read the stream.
     let body: unknown;
     try {
-      body = await readJsonBody(req);
+      body = await readJsonBody(req, MCP_MAX_BODY_BYTES);
     } catch {
       writeError(res, 400, 'Invalid or oversized request body');
       return;
