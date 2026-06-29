@@ -254,8 +254,10 @@ docker run --rm -p 3000:3000 \
   navidrome-mcp
 ```
 
-The MCP endpoint is then at `http://localhost:3000/mcp`, with the `GET /healthz` liveness endpoint available for an orchestrator probe. The container runs as a non-root user. (mpv
-playback isn't included in the image — it's meant as a headless, networked MCP server.)
+The MCP endpoint is then at `http://localhost:3000/mcp`. The image ships a Docker
+`HEALTHCHECK` that polls `GET /healthz` on port 3000 (so `docker ps` shows `healthy`;
+orchestrators can use the same endpoint), and runs as a non-root user. (mpv playback isn't
+included in the image — it's meant as a headless, networked MCP server.)
 
 ### Installing mpv (optional)
 
