@@ -202,9 +202,24 @@ async function main(): Promise<void> {
     // (one MCP Server per session); stdio serves the single local-process client
     // the same way it always has.
     if (config.transport.type === 'http') {
+      // Loud warning for the genuinely unsafe combination: bound to a
+      // non-loopback address with no bearer token. We don't refuse to start —
+      // a NetworkPolicy-locked / same-pod deployment is a legitimate no-token
+      // case — but it must never happen silently.
+      const loopback = new Set(['127.0.0.1', '::1', 'localhost']);
+      if (!loopback.has(config.transport.host) && config.transport.authToken === undefined) {
+        logger.warn(
+          `MCP HTTP transport is bound to ${config.transport.host} with NO auth token — ` +
+          'anyone who can reach the port gets full, unauthenticated control of your Navidrome ' +
+          'library. Set transport.authToken, or restrict access with a network policy / ' +
+          'authenticating reverse proxy.'
+        );
+      }
+
       const http = await startHttpTransport({
         host: config.transport.host,
         port: config.transport.port,
+        authToken: config.transport.authToken,
         createMcpServer: () => createConfiguredServer(client, config),
       });
 

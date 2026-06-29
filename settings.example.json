@@ -8,7 +8,8 @@
     "type": "stdio",
     "host": "127.0.0.1",
     "port": 3000,
-    "expose": false
+    "expose": false,
+    "authToken": ""
   },
   "library": {
     "defaultLibraryIds": [],

@@ -128,6 +128,13 @@ describe('config resolution', () => {
       expect((await loadConfig()).transport.host).toBe('1.2.3.4');
     });
 
+    it('maps a non-empty transport authToken through, blank → undefined', async () => {
+      write({ ...BASE, transport: { type: 'http', authToken: '  secret-token  ' } });
+      expect((await loadConfig()).transport.authToken).toBe('secret-token');
+      write({ ...BASE, transport: { type: 'http', authToken: '   ' } });
+      expect((await loadConfig()).transport.authToken).toBeUndefined();
+    });
+
     it('rejects an unknown transport type', async () => {
       write({ ...BASE, transport: { type: 'websocket' } });
       // SettingsFileSchema rejects the bad enum → store reads as unconfigured.

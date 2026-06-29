@@ -17,7 +17,7 @@
  */
 
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
@@ -39,6 +39,14 @@ export interface HttpTransport {
 interface HttpTransportOptions {
   host: string;
   port: number;
+  /**
+   * Optional bearer token. When set, every `/mcp` request must carry
+   * `Authorization: Bearer <token>` (compared in constant time) or it is
+   * rejected with 401 before reaching the transport. Left undefined, the
+   * endpoint is unauthenticated — only safe on loopback or behind a network
+   * policy / authenticating proxy. `/healthz` is never gated.
+   */
+  authToken?: string | undefined;
   /**
    * Builds a fresh, fully-configured MCP {@link Server} for a new session. The
    * Streamable HTTP transport is stateful — one transport (and one Server) per
@@ -62,12 +70,12 @@ interface HttpTransportOptions {
  *     session's transport (GET opens the SSE stream, DELETE terminates it).
  *   - Anything else → a JSON-RPC / HTTP error, leaving no orphaned session.
  *
- * Binding host comes from config (`0.0.0.0` by default for this transport, since
- * choosing HTTP is the opt-in to network exposure). There is no built-in auth —
- * front it with a reverse proxy / network policy.
+ * Binding host comes from config (loopback by default; `expose`/an explicit
+ * host opt into network exposure). An optional bearer `authToken` gates every
+ * `/mcp` request; without one, front it with a reverse proxy / network policy.
  */
 export async function startHttpTransport(options: HttpTransportOptions): Promise<HttpTransport> {
-  const { host, port, createMcpServer } = options;
+  const { host, port, authToken, createMcpServer } = options;
 
   // Active sessions keyed by the SDK-generated session id. A transport removes
   // itself here on close (DELETE, client disconnect, or transport error) so the
@@ -105,6 +113,14 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
 
     if (path !== MCP_PATH) {
       writeError(res, 404, `Not found. The MCP endpoint is ${MCP_PATH}.`);
+      return;
+    }
+
+    // Bearer gate (when configured): the session id is the only other access
+    // control, so a missing/wrong token is rejected before we touch a session.
+    if (authToken !== undefined && !isAuthorized(req, authToken)) {
+      res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
       return;
     }
 
@@ -214,6 +230,22 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
   const url = `http://${displayHost}:${String(boundPort)}${MCP_PATH}`;
   return { url, close };
+}
+
+/**
+ * Constant-time bearer check. Hashes both sides to a fixed-width digest first so
+ * `timingSafeEqual` (which throws on length mismatch) is safe and the comparison
+ * leaks neither the token length nor where it first differs.
+ */
+function isAuthorized(req: IncomingMessage, token: string): boolean {
+  const header = headerValue(req, 'authorization');
+  if (header === undefined) return false;
+  const match = /^Bearer[ ]+(.+)$/i.exec(header.trim());
+  const presented = match?.[1];
+  if (presented === undefined) return false;
+  const a = createHash('sha256').update(presented).digest();
+  const b = createHash('sha256').update(token).digest();
+  return timingSafeEqual(a, b);
 }
 
 /** Read a single header value as a string (collapsing the array form). */

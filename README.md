@@ -173,25 +173,33 @@ a container in the same Kubernetes namespace as Navidrome — and point networke
 clients at it directly, with no external `supergateway`/`mcp-proxy` bridge.
 
 Add a `transport` block to your `settings.json`. `host` defaults to `127.0.0.1`
-(loopback only); set `expose: true` to bind all interfaces (`0.0.0.0`) so a remote or in-cluster client can reach it; an explicit `host` overrides this:
+(loopback only); set `expose: true` to bind all interfaces (`0.0.0.0`) so a remote or in-cluster client can reach it; an explicit `host` overrides this. Set `authToken` to require bearer auth (recommended whenever the port is reachable beyond loopback):
 
 ```json
 "transport": {
   "type": "http",
   "port": 3000,
-  "expose": true
+  "expose": true,
+  "authToken": "a-long-random-secret"
 }
 ```
 
+The settings page has a **Generate** button next to the auth-token field. When a token is
+set, every `/mcp` request must carry `Authorization: Bearer <token>` (compared in constant
+time); anything else gets a `401`. `/healthz` is never gated. If the transport binds a
+non-loopback address with **no** token, the server logs a loud warning at startup rather
+than refusing to start, so a NetworkPolicy-locked deployment keeps zero-friction.
+
 The MCP endpoint is then served at `http://<host>:<port>/mcp`. Point an HTTP-capable MCP
-client at that URL:
+client at that URL (add the `Authorization` header if you set a token):
 
 ```json
 {
   "mcpServers": {
     "navidrome": {
       "type": "http",
-      "url": "http://your-host:3000/mcp"
+      "url": "http://your-host:3000/mcp",
+      "headers": { "Authorization": "Bearer a-long-random-secret" }
     }
   }
 }
@@ -203,15 +211,16 @@ checks — it reports only that the HTTP server is up, and performs no Navidrome
 
 On first run the settings form also pre-fills the transport from these environment
 variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http`),
-`MCP_HTTP_HOST`, `MCP_HTTP_PORT`, and `MCP_HTTP_EXPOSE` (`true` to bind all interfaces).
+`MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), and
+`MCP_HTTP_AUTH_TOKEN`.
 
-> **Security:** the HTTP transport binds **loopback (`127.0.0.1`) by default** and has **no
-> built-in authentication** — the server holds an already-authenticated Navidrome session,
-> so an open port is full library control with no credential. Exposing it beyond localhost
-> is a deliberate opt-in (`expose: true`, or an explicit non-loopback `host`). When you do,
-> restrict access with a Kubernetes NetworkPolicy, a firewall, or a reverse proxy that adds
-> authentication/TLS. Keep the default `stdio` transport unless you specifically need remote
-> access.
+> **Security:** the HTTP transport binds **loopback (`127.0.0.1`) by default** and is
+> **unauthenticated unless you set `transport.authToken`** — the server holds an
+> already-authenticated Navidrome session, so an open port is full library control with no
+> credential. Exposing it beyond localhost is a deliberate opt-in (`expose: true`, or an
+> explicit non-loopback `host`); when you do, set an auth token **and/or** restrict access
+> with a Kubernetes NetworkPolicy, a firewall, or a reverse proxy that adds TLS. Keep the
+> default `stdio` transport unless you specifically need remote access.
 
 #### Running in Docker
 

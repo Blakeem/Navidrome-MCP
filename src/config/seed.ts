@@ -103,6 +103,7 @@ function importFromLegacyEnv(): SettingsFile {
       host: get('MCP_HTTP_HOST') ?? null,
       port: transportPort,
       expose: get('MCP_HTTP_EXPOSE') === 'true',
+      authToken: get('MCP_HTTP_AUTH_TOKEN') ?? null,
     },
     library: {
       defaultLibraryIds,

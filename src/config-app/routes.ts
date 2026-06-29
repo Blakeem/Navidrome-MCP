@@ -161,14 +161,19 @@ async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Pro
   return unmaskSecrets(result.data);
 }
 
-/** Replace the real password with the sentinel for safe display. */
+/** Replace stored secrets (Navidrome password, MCP auth token) with the sentinel
+ * for safe display. */
 function maskSecrets(settings: SettingsFile): SettingsFile {
+  let masked = settings;
   const password = settings.navidrome?.password;
-  if (password === undefined || password === '') return settings;
-  return {
-    ...settings,
-    navidrome: { ...settings.navidrome, password: PASSWORD_SENTINEL },
-  };
+  if (password !== undefined && password !== '') {
+    masked = { ...masked, navidrome: { ...masked.navidrome, password: PASSWORD_SENTINEL } };
+  }
+  const authToken = settings.transport?.authToken;
+  if (authToken !== undefined && authToken !== null && authToken !== '') {
+    masked = { ...masked, transport: { ...masked.transport, authToken: PASSWORD_SENTINEL } };
+  }
+  return masked;
 }
 
 /**
@@ -181,12 +186,19 @@ function maskSecrets(settings: SettingsFile): SettingsFile {
  * looked filled — the seed is the correct source.
  */
 function unmaskSecrets(settings: SettingsFile): SettingsFile {
-  if (settings.navidrome?.password !== PASSWORD_SENTINEL) return settings;
-  const stored = buildFormSeed().navidrome?.password ?? '';
-  return {
-    ...settings,
-    navidrome: { ...settings.navidrome, password: stored },
-  };
+  let result = settings;
+  // Read both secrets from the SAME source the form was seeded from.
+  let seed: SettingsFile | undefined;
+  const seeded = (): SettingsFile => (seed ??= buildFormSeed());
+  if (result.navidrome?.password === PASSWORD_SENTINEL) {
+    const stored = seeded().navidrome?.password ?? '';
+    result = { ...result, navidrome: { ...result.navidrome, password: stored } };
+  }
+  if (result.transport?.authToken === PASSWORD_SENTINEL) {
+    const stored = seeded().transport?.authToken ?? null;
+    result = { ...result, transport: { ...result.transport, authToken: stored } };
+  }
+  return result;
 }
 
 function extractMessage(err: unknown): string {

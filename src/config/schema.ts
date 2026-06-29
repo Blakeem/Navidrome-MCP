@@ -49,11 +49,17 @@ export const ConfigSchema = z.object({
   // endpoint on localhost only. Setting `expose=true` forces the bind to
   // `0.0.0.0` so a remote/cluster client can reach it; an explicit `host`
   // overrides this.
+  //
+  // `authToken` (optional) turns on bearer auth: when set, every `/mcp` request
+  // must present `Authorization: Bearer <token>`. Left unset the endpoint is
+  // unauthenticated — fine for loopback or a network-policy-locked pod, but the
+  // server warns loudly if it binds a non-loopback address without one.
   transport: z.object({
     type: z.enum(['stdio', 'http']).default('stdio'),
     host: z.string().default('127.0.0.1'),
     port: z.number().int().min(1).max(65535).default(3000),
     expose: z.boolean().default(false),
+    authToken: z.string().optional(),
   }),
 
   // Library Configuration

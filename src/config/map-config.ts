@@ -88,6 +88,7 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
       host: transportHost,
       port: transport.port ?? 3000,
       expose: transportExpose,
+      authToken: nonEmpty(transport.authToken),
     },
 
     defaultLibraryIds,

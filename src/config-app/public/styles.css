@@ -91,6 +91,10 @@ label.check { display: flex; align-items: flex-start; gap: 10px; }
 label.check input { width: auto; margin-top: 3px; }
 label.check span { font-weight: 400; }
 
+.with-btn { display: flex; gap: 8px; align-items: stretch; }
+.with-btn input { flex: 1; }
+.with-btn .btn { flex: 0 0 auto; white-space: nowrap; }
+
 .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
 .btn {
   padding: 10px 18px;

@@ -54,9 +54,15 @@
         </label>
         <label class="check">
           <input id="transportExpose" type="checkbox" />
-          <span>Expose on network <span class="warn">binds <code>0.0.0.0</code> (all interfaces) — http has no auth, so anyone who can reach the port gets full library control</span></span>
+          <span>Expose on network <span class="warn">binds <code>0.0.0.0</code> (all interfaces) — anyone who can reach the port gets full library control unless you set an auth token below</span></span>
         </label>
-        <p class="hint">Leave http unexposed unless you front it with a firewall, network policy, or an authenticating reverse proxy. Setting an explicit bind host overrides this.</p>
+        <label>Auth token <span class="hint">http only — when set, clients must send <code>Authorization: Bearer &lt;token&gt;</code>. Leave blank for no auth (loopback / network-policy-locked only).</span>
+          <span class="with-btn">
+            <input id="transportAuthToken" type="password" placeholder="(no auth)" autocomplete="off" />
+            <button type="button" id="transportAuthTokenGen" class="btn secondary">Generate</button>
+          </span>
+        </label>
+        <p class="hint">Leave http unexposed unless you set an auth token, or front it with a firewall, network policy, or an authenticating reverse proxy. Setting an explicit bind host overrides the expose toggle.</p>
       </section>
 
       <section class="card">

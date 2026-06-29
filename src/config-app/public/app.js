@@ -17,6 +17,7 @@ const FIELDS = [
   ['transport.host', 'transportHost', 'stringOrNull'],
   ['transport.port', 'transportPort', 'int', 3000],
   ['transport.expose', 'transportExpose', 'bool', false],
+  ['transport.authToken', 'transportAuthToken', 'stringOrNull'],
   ['features.lastFmApiKey', 'lastFmApiKey', 'stringOrNull'],
   ['features.musicBrainzUserAgent', 'musicBrainzUserAgent', 'stringOrNull'],
   ['features.radioBrowserUserAgent', 'radioBrowserUserAgent', 'stringOrNull'],
@@ -227,6 +228,19 @@ async function init() {
   }
   document.getElementById('test-btn').addEventListener('click', onTest);
   document.getElementById('settings-form').addEventListener('submit', onSave);
+  const genBtn = document.getElementById('transportAuthTokenGen');
+  if (genBtn) genBtn.addEventListener('click', generateAuthToken);
+}
+
+/* Fill the auth-token field with a fresh 256-bit random token (hex). Shown as
+ * plaintext on generation so the user can copy it for their client config. */
+function generateAuthToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  const el = document.getElementById('transportAuthToken');
+  el.type = 'text';
+  el.value = token;
 }
 
 init();

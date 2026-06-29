@@ -19,6 +19,7 @@ const ENV_KEYS = [
   'RADIO_BROWSER_USER_AGENT', 'RADIO_BROWSER_BASE',
   'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE',
   'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT', 'MCP_HTTP_EXPOSE',
+  'MCP_HTTP_AUTH_TOKEN',
 ];
 
 describe('buildFormSeed', () => {
@@ -97,11 +98,13 @@ describe('buildFormSeed', () => {
     process.env['MCP_HTTP_HOST'] = '10.0.0.5';
     process.env['MCP_HTTP_PORT'] = '8080';
     process.env['MCP_HTTP_EXPOSE'] = 'true';
+    process.env['MCP_HTTP_AUTH_TOKEN'] = 'tok-123';
     const seed = buildFormSeed();
     expect(seed.transport?.type).toBe('http');
     expect(seed.transport?.host).toBe('10.0.0.5');
     expect(seed.transport?.port).toBe(8080);
     expect(seed.transport?.expose).toBe(true);
+    expect(seed.transport?.authToken).toBe('tok-123');
   });
 
   it('ignores an unrecognized MCP_TRANSPORT value (falls back to stdio)', () => {

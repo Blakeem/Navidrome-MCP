@@ -147,3 +147,69 @@ describe('Streamable HTTP transport', () => {
     expect(res.status).toBe(405);
   });
 });
+
+describe('Streamable HTTP transport — bearer auth', () => {
+  const TOKEN = 'super-secret-token';
+  let handle: HttpTransport;
+
+  beforeEach(async () => {
+    handle = await startHttpTransport({
+      host: '127.0.0.1',
+      port: 0,
+      authToken: TOKEN,
+      createMcpServer: () => makeServer(),
+    });
+  });
+
+  afterEach(async () => {
+    await handle.close();
+  });
+
+  const initBody = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'c', version: '0' } },
+  });
+  const headers = (auth?: string): Record<string, string> => ({
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+    ...(auth !== undefined ? { Authorization: auth } : {}),
+  });
+
+  it('rejects a request with no Authorization header (401)', async () => {
+    const res = await fetch(handle.url, { method: 'POST', headers: headers(), body: initBody });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toMatch(/bearer/i);
+  });
+
+  it('rejects a wrong bearer token (401)', async () => {
+    const res = await fetch(handle.url, {
+      method: 'POST',
+      headers: headers('Bearer not-the-token'),
+      body: initBody,
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts the correct bearer token and completes the handshake', async () => {
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(
+      new StreamableHTTPClientTransport(endpoint(handle), {
+        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+      }),
+    );
+    try {
+      const tools = await client.listTools();
+      expect(tools.tools.map((t) => t.name)).toContain('ping');
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('never gates /healthz behind the token', async () => {
+    const base = endpoint(handle);
+    const res = await fetch(`http://${base.host}/healthz`, { method: 'GET' });
+    expect(res.status).toBe(200);
+  });
+});
