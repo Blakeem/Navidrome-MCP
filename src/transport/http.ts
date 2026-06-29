@@ -132,7 +132,9 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     const startedAt = Date.now();
     res.once('finish', () => {
       const sid = headerValue(req, 'mcp-session-id');
-      const session = sid !== undefined ? ` [session ${sid}]` : '';
+      // Log a short fingerprint, never the raw id: with no other auth the
+      // session id IS the access token, so it must not land in INFO logs.
+      const session = sid !== undefined ? ` [session ${sessionFingerprint(sid)}]` : '';
       const elapsed = Date.now() - startedAt;
       logger.info(`HTTP ${method} ${path} -> ${String(res.statusCode)} (${String(elapsed)}ms)${session}`);
     });
@@ -289,6 +291,15 @@ function isAuthorized(req: IncomingMessage, token: string): boolean {
   const a = createHash('sha256').update(presented).digest();
   const b = createHash('sha256').update(token).digest();
   return timingSafeEqual(a, b);
+}
+
+/**
+ * A short, non-reversible fingerprint of a session id for logs — the first 8 hex
+ * of its sha256. Enough to correlate a session's requests without writing the
+ * (auth-equivalent) id itself to the log stream.
+ */
+function sessionFingerprint(sessionId: string): string {
+  return createHash('sha256').update(sessionId).digest('hex').slice(0, 8);
 }
 
 /** Read a single header value as a string (collapsing the array form). */
