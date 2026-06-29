@@ -21,7 +21,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createRuntime } from './bootstrap.js';
 import { resolveConfigState, type Config } from './config.js';
-import { startHttpTransport } from './transport/http.js';
+import { startHttpTransport, type HttpTransport } from './transport/http.js';
 import type { NavidromeClient } from './client/navidrome-client.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
@@ -169,38 +169,10 @@ async function main(): Promise<void> {
       }
     }
 
-    // mpv teardown on MCP exit (lifecycle §B.1): mpv stops with its last host.
-    // On a graceful signal, quit mpv IFF no web server is running — when a
-    // `navidrome-web` owns the port (incl. an MCP-spawned child or a persisted
-    // one) it owns mpv and tears it down itself, so MCP must not double-quit.
-    // Covers MCP-only mode and the spawn-failed case. Probe is loopback.
-    if (config.features.playback) {
-      let stopping = false;
-      // Exit with the conventional 128 + signal number so a supervisor sees
-      // signal termination (SIGINT → 130, SIGTERM → 143) rather than a clean
-      // 0 that masks the fact we were killed. Teardown is identical for both.
-      const makeExit = (signo: number) => (): void => {
-        if (stopping) return;
-        stopping = true;
-        void (async (): Promise<void> => {
-          try {
-            if (!(await webOwnerPresent(config.webui.port))) {
-              await playbackEngine.quitMpv();
-              logger.info('MCP exit: no web server owns mpv — quit it');
-            }
-          } catch {
-            /* best-effort */
-          }
-          process.exit(128 + signo);
-        })();
-      };
-      process.once('SIGINT', makeExit(2));
-      process.once('SIGTERM', makeExit(15));
-    }
-
     // Bind the configured transport. HTTP serves remote clients over a socket
     // (one MCP Server per session); stdio serves the single local-process client
     // the same way it always has.
+    let httpHandle: HttpTransport | undefined;
     if (config.transport.type === 'http') {
       // Loud warning for the genuinely unsafe combination: bound to a
       // non-loopback address with no bearer token. We don't refuse to start —
@@ -216,7 +188,7 @@ async function main(): Promise<void> {
         );
       }
 
-      const http = await startHttpTransport({
+      httpHandle = await startHttpTransport({
         host: config.transport.host,
         port: config.transport.port,
         authToken: config.transport.authToken,
@@ -225,27 +197,35 @@ async function main(): Promise<void> {
         createMcpServer: () => createConfiguredServer(client, config),
       });
 
-      // Stop accepting connections on a graceful signal. The playback teardown
-      // handlers above (when registered) already own process.exit; when playback
-      // is off, exit here so the bound socket doesn't keep the process alive.
-      const stopHttp = (signo: number) => (): void => {
-        void (async (): Promise<void> => {
-          try {
-            await http.close();
-          } finally {
-            if (!config.features.playback) process.exit(128 + signo);
-          }
-        })();
-      };
-      process.once('SIGINT', stopHttp(2));
-      process.once('SIGTERM', stopHttp(15));
-
-      logger.info(`Navidrome MCP Server listening on ${http.url} (Streamable HTTP)`);
+      logger.info(`Navidrome MCP Server listening on ${httpHandle.url} (Streamable HTTP)`);
     } else {
       const transport = new StdioServerTransport();
       const server = createConfiguredServer(client, config);
       await server.connect(transport);
       logger.info('Navidrome MCP Server started successfully');
+    }
+
+    if (httpHandle !== undefined || config.features.playback) {
+      let stopping = false;
+      const shutdown = (signo: number) => (): void => {
+        if (stopping) return;
+        stopping = true;
+        void (async (): Promise<void> => {
+          try {
+            if (httpHandle !== undefined) await httpHandle.close();
+            if (config.features.playback && !(await webOwnerPresent(config.webui.port))) {
+              await playbackEngine.quitMpv();
+              logger.info('MCP exit: no web server owns mpv — quit it');
+            }
+          } catch (err) {
+            logger.debug('shutdown cleanup error (continuing to exit):', err);
+          } finally {
+            process.exit(128 + signo);
+          }
+        })();
+      };
+      process.once('SIGINT', shutdown(2));
+      process.once('SIGTERM', shutdown(15));
     }
   } catch (error) {
     // Provide detailed error information for debugging
