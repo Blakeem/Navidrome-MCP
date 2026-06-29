@@ -37,8 +37,6 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --prod --frozen-lockfile --ignore-scripts
 
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/scripts ./scripts
-COPY --from=build /app/assets ./assets
 
 EXPOSE 3000
 
