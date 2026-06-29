@@ -244,8 +244,18 @@ variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http
 
 A [`Dockerfile`](Dockerfile) is included for exactly this HTTP-transport use case. The
 image reads its config from a mounted `settings.json` (it points
-`NAVIDROME_CONFIG_PATH` at `/config/settings.json`), so create one with `transport.type`
-set to `http` and `transport.expose: true` — a container must bind `0.0.0.0` (not the default loopback) to be reachable through the published port — then mount it:
+`NAVIDROME_CONFIG_PATH` at `/config/settings.json`).
+
+> **Required config — the container does nothing useful without it.** The image runs the
+> same binary as everywhere else, which defaults to **stdio**. Mounted with a `settings.json`
+> that leaves `transport.type` at `stdio`, the container starts, binds **no socket**, and
+> never serves `/mcp` or `/healthz` — it just sits there "Up". You **must** set
+> `transport.type: "http"` and `transport.expose: true` (a container has to bind `0.0.0.0`,
+> not the default loopback, to be reachable through the published port). The bundled
+> `HEALTHCHECK` polls `/healthz`, so a container left in stdio mode shows as **unhealthy**
+> rather than silently broken.
+
+Create the `settings.json`, then mount it:
 
 ```bash
 docker build -t navidrome-mcp .
@@ -258,6 +268,62 @@ The MCP endpoint is then at `http://localhost:3000/mcp`. The image ships a Docke
 `HEALTHCHECK` that polls `GET /healthz` on port 3000 (so `docker ps` shows `healthy`;
 orchestrators can use the same endpoint), and runs as a non-root user. (mpv playback isn't
 included in the image — it's meant as a headless, networked MCP server.)
+
+#### Running in Kubernetes
+
+The image expects `settings.json` at `/config/settings.json`. Since that file holds
+plaintext credentials, store it in a `Secret` and mount it (a `ConfigMap` would expose the
+credentials). Use a `livenessProbe` against `/healthz`:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: navidrome-mcp
+type: Opaque
+stringData:
+  settings.json: |
+    {
+      "navidrome": { "url": "http://navidrome:4533", "username": "mcp", "password": "..." },
+      "transport": {
+        "type": "http",
+        "expose": true,
+        "authToken": "a-long-random-secret",
+        "allowedHosts": ["navidrome-mcp:3000"]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: navidrome-mcp
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: navidrome-mcp } }
+  template:
+    metadata: { labels: { app: navidrome-mcp } }
+    spec:
+      containers:
+        - name: navidrome-mcp
+          image: ghcr.io/blakeem/navidrome-mcp:latest
+          ports: [{ containerPort: 3000 }]
+          livenessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+      volumes:
+        - name: config
+          secret:
+            secretName: navidrome-mcp
+            items: [{ key: settings.json, path: settings.json }]
+```
+
+Note `allowedHosts`: with DNS-rebinding protection on, the `host:port` your clients use to
+reach the Service (e.g. `navidrome-mcp:3000`) must be allow-listed, or requests are
+rejected. `env:` is **import-only** (it pre-fills the settings form on first run, not the
+running server), so the mounted `settings.json` is the source of truth in-cluster.
 
 ### Installing mpv (optional)
 
