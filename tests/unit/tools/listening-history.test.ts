@@ -157,6 +157,10 @@ describe('listRecentlyPlayed', () => {
   });
 
   it('timeRange filter: offset paginates the post-filter window (page 2 != page 1)', async () => {
+    // Pin "now" just after the plays below so the `month` cutoff is deterministic
+    // and doesn't rot as real-world time moves past the hardcoded dates.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 4, 9, 12, 0, 1));
     // 5 in-range plays, newest first (the server returns them sorted playDate DESC).
     const rows = Array.from({ length: 5 }, (_, i) => ({
       id: `s${i}`, title: `T${i}`, artist: 'A', artistId: 'a',
