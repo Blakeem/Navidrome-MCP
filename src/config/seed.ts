@@ -89,11 +89,23 @@ function importFromLegacyEnv(): SettingsFile {
   const cacheTtl = toInt(get('CACHE_TTL'), 300);
   const tokenExpiry = toInt(get('TOKEN_EXPIRY'), 86400);
 
+  const transportType = get('MCP_TRANSPORT') === 'http' ? 'http' : 'stdio';
+  const transportPort = toInt(get('MCP_HTTP_PORT'), 3000);
+
   return {
     navidrome: {
       url: get('NAVIDROME_URL') ?? '',
       username: get('NAVIDROME_USERNAME') ?? '',
       password: get('NAVIDROME_PASSWORD') ?? '',
+    },
+    transport: {
+      type: transportType,
+      host: get('MCP_HTTP_HOST') ?? null,
+      port: transportPort,
+      expose: get('MCP_HTTP_EXPOSE') === 'true',
+      authToken: get('MCP_HTTP_AUTH_TOKEN') ?? null,
+      allowedHosts: toList(get('MCP_HTTP_ALLOWED_HOSTS')),
+      allowedOrigins: toList(get('MCP_HTTP_ALLOWED_ORIGINS')),
     },
     library: {
       defaultLibraryIds,
@@ -138,6 +150,13 @@ function toInt(value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const n = parseInt(value, 10);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/** Split a comma-separated env value into a trimmed list, or null when unset. */
+function toList(value: string | undefined): string[] | null {
+  if (value === undefined) return null;
+  const items = value.split(',').map((s) => s.trim()).filter((s) => s !== '');
+  return items.length > 0 ? items : null;
 }
 
 /**

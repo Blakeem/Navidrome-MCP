@@ -39,6 +39,39 @@
       </section>
 
       <section class="card">
+        <h2>MCP transport</h2>
+        <label>Type <span class="hint"><code>stdio</code> = launched locally by your client (default); <code>http</code> = serve over the network at <code>/mcp</code> for remote/containerized clients</span>
+          <select id="transportType">
+            <option value="stdio">stdio (local process)</option>
+            <option value="http">http (Streamable HTTP)</option>
+          </select>
+        </label>
+        <label>Bind host <span class="hint">http only — blank stays on <code>127.0.0.1</code> (loopback) unless "Expose" is set</span>
+          <input id="transportHost" type="text" placeholder="127.0.0.1" />
+        </label>
+        <label>Port <span class="hint">http only</span>
+          <input id="transportPort" type="number" min="1" max="65535" placeholder="3000" />
+        </label>
+        <label class="check">
+          <input id="transportExpose" type="checkbox" />
+          <span>Expose on network <span class="warn">binds <code>0.0.0.0</code> (all interfaces) — anyone who can reach the port gets full library control unless you set an auth token below</span></span>
+        </label>
+        <label>Auth token <span class="hint">http only — when set, clients must send <code>Authorization: Bearer &lt;token&gt;</code>. Leave blank for no auth (loopback / network-policy-locked only).</span>
+          <span class="with-btn">
+            <input id="transportAuthToken" type="password" placeholder="(no auth)" autocomplete="off" />
+            <button type="button" id="transportAuthTokenGen" class="btn secondary">Generate</button>
+          </span>
+        </label>
+        <label>Allowed hosts <span class="hint">http only — DNS-rebinding protection is always on; loopback and the bound <code>host:port</code> are allowed automatically. Behind a proxy / k8s Service, list the external <code>host:port</code> clients use, comma-separated (e.g. <code>mcp.example.com:3000</code>).</span>
+          <input id="transportAllowedHosts" type="text" placeholder="(auto)" />
+        </label>
+        <label>Allowed origins <span class="hint">http only — only needed for browser clients; comma-separated <code>Origin</code> values to accept</span>
+          <input id="transportAllowedOrigins" type="text" placeholder="(none)" />
+        </label>
+        <p class="hint">Leave http unexposed unless you set an auth token, or front it with a firewall, network policy, or an authenticating reverse proxy. Setting an explicit bind host overrides the expose toggle.</p>
+      </section>
+
+      <section class="card">
         <h2>Music discovery — Last.fm <span class="opt">optional</span></h2>
         <label>API key <span class="hint">enables similar artists/tracks, bios, charts — <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener noreferrer">get a free key here</a></span>
           <input id="lastFmApiKey" type="text" placeholder="(disabled)" />

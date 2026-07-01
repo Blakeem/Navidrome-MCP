@@ -23,6 +23,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { logger } from '../../utils/logger.js';
 
 // Tool category interfaces
 export interface ToolCategory {
@@ -46,12 +47,21 @@ export class ToolRegistry {
   }
 
   async handleToolCall(name: string, args: unknown): Promise<unknown> {
+    const start = Date.now();
     for (const category of this.categories.values()) {
       const tool = category.tools.find(t => t.name === name);
       if (tool) {
-        return category.handleToolCall(name, args);
+        try {
+          const result = await category.handleToolCall(name, args);
+          logger.debug(`tool ${name} ok (${Date.now() - start}ms)`);
+          return result;
+        } catch (err) {
+          logger.warn(`tool ${name} failed (${Date.now() - start}ms):`, err);
+          throw err;
+        }
       }
     }
+    logger.warn(`tool ${name} unknown`);
     throw new Error(ErrorFormatter.toolUnknown(name));
   }
 }

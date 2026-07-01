@@ -19,12 +19,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /**
- * Body-size cap for control-route JSON payloads. Our largest body is a seek
- * (`{seconds, mode}`) — well under a hundred bytes. Anything bigger is a
- * misconfigured client or a malicious one, and we'd rather fail fast than
- * buffer arbitrary input on a localhost-default server.
+ * Default body-size cap for control-route JSON payloads. Our largest web-UI body
+ * is a seek (`{seconds, mode}`) — well under a hundred bytes. Anything bigger is
+ * a misconfigured client or a malicious one, and we'd rather fail fast than
+ * buffer arbitrary input on a localhost-default server. Callers handling larger
+ * payloads (e.g. the MCP transport) pass a bigger, still-bounded cap.
  */
-const MAX_BODY_BYTES = 16 * 1024;
+const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
 
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -58,10 +59,14 @@ export async function runAction(res: ServerResponse, action: () => Promise<unkno
 /**
  * Read a JSON request body with a hard size cap. Empty bodies resolve to
  * `null` so caller can distinguish "no body provided" from "{}" — useful for
- * routes that accept no input. Beyond `MAX_BODY_BYTES`, the connection is
- * destroyed (no partial JSON parse) and the promise rejects.
+ * routes that accept no input. Beyond `maxBytes` (defaults to
+ * `DEFAULT_MAX_BODY_BYTES`), the connection is destroyed (no partial JSON parse)
+ * and the promise rejects.
  */
-export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+export async function readJsonBody(
+  req: IncomingMessage,
+  maxBytes: number = DEFAULT_MAX_BODY_BYTES,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let received = 0;
@@ -70,7 +75,7 @@ export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
     req.on('data', (chunk: Buffer) => {
       if (aborted) return;
       received += chunk.length;
-      if (received > MAX_BODY_BYTES) {
+      if (received > maxBytes) {
         aborted = true;
         req.destroy();
         reject(new Error('Request body too large'));

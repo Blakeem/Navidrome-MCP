@@ -32,6 +32,13 @@ function nonEmpty(value: string | null | undefined): string | undefined {
   return trimmed === '' ? undefined : trimmed;
 }
 
+/** Trim a string list, drop blanks, and collapse an empty result to `undefined`. */
+function cleanList(value: readonly (string | null | undefined)[] | null | undefined): string[] | undefined {
+  if (value === null || value === undefined) return undefined;
+  const cleaned = value.map((v) => v?.trim()).filter((v): v is string => v !== undefined && v !== '');
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
 /**
  * Project the nested store into the flat `RawConfigInput` that `ConfigSchema`
  * validates. The single place the nested→flat translation lives, shared by
@@ -42,6 +49,7 @@ function nonEmpty(value: string | null | undefined): string | undefined {
  */
 export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
   const nav = settings.navidrome ?? {};
+  const transport = settings.transport ?? {};
   const features = settings.features ?? {};
   const playback = settings.playback ?? {};
   const webui = settings.webui ?? {};
@@ -68,6 +76,12 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
   const explicitHost = nonEmpty(webui.host);
   const host = explicitHost ?? (expose ? '0.0.0.0' : '127.0.0.1');
 
+  // transport host: same model as the webui above — loopback by default, an
+  // explicit host wins, and `expose` is the deliberate opt-in to 0.0.0.0.
+  const transportExpose = transport.expose ?? false;
+  const transportExplicitHost = nonEmpty(transport.host);
+  const transportHost = transportExplicitHost ?? (transportExpose ? '0.0.0.0' : '127.0.0.1');
+
   return {
     navidromeUrl: nav.url ?? '',
     navidromeUsername: nav.username ?? '',
@@ -75,6 +89,16 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
     debug: advanced.debug ?? false,
     cacheTtl: advanced.cacheTtl ?? 300,
     tokenExpiry: advanced.tokenExpiry ?? 86400,
+
+    transport: {
+      type: transport.type ?? 'stdio',
+      host: transportHost,
+      port: transport.port ?? 3000,
+      expose: transportExpose,
+      authToken: nonEmpty(transport.authToken),
+      allowedHosts: cleanList(transport.allowedHosts),
+      allowedOrigins: cleanList(transport.allowedOrigins),
+    },
 
     defaultLibraryIds,
 

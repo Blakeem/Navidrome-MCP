@@ -37,6 +37,38 @@ export const ConfigSchema = z.object({
   cacheTtl: z.number().positive().default(300),
   tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
 
+  // MCP Transport Configuration — how the MCP server exposes itself to clients.
+  // 'stdio' (default) is the classic local-process transport every desktop MCP
+  // client speaks; nothing binds a socket. 'http' serves the MCP Streamable HTTP
+  // transport on `host:port` so the server can run as a long-lived process
+  // (e.g. a container in a cluster) that remote clients connect to over HTTP —
+  // removing the need to wrap it in an external bridge like `supergateway`.
+  // The MCP endpoint is served at `/mcp`.
+  //
+  // Mirrors the webui exposure model (see below): `host=127.0.0.1` keeps the
+  // endpoint on localhost only. Setting `expose=true` forces the bind to
+  // `0.0.0.0` so a remote/cluster client can reach it; an explicit `host`
+  // overrides this.
+  //
+  // `authToken` (optional) turns on bearer auth: when set, every `/mcp` request
+  // must present `Authorization: Bearer <token>`. Left unset the endpoint is
+  // unauthenticated — fine for loopback or a network-policy-locked pod, but the
+  // server warns loudly if it binds a non-loopback address without one.
+  //
+  // DNS-rebinding protection is always on for the HTTP transport. The loopback
+  // and bound `host:port` are accepted automatically; a deployment reached
+  // through a proxy / k8s Service must add the external `host:port` clients use
+  // to `allowedHosts`. `allowedOrigins` is only needed for browser clients.
+  transport: z.object({
+    type: z.enum(['stdio', 'http']).default('stdio'),
+    host: z.string().default('127.0.0.1'),
+    port: z.number().int().min(1).max(65535).default(3000),
+    expose: z.boolean().default(false),
+    authToken: z.string().optional(),
+    allowedHosts: z.array(z.string()).optional(),
+    allowedOrigins: z.array(z.string()).optional(),
+  }),
+
   // Library Configuration
   defaultLibraryIds: z.array(z.number()).optional(),
 

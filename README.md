@@ -156,8 +156,174 @@ save.
 - **mpv path:** point at the mpv binary if it's not on `PATH`; blank auto-detects.
 - **Transcode format:** defaults to `raw` (streams the original file untouched for best quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
 - **Web UI** (port / host / expose / enabled / auto-open browser): configures the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
+- **Transport** (type / host / port): how the server exposes the MCP protocol itself. Defaults to `stdio` (the standard local-process transport every desktop client uses). Set `type` to `http` to serve the [Streamable HTTP transport](#running-over-http-containers--remote-clients) instead — for running the server as a long-lived process that remote clients connect to over the network.
 
 Features turn on automatically when their settings are present. Restart your MCP client after saving.
+
+### Running over HTTP (containers / remote clients)
+
+By default the server speaks MCP over **stdio**: the client launches it as a child
+process and talks to it over stdin/stdout. That's ideal for a desktop client on the same
+machine, but it can't be reached over a network.
+
+Setting the transport to **`http`** makes the server bind a socket and serve the MCP
+[Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
+at `/mcp` instead. This lets you run it as a standalone, always-on process — for example
+a container in the same Kubernetes namespace as Navidrome — and point networked MCP
+clients at it directly, with no external `supergateway`/`mcp-proxy` bridge.
+
+Add a `transport` block to your `settings.json`. `host` defaults to `127.0.0.1`
+(loopback only); set `expose: true` to bind all interfaces (`0.0.0.0`) so a remote or in-cluster client can reach it; an explicit `host` overrides this. Set `authToken` to require bearer auth (recommended whenever the port is reachable beyond loopback):
+
+```json
+"transport": {
+  "type": "http",
+  "port": 3000,
+  "expose": true,
+  "authToken": "a-long-random-secret"
+}
+```
+
+The settings page has a **Generate** button next to the auth-token field. When a token is
+set, every `/mcp` request must carry `Authorization: Bearer <token>` (compared in constant
+time); anything else gets a `401`. `/healthz` is never gated. If the transport binds a
+non-loopback address with **no** token, the server logs a loud warning at startup rather
+than refusing to start, so a NetworkPolicy-locked deployment keeps zero-friction.
+
+The MCP endpoint is then served at `http://<host>:<port>/mcp`. Point an HTTP-capable MCP
+client at that URL (add the `Authorization` header if you set a token):
+
+```json
+{
+  "mcpServers": {
+    "navidrome": {
+      "type": "http",
+      "url": "http://your-host:3000/mcp",
+      "headers": { "Authorization": "Bearer a-long-random-secret" }
+    }
+  }
+}
+```
+
+**DNS-rebinding protection** is always on for the HTTP transport: requests whose
+`Host` header isn't allow-listed are rejected, so a malicious web page can't drive the
+server through your browser even on loopback. The loopback aliases and the bound
+`host:port` are accepted automatically. If you reach the server through a reverse proxy
+or a Kubernetes Service, add the external `host:port` your clients use to
+`transport.allowedHosts` (otherwise legitimate requests get rejected), e.g.:
+
+```json
+"transport": {
+  "type": "http",
+  "expose": true,
+  "allowedHosts": ["navidrome-mcp.media.svc.cluster.local:3000", "mcp.example.com"]
+}
+```
+
+Set `transport.allowedOrigins` only for browser clients (it gates the `Origin` header).
+
+In HTTP mode the server also exposes an unauthenticated liveness endpoint at
+`GET /healthz` (returns `200 {"status":"ok"}`) for container/orchestrator health
+checks — it reports only that the HTTP server is up, and performs no Navidrome call.
+
+On first run the settings form also pre-fills the transport from these environment
+variables (import-only, like all other settings): `MCP_TRANSPORT` (`stdio`|`http`),
+`MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces),
+`MCP_HTTP_AUTH_TOKEN`, and `MCP_HTTP_ALLOWED_HOSTS` / `MCP_HTTP_ALLOWED_ORIGINS`
+(comma-separated).
+
+> **Security:** the HTTP transport binds **loopback (`127.0.0.1`) by default** and is
+> **unauthenticated unless you set `transport.authToken`** — the server holds an
+> already-authenticated Navidrome session, so an open port is full library control with no
+> credential. Exposing it beyond localhost is a deliberate opt-in (`expose: true`, or an
+> explicit non-loopback `host`); when you do, set an auth token **and/or** restrict access
+> with a Kubernetes NetworkPolicy, a firewall, or a reverse proxy that adds TLS. Keep the
+> default `stdio` transport unless you specifically need remote access.
+
+#### Running in Docker
+
+A [`Dockerfile`](Dockerfile) is included for exactly this HTTP-transport use case. The
+image reads its config from a mounted `settings.json` (it points
+`NAVIDROME_CONFIG_PATH` at `/config/settings.json`).
+
+> **Required config — the container does nothing useful without it.** The image runs the
+> same binary as everywhere else, which defaults to **stdio**. Mounted with a `settings.json`
+> that leaves `transport.type` at `stdio`, the container starts, binds **no socket**, and
+> never serves `/mcp` or `/healthz` — it just sits there "Up". You **must** set
+> `transport.type: "http"` and `transport.expose: true` (a container has to bind `0.0.0.0`,
+> not the default loopback, to be reachable through the published port). The bundled
+> `HEALTHCHECK` polls `/healthz`, so a container left in stdio mode shows as **unhealthy**
+> rather than silently broken.
+
+Create the `settings.json`, then mount it:
+
+```bash
+docker build -t navidrome-mcp .
+docker run --rm -p 3000:3000 \
+  -v "$PWD/settings.json:/config/settings.json:ro" \
+  navidrome-mcp
+```
+
+The MCP endpoint is then at `http://localhost:3000/mcp`. The image ships a Docker
+`HEALTHCHECK` that polls `GET /healthz` on port 3000 (so `docker ps` shows `healthy`;
+orchestrators can use the same endpoint), and runs as a non-root user. (mpv playback isn't
+included in the image — it's meant as a headless, networked MCP server.)
+
+#### Running in Kubernetes
+
+The image expects `settings.json` at `/config/settings.json`. Since that file holds
+plaintext credentials, store it in a `Secret` and mount it (a `ConfigMap` would expose the
+credentials). Use a `livenessProbe` against `/healthz`:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: navidrome-mcp
+type: Opaque
+stringData:
+  settings.json: |
+    {
+      "navidrome": { "url": "http://navidrome:4533", "username": "mcp", "password": "..." },
+      "transport": {
+        "type": "http",
+        "expose": true,
+        "authToken": "a-long-random-secret",
+        "allowedHosts": ["navidrome-mcp:3000"]
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: navidrome-mcp
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: navidrome-mcp } }
+  template:
+    metadata: { labels: { app: navidrome-mcp } }
+    spec:
+      containers:
+        - name: navidrome-mcp
+          image: ghcr.io/blakeem/navidrome-mcp:latest
+          ports: [{ containerPort: 3000 }]
+          livenessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+          volumeMounts:
+            - { name: config, mountPath: /config, readOnly: true }
+      volumes:
+        - name: config
+          secret:
+            secretName: navidrome-mcp
+            items: [{ key: settings.json, path: settings.json }]
+```
+
+Note `allowedHosts`: with DNS-rebinding protection on, the `host:port` your clients use to
+reach the Service (e.g. `navidrome-mcp:3000`) must be allow-listed, or requests are
+rejected. `env:` is **import-only** (it pre-fills the settings form on first run, not the
+running server), so the mounted `settings.json` is the source of truth in-cluster.
 
 ### Installing mpv (optional)
 
@@ -195,7 +361,7 @@ Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `
 
 ### A Note on ChatGPT Desktop
 
-ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and isn't compatible with local stdio servers like this one. You can bridge a stdio server to HTTPS with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), but for a self-hosted music server it's simpler to use Claude Desktop, Claude Code, Cursor, or another client with native stdio support.
+ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and isn't compatible with local stdio servers. This server can now serve MCP directly over HTTP — see [Running over HTTP](#running-over-http-containers--remote-clients) — so you can host it behind a reverse proxy that terminates TLS instead of reaching for an external bridge like [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). For a self-hosted music server, though, it's still simplest to use Claude Desktop, Claude Code, Cursor, or another client with native stdio support.
 
 ## MPV Remote (Web UI)
 

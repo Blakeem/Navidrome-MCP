@@ -95,6 +95,52 @@ describe('config resolution', () => {
       expect((await loadConfig()).webui.host).toBe('127.0.0.1');
     });
 
+    it('defaults the transport to stdio on loopback:3000 when unset', async () => {
+      write(BASE);
+      const c = await loadConfig();
+      expect(c.transport).toEqual({ type: 'stdio', host: '127.0.0.1', port: 3000, expose: false });
+    });
+
+    it('maps an explicit http transport block', async () => {
+      write({ ...BASE, transport: { type: 'http', host: '10.0.0.5', port: 9000 } });
+      const c = await loadConfig();
+      expect(c.transport).toEqual({ type: 'http', host: '10.0.0.5', port: 9000, expose: false });
+    });
+
+    it('stays on loopback when host is blank and expose is unset', async () => {
+      write({ ...BASE, transport: { type: 'http', host: '   ' } });
+      const c = await loadConfig();
+      expect(c.transport.host).toBe('127.0.0.1');
+      expect(c.transport.port).toBe(3000);
+    });
+
+    it('flips the bind to 0.0.0.0 when expose is set and no explicit host', async () => {
+      write({ ...BASE, transport: { type: 'http', expose: true } });
+      const c = await loadConfig();
+      expect(c.transport.host).toBe('0.0.0.0');
+      expect(c.transport.expose).toBe(true);
+    });
+
+    it('lets an explicit transport host win over expose', async () => {
+      write({ ...BASE, transport: { type: 'http', expose: true, host: '127.0.0.1' } });
+      expect((await loadConfig()).transport.host).toBe('127.0.0.1');
+      write({ ...BASE, transport: { type: 'http', expose: false, host: '1.2.3.4' } });
+      expect((await loadConfig()).transport.host).toBe('1.2.3.4');
+    });
+
+    it('maps a non-empty transport authToken through, blank → undefined', async () => {
+      write({ ...BASE, transport: { type: 'http', authToken: '  secret-token  ' } });
+      expect((await loadConfig()).transport.authToken).toBe('secret-token');
+      write({ ...BASE, transport: { type: 'http', authToken: '   ' } });
+      expect((await loadConfig()).transport.authToken).toBeUndefined();
+    });
+
+    it('rejects an unknown transport type', async () => {
+      write({ ...BASE, transport: { type: 'websocket' } });
+      // SettingsFileSchema rejects the bad enum → store reads as unconfigured.
+      expect(await resolveConfigState()).toEqual({ configured: false });
+    });
+
     it('requires BOTH provider and user agent to enable lyrics', async () => {
       write({ ...BASE, features: { lyricsProvider: 'lrclib' } });
       expect((await loadConfig()).features.lyrics).toBe(false);

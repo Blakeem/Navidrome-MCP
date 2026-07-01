@@ -13,6 +13,13 @@ const FIELDS = [
   ['navidrome.password', 'password', 'string'],
   ['library.defaultLibraryIds', 'defaultLibraries', 'csvIntArray'],
   ['library.filterCacheEnabled', 'filterCacheEnabled', 'bool', true],
+  ['transport.type', 'transportType', 'string', 'stdio'],
+  ['transport.host', 'transportHost', 'stringOrNull'],
+  ['transport.port', 'transportPort', 'int', 3000],
+  ['transport.expose', 'transportExpose', 'bool', false],
+  ['transport.authToken', 'transportAuthToken', 'stringOrNull'],
+  ['transport.allowedHosts', 'transportAllowedHosts', 'csvStringArray'],
+  ['transport.allowedOrigins', 'transportAllowedOrigins', 'csvStringArray'],
   ['features.lastFmApiKey', 'lastFmApiKey', 'stringOrNull'],
   ['features.musicBrainzUserAgent', 'musicBrainzUserAgent', 'stringOrNull'],
   ['features.radioBrowserUserAgent', 'radioBrowserUserAgent', 'stringOrNull'],
@@ -60,11 +67,17 @@ function populate(seed) {
       case 'csvIntArray':
         el.value = Array.isArray(raw) ? raw.join(',') : '';
         break;
+      case 'csvStringArray':
+        el.value = Array.isArray(raw) ? raw.join(', ') : '';
+        break;
       case 'int':
         el.value = raw == null ? '' : String(raw);
         break;
       default: // string | stringOrNull
-        el.value = raw == null ? '' : String(raw);
+        // Fall back to the declared default when the seed has no value, so a
+        // <select> (e.g. transport.type) lands on a valid option instead of an
+        // empty/-1 selection. Text inputs without a default just stay blank.
+        el.value = raw == null ? (dflt == null ? '' : String(dflt)) : String(raw);
     }
   }
 }
@@ -97,6 +110,12 @@ function collect() {
           .split(',')
           .map((t) => parseInt(t.trim(), 10))
           .filter((n) => Number.isFinite(n));
+        break;
+      case 'csvStringArray':
+        value = el.value
+          .split(',')
+          .map((t) => t.trim())
+          .filter((t) => t !== '');
         break;
       default:
         value = el.value;
@@ -220,6 +239,19 @@ async function init() {
   }
   document.getElementById('test-btn').addEventListener('click', onTest);
   document.getElementById('settings-form').addEventListener('submit', onSave);
+  const genBtn = document.getElementById('transportAuthTokenGen');
+  if (genBtn) genBtn.addEventListener('click', generateAuthToken);
+}
+
+/* Fill the auth-token field with a fresh 256-bit random token (hex). Shown as
+ * plaintext on generation so the user can copy it for their client config. */
+function generateAuthToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  const el = document.getElementById('transportAuthToken');
+  el.type = 'text';
+  el.value = token;
 }
 
 init();

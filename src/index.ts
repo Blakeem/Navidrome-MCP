@@ -20,7 +20,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createRuntime } from './bootstrap.js';
-import { resolveConfigState } from './config.js';
+import { resolveConfigState, type Config } from './config.js';
+import { startHttpTransport, type HttpTransport } from './transport/http.js';
+import type { NavidromeClient } from './client/navidrome-client.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
@@ -42,6 +44,29 @@ process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection:', reason);
 });
 
+/**
+ * Build a fully-configured MCP {@link Server}: a fresh instance with all tools
+ * and resources registered against the shared, already-authenticated client.
+ *
+ * Factored out because the Streamable HTTP transport is stateful and needs one
+ * Server per session, while stdio needs exactly one — both call this so the two
+ * paths register an identical surface.
+ */
+function createConfiguredServer(client: NavidromeClient, config: Config): Server {
+  const server = new Server(
+    {
+      name: 'navidrome-mcp',
+      version: getPackageVersion(),
+    },
+    {
+      capabilities: MCP_CAPABILITIES,
+    }
+  );
+  registerTools(server, client, config);
+  registerResources(server, client);
+  return server;
+}
+
 async function main(): Promise<void> {
   try {
     // Add startup diagnostics for troubleshooting. Config now comes from the
@@ -50,16 +75,6 @@ async function main(): Promise<void> {
     logger.debug('Starting Navidrome MCP Server...');
     logger.debug('Node version:', process.version);
     logger.debug('Platform:', process.platform);
-
-    const server = new Server(
-      {
-        name: 'navidrome-mcp',
-        version: getPackageVersion(),
-      },
-      {
-        capabilities: MCP_CAPABILITIES,
-      }
-    );
 
     // First-run / degraded mode: when settings.json has no usable Navidrome URL
     // we cannot build a client. Instead of crashing, start the loopback settings
@@ -73,6 +88,13 @@ async function main(): Promise<void> {
         `Navidrome MCP is not configured. Open the settings page to set it up: ${settings.url}`
       );
       openBrowser(settings.url);
+
+      // Setup mode is inherently local + interactive, so it always uses stdio
+      // (the HTTP transport is opt-in for a configured, headless deployment).
+      const server = new Server(
+        { name: 'navidrome-mcp', version: getPackageVersion() },
+        { capabilities: MCP_CAPABILITIES }
+      );
       registerDegradedTools(server, settings.url);
 
       // Mirror the happy-path handlers: close the config server, then exit with
@@ -102,9 +124,6 @@ async function main(): Promise<void> {
     // library/filter caches, and configures the playback engine. Identical for
     // the MCP server and the future standalone web server.
     const { config, client } = await createRuntime(state.config);
-
-    registerTools(server, client, config);
-    registerResources(server, client);
 
     // Standalone web player (spec §6). Instead of an in-process server, MCP
     // spawns the SAME `navidrome-web` process it would run standalone, as an IPC
@@ -150,39 +169,64 @@ async function main(): Promise<void> {
       }
     }
 
-    // mpv teardown on MCP exit (lifecycle §B.1): mpv stops with its last host.
-    // On a graceful signal, quit mpv IFF no web server is running — when a
-    // `navidrome-web` owns the port (incl. an MCP-spawned child or a persisted
-    // one) it owns mpv and tears it down itself, so MCP must not double-quit.
-    // Covers MCP-only mode and the spawn-failed case. Probe is loopback.
-    if (config.features.playback) {
+    // Bind the configured transport. HTTP serves remote clients over a socket
+    // (one MCP Server per session); stdio serves the single local-process client
+    // the same way it always has.
+    let httpHandle: HttpTransport | undefined;
+    if (config.transport.type === 'http') {
+      // Loud warning for the genuinely unsafe combination: bound to a
+      // non-loopback address with no bearer token. We don't refuse to start —
+      // a NetworkPolicy-locked / same-pod deployment is a legitimate no-token
+      // case — but it must never happen silently.
+      const loopback = new Set(['127.0.0.1', '::1', 'localhost']);
+      if (!loopback.has(config.transport.host) && config.transport.authToken === undefined) {
+        logger.warn(
+          `MCP HTTP transport is bound to ${config.transport.host} with NO auth token — ` +
+          'anyone who can reach the port gets full, unauthenticated control of your Navidrome ' +
+          'library. Set transport.authToken, or restrict access with a network policy / ' +
+          'authenticating reverse proxy.'
+        );
+      }
+
+      httpHandle = await startHttpTransport({
+        host: config.transport.host,
+        port: config.transport.port,
+        authToken: config.transport.authToken,
+        allowedHosts: config.transport.allowedHosts,
+        allowedOrigins: config.transport.allowedOrigins,
+        createMcpServer: () => createConfiguredServer(client, config),
+      });
+
+      logger.info(`Navidrome MCP Server listening on ${httpHandle.url} (Streamable HTTP)`);
+    } else {
+      const transport = new StdioServerTransport();
+      const server = createConfiguredServer(client, config);
+      await server.connect(transport);
+      logger.info('Navidrome MCP Server started successfully');
+    }
+
+    if (httpHandle !== undefined || config.features.playback) {
       let stopping = false;
-      // Exit with the conventional 128 + signal number so a supervisor sees
-      // signal termination (SIGINT → 130, SIGTERM → 143) rather than a clean
-      // 0 that masks the fact we were killed. Teardown is identical for both.
-      const makeExit = (signo: number) => (): void => {
+      const shutdown = (signo: number) => (): void => {
         if (stopping) return;
         stopping = true;
         void (async (): Promise<void> => {
           try {
-            if (!(await webOwnerPresent(config.webui.port))) {
+            if (httpHandle !== undefined) await httpHandle.close();
+            if (config.features.playback && !(await webOwnerPresent(config.webui.port))) {
               await playbackEngine.quitMpv();
               logger.info('MCP exit: no web server owns mpv — quit it');
             }
-          } catch {
-            /* best-effort */
+          } catch (err) {
+            logger.debug('shutdown cleanup error (continuing to exit):', err);
+          } finally {
+            process.exit(128 + signo);
           }
-          process.exit(128 + signo);
         })();
       };
-      process.once('SIGINT', makeExit(2));
-      process.once('SIGTERM', makeExit(15));
+      process.once('SIGINT', shutdown(2));
+      process.once('SIGTERM', shutdown(15));
     }
-
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-
-    logger.info('Navidrome MCP Server started successfully');
   } catch (error) {
     // Provide detailed error information for debugging
     logger.error('Failed to start Navidrome MCP Server');
