@@ -65,23 +65,17 @@ export const RADIO_VALIDATION = {
   HEAD_TIMEOUT_RATIO: 0.6,
   
   /**
-   * Minimum timeout for audio sampling phase
-   * Ensures sufficient time to detect audio content even with slow connections
+   * Maximum timeout for the audio sampling phase
+   * Caps how long a generous overall budget will linger sampling audio content
    */
-  MIN_SAMPLE_TIMEOUT: 2000, // 2 seconds
+  MAX_SAMPLE_TIMEOUT: 2000, // 2 seconds
   
   /**
    * Buffer size for audio content sampling
    * 8KB provides good balance between detection accuracy and efficiency
    */
   SAMPLE_BUFFER_SIZE: 8192, // 8KB
-  
-  /**
-   * Timeout for reading stream content during validation
-   * Prevents hanging on non-responsive streams during content analysis
-   */
-  STREAM_READ_TIMEOUT: 3000, // 3 seconds
-  
+
   /**
    * Fallback HEAD timeout when calculated value would be too high
    * Prevents excessive wait times for HEAD requests

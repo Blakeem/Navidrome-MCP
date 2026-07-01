@@ -183,7 +183,7 @@ async function serveStatic(res: ServerResponse, pathname: string): Promise<void>
     });
     res.end(body);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') {
       writeError(res, 404, 'Not found');
       return;
     }

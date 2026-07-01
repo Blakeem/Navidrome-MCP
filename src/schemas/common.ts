@@ -149,7 +149,6 @@ export const UrlSchema = z.string().url('URL must be a valid URL');
 
 // String array schemas
 export const StringArraySchema = z.array(z.string());
-export const OptionalStringArraySchema = z.array(z.string()).optional();
 export const NonEmptyStringArraySchema = z.array(z.string()).min(1, 'At least one item is required');
 
 // Individual search tool schemas (query optional for listing functionality)

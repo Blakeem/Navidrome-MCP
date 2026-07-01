@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readSettings, type SettingsFile } from './store.js';
-import { DEFAULT_USER_AGENT, DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
+import { DEFAULT_USER_AGENT, DEFAULT_MUSICBRAINZ_USER_AGENT, DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
 
 /**
  * Recommended values for the optional radio/lyrics fields that gate a feature
@@ -39,6 +39,7 @@ import { DEFAULT_USER_AGENT, DEFAULT_LRCLIB_BASE } from '../constants/defaults.j
  * SRV-based auto mirror selection, which is more robust than pinning a mirror.
  */
 export const FORM_SUGGESTIONS = {
+  'features.musicBrainzUserAgent': DEFAULT_MUSICBRAINZ_USER_AGENT,
   'features.radioBrowserUserAgent': DEFAULT_USER_AGENT,
   'features.lyricsProvider': 'lrclib',
   'features.lrclibUserAgent': DEFAULT_USER_AGENT,
@@ -100,6 +101,7 @@ function importFromLegacyEnv(): SettingsFile {
     },
     features: {
       lastFmApiKey: get('LASTFM_API_KEY') ?? null,
+      musicBrainzUserAgent: get('MUSICBRAINZ_USER_AGENT') ?? FORM_SUGGESTIONS['features.musicBrainzUserAgent'],
       // Radio + lyrics gating fields are pre-filled with the recommended
       // defaults on first run (the values are the single-sourced FORM_SUGGESTIONS
       // above, so the form's later-run "suggested" hints match exactly).

@@ -111,10 +111,16 @@ export async function handleSetPlayerSettings(
     }
   }
 
-  const stored = readSettings()?.webui ?? {};
+  // Build the response from values already in hand rather than re-reading
+  // settings.json — a concurrent writer (e.g. the config-app) could change the
+  // file in the window after writeSettings, and a caught write failure above
+  // would make a re-read report stale/un-persisted values as if applied.
   writeJson(res, 200, {
     persistAfterMcpExit: getPersist(),
-    autoOpenBrowser: stored.autoOpenBrowser ?? false,
+    autoOpenBrowser:
+      typeof input.autoOpenBrowser === 'boolean'
+        ? input.autoOpenBrowser
+        : (current?.webui?.autoOpenBrowser ?? false),
   });
 }
 

@@ -49,8 +49,8 @@ interface UserInfo {
   name: string;
   email: string;
   isAdmin: boolean;
-  lastLoginAt: string;
-  lastAccessAt: string;
+  lastLoginAt: string | null;
+  lastAccessAt: string | null;
   createdAt: string;
   updatedAt: string;
   libraries: LibraryInfo[];
@@ -166,6 +166,18 @@ class LibraryManager {
       // /user/{uid} failure is genuinely abnormal — uid was valid in the
       // JWT but the API rejected it. Bubble up so initialize() can wrap it.
       throw new Error(ErrorFormatter.toolExecution('loadUserLibraries', error));
+    }
+
+    // The response is typed as UserInfo but unvalidated. Guard that `libraries`
+    // is actually an array before downstream code treats it as one (length,
+    // map, etc.). A non-conforming payload (unexpected/future API shape) should
+    // degrade to "not initialized" rather than throw a TypeError deeper in.
+    if (!Array.isArray(this.userInfo.libraries)) {
+      logger.warn(
+        `User payload for ${claims.uid} has no libraries array; skipping library initialization`,
+      );
+      this.userInfo = null;
+      return false;
     }
 
     await this.enrichLibraryStats(client);
@@ -391,7 +403,11 @@ class LibraryManager {
     this.userInfo = null;
     this.activeLibraryIds = [];
     this.initialized = false;
-    LibraryManager.instance = null;
+    // Clear any in-flight init promise so a fresh initialize() can run after
+    // reset instead of awaiting the stale (pre-reset) one. Note: a reset that
+    // races an unsettled initialize() should still await it first — this only
+    // prevents the next initialize() from short-circuiting on the old promise.
+    this.initPromise = null;
   }
 }
 

@@ -14,6 +14,7 @@ const FIELDS = [
   ['library.defaultLibraryIds', 'defaultLibraries', 'csvIntArray'],
   ['library.filterCacheEnabled', 'filterCacheEnabled', 'bool', true],
   ['features.lastFmApiKey', 'lastFmApiKey', 'stringOrNull'],
+  ['features.musicBrainzUserAgent', 'musicBrainzUserAgent', 'stringOrNull'],
   ['features.radioBrowserUserAgent', 'radioBrowserUserAgent', 'stringOrNull'],
   ['features.radioBrowserBase', 'radioBrowserBase', 'stringOrNull'],
   ['features.lyricsProvider', 'lyricsProvider', 'string'],

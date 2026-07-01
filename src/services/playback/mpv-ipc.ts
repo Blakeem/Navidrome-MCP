@@ -257,6 +257,7 @@ export class MpvIpc {
 
       const onError = (err: Error): void => {
         sock.removeListener('connect', onConnect);
+        sock.destroy();
         reject(err);
       };
 

@@ -24,8 +24,6 @@ import {
   RatingSchema,
   UrlSchema,
   StringArraySchema,
-  OptionalStringArraySchema,
-  NonEmptyStringArraySchema,
   OptionalBooleanSchema,
   VerboseSchema,
   createLimitSchema,
@@ -53,7 +51,7 @@ export const CreatePlaylistSchema = z.object({
 });
 
 export const UpdatePlaylistSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required'),
+  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
   name: z.string().min(1).optional(),
   comment: z.string().optional(),
   public: OptionalBooleanSchema,
@@ -61,12 +59,12 @@ export const UpdatePlaylistSchema = z.object({
 
 export const AddTracksToPlaylistSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
-  songIds: OptionalStringArraySchema,
-  albumIds: OptionalStringArraySchema,
-  artistIds: OptionalStringArraySchema,
+  songIds: z.array(z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters')).optional(),
+  albumIds: z.array(z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters')).optional(),
+  artistIds: z.array(z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters')).optional(),
   discs: z.array(z.object({
-    albumId: z.string(),
-    discNumber: z.number(),
+    albumId: z.string().min(1).regex(ID_PATTERN, 'Album ID contains invalid characters'),
+    discNumber: z.number().int().min(1),
   })).optional(),
 }).superRefine((val, ctx) => {
   const hasContent =
@@ -84,7 +82,7 @@ export const AddTracksToPlaylistSchema = z.object({
 
 export const RemoveTracksFromPlaylistSchema = z.object({
   playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
-  trackIds: NonEmptyStringArraySchema,
+  trackIds: z.array(z.string().min(1).regex(ID_PATTERN, 'Track ID contains invalid characters')).min(1, 'At least one item is required'),
 });
 
 // Navidrome's reorder endpoint uses 1-based position IDs (the same IDs returned
@@ -125,9 +123,9 @@ export const SaveQueueSchema = z.object({
 // just one type).
 export const SearchAllSchema = EnhancedSearchSchema.extend({
   query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
-  artistCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-  albumCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
-  songCount: z.number().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  artistCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  albumCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
+  songCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   offset: z.number().int().min(0).optional().default(0),
   verbose: VerboseSchema,
 });
@@ -146,7 +144,7 @@ export const SearchByTagsSchema = z.object({
 });
 
 export const TagDistributionSchema = z.object({
-  tagNames: z.array(z.string()).optional(),
+  tagNames: z.array(z.string().min(1)).optional(),
   limit: createLimitSchema(1, 50, DEFAULT_VALUES.TAG_DISTRIBUTION_LIMIT),
   distributionLimit: createLimitSchema(1, 100, DEFAULT_VALUES.TAG_DISTRIBUTION_VALUES_LIMIT),
 });
@@ -191,6 +189,62 @@ export const TrendingMusicSchema = z.object({
   page: z.number().min(1).optional().default(1),
 });
 
+// MusicBrainz release-group vocabulary (subset relevant to discographies);
+// see docs/musicbrainz-api.md §8. Values are lowercase — MB's `type=` browse
+// filter accepts them lowercase, and secondary types are lowercased on parse.
+const MbPrimaryTypeSchema = z.enum(['album', 'ep', 'single']);
+const MbSecondaryTypeSchema = z.enum([
+  'live',
+  'compilation',
+  'soundtrack',
+  'remix',
+  'dj-mix',
+  'demo',
+  'mixtape/street',
+  'interview',
+  'audiobook',
+  'audio drama',
+  'spokenword',
+  'field recording',
+]);
+
+export const GetArtistAlbumsSchema = z.object({
+  artist: z.string().min(1).optional(),
+  mbid: z.string().uuid().optional(),
+  includeTypes: z.array(MbPrimaryTypeSchema).min(1).optional().default(['album']),
+  excludeSecondary: z.array(MbSecondaryTypeSchema).optional()
+    .default(['live', 'compilation', 'soundtrack', 'remix', 'dj-mix', 'demo']),
+  onlyMissing: OptionalBooleanSchema.default(false),
+  includeUnverified: OptionalBooleanSchema.default(false),
+  verbose: VerboseSchema,
+}).superRefine((value, ctx) => {
+  if (value.artist === undefined && value.mbid === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Either artist (name) or mbid (MusicBrainz artist ID) is required',
+      path: ['artist'],
+    });
+  }
+});
+
+// Single-album deep dive (get_album_info): tracklist, year/type, genres, wiki,
+// popularity, library membership. `mbid` is a MusicBrainz RELEASE-GROUP MBID —
+// exactly what get_artist_albums emits per album. See docs/ARTIST-ALBUMS-SPEC.md §9.
+export const GetAlbumInfoSchema = z.object({
+  artist: z.string().min(1).optional(),
+  album: z.string().min(1).optional(),
+  mbid: z.string().uuid().optional(),
+  verbose: VerboseSchema,
+}).superRefine((value, ctx) => {
+  if (value.mbid === undefined && (value.artist === undefined || value.album === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Either mbid (MusicBrainz release-group ID) or both artist and album are required',
+      path: ['album'],
+    });
+  }
+});
+
 // Lyrics validation schema
 export const GetLyricsSchema = z.object({
   title: z.string().min(1),
@@ -223,5 +277,5 @@ export const SetActiveLibrariesSchema = z.object({
 
 // Song playlists schema
 export const GetSongPlaylistsSchema = z.object({
-  songId: z.string().min(1, 'Song ID is required'),
+  songId: z.string().min(1, 'Song ID is required').regex(ID_PATTERN, 'Song ID contains invalid characters'),
 });

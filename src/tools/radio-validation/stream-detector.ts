@@ -33,6 +33,9 @@ const VALID_AUDIO_MIMES = [
   'audio/mp3',
   'audio/aac',
   'audio/aacp',
+  'audio/mp4',     // AAC in MPEG-4 container (HLS fMP4, Apple streams)
+  'audio/x-m4a',   // M4A (AAC) variant
+  'audio/m4a',
   'audio/ogg',
   'audio/opus',
   'audio/flac',

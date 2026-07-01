@@ -47,16 +47,18 @@ interface LRCLIBResponse {
  */
 function parseSyncedLyrics(lrcText: string): LyricsLine[] {
   const lines: LyricsLine[] = [];
-  const lrcRegex = /\[(\d{2}):(\d{2})\.(\d{2})\](.+)/g;
-  
+  const lrcRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.+)/g;
+
   let match;
   while ((match = lrcRegex.exec(lrcText)) !== null) {
-    const [, minutesStr = '', secondsStr = '', centisecondsStr = '', textStr = ''] = match;
+    const [, minutesStr = '', secondsStr = '', fractionStr = '', textStr = ''] = match;
 
     const minutes = parseInt(minutesStr, 10);
     const seconds = parseInt(secondsStr, 10);
-    const centiseconds = parseInt(centisecondsStr, 10);
-    const timeMs = (minutes * 60 + seconds) * 1000 + centiseconds * 10;
+    const fraction = parseInt(fractionStr, 10);
+    // 3-digit groups are milliseconds; 2-digit groups are centiseconds (×10).
+    const fractionMs = fractionStr.length === 3 ? fraction : fraction * 10;
+    const timeMs = (minutes * 60 + seconds) * 1000 + fractionMs;
     const text = textStr.trim();
     
     if (text) {

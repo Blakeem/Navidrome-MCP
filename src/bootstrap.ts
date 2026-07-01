@@ -46,8 +46,8 @@ interface Runtime {
  * process-conditional (the playback survivor scrobbles; see the standalone-web
  * spec §6.4), so each entry point wires it itself after calling this.
  */
-export async function createRuntime(): Promise<Runtime> {
-  const config = await loadConfig();
+export async function createRuntime(preloaded?: Config): Promise<Runtime> {
+  const config = preloaded ?? await loadConfig();
   logger.setDebug(config.debug);
 
   const client = new NavidromeClient(config);

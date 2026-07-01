@@ -76,6 +76,17 @@ export const SUBSONIC_CLIENT_NAME = 'navidrome-mcp';
 export const DEFAULT_USER_AGENT = 'Navidrome-MCP';
 
 /**
+ * Default User-Agent for MusicBrainz calls when `musicBrainzUserAgent` is not
+ * configured. MusicBrainz *requires* a meaningful User-Agent with contact info
+ * (https://musicbrainz.org/doc/MusicBrainz_API — generic agents may be
+ * blocked), hence the repo URL suffix that the plain DEFAULT_USER_AGENT lacks.
+ * Like DEFAULT_USER_AGENT, intentionally unversioned: it doubles as the
+ * settings-form suggestion and shouldn't churn on every release.
+ */
+export const DEFAULT_MUSICBRAINZ_USER_AGENT =
+  'Navidrome-MCP (https://github.com/Blakeem/Navidrome-MCP)';
+
+/**
  * Canonical LRCLIB endpoint. The single source for the lyrics base URL: the
  * settings-form default, the runtime schema default, and the blank-fallthrough
  * in map-config all resolve here.

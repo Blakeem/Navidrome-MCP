@@ -18,7 +18,14 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
-import { playPlaylist } from '../../tools/playback.js';
+import {
+  playPlaylist,
+  PlayPlaylistSchema,
+  playStarredAlbums,
+  PlayStarredAlbumsSchema,
+  playStarredSongs,
+  PlayStarredSongsSchema,
+} from '../../tools/playback.js';
 import { listPlaylists } from '../../tools/playlist-management/playlist-crud.js';
 import { readJsonBody, runAction, writeError } from '../http-helpers.js';
 
@@ -61,5 +68,87 @@ export async function handlePlayPlaylist(
     writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
     return;
   }
-  return runAction(res, () => playPlaylist(client, body));
+
+  // Re-validate at the route boundary so a malformed request (missing
+  // playlistId, wrong types, null body) returns HTTP 400 — a client input
+  // error — rather than the generic 500 that runAction maps every thrown
+  // error to. The impl re-parses with the same schema, so the contract cannot
+  // drift.
+  const validation = PlayPlaylistSchema.safeParse(body);
+  if (!validation.success) {
+    const message = validation.error.issues.map((issue) => issue.message).join('; ');
+    writeError(res, 400, message !== '' ? message : 'invalid request body');
+    return;
+  }
+
+  return runAction(res, () => playPlaylist(client, validation.data));
+}
+
+/**
+ * POST /api/starred/songs/play — Body `{mode?: 'replace'|'append', shuffle?:
+ * boolean}`. Plays the user's whole starred (hearted) song set, `playDate` ASC.
+ * No ID is supplied — the starred collection is the implicit target. Mirrors
+ * `handlePlayPlaylist`'s 400/500 boundary exactly: malformed JSON or an invalid
+ * body returns HTTP 400; thrown impl errors map to 500 via `runAction`.
+ */
+export async function handlePlayStarredSongs(
+  req: IncomingMessage,
+  res: ServerResponse,
+  client: NavidromeClient,
+): Promise<void> {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
+    return;
+  }
+
+  // Re-validate at the route boundary so a malformed request (wrong types)
+  // returns HTTP 400 — a client input error — rather than the generic 500 that
+  // runAction maps every thrown error to. The impl re-parses with the same
+  // schema, so the contract cannot drift.
+  const validation = PlayStarredSongsSchema.safeParse(body);
+  if (!validation.success) {
+    const message = validation.error.issues.map((issue) => issue.message).join('; ');
+    writeError(res, 400, message !== '' ? message : 'invalid request body');
+    return;
+  }
+
+  return runAction(res, () => playStarredSongs(client, validation.data));
+}
+
+/**
+ * POST /api/starred/albums/play — Body `{mode?: 'replace'|'append', shuffle?:
+ * 'none'|'albums'|'songs'}`. Plays the user's whole starred (hearted) album set,
+ * `playDate` ASC, with the album-aware shuffle. No ID is supplied — the starred
+ * collection is the implicit target. Mirrors `handlePlayStarredSongs`'s 400/500
+ * boundary exactly: malformed JSON or an invalid body returns HTTP 400; thrown
+ * impl errors map to 500 via `runAction`.
+ */
+export async function handlePlayStarredAlbums(
+  req: IncomingMessage,
+  res: ServerResponse,
+  client: NavidromeClient,
+): Promise<void> {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
+    return;
+  }
+
+  // Re-validate at the route boundary so a malformed request (wrong types)
+  // returns HTTP 400 — a client input error — rather than the generic 500 that
+  // runAction maps every thrown error to. The impl re-parses with the same
+  // schema, so the contract cannot drift.
+  const validation = PlayStarredAlbumsSchema.safeParse(body);
+  if (!validation.success) {
+    const message = validation.error.issues.map((issue) => issue.message).join('; ');
+    writeError(res, 400, message !== '' ? message : 'invalid request body');
+    return;
+  }
+
+  return runAction(res, () => playStarredAlbums(client, validation.data));
 }

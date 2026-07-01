@@ -86,6 +86,9 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
     },
 
     lastFmApiKey,
+    // No features.* flag: MusicBrainz needs no API key; absent value falls back
+    // to DEFAULT_MUSICBRAINZ_USER_AGENT at the call site.
+    musicBrainzUserAgent: nonEmpty(features.musicBrainzUserAgent),
     radioBrowserUserAgent,
     // Only an explicit, real URL pins the mirror; null/blank keeps SRV resolution.
     radioBrowserBaseOverride: nonEmpty(features.radioBrowserBase),

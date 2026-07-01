@@ -21,6 +21,8 @@
  * Provides consistent error messages across the MCP application
  */
 
+import { sanitizeFilename } from './sanitize-url.js';
+
 export class ErrorFormatter {
   /**
    * Extract message from unknown error type
@@ -60,6 +62,15 @@ export class ErrorFormatter {
    */
   static toolExecution(toolName: string, error: unknown): string {
     const message = this.extractMessage(error);
+    // Dedupe nested wrapping: when an inner impl already wrapped its error with
+    // this same `Tool '<name>' failed: ` prefix (e.g. listRadioStations ->
+    // getRadioStation -> playRadioStation each rewrap with their own tool name),
+    // stacking another prefix produces a confusing triple-prefixed message for
+    // the LLM. Preserve the innermost meaningful message and only prefix when it
+    // is not already wrapped.
+    if (/^Tool '[^']*' failed: /.test(message)) {
+      return message;
+    }
     return `Tool '${toolName}' failed: ${message}`;
   }
 
@@ -183,6 +194,6 @@ export class ErrorFormatter {
    * Format validation stream/URL errors
    */
   static streamValidation(url: string, issue: string): string {
-    return `Stream validation failed: ${url} - ${issue}`;
+    return `Stream validation failed: ${sanitizeFilename(url)} - ${issue}`;
   }
 }

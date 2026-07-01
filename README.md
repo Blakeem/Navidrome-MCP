@@ -209,7 +209,7 @@ When local audio playback is active, the server runs a companion web interface: 
 - **Transport controls:** previous / pause-resume / next, with a seek bar showing position and remaining time.
 - **Volume slider:** drives mpv's internal volume (independent of your OS volume).
 - **Queue list:** every track with title, artist · album, and duration. Click a row to jump to it; the **clear** icon empties the queue and stops playback.
-- **Playlist picker:** the playlist icon opens your Navidrome playlists; pick one to start it (Replace or Add to queue, with optional Shuffle).
+- **Play picker:** the playlist icon opens a tabbed picker. **Playlists** lists yours to pick one (with optional Shuffle); **Starred Songs** plays your hearted songs in order (least-recently-played first) or shuffled; **Starred Albums** plays your hearted albums in order, in shuffled album order, or with all songs shuffled. Every mode starts with Replace or Add to queue.
 - **Gear + power buttons (host only):** the top bar shows a **gear** (player settings, including "keep playing after the MCP server closes") and a **power** button that stops mpv and the player. Both are hidden for remote (LAN) browsers.
 - **Live updates:** Server-Sent Events push state changes as they happen (throttled to ~1 Hz) and auto-reconnect on disconnect.
 
@@ -368,6 +368,8 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `get_artist_info` | Artist biography and tags |
 | `get_top_tracks_by_artist` | Top tracks for an artist |
 | `get_trending_music` | Trending artists, tracks, and tags from Last.fm charts |
+| `get_artist_albums` | Full discography with release types/years (MusicBrainz), genres + popularity (Last.fm), and an in-library flag per album — "what albums by X am I missing?" |
+| `get_album_info` | Single-album deep dive: tracklist with durations, year/type, genres, wiki summary, popularity, and library membership — works for albums you don't own |
 
 ### Lyrics (requires the LRCLIB provider, set in the settings page)
 

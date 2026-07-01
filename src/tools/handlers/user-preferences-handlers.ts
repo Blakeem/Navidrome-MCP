@@ -87,7 +87,7 @@ const tools: Tool[] = [
           enum: ['song', 'album', 'artist'],
         },
         rating: {
-          type: 'number',
+          type: 'integer',
           description: 'Rating from 0-5 stars (0 removes rating)',
           minimum: 0,
           maximum: 5,
@@ -141,7 +141,7 @@ const tools: Tool[] = [
           enum: ['songs', 'albums', 'artists'],
         },
         minRating: {
-          type: 'number',
+          type: 'integer',
           description: 'Minimum rating to include (1-5)',
           minimum: 1,
           maximum: 5,

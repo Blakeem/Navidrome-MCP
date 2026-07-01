@@ -62,7 +62,7 @@ const tools: Tool[] = [
         },
         position: {
           type: 'number',
-          description: 'Playback position in seconds',
+          description: 'Playback position in milliseconds within the current track',
           minimum: 0,
           default: 0,
         },

@@ -69,24 +69,16 @@ export function getDefaultIpcPath(): string {
  * Detect an mpv binary on the host.
  *
  * Resolution order:
- *   1. `MPV_PATH` environment variable (verified executable)
- *   2. `which mpv` (POSIX) / `where mpv` (Windows) — first line of output
+ *   1. `which mpv` (POSIX) / `where mpv` (Windows) — first line of output
  *
  * Returns `null` if no usable binary is found.
+ *
+ * Note: `MPV_PATH` is NOT read here at runtime — it is consumed only once at
+ * first-run seeding (`src/config/seed.ts`) to pre-fill `playback.mpvPath` in
+ * the settings store, which is the canonical config source.
  */
 export function detectMpvBinary(): string | null {
-  // 1. Explicit env override
-  const override = process.env['MPV_PATH'];
-  if (override !== undefined && override.trim() !== '') {
-    const trimmed = override.trim();
-    if (isExecutable(trimmed)) {
-      return trimmed;
-    }
-    logger.warn(`MPV_PATH is set but not executable: ${trimmed}`);
-    return null;
-  }
-
-  // 2. PATH lookup
+  // PATH lookup
   try {
     const cmd = process.platform === 'win32' ? 'where mpv' : 'command -v mpv';
     const stdout = execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -108,8 +100,9 @@ export function detectMpvBinary(): string | null {
  *   - An explicit path wins — validated for executability; a stale/non-executable
  *     path returns `null` (and warns) so playback is disabled with a clear reason
  *     rather than silently failing on first play.
- *   - `null`/empty means "auto-detect" — falls back to `detectMpvBinary()` (which
- *     honors the legacy `MPV_PATH` env, then a PATH lookup).
+ *   - `null`/empty means "auto-detect" — falls back to `detectMpvBinary()`
+ *     (a PATH lookup). `MPV_PATH` is consumed only at first-run seeding into the
+ *     store, never read here at runtime.
  */
 export function resolveMpvBinary(explicitPath: string | null | undefined): string | null {
   if (explicitPath !== undefined && explicitPath !== null && explicitPath.trim() !== '') {

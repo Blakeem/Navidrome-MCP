@@ -73,6 +73,13 @@ const RE_API_KEY =
 //    that appear inside log strings where the URL isn't parseable in isolation)
 const RE_SUBSONIC_PARAMS = /([?&])[upst]=[^&\s]*/gi;
 
+// Sensitive object-key names. When the object walker encounters a key matching
+// this, the whole value is replaced with <REDACTED> regardless of its type —
+// string leaves carry no key context for redactString() to match on, so a bare
+// credential under e.g. a `password` key would otherwise reach stderr unredacted.
+const RE_SENSITIVE_KEY =
+  /^(password|passwd|pwd|token|secret|api[_-]?key|api[_-]?token|authorization|x-nd-authorization|bearer[_-]?token|jwt[_-]?secret|credentials?)$/i;
+
 /**
  * Apply all credential-redaction regex passes to a single string.
  * If the string exceeds MAX_REDACT_STRING_BYTES it is truncated and tagged
@@ -112,8 +119,12 @@ function redactString(s: string): string {
   out = out.replace(RE_JWT, '<JWT_REDACTED>');
   RE_JWT.lastIndex = 0;
 
-  // API key / secret hints
-  out = out.replace(RE_API_KEY, '$1=<REDACTED>');
+  // API key / secret hints — preserve the original key text (including any
+  // surrounding quotes) and the original separator, mirroring RE_PASSWORD_FIELD.
+  out = out.replace(RE_API_KEY, (match) => {
+    const sepIdx = match.search(/[:=]/);
+    return `${match.slice(0, sepIdx + 1)}<REDACTED>`;
+  });
   RE_API_KEY.lastIndex = 0;
 
   // Subsonic auth query params in raw strings
@@ -159,8 +170,11 @@ export function redact(value: unknown, depth: number = 0): unknown {
       });
     }
     if ('cause' in value && value.cause !== undefined) {
+      // Bound the cause-chain recursion: the Error branch sits above the
+      // depth guard at line 183, so without this an unbounded or circular
+      // `.cause` chain would recurse until the V8 stack overflows.
       Object.defineProperty(redacted, 'cause', {
-        value: redact(value.cause, depth + 1),
+        value: depth + 1 < MAX_REDACT_DEPTH ? redact(value.cause, depth + 1) : value.cause,
         configurable: true,
         writable: true,
       });
@@ -180,7 +194,11 @@ export function redact(value: unknown, depth: number = 0): unknown {
   if (typeof value === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      result[key] = redact(val, depth + 1);
+      if (RE_SENSITIVE_KEY.test(key)) {
+        result[key] = '<REDACTED>';
+      } else {
+        result[key] = redact(val, depth + 1);
+      }
     }
     return result;
   }

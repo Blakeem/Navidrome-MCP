@@ -90,8 +90,8 @@ function getUserDetails(): UserDetailsDTO {
         name: userInfo.name,
         email: userInfo.email,
         isAdmin: userInfo.isAdmin,
-        lastLoginAt: userInfo.lastLoginAt,
-        lastAccessAt: userInfo.lastAccessAt,
+        lastLoginAt: nullIfGoZeroTime(userInfo.lastLoginAt),
+        lastAccessAt: nullIfGoZeroTime(userInfo.lastAccessAt),
       },
       libraries: {
         available: libraryDTOs,

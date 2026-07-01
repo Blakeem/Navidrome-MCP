@@ -256,6 +256,16 @@ export function buildContentTypeParams(config: SearchParamsConfig): ContentTypeP
         // are ever reshuffled.
         mapped = endpoint === 'song' ? 'title' : 'name';
         break;
+      case 'title':
+        // Cross-type alias from EnhancedSearchSchema: albums/artists have no
+        // `title` column, so map to `name`; songs sort by `title`.
+        mapped = endpoint === 'song' ? 'title' : 'name';
+        break;
+      case 'album':
+        // `album` is a real column on /api/song; on album/artist endpoints it is
+        // self-referential/unknown, so collapse to `name`.
+        mapped = endpoint === 'song' ? 'album' : 'name';
+        break;
       case 'recently_added':
       case 'starred_at':
       case 'random':

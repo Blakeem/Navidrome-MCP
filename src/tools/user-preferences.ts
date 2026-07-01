@@ -47,6 +47,7 @@ interface StarItemResult {
 interface ListStarredResult {
   count: number;
   items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
+  hasMore: boolean;
 }
 
 interface RatedItem {
@@ -180,7 +181,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
     // `starredAt DESC` would over-include items whose star was cleared but
     // still carry a leftover timestamp (Navidrome retains `starredAt` as a
     // "last starred at" history field).
-    const response = await client.requestWithLibraryFilter<unknown>(
+    const { data: response, total } = await client.requestWithLibraryFilterAndMeta<unknown>(
       `${endpoint}?starred=true&_start=${offset}&_end=${offset + limit}&_sort=starredAt&_order=DESC`
     );
 
@@ -199,6 +200,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
     return {
       count: items.length,
       items,
+      hasMore: total !== null ? offset + items.length < total : items.length === limit,
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('list_starred_items', error));

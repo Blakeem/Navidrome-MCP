@@ -29,6 +29,23 @@ describe('ErrorFormatter.toolExecution', () => {
     const msg = ErrorFormatter.toolExecution('search_songs', 'raw string');
     expect(msg).toContain('Unknown error');
   });
+
+  // Regression for src-tools-3-1: nested impls (e.g. listRadioStations ->
+  // getRadioStation -> playRadioStation) each rewrap with their own tool name.
+  // toolExecution must NOT stack a second prefix onto an already-wrapped message.
+  it('does not double-prefix an already-wrapped message', () => {
+    const inner = ErrorFormatter.toolExecution('list_radio_stations', new Error('network down'));
+    const outer = ErrorFormatter.toolExecution('play_radio_station', new Error(inner));
+    // Exactly one prefix survives, preserving the innermost meaningful message.
+    expect(outer).toBe(inner);
+    expect(outer.match(/Tool '[^']*' failed: /g)).toHaveLength(1);
+    expect(outer).toContain('network down');
+  });
+
+  it('still adds exactly one prefix to a bare error', () => {
+    const msg = ErrorFormatter.toolExecution('search_songs', new Error('boom'));
+    expect(msg).toBe("Tool 'search_songs' failed: boom");
+  });
 });
 
 // ---- httpRequest ------------------------------------------------------------

@@ -157,8 +157,8 @@ export async function sampleAudioData(
   // Clamp the sample timeout to the caller's remaining budget — never raise it
   // above what's left (e.g. when remainingTimeout is in (1000, 2000) the old
   // Math.max would have over-run the overall deadline). We still cap at the
-  // MIN_SAMPLE_TIMEOUT ceiling so a generous budget doesn't sample forever.
-  const sampleTimeout = Math.min(RADIO_VALIDATION.MIN_SAMPLE_TIMEOUT, remainingTimeout);
+  // MAX_SAMPLE_TIMEOUT cap so a generous budget doesn't sample forever.
+  const sampleTimeout = Math.min(RADIO_VALIDATION.MAX_SAMPLE_TIMEOUT, remainingTimeout);
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
@@ -227,7 +227,10 @@ export async function sampleAudioData(
           let totalLength = 0;
           const maxBytes = RADIO_VALIDATION.SAMPLE_BUFFER_SIZE; // 8KB limit
           const startTime = Date.now();
-          const readTimeout = RADIO_VALIDATION.STREAM_READ_TIMEOUT; // 3 second timeout for reading
+          // Track the actual sample budget rather than a fixed constant so this
+          // wall-clock guard stays meaningful if MAX_SAMPLE_TIMEOUT changes; the
+          // AbortController (armed at sampleTimeout) handles the stall case too.
+          const readTimeout = sampleTimeout;
 
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop; exits via break/return
           while (true) {

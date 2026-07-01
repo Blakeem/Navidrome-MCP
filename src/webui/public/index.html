@@ -167,15 +167,49 @@
   <dialog id="playlists-dialog" class="modal">
     <form method="dialog" class="modal-content">
       <h2>Play a Playlist</h2>
-      <div class="playlist-options">
-        <fieldset class="pl-mode">
-          <label><input type="radio" name="pl-mode" value="replace" checked /> <span>Replace queue</span></label>
-          <label><input type="radio" name="pl-mode" value="append" /> <span>Add to queue</span></label>
-        </fieldset>
-        <label class="pl-shuffle"><input type="checkbox" id="pl-shuffle" /> <span>Shuffle</span></label>
+      <div class="modal-tabs" role="tablist">
+        <button type="button" class="modal-tab is-active" id="pl-tab-playlists" data-tab="playlists">Playlists</button>
+        <button type="button" class="modal-tab" id="pl-tab-starred" data-tab="starred">Starred Songs</button>
+        <button type="button" class="modal-tab" id="pl-tab-albums" data-tab="albums">Starred Albums</button>
       </div>
-      <p class="modal-hint" id="playlists-status"></p>
-      <ul class="network-list playlist-list" id="playlists-list"></ul>
+      <div class="modal-pane" id="pl-pane-playlists">
+        <div class="playlist-options">
+          <fieldset class="pl-mode">
+            <label><input type="radio" name="pl-mode" value="replace" checked /> <span>Replace queue</span></label>
+            <label><input type="radio" name="pl-mode" value="append" /> <span>Add to queue</span></label>
+          </fieldset>
+          <label class="pl-shuffle"><input type="checkbox" id="pl-shuffle" /> <span>Shuffle</span></label>
+        </div>
+        <p class="modal-hint" id="playlists-status"></p>
+        <ul class="network-list playlist-list" id="playlists-list"></ul>
+      </div>
+      <div class="modal-pane" id="pl-pane-starred" hidden>
+        <div class="playlist-options">
+          <fieldset class="pl-mode">
+            <label><input type="radio" name="starred-mode" value="replace" checked /> <span>Replace queue</span></label>
+            <label><input type="radio" name="starred-mode" value="append" /> <span>Add to queue</span></label>
+          </fieldset>
+        </div>
+        <p class="modal-hint" id="starred-status">Play all of your hearted songs, least-recently-played first.</p>
+        <div class="starred-actions">
+          <button type="button" class="primary-btn" id="starred-play-order">Play in order</button>
+          <button type="button" class="btn-secondary" id="starred-play-shuffle">Shuffle</button>
+        </div>
+      </div>
+      <div class="modal-pane" id="pl-pane-albums" hidden>
+        <div class="playlist-options">
+          <fieldset class="pl-mode">
+            <label><input type="radio" name="albums-mode" value="replace" checked /> <span>Replace queue</span></label>
+            <label><input type="radio" name="albums-mode" value="append" /> <span>Add to queue</span></label>
+          </fieldset>
+        </div>
+        <p class="modal-hint" id="albums-status">Play all of your hearted albums, least-recently-played first.</p>
+        <div class="starred-actions">
+          <button type="button" class="primary-btn" id="albums-play-order">Play in order</button>
+          <button type="button" class="btn-secondary" id="albums-play-shuffle-albums">Shuffle albums</button>
+          <button type="button" class="btn-secondary" id="albums-play-shuffle-songs">Shuffle all songs</button>
+        </div>
+      </div>
       <menu class="modal-actions">
         <button type="submit" class="primary-btn">Close</button>
       </menu>

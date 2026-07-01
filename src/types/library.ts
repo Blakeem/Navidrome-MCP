@@ -54,8 +54,8 @@ export interface UserDetailsDTO {
     name: string;
     email: string;
     isAdmin: boolean;
-    lastLoginAt: string;
-    lastAccessAt: string;
+    lastLoginAt: string | null;
+    lastAccessAt: string | null;
   };
   libraries: {
     available: LibraryDTO[];

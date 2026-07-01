@@ -48,6 +48,7 @@ interface QueueTrack {
 
 interface SavedQueueResult {
   current: number;
+  /** Playback offset within the current track, in milliseconds. */
   position: number;
   trackCount: number;
   tracks: QueueTrack[];

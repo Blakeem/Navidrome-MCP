@@ -170,6 +170,9 @@ class PlaybackEngine {
   private mpvVersion: string | null = null;
   private signalsRegistered = false;
   private shuttingDown = false;
+  // Re-entrancy guard for shutdown() — distinct from `shuttingDown` (which the
+  // onSignal handler also sets), so a later shutdown() still runs full cleanup.
+  private cleanupInProgress = false;
   private readonly propertyCache = new Map<string, unknown>();
   // Tracks the currently-loaded radio station so `now_playing` can surface
   // the human-readable name. Set by `enqueueRadio`; cleared by any operation
@@ -979,7 +982,7 @@ class PlaybackEngine {
    * stored lock resolves even if `fn` rejected.
    */
   private withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.mutationLock.then(fn, fn);
+    const next = this.mutationLock.then(() => fn());
     this.mutationLock = next.catch(() => undefined);
     return next;
   }
@@ -1225,7 +1228,15 @@ class PlaybackEngine {
    * Idempotent; the engine can be restarted after an explicit shutdown.
    */
   shutdown(): void {
-    if (this.shuttingDown) return;
+    if (this.cleanupInProgress) return;
+    this.cleanupInProgress = true;
+
+    // NOTE: we do NOT early-return on `shuttingDown`. The release-on-signal
+    // handler (onSignal) sets `shuttingDown = true` and closes our IPC without
+    // running full cleanup; gating on it here would make a later shutdown()/
+    // quitMpv() a no-op and leave caches, startPromise, and subscribers behind.
+    // The body below is fully idempotent (null-safe ipc close, clearing empty
+    // maps is harmless), so it is safe to run after the signal path.
     this.shuttingDown = true;
 
     const ipc = this.ipc;
@@ -1246,6 +1257,7 @@ class PlaybackEngine {
 
     // Allow restarting after an explicit shutdown
     this.shuttingDown = false;
+    this.cleanupInProgress = false;
   }
 }
 
