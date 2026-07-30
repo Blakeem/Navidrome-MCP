@@ -6,10 +6,12 @@
   },
   "transport": {
     "type": "stdio",
-    "host": "127.0.0.1",
+    "host": null,
     "port": 3000,
     "expose": false,
-    "authToken": ""
+    "authToken": "",
+    "allowedHosts": [],
+    "allowedOrigins": []
   },
   "library": {
     "defaultLibraryIds": [],
@@ -32,7 +34,7 @@
   "webui": {
     "enabled": true,
     "port": 8808,
-    "host": "127.0.0.1",
+    "host": null,
     "expose": false,
     "autoOpenBrowser": false,
     "persistAfterMcpExit": false

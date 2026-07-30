@@ -5,12 +5,12 @@ Turn your Navidrome music server into a conversational music assistant. This MCP
 ## Table of Contents
 
 - [Features](#features)
-- [Installation](#installation)
-- [MPV Remote (Web UI)](#mpv-remote-web-ui)
 - [Available Tools](#available-tools)
+- [Installation & Setup](#installation--setup)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
 - [License](#license)
+- [Support](#support)
 
 ## Features
 
@@ -22,17 +22,19 @@ Browse and search songs, albums, artists, genres, and tags with rich filtering: 
 
 > Requires [`mpv`](https://mpv.io/) on the host running the MCP server (see [Installing mpv](#installing-mpv-optional)).
 
-Audio plays through your machine's speakers, no browser or Navidrome web UI needed. Search and play in a single step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, *"add 10 random rock songs to whatever's already playing, shuffled"*. Three shuffle modes for albums (keep order, randomize album order, fully interleave tracks).
+Audio plays through your machine's speakers, no browser or Navidrome web UI needed. Search and play in a single step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, *"add 10 random rock songs to whatever's already playing, shuffled"*. Albums get three shuffle modes: keep order, randomize album order, or fully interleave tracks.
 
-The live queue is actively manipulable: reorder and shuffle tracks without interrupting what's playing — shuffle keeps the current song going and reshuffles the rest around it — and removing the current track auto-advances to the next. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with ICY metadata flowing through so you can see what the station is currently playing. Plays scrobble back to Navidrome so your recently-played and play counts stay in sync with what you actually listen to through mpv. mpv is lazy-spawned on first use, survives MCP client restarts via a per-user socket, and works on Linux, macOS, and Windows 11.
+The live queue stays editable during playback: reorder or shuffle without interrupting the current song (shuffle keeps it playing and reshuffles the rest), and removing the current track auto-advances to the next. Saved Navidrome radio stations (Icecast, SHOUTcast, etc.) stream through mpv with live ICY metadata, so you can see what the station is playing. Plays scrobble back to Navidrome, keeping your play counts and recently-played in sync. mpv is lazy-spawned on first use, can survive MCP client restarts via a per-user socket (see [MPV Remote setup](#mpv-remote-setup) for the lifetime rules), and works on Linux, macOS, and Windows 11.
 
 This design is built for conversational control and pairs cleanly with voice transports (Whisper STT + TTS) to build a hands-free music device on a Raspberry Pi or always-on machine.
 
-### 🎛️ MPV Remote (Standalone Web Player)
+### 🎛️ MPV Remote (Web UI)
 
 > Requires `mpv` (same as Local Audio Playback). On by default; starts with the server.
 
-A companion web UI at `http://localhost:8808` for controlling local mpv playback from any browser: a now-playing card with cover art, transport controls, a seek bar, volume, and a live queue you can click to jump around. A built-in playlist picker starts any Navidrome playlist straight from the page, so it works as a real remote, not just a now-playing mirror. Expose it on your LAN to use a phone or tablet to control playback. See [MPV Remote (Web UI)](#mpv-remote-web-ui) for setup, lifetime, and the security note.
+A companion web UI at `http://localhost:8808` that gives any browser direct access to the Local Playback tools: now-playing with cover art, transport and seek controls, volume, and a live queue you can click to jump around, all updated in real time. Beyond the tools, a built-in picker starts any playlist, your starred songs, or your starred albums straight from the page, so it works as a real remote without touching the assistant. Enable **Expose on LAN** to control playback from a phone or tablet; audio always comes out of the machine running the server. Setup, lifetime, and security details: [MPV Remote setup](#mpv-remote-setup).
+
+[![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)](navidome-mcp-mpv-remote-large.png)
 
 ### 🎶 Playlists
 
@@ -68,465 +70,9 @@ Star/unstar songs, albums, and artists, set 0-5 star ratings, and list everythin
 
 Filter all operations to a subset of your Navidrome libraries, either by setting a default in the settings page (**Default libraries**, `library.defaultLibraryIds`) or by switching active libraries at runtime.
 
-## Installation
-
-### Prerequisites
-
-- **Node.js 20+** ([download](https://nodejs.org/))
-- **A running Navidrome server**
-- **An MCP-compatible client** (Claude Desktop, Claude Code, Cursor, or another MCP client with local stdio support)
-- **Optional: [mpv](https://mpv.io/)** for local audio playback
-
-### Quick Setup
-
-Install the published package (auto-updates on launch):
-
-```bash
-npm install -g navidrome-mcp
-```
-
-Package: [navidrome-mcp on npm](https://www.npmjs.com/package/navidrome-mcp).
-
-For a development build:
-
-```bash
-git clone https://github.com/Blakeem/Navidrome-MCP.git
-cd Navidrome-MCP
-pnpm install
-pnpm build
-```
-
-### Configure Your MCP Client
-
-The MCP client config does just one thing: tell it how to *launch* the server. Your
-Navidrome credentials and all options live in a local `settings.json`, edited through a
-browser-based settings page (no secrets in the client JSON or environment). The settings
-page opens automatically on first run (see [First-run setup](#first-run-setup)).
-
-For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Claude/` on Windows, `~/Library/Application Support/Claude/` on macOS, `~/.config/Claude/` on Linux). Other MCP clients use the same JSON shape.
-
-```json
-{
-  "mcpServers": {
-    "navidrome": {
-      "command": "npx",
-      "args": ["navidrome-mcp"]
-    }
-  }
-}
-```
-
-For a manual build, replace `command`/`args` with:
-
-```json
-"command": "node",
-"args": ["/absolute/path/to/Navidrome-MCP/dist/index.js"]
-```
-
-### First-run setup
-
-On first start without configuration, the **settings page** opens automatically in your
-browser. This happens whether you launched the MCP server or the standalone web player
-(`navidrome-web`) first; either one, run unconfigured, brings it up. If a browser can't
-open (e.g. over SSH), the URL is printed to the console, and the unconfigured MCP server
-also exposes an `open_settings` tool that returns it. You can open the settings page any
-time with:
-
-```bash
-npx navidrome-config
-```
-
-Enter your Navidrome URL, username, and password (plus any optional features), click
-**Test connection**, then **Save**. This writes a local `settings.json` (shape:
-[`settings.example.json`](settings.example.json)). Settings load at startup and don't
-hot-reload, so restart whatever you launched to apply them: the MCP client (quit and
-reopen, e.g. Claude Desktop) or the web player (re-run `navidrome-web`). If the web
-player brought up the settings page itself, it stays open for further edits and
-self-closes when idle; re-launch `navidrome-web` to start playing. Upgrading from the old
-env-based setup? The form pre-fills from your previous `env`/`.env` values; verify and
-save.
-
-**Headless machines / containers:** the settings page binds loopback-only, so on a host
-with no browser (a VPS, a Docker container) configure with **environment variables**
-instead: when no `settings.json` exists, the server runs directly from `NAVIDROME_URL`,
-`NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD` (plus any optional variables such as
-`MCP_TRANSPORT`, `LASTFM_API_KEY`, …). A `settings.json`, once created, always takes
-precedence over env.
-
-**Required:** Navidrome URL, username, password.
-
-**Optional (set in the settings page):**
-- **Default libraries:** comma-separated library IDs to activate by default; blank = all.
-- **Last.fm API key:** enables Last.fm discovery features.
-- **Radio Browser user agent:** enables global station discovery.
-- **Lyrics provider (LRCLIB)** + user agent: enables lyrics fetching.
-- **mpv path:** point at the mpv binary if it's not on `PATH`; blank auto-detects.
-- **Transcode format:** defaults to `raw` (streams the original file untouched for best quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
-- **Web UI** (port / host / expose / enabled / auto-open browser): configures the [MPV Remote web UI](#mpv-remote-web-ui) (defaults to `localhost:8808`).
-- **Transport** (type / host / port): how the server exposes the MCP protocol itself. Defaults to `stdio` (the standard local-process transport every desktop client uses). Set `type` to `http` to serve the [Streamable HTTP transport](#running-over-http-containers--remote-clients) instead — for running the server as a long-lived process that remote clients connect to over the network.
-
-Features turn on automatically when their settings are present. Restart your MCP client after saving.
-
-### Running over HTTP (containers / remote clients)
-
-By default the server speaks MCP over **stdio**: the client launches it as a child
-process and talks to it over stdin/stdout. That's ideal for a desktop client on the same
-machine, but it can't be reached over a network.
-
-Setting the transport to **`http`** makes the server bind a socket and serve the MCP
-[Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
-at `/mcp` instead. This lets you run it as a standalone, always-on process — for example
-a container in the same Kubernetes namespace as Navidrome — and point networked MCP
-clients at it directly, with no external `supergateway`/`mcp-proxy` bridge.
-
-Add a `transport` block to your `settings.json`. `host` defaults to `127.0.0.1`
-(loopback only); set `expose: true` to bind all interfaces (`0.0.0.0`) so a remote or in-cluster client can reach it; an explicit `host` overrides this. Set `authToken` to require bearer auth (recommended whenever the port is reachable beyond loopback):
-
-```json
-"transport": {
-  "type": "http",
-  "port": 3000,
-  "expose": true,
-  "authToken": "a-long-random-secret"
-}
-```
-
-The settings page has a **Generate** button next to the auth-token field. When a token is
-set, every `/mcp` request must carry `Authorization: Bearer <token>` (compared in constant
-time); anything else gets a `401`. `/healthz` is never gated. If the transport binds a
-non-loopback address with **no** token, the server logs a loud warning at startup rather
-than refusing to start, so a NetworkPolicy-locked deployment keeps zero-friction.
-
-The MCP endpoint is then served at `http://<host>:<port>/mcp`. Point an HTTP-capable MCP
-client at that URL (add the `Authorization` header if you set a token):
-
-```json
-{
-  "mcpServers": {
-    "navidrome": {
-      "type": "http",
-      "url": "http://your-host:3000/mcp",
-      "headers": { "Authorization": "Bearer a-long-random-secret" }
-    }
-  }
-}
-```
-
-**Host filtering (DNS-rebinding protection):** on the default bind — loopback with no
-auth token — requests whose `Host` header isn't a loopback alias are rejected, so a
-malicious web page can't drive the server through your own browser. Setting an
-`authToken` or binding a non-loopback address turns the automatic filter **off**: a
-remote deployment is reached by names the server can't know in advance (a compose
-service name, `host.docker.internal`, your VPS IP), and the bearer gate already blocks
-rebinding (a lured browser can't attach your token). To pin the accepted names
-explicitly, set `transport.allowedHosts` — it is always enforced when present:
-
-```json
-"transport": {
-  "type": "http",
-  "expose": true,
-  "allowedHosts": ["navidrome-mcp.media.svc.cluster.local:3000", "mcp.example.com"]
-}
-```
-
-Set `transport.allowedOrigins` only for browser clients (it gates the `Origin` header).
-
-In HTTP mode the server also exposes an unauthenticated liveness endpoint at
-`GET /healthz` (returns `200 {"status":"ok"}`) for container/orchestrator health
-checks — it reports only that the HTTP server is up, and performs no Navidrome call.
-
-> **Single-account, shared state:** every HTTP session is served by one process
-> that holds a single authenticated Navidrome account, and the active-library
-> selection is process-global. A `set_active_libraries` call therefore changes the
-> library filter for **all** connected sessions' subsequent search/list calls, and
-> `get_user_details` reflects that shared selection — there is no per-session
-> library scoping under the HTTP transport.
-
-The transport can also be configured entirely through environment variables:
-`MCP_TRANSPORT` (`stdio`|`http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE`
-(`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, and `MCP_HTTP_ALLOWED_HOSTS` /
-`MCP_HTTP_ALLOWED_ORIGINS` (comma-separated). These apply two ways: as the **runtime
-config** whenever no `settings.json` exists (the headless/container path), and as
-**pre-fill** for the settings form on first run.
-
-> **Security:** the HTTP transport binds **loopback (`127.0.0.1`) by default** and is
-> **unauthenticated unless you set `transport.authToken`** — the server holds an
-> already-authenticated Navidrome session, so an open port is full library control with no
-> credential. Exposing it beyond localhost is a deliberate opt-in (`expose: true`, or an
-> explicit non-loopback `host`); when you do, set an auth token **and/or** restrict access
-> with a Kubernetes NetworkPolicy, a firewall, or a reverse proxy that adds TLS. Keep the
-> default `stdio` transport unless you specifically need remote access.
-
-#### Running in Docker
-
-A [`Dockerfile`](Dockerfile) is included for exactly this HTTP-transport use case. The
-image defaults to the HTTP transport bound to all interfaces (`MCP_TRANSPORT=http`,
-`MCP_HTTP_EXPOSE=true` are baked in as env fallbacks), so the only required config is
-your Navidrome credentials:
-
-```bash
-docker build -t navidrome-mcp .
-docker run --rm -p 3000:3000 \
-  -e NAVIDROME_URL=http://your-navidrome:4533 \
-  -e NAVIDROME_USERNAME=mcp \
-  -e NAVIDROME_PASSWORD=your-password \
-  -e MCP_HTTP_AUTH_TOKEN=a-long-random-secret \
-  navidrome-mcp
-```
-
-The MCP endpoint is then at `http://localhost:3000/mcp`. The image ships a Docker
-`HEALTHCHECK` that polls `GET /healthz` on port 3000 (so `docker ps` shows `healthy`;
-orchestrators can use the same endpoint), and runs as a non-root user. (mpv playback isn't
-included in the image — it's meant as a headless, networked MCP server.)
-
-Prefer a file over env vars? Mount a `settings.json` at `/config/settings.json` (the
-image points `NAVIDROME_CONFIG_PATH` there); a mounted file always wins over env:
-
-```bash
-docker run --rm -p 3000:3000 \
-  -v "$PWD/settings.json:/config/settings.json:ro" \
-  navidrome-mcp
-```
-
-> **With a mounted `settings.json`, the file is the whole config** — the image's env
-> defaults no longer apply. The file itself must set `transport.type: "http"` and
-> `transport.expose: true` (a container has to bind `0.0.0.0`, not loopback, to be
-> reachable through the published port); left at the `stdio` default, the container
-> starts, binds **no socket**, and the bundled `HEALTHCHECK` shows it **unhealthy**.
-
-#### Connecting from LibreChat
-
-Both variants go under `mcpServers:` in `librechat.yaml`.
-
-**Option A — stdio inside the LibreChat container (simplest).** LibreChat spawns the
-server itself; configure it entirely through the `env:` block (env vars are the runtime
-config whenever no `settings.json` exists):
-
-```yaml
-mcpServers:
-  navidrome:
-    type: stdio                # optional — inferred from `command`
-    command: npx
-    args: ["navidrome-mcp"]
-    env:
-      NAVIDROME_URL: "http://your-navidrome:4533"
-      NAVIDROME_USERNAME: "mcp"
-      NAVIDROME_PASSWORD: "${NAVIDROME_MCP_PASSWORD}"   # ${VAR} reads LibreChat's own env
-    serverInstructions: true
-```
-
-**Option B — separate container over Streamable HTTP** (LibreChat v0.7.8+). Run the
-Docker image from the previous section alongside LibreChat (same compose network), then:
-
-```yaml
-mcpServers:
-  navidrome:
-    type: streamable-http      # must be explicit — with only `url`, LibreChat assumes SSE
-    url: http://navidrome-mcp:3000/mcp
-    headers:
-      Authorization: "Bearer ${NAVIDROME_MCP_TOKEN}"
-```
-
-> **LibreChat blocks private/internal addresses by default** (SSRF protection). For a
-> compose-service or `host.docker.internal` URL, allow it explicitly in `librechat.yaml`
-> or the MCP server never initializes:
->
-> ```yaml
-> mcpSettings:
->   allowedAddresses:
->     - "navidrome-mcp:3000"      # or "host.docker.internal:3000"
-> ```
-
-#### Running in Kubernetes
-
-The image expects `settings.json` at `/config/settings.json`. Since that file holds
-plaintext credentials, store it in a `Secret` and mount it (a `ConfigMap` would expose the
-credentials). Use a `livenessProbe` against `/healthz`:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: navidrome-mcp
-type: Opaque
-stringData:
-  settings.json: |
-    {
-      "navidrome": { "url": "http://navidrome:4533", "username": "mcp", "password": "..." },
-      "transport": {
-        "type": "http",
-        "expose": true,
-        "authToken": "a-long-random-secret",
-        "allowedHosts": ["navidrome-mcp:3000"]
-      }
-    }
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: navidrome-mcp
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: navidrome-mcp } }
-  template:
-    metadata: { labels: { app: navidrome-mcp } }
-    spec:
-      containers:
-        - name: navidrome-mcp
-          image: ghcr.io/blakeem/navidrome-mcp:latest
-          ports: [{ containerPort: 3000 }]
-          livenessProbe:
-            httpGet: { path: /healthz, port: 3000 }
-          readinessProbe:
-            httpGet: { path: /healthz, port: 3000 }
-          volumeMounts:
-            - { name: config, mountPath: /config, readOnly: true }
-      volumes:
-        - name: config
-          secret:
-            secretName: navidrome-mcp
-            items: [{ key: settings.json, path: settings.json }]
-```
-
-Note `allowedHosts`: it is optional — with `authToken` set (or any non-loopback bind),
-automatic Host filtering is off, so in-cluster names just work. Listing hosts pins the
-exact `host:port` values clients may use (enforced whenever present) as
-defense-in-depth. Alternatively, skip the mounted file entirely and configure through
-env vars from a Secret (`NAVIDROME_URL`, `NAVIDROME_USERNAME`, `NAVIDROME_PASSWORD`,
-`MCP_HTTP_AUTH_TOKEN`, …) — env is the runtime config whenever no `settings.json`
-exists, and a mounted `settings.json` wins when both are present.
-
-### Installing mpv (optional)
-
-mpv is a lightweight, cross-platform media player. When detected at startup, the server registers an additional set of playback tools so audio streams through your machine's speakers. Without it, the server still manages your library and Navidrome's saved queue; it just doesn't produce audio.
-
-**macOS** (via [Homebrew](https://brew.sh/)):
-```bash
-brew install mpv
-```
-
-**Linux:**
-```bash
-sudo apt install mpv       # Debian / Ubuntu / Mint / PopOS
-sudo dnf install mpv       # Fedora / RHEL / CentOS Stream
-sudo pacman -S mpv         # Arch / Manjaro
-sudo zypper install mpv    # openSUSE
-```
-
-**Windows:**
-```powershell
-winget install shinchiro.mpv   # winget is included on Windows 11
-scoop install mpv
-choco install mpv
-```
-
-> Use the full ID `shinchiro.mpv`; plain `winget install mpv` prompts you to disambiguate from an unofficial Store package. The shinchiro build is the one [mpv.io](https://mpv.io/installation/) points to for Windows.
->
-> **Windows `PATH` note.** The `shinchiro.mpv` package installs to `C:\Program Files\MPV Player\` and does **not** add itself to `PATH`. Either:
-> - Add that folder to your `PATH` (System Properties → Environment Variables → Path → New), then open a new terminal, or
-> - Set **mpv path** in the settings page (`playback.mpvPath`) to the full `mpv.exe` path, e.g. `C:\Program Files\MPV Player\mpv.exe`.
->
-> Other install methods (scoop, choco, manual zip) use different folders. If `mpv --version` fails in a fresh terminal, locate `mpv.exe` and apply one of the fixes above.
-
-Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `mpv --version`, then restart your MCP client so the server re-detects mpv.
-
-### A Note on ChatGPT Desktop
-
-ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and isn't compatible with local stdio servers. This server can now serve MCP directly over HTTP — see [Running over HTTP](#running-over-http-containers--remote-clients) — so you can host it behind a reverse proxy that terminates TLS instead of reaching for an external bridge like [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). For a self-hosted music server, though, it's still simplest to use Claude Desktop, Claude Code, Cursor, or another client with native stdio support.
-
-## MPV Remote (Web UI)
-
-When local audio playback is active, the server runs a companion web interface: a now-playing display and transport-control remote. Open it in any browser on the host (or anywhere on your LAN once exposed).
-
-[![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)](navidome-mcp-mpv-remote-large.png)
-
-### What it does
-
-- **Now-playing card:** cover art, title, artist, album, and queue position. A `Live` indicator confirms the SSE stream is healthy.
-- **Transport controls:** previous / pause-resume / next, with a seek bar showing position and remaining time.
-- **Volume slider:** drives mpv's internal volume (independent of your OS volume).
-- **Queue list:** every track with title, artist · album, and duration. Click a row to jump to it; the **clear** icon empties the queue and stops playback.
-- **Play picker:** the playlist icon opens a tabbed picker. **Playlists** lists yours to pick one (with optional Shuffle); **Starred Songs** plays your hearted songs in order (least-recently-played first) or shuffled; **Starred Albums** plays your hearted albums in order, in shuffled album order, or with all songs shuffled. Every mode starts with Replace or Add to queue.
-- **Gear + power buttons (host only):** the top bar shows a **gear** (player settings, including "keep playing after the MCP server closes") and a **power** button that stops mpv and the player. Both are hidden for remote (LAN) browsers.
-- **Live updates:** Server-Sent Events push state changes as they happen (throttled to ~1 Hz) and auto-reconnect on disconnect.
-
-### Enabling & lifetime
-
-On by default, it starts with the server as a separate `navidrome-web` process; the port binds immediately, so the page and its playlist picker are reachable before anything plays. Hosts without mpv don't start it.
-
-**Does it keep playing after you close the AI?**
-
-- **Default (off):** the MCP-launched player and mpv stop when you close or restart the MCP server.
-- **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the in-player gear modal): the player keeps running after you close the AI; stop it later with the **power** button.
-- **Launched it yourself** (`navidrome-web`, below): always runs independently; the MCP server attaches to it and never shuts it down.
-
-mpv stops exactly when the player stops (no background idle timeout).
-
-To disable the panel entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
-
-### Running it standalone (without an MCP client)
-
-Launch the player directly to run it independently of any MCP client. It reads the `settings.json` and opens your browser automatically. A standalone launch always persists: it runs in the background until you stop it with the **power** button in the UI. It **coexists** with an MCP-launched instance: whoever binds the configured port first owns it and the other connects to it (an MCP server attaches rather than replacing or stopping it). Logs go to `navidrome-web.log` in your config directory.
-
-> **Configure first.** The player needs your Navidrome details in `settings.json`. If it isn't configured yet, launching it brings up the **settings page** instead of the player (see [First-run setup](#first-run-setup)). Fill it in and Save, then re-launch `navidrome-web` to start playing. The setup page self-closes when idle, so it never lingers. You can also configure ahead of time with `npx navidrome-config`.
-
-#### Desktop shortcut (recommended)
-
-Generate a double-clickable icon for your platform. It starts the player in the background with **no terminal window** and opens your browser; if a player is already running, it just opens the browser. Stop it with the **power** button in the UI.
-
-```bash
-navidrome-web-shortcut       # after: npm install -g navidrome-mcp
-# or, from a dev clone (see Development):
-pnpm make:launcher
-```
-
-This bakes the absolute paths to your `node` and the built player into the shortcut, so it works without anything on your `PATH`. It writes:
-
-- **Linux:** `Navidrome Player.desktop` on your Desktop **and** in your app menu (`~/.local/share/applications`). On GNOME, right-click → *Allow Launching* the first time.
-- **macOS:** `Navidrome Player.app` on your Desktop (drag to `/Applications` if you like).
-- **Windows:** `Navidrome Player.vbs` on your Desktop **and** Start Menu. (If your Desktop is redirected into OneDrive, it lands there.)
-
-Re-run the generator any time you move or rebuild the project to refresh the baked-in paths.
-
-#### From the command line
-
-```bash
-navidrome-web                # after: npm install -g navidrome-mcp
-# or, from a dev clone / manual build:
-node dist/web/main.js
-```
-
-### Configuration
-
-All of these are optional and live in the **Web UI** section of the settings page (`navidrome-config`); the keys below are their `settings.json` paths. Restart the client after saving (except `persistAfterMcpExit`, which the in-player gear modal applies live).
-
-| Setting (`settings.json`) | Default | Effect |
-|---|---|---|
-| `webui.enabled` | `true` | Disable the panel entirely. |
-| `webui.port` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
-| `webui.host` | `127.0.0.1` | Bind address. Override only if you know which interface you want; usually **Expose on LAN** is the right knob. |
-| `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
-| `webui.autoOpenBrowser` | `false` | Open the player in your browser automatically when the MCP server starts. (Running `navidrome-web` directly always opens a browser regardless.) |
-| `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player (and mpv) running after the MCP server closes/restarts. Toggle it live in the in-player gear modal too. |
-
-When **Expose on LAN** is enabled, the player logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one of those on your phone or tablet.
-
-### Using it as a phone/tablet remote
-
-1. Enable **Expose on LAN** in the settings page and Save.
-2. Restart the MCP client (or restart `navidrome-web`).
-3. Open the LAN URL from the startup log in your phone's browser. The player is reachable immediately; start a playlist from the picker without touching the assistant. Bookmark it for one-tap access (the page is a single static bundle, no install required).
-
-### Security note
-
-The web UI has **no authentication**: anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
-
-- With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
-- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**. There's no rate-limiting, no auth, and the control API allows queue manipulation and starting playlists. The **player settings and the power button are loopback-only** (and hidden in the UI for remote browsers), so a phone on your LAN can control playback but can't change settings or shut the server down. The browser-based main settings page is likewise never exposed.
-
 ## Available Tools
 
-Tools marked **conditional** are only registered when the corresponding configuration is present.
+Tool categories whose heading says **requires ...** are only registered when that configuration is present.
 
 ### Core System
 
@@ -605,8 +151,8 @@ Tools marked **conditional** are only registered when the corresponding configur
 | `get_artist_info` | Artist biography and tags |
 | `get_top_tracks_by_artist` | Top tracks for an artist |
 | `get_trending_music` | Trending artists, tracks, and tags from Last.fm charts |
-| `get_artist_albums` | Full discography with release types/years (MusicBrainz), genres + popularity (Last.fm), and an in-library flag per album — "what albums by X am I missing?" |
-| `get_album_info` | Single-album deep dive: tracklist with durations, year/type, genres, wiki summary, popularity, and library membership — works for albums you don't own |
+| `get_artist_albums` | Full discography with release types/years (MusicBrainz), genres and popularity (Last.fm), and an in-library flag per album. Answers "what albums by X am I missing?" |
+| `get_album_info` | Single-album deep dive: tracklist with durations, year/type, genres, wiki summary, popularity, and library membership. Works for albums you don't own |
 
 ### Lyrics (requires the LRCLIB provider, set in the settings page)
 
@@ -636,7 +182,7 @@ Tools marked **conditional** are only registered when the corresponding configur
 
 ### Local Playback (requires [`mpv`](https://mpv.io/))
 
-Audio plays through the host's speakers. mpv is lazy-spawned on first use and survives MCP client restarts via a per-user IPC socket. Playback streams the original file by default; set **Transcode format** to a codec for constrained bandwidth (see [First-run setup](#first-run-setup)).
+Audio plays through the host's speakers. mpv is lazy-spawned on first use and can survive MCP client restarts via a per-user IPC socket (see [MPV Remote setup](#mpv-remote-setup)). Playback streams the original file by default; set **Transcode format** to a codec for constrained bandwidth (see [First-run setup](#first-run-setup)).
 
 | Tool | Description |
 |------|-------------|
@@ -661,6 +207,239 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 | `remove_from_play_queue` | Remove an entry; mpv auto-advances if the current track is removed |
 | `play_queue_index` | Jump directly to the queue entry at the given index; does not reorder |
 
+## Installation & Setup
+
+### Prerequisites
+
+- **Node.js 20+** ([download](https://nodejs.org/))
+- **A running Navidrome server**
+- **An MCP-compatible client** (Claude Desktop, Claude Code, Cursor, or another MCP client with local stdio support)
+- **Optional: [mpv](https://mpv.io/)** for local audio playback
+
+### Quick Setup
+
+Install the published package (auto-updates on launch):
+
+```bash
+npm install -g navidrome-mcp
+```
+
+Package: [navidrome-mcp on npm](https://www.npmjs.com/package/navidrome-mcp).
+
+For a development build:
+
+```bash
+git clone https://github.com/Blakeem/Navidrome-MCP.git
+cd Navidrome-MCP
+pnpm install
+pnpm build
+```
+
+### Configure Your MCP Client
+
+The MCP client config does just one thing: tell it how to *launch* the server. Your Navidrome credentials and all options live in a local `settings.json`, edited through a browser-based settings page (no secrets in the client JSON or environment). The settings page opens automatically on first run (see [First-run setup](#first-run-setup)).
+
+For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Claude/` on Windows, `~/Library/Application Support/Claude/` on macOS, `~/.config/Claude/` on Linux). Other MCP clients use the same JSON shape.
+
+```json
+{
+  "mcpServers": {
+    "navidrome": {
+      "command": "npx",
+      "args": ["navidrome-mcp"]
+    }
+  }
+}
+```
+
+For a manual build, replace `command`/`args` with:
+
+```json
+"command": "node",
+"args": ["/absolute/path/to/Navidrome-MCP/dist/index.js"]
+```
+
+### First-run setup
+
+On first start without configuration, the **settings page** opens automatically in your browser, whether you launched the MCP server or the standalone web player (`navidrome-web`) first. If a browser can't open (e.g. over SSH), the URL is printed to the console, and the unconfigured MCP server also exposes an `open_settings` tool that returns it. You can open the settings page any time with:
+
+```bash
+npx navidrome-config
+```
+
+Enter your Navidrome URL, username, and password (plus any optional features), click **Test connection**, then **Save**. This writes a local `settings.json` (shape: [`settings.example.json`](settings.example.json)). Settings load at startup and don't hot-reload, so restart whatever you launched to apply them: the MCP client (quit and reopen, e.g. Claude Desktop) or the web player (re-run `navidrome-web`). Upgrading from the old env-based setup? The form pre-fills from your previous `env`/`.env` values; verify and save.
+
+**Headless machines / containers:** the settings page binds loopback-only, so on a host with no browser (a VPS, a Docker container) configure with **environment variables** instead: when no `settings.json` exists, the server runs directly from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD` (plus any optional variables such as `MCP_TRANSPORT`, `LASTFM_API_KEY`, ...). A `settings.json`, once created, always takes precedence over env.
+
+**Required:** Navidrome URL, username, password.
+
+**Optional (set in the settings page):**
+- **Default libraries:** comma-separated library IDs to activate by default; blank = all.
+- **Last.fm API key:** enables Last.fm discovery features.
+- **Radio Browser user agent:** enables global station discovery.
+- **Lyrics provider (LRCLIB)** + user agent: enables lyrics fetching.
+- **mpv path:** point at the mpv binary if it's not on `PATH`; blank auto-detects.
+- **Transcode format:** defaults to `raw` (streams the original file untouched for best quality and reliable seeking). Set a codec (e.g. `mp3`, `opus`) to transcode for slow/metered links; the bitrate applies then.
+- **Web UI** (port / host / expose / enabled / auto-open browser): configures the MPV Remote (see [MPV Remote setup](#mpv-remote-setup); defaults to `localhost:8808`).
+- **Transport** (type / host / port): how the server exposes the MCP protocol. Defaults to `stdio`, the standard local-process transport every desktop client uses. Set `type` to `http` to run the server as a long-lived network process instead (see [Running over HTTP](#running-over-http)).
+
+Features turn on automatically when their settings are present. Restart your MCP client after saving.
+
+### Installing mpv (optional)
+
+mpv is a lightweight, cross-platform media player. When detected at startup, the server registers the playback toolset so audio streams through your machine's speakers. Without it, the server still manages your library and Navidrome's saved queue; it just doesn't produce audio.
+
+**macOS** (via [Homebrew](https://brew.sh/)):
+```bash
+brew install mpv
+```
+
+**Linux:**
+```bash
+sudo apt install mpv       # Debian / Ubuntu / Mint / PopOS
+sudo dnf install mpv       # Fedora / RHEL / CentOS Stream
+sudo pacman -S mpv         # Arch / Manjaro
+sudo zypper install mpv    # openSUSE
+```
+
+**Windows:**
+```powershell
+winget install shinchiro.mpv   # winget is included on Windows 11
+scoop install mpv
+choco install mpv
+```
+
+> Use the full ID `shinchiro.mpv`; plain `winget install mpv` prompts you to disambiguate from an unofficial Store package. The shinchiro build is the one [mpv.io](https://mpv.io/installation/) points to for Windows.
+>
+> **Windows `PATH` note.** The `shinchiro.mpv` package installs to `C:\Program Files\MPV Player\` and does **not** add itself to `PATH`. Either:
+> - Add that folder to your `PATH` (System Properties → Environment Variables → Path → New), then open a new terminal, or
+> - Set **mpv path** in the settings page (`playback.mpvPath`) to the full `mpv.exe` path, e.g. `C:\Program Files\MPV Player\mpv.exe`.
+>
+> Other install methods (scoop, choco, manual zip) use different folders. If `mpv --version` fails in a fresh terminal, locate `mpv.exe` and apply one of the fixes above.
+
+Or a pre-built binary from [mpv.io](https://mpv.io/installation/). Verify with `mpv --version`, then restart your MCP client so the server re-detects mpv.
+
+### MPV Remote setup
+
+#### Enabling & lifetime
+
+On by default: the server starts it as a separate `navidrome-web` process and the port binds immediately, so the page is reachable before anything plays. Hosts without mpv don't start it. Player settings live behind the in-player gear icon; the gear and power buttons only appear for browsers on the host machine.
+
+Whether playback survives closing your AI client:
+
+- **Default (off):** the MCP-launched player and mpv stop when the MCP server closes or restarts.
+- **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the gear modal): the player keeps running; stop it later with the power button.
+- **Launched yourself** (`navidrome-web`, below): always runs independently; the MCP server attaches to it and never shuts it down.
+
+mpv stops exactly when the player stops (no background idle timeout). To disable the panel entirely, uncheck **Enable the companion control panel** in the settings page (`webui.enabled`).
+
+#### Running it standalone
+
+Run the player independently of any MCP client:
+
+```bash
+navidrome-web                # after: npm install -g navidrome-mcp
+# or, from a dev clone / manual build:
+node dist/web/main.js
+```
+
+It reads `settings.json`, opens your browser, and runs in the background until you stop it with the power button in the UI. It coexists with an MCP-launched instance: whoever binds the configured port first owns it and the other attaches to it. Logs go to `navidrome-web.log` in your config directory.
+
+If nothing is configured yet, launching it brings up the settings page instead of the player (see [First-run setup](#first-run-setup)); fill it in, Save, then re-launch `navidrome-web`.
+
+#### Desktop shortcut (recommended)
+
+Generate a double-clickable icon for your platform. It starts the player in the background with no terminal window and opens your browser; if a player is already running, it just opens the browser.
+
+```bash
+navidrome-web-shortcut       # after: npm install -g navidrome-mcp
+# or, from a dev clone (see Development):
+pnpm make:launcher
+```
+
+The shortcut bakes in the absolute paths to your `node` and the built player, so it works without anything on `PATH`. It writes:
+
+- **Linux:** `Navidrome Player.desktop` on your Desktop and in your app menu (`~/.local/share/applications`). On GNOME, right-click → *Allow Launching* the first time.
+- **macOS:** `Navidrome Player.app` on your Desktop (drag to `/Applications` if you like).
+- **Windows:** `Navidrome Player.vbs` on your Desktop and Start Menu. (A OneDrive-redirected Desktop puts it there.)
+
+Re-run the generator after moving or rebuilding the project to refresh the baked-in paths.
+
+#### Configuration
+
+All optional; they live in the **Web UI** section of the settings page, keyed below by their `settings.json` paths. Restart the client after saving (except `persistAfterMcpExit`, which the gear modal applies live).
+
+| Setting (`settings.json`) | Default | Effect |
+|---|---|---|
+| `webui.enabled` | `true` | Disable the panel entirely. |
+| `webui.port` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
+| `webui.host` | `127.0.0.1` | Bind address. Override only if you know which interface you want; usually **Expose on LAN** is the right knob. |
+| `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
+| `webui.autoOpenBrowser` | `false` | Open the player in your browser automatically when the MCP server starts. (Running `navidrome-web` directly always opens a browser regardless.) |
+| `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player (and mpv) running after the MCP server closes/restarts. Toggle it live in the in-player gear modal too. |
+
+#### Using it as a phone/tablet remote
+
+1. Enable **Expose on LAN** in the settings page and Save.
+2. Restart the MCP client (or restart `navidrome-web`).
+3. The player logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one in your phone's browser and bookmark it; the picker works immediately, no assistant needed.
+
+#### Security note
+
+The web UI has **no authentication**: anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
+
+- With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
+- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's usually fine on a trusted home network, but **do not expose it directly to the public internet**; there's no rate-limiting or auth, and the control API allows queue manipulation and starting playlists. Player settings and the power button stay loopback-only (and hidden for remote browsers), so a phone on your LAN can control playback but can't change settings or shut the player down. The browser-based main settings page is likewise never exposed. Once exposed, `GET /healthz` returns `404` off-box (to avoid leaking a version fingerprint), so health-check the player from inside its host.
+
+### Running over HTTP
+
+By default the server speaks MCP over **stdio**: the client launches it as a child process and talks to it over stdin/stdout. That's ideal for a desktop client on the same machine, but it can't be reached over a network.
+
+Setting the transport to **`http`** makes the server bind a socket and serve the MCP [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) at `/mcp` instead, so it can run as a standalone, always-on process that networked MCP clients connect to directly, with no external `supergateway`/`mcp-proxy` bridge.
+
+Add a `transport` block to your `settings.json`. `host` defaults to `127.0.0.1` (loopback only); set `expose: true` to bind all interfaces (`0.0.0.0`) so a remote client can reach it; an explicit `host` overrides this. Set `authToken` to require bearer auth, recommended whenever the port is reachable beyond loopback (the settings page has a **Generate** button for it):
+
+```json
+"transport": {
+  "type": "http",
+  "port": 3000,
+  "expose": true,
+  "authToken": "a-long-random-secret"
+}
+```
+
+Point an HTTP-capable MCP client at `http://<host>:<port>/mcp`:
+
+```json
+{
+  "mcpServers": {
+    "navidrome": {
+      "type": "http",
+      "url": "http://your-host:3000/mcp",
+      "headers": { "Authorization": "Bearer a-long-random-secret" }
+    }
+  }
+}
+```
+
+When a token is set, every `/mcp` request must carry `Authorization: Bearer <token>` (compared in constant time); anything else gets a `401`. If the transport binds a non-loopback address with **no** token, the server logs a loud warning at startup rather than refusing to start, so a firewalled or NetworkPolicy-locked deployment keeps zero-friction. `GET /healthz` is never gated: it's an unauthenticated liveness endpoint (returns `200 {"status":"ok"}`) for container and orchestrator health checks, and it performs no Navidrome call.
+
+**Host filtering (DNS-rebinding protection):** on the default bind (loopback with no auth token), requests whose `Host` header isn't a loopback alias are rejected, so a malicious web page can't drive the server through your own browser. Setting an `authToken` or binding a non-loopback address turns the automatic filter **off**: a remote deployment is reached by names the server can't know in advance, and the bearer gate already blocks rebinding (a lured browser can't attach your token). To pin the accepted names explicitly, set `transport.allowedHosts`, which is always enforced when present. Set `transport.allowedOrigins` only for browser clients (it gates the `Origin` header).
+
+The transport can also be configured entirely through environment variables: `MCP_TRANSPORT` (`stdio`|`http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, and `MCP_HTTP_ALLOWED_HOSTS` / `MCP_HTTP_ALLOWED_ORIGINS` (comma-separated). The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`). These apply two ways: as the **runtime config** whenever no `settings.json` exists (the headless/container path), and as **pre-fill** for the settings form on first run.
+
+> **Single account, shared state:** every HTTP session is served by one process holding a single authenticated Navidrome account, and the active-library selection is process-global. A `set_active_libraries` call changes the library filter for **all** connected sessions, and `get_user_details` reflects that shared selection; there is no per-session library scoping under the HTTP transport.
+
+> **Security:** the HTTP transport binds **loopback (`127.0.0.1`) by default** and is **unauthenticated unless you set `transport.authToken`**. The server holds an already-authenticated Navidrome session, so an open port is full library control with no credential. Exposing it beyond localhost is a deliberate opt-in (`expose: true`, or an explicit non-loopback `host`); when you do, set an auth token **and/or** restrict access with a firewall, a Kubernetes NetworkPolicy, or a reverse proxy that adds TLS. Keep the default `stdio` transport unless you specifically need remote access.
+
+**Where the audio comes out.** The transport decides who can reach the MCP protocol; it does not move the audio. mpv runs next to the server process, so the machine running the server is always the machine that makes the sound. Running HTTP directly on a machine (not in a container) is the one shape that gives you remote MCP access *and* working playback: run the server on the machine wired to your speakers, point remote clients at `http://that-machine:3000/mcp`, and set an `authToken`. A container gives you an always-on, **library-only** endpoint (search, playlists, ratings, radio metadata, Last.fm, lyrics) with no audio.
+
+Deploying in a container? See **[Running in Docker](https://github.com/Blakeem/Navidrome-MCP/blob/main/docs/DOCKER.md)**: the image, what each deployment shape gives you, mounted config, and the audio caveats.
+
+### A Note on ChatGPT Desktop
+
+ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and isn't compatible with local stdio servers. This server can serve MCP directly over HTTP (see [Running over HTTP](#running-over-http)), so you can host it behind a reverse proxy that terminates TLS instead of reaching for an external bridge like [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). For a self-hosted music server, though, it's still simplest to use Claude Desktop, Claude Code, Cursor, or another client with native stdio support.
+
 ## Troubleshooting
 
 **Connection problems**
@@ -669,7 +448,7 @@ Audio plays through the host's speakers. mpv is lazy-spawned on first use and su
 - Use the settings page's **Test connection** button (or test credentials with `curl` / a browser) before saving
 
 **macOS-specific**
-- See the [macOS Troubleshooting Guide](docs/MACOS_TROUBLESHOOTING.md) (commonly: Node.js path not found; fix with symlinks or full paths)
+- See the [macOS Troubleshooting Guide](https://github.com/Blakeem/Navidrome-MCP/blob/main/docs/MACOS_TROUBLESHOOTING.md) (commonly: Node.js path not found; fix with symlinks or full paths)
 
 **Configuration**
 - Use absolute paths in config files

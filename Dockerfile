@@ -30,6 +30,11 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
 ENV NAVIDROME_CONFIG_PATH=/config/settings.json
+# Owned by `node` (the USER below) so anything the runtime writes beside the
+# settings file works — notably navidrome-web.log, if a derived image adds mpv.
+# A Docker-created anonymous volume inherits this ownership; a bind mount keeps
+# the host's, which is the operator's to get right.
+RUN mkdir -p /config && chown node:node /config
 VOLUME ["/config"]
 
 # Container-shaped defaults for the env-var config fallback: this image exists

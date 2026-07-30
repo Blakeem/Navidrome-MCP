@@ -255,7 +255,12 @@ async function main(): Promise<void> {
   logger.setDebug(state.config.debug);
 
   // Shared bootstrap: same config/client/managers/engine the MCP server builds.
-  const { config, client } = await createRuntime();
+  // Pass the config `resolveConfigState()` already resolved — calling
+  // `createRuntime()` bare would make it re-read the store via `loadConfig()`,
+  // which is store-only and therefore throws on the env-var fallback path
+  // (headless/container, or an MCP client's `env:` block). Reusing the snapshot
+  // also closes the TOCTOU window a second independent disk read would open.
+  const { config, client } = await createRuntime(state.config);
   // Seed the persist flag (may be toggled live via the settings modal).
   initPersist(config.webui.persistAfterMcpExit);
 

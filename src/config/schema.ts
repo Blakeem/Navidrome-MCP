@@ -116,8 +116,8 @@ export const ConfigSchema = z.object({
 
   // Web UI Configuration — companion HTTP control panel for mpv playback.
   // The web UI is implicitly gated by the playback feature: it only ever
-  // initializes when mpv is detected. Even when `enabled` is true, the
-  // server does not bind a port until something has been queued.
+  // initializes when mpv is detected. When `enabled` is true the server
+  // spawns the player eagerly at startup, so the port binds immediately.
   // `host=127.0.0.1` keeps the panel on localhost only. Setting `expose=true`
   // forces the bind to `0.0.0.0` so a phone on the same LAN can reach it;
   // explicit `host` overrides this.

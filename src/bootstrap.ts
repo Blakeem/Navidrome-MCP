@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { loadConfig } from './config.js';
 import type { Config } from './config.js';
 import { NavidromeClient } from './client/navidrome-client.js';
 import { libraryManager } from './services/library-manager.js';
@@ -45,9 +44,14 @@ interface Runtime {
  * Deliberately does NOT attach the scrobbler — scrobbling ownership is
  * process-conditional (the playback survivor scrobbles; see the standalone-web
  * spec §6.4), so each entry point wires it itself after calling this.
+ *
+ * `config` is REQUIRED, and deliberately so: every entry point already resolves
+ * it via `resolveConfigState()` (the only resolver that includes the env-var
+ * fallback for headless/container deployments). An optional parameter defaulting
+ * to a bare `loadConfig()` would silently re-read the store — which is
+ * store-only — and throw on the env-var path, so the type now forbids it.
  */
-export async function createRuntime(preloaded?: Config): Promise<Runtime> {
-  const config = preloaded ?? await loadConfig();
+export async function createRuntime(config: Config): Promise<Runtime> {
   logger.setDebug(config.debug);
 
   const client = new NavidromeClient(config);
