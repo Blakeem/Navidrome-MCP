@@ -74,12 +74,12 @@ function getRadioTools(config: Config): Tool[] {
                 streamUrl: {
                   type: 'string',
                   description: 'Stream URL (required) - must be valid HTTP/HTTPS URL',
-                  pattern: '^https?://.+',
+                  pattern: '^https?://.+$',
                 },
                 homePageUrl: {
                   type: 'string',
                   description: 'Optional homepage URL for the station',
-                  pattern: '^https?://.+',
+                  pattern: '^https?://.+$',
                 },
               },
               required: ['name', 'streamUrl'],
