@@ -154,11 +154,12 @@ Tool categories whose heading says **requires ...** are only registered when tha
 | `get_artist_albums` | Full discography with release types and years (MusicBrainz), genres and popularity (Last.fm), and an in-library flag per album. Answers "what albums by X am I missing?" |
 | `get_album_info` | Album detail: tracklist with durations, year and type, genres, wiki summary, popularity, and library membership. Works for albums you don't own |
 
-### Lyrics (requires the LRCLIB provider, set in the settings page)
+### Lyrics
 
 | Tool | Description |
 |------|-------------|
-| `get_lyrics` | Time-synced (LRC) and plain-text lyrics, matched by title/artist/album/duration |
+| `get_lyrics` | Lyrics for one song, by Navidrome song ID or by LRCLIB record ID. Time-synced (LRC) lines when the source carries them |
+| `search_lyrics` | Search LRCLIB by title and artist. Returns candidate records plus the matching library song. Requires the LRCLIB provider, set in the settings page |
 
 ### Radio Management
 

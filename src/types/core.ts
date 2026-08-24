@@ -61,6 +61,9 @@ export interface SongDTO {
   starredAt?: string;
   /** ISO 8601 timestamp when the user last played this song, if any */
   playDate?: string;
+  /** Lyrics carried by the audio file's own tag, timed or plain. Omitted when
+   *  the file has none. Says nothing about LRCLIB availability. */
+  lyrics?: 'synced' | 'plain';
 }
 
 

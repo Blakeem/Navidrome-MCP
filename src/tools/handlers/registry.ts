@@ -97,7 +97,6 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
 
   // Use feature flags from config for conditional tools
   const hasLastFm = config.features.lastfm;
-  const hasLyrics = config.features.lyrics;
   const hasPlayback = config.features.playback;
 
   // Register all tool categories
@@ -109,14 +108,13 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
   registry.register('queue-management', createQueueToolCategory(client, config));
   registry.register('radio', createRadioToolCategory(client, config));
   registry.register('tags', createTagsToolCategory(client, config));
+  // Unconditional: the category serves the lyrics stored in the audio files
+  // with no LRCLIB, and drops its LRCLIB search when features.lyrics is off.
+  registry.register('lyrics', createLyricsToolCategory(client, config));
 
   // Add conditional tools based on configuration  
   if (hasLastFm) {
     registry.register('lastfm-discovery', createLastFmToolCategory(client, config));
-  }
-
-  if (hasLyrics) {
-    registry.register('lyrics', createLyricsToolCategory(client, config));
   }
 
   if (hasPlayback) {

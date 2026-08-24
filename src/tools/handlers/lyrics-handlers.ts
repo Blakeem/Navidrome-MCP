@@ -23,13 +23,42 @@ import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
-import { getLyrics } from '../lyrics.js';
+import { getLyricsByIdentity, searchLyricsCandidates } from '../lyrics.js';
 
-// Tool definitions for lyrics category
-const tools: Tool[] = [
-  {
+function buildGetLyricsTool(hasLrclib: boolean): Tool {
+  const properties: Record<string, unknown> = {
+    songId: {
+      type: 'string',
+      description: hasLrclib
+        ? 'Navidrome song ID. Reads the lyrics stored in the audio file, then falls back to LRCLIB using the metadata of that song. Required unless lrclibId is given.'
+        : 'Navidrome song ID. Reads the lyrics stored in the audio file.',
+    },
+  };
+
+  if (hasLrclib) {
+    properties['lrclibId'] = {
+      type: 'string',
+      description: 'LRCLIB record ID, as returned by search_lyrics. Fetches that record directly. Required unless songId is given.',
+    };
+  }
+
+  return {
     name: 'get_lyrics',
-    description: 'Get lyrics for a song (both synced and unsynced). Returns timed lyrics for karaoke-style display when available.',
+    description: hasLrclib
+      ? 'Get the lyrics of ONE song, identified by a Navidrome song ID or by an LRCLIB record ID. Returns timed lines for karaoke-style display when the source carries them (hasSynced). To look lyrics up from a title and an artist name, call search_lyrics first.'
+      : 'Get the lyrics of ONE song from its own audio file, identified by a Navidrome song ID. Returns timed lines for karaoke-style display when the file carries them (hasSynced).',
+    inputSchema: {
+      type: 'object',
+      properties,
+      required: hasLrclib ? [] : ['songId'],
+    },
+  };
+}
+
+function buildSearchLyricsTool(): Tool {
+  return {
+    name: 'search_lyrics',
+    description: 'Search LRCLIB for the lyrics of a track by title and artist. Returns candidate records, each with an lrclibId to pass to get_lyrics. Also returns the matching library song when there is one, so its own file lyrics can be used instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -43,31 +72,39 @@ const tools: Tool[] = [
         },
         album: {
           type: 'string',
-          description: 'Album name (improves match accuracy)',
+          description: 'Album name (improves match ranking)',
         },
         durationMs: {
           type: 'number',
-          description: 'Song duration in milliseconds (improves match accuracy)',
+          description: 'Song duration in milliseconds (improves match ranking)',
           minimum: 0,
-        },
-        id: {
-          type: 'string',
-          description: 'LRCLIB record ID if known',
         },
       },
       required: ['title', 'artist'],
     },
-  },
-];
+  };
+}
 
-// Factory function for creating lyrics tool category with dependencies  
-export function createLyricsToolCategory(_client: NavidromeClient, config: Config): ToolCategory {
+// Factory function for creating lyrics tool category with dependencies
+export function createLyricsToolCategory(client: NavidromeClient, config: Config): ToolCategory {
+  const hasLrclib = config.features.lyrics;
+  // Without LRCLIB the category still serves the lyrics stored in the audio
+  // files, so only the LRCLIB-backed search drops out.
+  const tools: Tool[] = hasLrclib
+    ? [buildGetLyricsTool(true), buildSearchLyricsTool()]
+    : [buildGetLyricsTool(false)];
+
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
         case 'get_lyrics':
-          return await getLyrics(config, args);
+          return await getLyricsByIdentity(config, client, args);
+        case 'search_lyrics':
+          if (!hasLrclib) {
+            throw new Error(ErrorFormatter.configMissing('LRCLIB lyrics', 'features.lyricsProvider'));
+          }
+          return await searchLyricsCandidates(config, client, args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }
