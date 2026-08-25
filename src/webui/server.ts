@@ -30,6 +30,7 @@ import { writeError } from './http-helpers.js';
 import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
 import { handleHealth } from './routes/health.js';
+import { handleLyrics } from './routes/lyrics.js';
 import { handleNetworkInfo } from './routes/network-info.js';
 import { handleListPlaylists, handlePlayPlaylist, handlePlayStarredAlbums, handlePlayStarredSongs } from './routes/playlists.js';
 import {
@@ -151,7 +152,7 @@ async function handleRequest(
   if (method === 'POST' && path === '/api/starred/albums/play') return handlePlayStarredAlbums(req, res, deps.client);
 
   // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
-  if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res); return; }
+  if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res, deps.config); return; }
   if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res); return; }
   if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res);
   if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
@@ -168,6 +169,20 @@ async function handleRequest(
       return;
     }
     return handleCover(res, deps.config, id);
+  }
+
+  // --- API: lyrics for one live-queue entry ---
+  if (method === 'GET' && path.startsWith('/api/lyrics/')) {
+    // A malformed percent-sequence makes decodeURIComponent throw a URIError;
+    // that's a client error, not a 500.
+    let songId: string;
+    try {
+      songId = decodeURIComponent(path.slice('/api/lyrics/'.length));
+    } catch {
+      writeError(res, 400, 'Malformed lyrics id');
+      return;
+    }
+    return handleLyrics(res, deps.config, deps.client, songId);
   }
 
   // --- Static / SPA index ---

@@ -760,3 +760,271 @@ body.player-stopped::after {
   font-size: 0.78rem;
   color: var(--text-muted);
 }
+
+/* ───────────────── lyrics overlay ───────────────── */
+/* Full-viewport surface over the remote. Sized in dvh, never vh, so the mobile
+   URL bar collapsing does not leave the transport off-screen. */
+.lyrics-view {
+  /* Overwritten inline by the font stepper. This is the step it starts at. */
+  --lyric-size: 1.25rem;
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 100dvh;
+  z-index: 20;
+  background: var(--bg);
+  color: var(--text);
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "lyrics-head"
+    "lyrics-body"
+    "lyrics-foot";
+}
+.lyrics-view[hidden] { display: none; }
+
+.lyrics-header {
+  grid-area: lyrics-head;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* Without this the row grows to its no-wrap title and pushes the stepper off
+     a phone screen. Zero lets the title's own ellipsis do the work instead. */
+  min-width: 0;
+  padding: 12px 16px;
+  padding-top: max(12px, env(safe-area-inset-top));
+  border-bottom: 1px solid var(--border);
+}
+
+.lyrics-heading { flex: 1 1 auto; min-width: 0; }
+
+.lyrics-title, .lyrics-artist {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lyrics-title { font-size: 1rem; font-weight: 600; }
+.lyrics-artist { font-size: 0.85rem; color: var(--text-muted); }
+
+.lyrics-header-actions { display: flex; align-items: center; gap: 8px; }
+.lyrics-slot { display: flex; align-items: center; gap: 6px; }
+
+/* Two fixed glyphs rather than a slider: the reader picks a step, not a value. */
+.lyric-size-btn { padding: 4px 8px; }
+.lyric-size-glyph { font-weight: 700; line-height: 1; }
+.lyric-size-glyph.is-small { font-size: 0.8rem; }
+.lyric-size-glyph.is-large { font-size: 1.15rem; }
+.lyric-size-btn:disabled { opacity: 0.4; cursor: default; }
+.lyric-size-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.lyrics-offset-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.lyrics-offset-value {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+.lyrics-offset-row .btn-secondary:disabled { opacity: 0.4; cursor: default; }
+.lyrics-offset-row .btn-secondary:disabled:hover { border-color: var(--border); }
+
+.lyrics-aside {
+  grid-area: lyrics-aside;
+  /* A phone viewport has no room for the art beside the words. */
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.lyrics-scroll {
+  grid-area: lyrics-body;
+  overflow-y: auto;
+  /* Keep a scroll gesture inside the overlay so the page behind never moves. */
+  overscroll-behavior: contain;
+  padding: 24px 20px 32px;
+  cursor: pointer;
+}
+
+.lyrics-status {
+  margin: 0;
+  padding: 24px 0;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+.lyrics-status:empty { display: none; }
+
+.lyrics-placard-head {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.lyrics-placard-note { display: block; margin-top: 6px; }
+.lyrics-placard-link {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.lyrics-placard-link:hover { text-decoration: underline; }
+
+.lyrics-lines {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  max-width: 42ch;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.lyric-line {
+  margin: 0;
+  font-size: var(--lyric-size);
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+/* LRC blank lines carry the pacing of a verse break, so keep their height. */
+.lyric-line:empty { min-height: 0.9em; }
+
+.lyrics-transport {
+  grid-area: lyrics-foot;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 18px 12px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+.lyrics-seek-line {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--progress, 0%),
+    var(--surface-2) var(--progress, 0%),
+    var(--surface-2) 100%
+  );
+}
+
+.lyrics-times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.lyrics-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  padding-top: 2px;
+}
+.lyrics-buttons .transport-btn { width: 44px; height: 44px; }
+.lyrics-buttons .transport-btn svg { width: 22px; height: 22px; }
+.lyrics-buttons .play-btn { width: 54px; height: 54px; }
+.lyrics-buttons .play-btn svg { width: 28px; height: 28px; }
+
+/* Immersive: the chrome gets out of the way of the words. */
+.lyrics-view.is-immersive .lyrics-header { display: none; }
+.lyrics-view.is-immersive .lyrics-times { display: none; }
+.lyrics-view.is-immersive .lyrics-transport {
+  gap: 3px;
+  padding-top: 4px;
+  padding-bottom: max(6px, env(safe-area-inset-bottom));
+}
+.lyrics-view.is-immersive .lyrics-buttons { gap: 20px; }
+.lyrics-view.is-immersive .lyrics-buttons .transport-btn { width: 34px; height: 34px; }
+.lyrics-view.is-immersive .lyrics-buttons .transport-btn svg { width: 18px; height: 18px; }
+.lyrics-view.is-immersive .lyrics-buttons .play-btn { width: 42px; height: 42px; }
+.lyrics-view.is-immersive .lyrics-buttons .play-btn svg { width: 22px; height: 22px; }
+
+/* Room above the first line and below the last so either can reach the centre.
+   Only a timed set follows the player, so plain text keeps its ordinary box. */
+.lyrics-lines.is-synced { padding-block: 38dvh; }
+.lyrics-lines.is-synced .lyric-line { cursor: pointer; }
+
+.lyric-line { transition: color 180ms ease, opacity 180ms ease; }
+.lyric-line.is-active { color: var(--text); }
+/* The finished line during an instrumental break: still the last thing sung,
+   no longer the thing to read. */
+.lyric-line.is-interlude { opacity: 0.5; }
+
+/* Stands in for the words during a break so a long gap does not look frozen. */
+.lyric-interlude {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.lyric-interlude span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: lyric-interlude-pulse 1.4s ease-in-out infinite;
+}
+.lyric-interlude span:nth-child(2) { animation-delay: 0.18s; }
+.lyric-interlude span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes lyric-interlude-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* Over the words and clear of the transport, up only while following is off. */
+.lyrics-follow-pill {
+  position: absolute;
+  left: 50%;
+  bottom: calc(112px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 9px 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgb(0 0 0 / 35%);
+}
+.lyrics-follow-pill:hover { border-color: var(--accent); }
+.lyrics-follow-pill[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lyric-line { transition: none; }
+  .lyric-interlude span { animation: none; opacity: 0.6; }
+}
+
+/* Two columns from the same DOM: art and transport left, words right. */
+@media (min-width: 900px) {
+  .lyrics-view {
+    grid-template-columns: minmax(260px, 340px) 1fr;
+    grid-template-areas:
+      "lyrics-head  lyrics-head"
+      "lyrics-aside lyrics-body"
+      "lyrics-foot  lyrics-body";
+  }
+  .lyrics-aside { display: flex; }
+  .lyrics-scroll { padding: 40px 48px 56px; border-left: 1px solid var(--border); }
+  .lyrics-lines { max-width: 48ch; }
+  .lyrics-transport { background: transparent; border-top: 0; }
+  .lyrics-follow-pill { left: auto; right: 32px; bottom: 32px; transform: none; }
+}

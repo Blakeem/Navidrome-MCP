@@ -23,6 +23,11 @@
         <span class="conn-dot"></span>
         <span class="conn-label">Connecting&hellip;</span>
       </span>
+      <button type="button" class="ghost-btn" id="open-lyrics" aria-label="Show lyrics">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm2 6h5v2H6zm7 0h5v2h-5zm-7 4h8v2H6zm10 0h2v2h-2z"/>
+        </svg>
+      </button>
       <button type="button" class="ghost-btn" id="open-playlists" aria-label="Play a playlist">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm12-.5V8h4V6h-6v8.05A3.5 3.5 0 1 0 15 17.5z"/>
@@ -144,6 +149,94 @@
     </section>
   </main>
 
+  <section class="lyrics-view" id="lyrics-view" aria-label="Lyrics" hidden>
+    <header class="lyrics-header">
+      <button type="button" class="ghost-btn" id="lyrics-back" aria-label="Close lyrics">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/>
+        </svg>
+      </button>
+      <div class="lyrics-heading">
+        <p class="lyrics-title" id="lyrics-title">No track loaded</p>
+        <p class="lyrics-artist" id="lyrics-artist"></p>
+      </div>
+      <div class="lyrics-header-actions">
+        <div class="lyrics-slot" id="lyrics-size-slot">
+          <button type="button" class="ghost-btn lyric-size-btn" id="lyrics-size-down" aria-label="Smaller lyrics text">
+            <span class="lyric-size-glyph is-small" aria-hidden="true">A</span>
+          </button>
+          <button type="button" class="ghost-btn lyric-size-btn" id="lyrics-size-up" aria-label="Larger lyrics text">
+            <span class="lyric-size-glyph is-large" aria-hidden="true">A</span>
+          </button>
+        </div>
+        <div class="lyrics-slot" id="lyrics-settings-slot">
+          <button type="button" class="ghost-btn" id="lyrics-settings" aria-label="Lyrics settings" hidden>
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path fill="currentColor" d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.24-1.12.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.42.32.61.22l2.39-.96c.5.38 1.04.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.24 1.12-.56 1.62-.94l2.39.96c.19.1.47.02.61-.22l1.92-3.32a.5.5 0 0 0-.12-.64ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="lyrics-aside">
+      <div class="cover" id="lyrics-cover">
+        <svg class="cover-placeholder" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3Z"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="lyrics-scroll" id="lyrics-scroll">
+      <p class="lyrics-status" id="lyrics-status"></p>
+      <ol class="lyrics-lines" id="lyrics-lines"></ol>
+    </div>
+
+    <footer class="lyrics-transport">
+      <div class="lyrics-seek-line" id="lyrics-seek-line" aria-hidden="true"></div>
+      <div class="lyrics-times">
+        <span id="lyrics-position">0:00</span>
+        <span id="lyrics-duration">0:00</span>
+      </div>
+      <div class="lyrics-buttons">
+        <button type="button" class="transport-btn" id="lyrics-prev" aria-label="Previous track">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
+          </svg>
+        </button>
+        <button type="button" class="transport-btn play-btn" id="lyrics-play-pause" aria-label="Play / Pause">
+          <svg id="lyrics-icon-play" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M8 5v14l11-7z"/>
+          </svg>
+          <svg id="lyrics-icon-pause" viewBox="0 0 24 24" aria-hidden="true" hidden>
+            <path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/>
+          </svg>
+        </button>
+        <button type="button" class="transport-btn" id="lyrics-next" aria-label="Next track">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z"/>
+          </svg>
+        </button>
+      </div>
+    </footer>
+  </section>
+
+  <dialog id="lyrics-settings-dialog" class="modal">
+    <form method="dialog" class="modal-content">
+      <h2>Lyrics Settings</h2>
+      <p class="modal-help">The sync offset applies to this device, for every song.</p>
+      <div class="lyrics-offset-row">
+        <button type="button" class="btn-secondary" id="lyrics-offset-down" aria-label="Decrease the lyrics sync offset">&minus;100 ms</button>
+        <span class="lyrics-offset-value" id="lyrics-offset-value">0.0 s</span>
+        <button type="button" class="btn-secondary" id="lyrics-offset-up" aria-label="Increase the lyrics sync offset">+100 ms</button>
+      </div>
+      <p class="modal-hint">A positive offset runs the words ahead of the audio.</p>
+      <menu class="modal-actions">
+        <button type="submit" class="primary-btn">Close</button>
+      </menu>
+    </form>
+  </dialog>
+
   <dialog id="settings-dialog" class="modal">
     <form method="dialog" class="modal-content">
       <h2>Player Settings</h2>
@@ -228,6 +321,7 @@
     </form>
   </dialog>
 
-  <script src="/app.js" defer></script>
+  <!-- Module scripts are deferred by default, so `defer` is redundant here. -->
+  <script src="/app.js" type="module"></script>
 </body>
 </html>
