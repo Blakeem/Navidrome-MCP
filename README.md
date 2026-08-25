@@ -54,8 +54,6 @@ Lyrics come from the audio file's own tags first and fall back to LRCLIB's commu
 
 The web player shows a lyrics view that highlights the current line and scrolls to follow it. Click a line to jump playback there. Scrolling pauses the follow so you can read ahead, and a control returns you to the current line. Font size and sync offset are adjustable, and both are kept per device. The screen stays awake while the view is open and playing.
 
-`get_lyrics` takes a Navidrome song ID or an LRCLIB record ID. `search_lyrics` searches LRCLIB by title and artist.
-
 [![Lyrics view](navidome-mcp-lyrics-remote-small.png)](navidome-mcp-lyrics-remote-large.png)
 
 ### 📻 Internet Radio

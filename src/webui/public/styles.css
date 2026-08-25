@@ -1025,11 +1025,11 @@ body.player-stopped::after {
   }
   .lyrics-aside { display: flex; }
   .lyrics-scroll { padding: 40px 48px 56px; border-left: 1px solid var(--border); }
-  /* No character cap here. A `ch` cap resolves against THIS element's font
-     size, not the `--lyric-size` its children use, so it stayed ~414px while
-     the text grew and wrapped lines at a third of the column. The desktop
-     column is already bounded by the grid, so let lines use its full width. */
-  .lyrics-lines { max-width: none; }
+  /* `ch` resolves against THIS element's font size, not the `--lyric-size` its
+     children use, so match them. Left at the inherited 16px the cap stayed near
+     414px while the text grew, wrapping lines at a third of the column. The cap
+     keeps `margin: 0 auto` something to centre, matching the narrow layout. */
+  .lyrics-lines { font-size: var(--lyric-size); max-width: 48ch; }
   .lyrics-transport { background: transparent; border-top: 0; }
   .lyrics-follow-pill { left: auto; right: 32px; bottom: 32px; transform: none; }
 }
