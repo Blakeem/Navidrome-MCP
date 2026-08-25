@@ -14,13 +14,26 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { Cache } from '../utils/cache.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
-import { isHttpUrlScheme } from '../utils/network-safety.js';
+import { hasControlChars, isHttpUrlScheme } from '../utils/network-safety.js';
 
 // Zod schemas for radio tool arguments — used instead of `args as { ... }` casts
 // to catch invalid inputs before they reach the Subsonic API.
 const RadioStationIdSchema = z.object({
   stationId: z.string().min(1, 'Radio station ID is required'),
 });
+
+/**
+ * Why a URL is unusable as a station URL, phrased to complete the sentence
+ * "Stream URL for station X ...", or null when it is fine. The control-char
+ * case is called out separately because the scheme message is actively
+ * misleading for it: a URL pasted with a trailing newline DOES start with
+ * http:// and the user has no way to see the character that failed.
+ */
+function describeUrlProblem(url: string): string | null {
+  if (hasControlChars(url)) return 'must not contain line breaks or control characters';
+  if (!isHttpUrlScheme(url)) return 'must use http:// or https://';
+  return null;
+}
 
 // Per-station name/url validation is intentionally kept in the loop below so
 // that a batch with one bad entry still processes the rest and returns per-item
@@ -278,10 +291,26 @@ export async function createRadioStation(
         // are also rejected here for safety — callers needing those should be
         // explicit, and Navidrome's saved-station path is the wrong place to
         // smuggle arbitrary schemes.
-        if (!isHttpUrlScheme(station.streamUrl)) {
+        const streamProblem = describeUrlProblem(station.streamUrl);
+        if (streamProblem !== null) {
           results.push({
             success: false,
-            error: `Stream URL for station "${station.name}" must use http:// or https://`
+            error: `Stream URL for station "${station.name}" ${streamProblem}`
+          });
+          failedCount++;
+          continue;
+        }
+
+        // homePageUrl reaches Navidrome and comes back out in the station DTO,
+        // so an unchecked `javascript:`/`file:` value would be stored and handed
+        // to whatever renders it. Same rule as the stream URL.
+        const homePageProblem = station.homePageUrl !== undefined && station.homePageUrl.trim() !== ''
+          ? describeUrlProblem(station.homePageUrl)
+          : null;
+        if (homePageProblem !== null) {
+          results.push({
+            success: false,
+            error: `Home page URL for station "${station.name}" ${homePageProblem}`
           });
           failedCount++;
           continue;

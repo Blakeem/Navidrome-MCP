@@ -8,18 +8,12 @@
  * raw lyric text must never reach the DTO.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
-import type { Config } from '../../../src/config.js';
-import { loadConfig } from '../../../src/config.js';
-import { shouldSkipLiveTests, getSkipReason, describeLive } from '../../helpers/env-detection.js';
-import { getSharedLiveClient } from '../../factories/mock-client.js';
-import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import { describe, it, expect } from 'vitest';
 import {
   transformToSongDTO,
   transformSongsToDTO,
   type RawSong,
 } from '../../../src/transformers/song-transformer.js';
-import { searchSongs } from '../../../src/tools/search.js';
 
 const SYNCED_TEXT = 'timed line that is definitely long enough here';
 const PLAIN_TEXT = 'plain line that is definitely long enough here';
@@ -111,32 +105,5 @@ describe('transformSongsToDTO - local lyrics flag', () => {
     expect(dtos).toHaveLength(100);
     expect(dtos[50]?.lyrics).toBeUndefined();
     expect(dtos.filter((dto) => dto.lyrics === 'plain')).toHaveLength(99);
-  });
-});
-
-describe('Song lyrics flag - live listing', () => {
-  let config: Config;
-  let liveClient: NavidromeClient;
-
-  beforeAll(async () => {
-    if (shouldSkipLiveTests()) {
-      console.warn(`Skipping live tests: ${getSkipReason()}`);
-      return;
-    }
-    config = await loadConfig();
-    liveClient = await getSharedLiveClient();
-  });
-
-  describeLive('Live song listing - structure only', () => {
-    it('returns either no lyrics flag or one of the two literals on every row', async () => {
-      const result = await searchSongs(liveClient, config, { limit: 5 });
-
-      expect(Array.isArray(result.songs)).toBe(true);
-      for (const song of result.songs) {
-        if (song.lyrics !== undefined) {
-          expect(['synced', 'plain']).toContain(song.lyrics);
-        }
-      }
-    });
   });
 });

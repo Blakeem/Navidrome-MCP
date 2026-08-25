@@ -22,6 +22,21 @@ import { Agent, buildConnector, fetch as undiciFetch } from 'undici';
 const ALLOWED_VALIDATOR_SCHEMES: readonly string[] = ['http:', 'https:'];
 
 /**
+ * C0 controls and DEL. The WHATWG URL parser silently strips tab, LF and CR
+ * before parsing, so `http://host/a\nHost: evil` yields a clean http: URL while
+ * callers go on to store and play the ORIGINAL string, newlines intact.
+ * Rejecting them here keeps "this parsed" and "this is what we hand onward"
+ * the same claim.
+ */
+export function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/**
  * True iff the URL parses and uses http:// or https:// — the only schemes
  * Node's fetch can probe. Other valid radio stream protocols (mms://,
  * rtsp://, rtmp://) are perfectly playable by mpv but cannot be validated
@@ -30,6 +45,7 @@ const ALLOWED_VALIDATOR_SCHEMES: readonly string[] = ['http:', 'https:'];
  * throw an opaque error deep in the stack.
  */
 export function isHttpUrlScheme(url: string): boolean {
+  if (hasControlChars(url)) return false;
   try {
     return ALLOWED_VALIDATOR_SCHEMES.includes(new URL(url).protocol);
   } catch {

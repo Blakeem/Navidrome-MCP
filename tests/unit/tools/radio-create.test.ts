@@ -223,3 +223,90 @@ describe('createRadioStation Zod input validation', () => {
     expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
   });
 });
+
+describe('createRadioStation URL validation', () => {
+  let mockClient: MockNavidromeClient;
+
+  beforeEach(() => {
+    resetRadioStationCacheForTesting();
+    mockClient = createMockClient();
+  });
+
+  // The WHATWG URL parser strips tab/LF/CR, so these parse to a clean http:
+  // URL while the RAW string is what gets stored and later handed to mpv.
+  it('rejects a stream URL carrying a newline, before any network call', async () => {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+      stations: [{ name: 'Injected', streamUrl: 'http://stream.test/live\nHost: internal.local' }],
+    });
+
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[0]?.error).toMatch(/line breaks or control characters/i);
+    expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-http home page URL', async () => {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+      stations: [{
+        name: 'Bad Homepage',
+        streamUrl: 'http://stream.test/audio',
+        homePageUrl: 'javascript:alert(1)',
+      }],
+    });
+
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[0]?.error).toMatch(/must use http/i);
+    expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects a home page URL carrying a newline', async () => {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+      stations: [{
+        name: 'Injected Homepage',
+        streamUrl: 'http://stream.test/audio',
+        homePageUrl: 'http://site.test/\nX-Injected: 1',
+      }],
+    });
+
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[0]?.error).toMatch(/home page/i);
+    expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
+  });
+
+  it('still accepts a station with a valid home page URL', async () => {
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([{ id: 'ok-1', name: 'Good', streamUrl: 'http://stream.test/audio' }])
+    );
+
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+      stations: [{
+        name: 'Good',
+        streamUrl: 'http://stream.test/audio',
+        homePageUrl: 'https://site.test/about',
+      }],
+    });
+
+    expect(result.results[0]?.success).toBe(true);
+  });
+
+  // The per-station checks live in the loop precisely so one bad entry does not
+  // take the batch down with it.
+  it('fails only the bad entry in a mixed batch', async () => {
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([{ id: 'ok-2', name: 'Fine', streamUrl: 'http://stream.test/ok' }])
+    );
+
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+      stations: [
+        { name: 'Broken', streamUrl: 'http://stream.test/x\nHost: evil' },
+        { name: 'Fine', streamUrl: 'http://stream.test/ok' },
+      ],
+    });
+
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[1]?.success).toBe(true);
+    expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
+  });
+});

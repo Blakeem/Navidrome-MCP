@@ -1,6 +1,6 @@
 {
   "name": "navidrome-mcp",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "MCP server for interacting with Navidrome music server",
   "type": "module",
   "main": "dist/index.js",
@@ -11,8 +11,9 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:playback": "vitest run --config vitest.playback.config.ts",
+    "test:live": "vitest run --config vitest.live.config.ts",
     "test:ci": "SKIP_INTEGRATION_TESTS=true MOCK_ONLY_TESTS=true NAVIDROME_URL=http://ci-dummy:4533 NAVIDROME_USERNAME=ci-user NAVIDROME_PASSWORD=ci-pass vitest run",
-    "test:all": "pnpm test:run && pnpm check:all",
+    "test:all": "pnpm test:run && pnpm test:live && pnpm check:all",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src tests --ext .ts",

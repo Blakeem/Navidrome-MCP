@@ -48,9 +48,15 @@ Find similar artists and tracks, fetch biographies and top tracks, and browse gl
 
 ### 🎤 Synchronized Lyrics
 
-> Enabled in the settings page (LRCLIB provider + a user agent). No API key needed.
+> LRCLIB is set in the settings page and needs no API key. Lyrics stored in your files work without it.
 
-Fetch time-synced lyrics (LRC format, millisecond timestamps) from LRCLIB's community database, matched by title, artist, album, and duration. Plain text is returned when no synced version exists.
+Lyrics come from the audio file's own tags first and fall back to LRCLIB's community database. Timed lyrics carry millisecond timestamps, and plain text is used when no timed version exists.
+
+The web player shows a lyrics view that highlights the current line and scrolls to follow it. Click a line to jump playback there. Scrolling pauses the follow so you can read ahead, and a control returns you to the current line. Font size and sync offset are adjustable, and both are kept per device. The screen stays awake while the view is open and playing.
+
+`get_lyrics` takes a Navidrome song ID or an LRCLIB record ID. `search_lyrics` searches LRCLIB by title and artist.
+
+[![Lyrics view](navidome-mcp-lyrics-remote-small.png)](navidome-mcp-lyrics-remote-large.png)
 
 ### 📻 Internet Radio
 
