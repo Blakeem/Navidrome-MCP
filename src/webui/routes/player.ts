@@ -17,6 +17,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Config } from '../../config.js';
 import { readSettings, writeSettings, SettingsFileSchema } from '../../config/store.js';
 import { logger } from '../../utils/logger.js';
 import { getPersist, setPersist } from '../../web/player-runtime.js';
@@ -28,9 +29,16 @@ import { isLoopbackPeer } from '../loopback.js';
  * whether to render the local-only affordances (gear/power). `isLocal` reflects
  * THIS request's peer; combined client-side with the SSE `player` snapshot
  * (hasLiveParent/persist) to compute the power button's visibility live.
+ *
+ * `lyrics.lrclibEnabled` only shapes the lyrics overlay's empty-state message.
+ * The overlay itself still opens when the flag is false, because a song can
+ * carry lyrics in its own file tag with no LRCLIB involved.
  */
-export function handlePlayerState(req: IncomingMessage, res: ServerResponse): void {
-  writeJson(res, 200, { isLocal: isLoopbackPeer(req) });
+export function handlePlayerState(req: IncomingMessage, res: ServerResponse, config: Config): void {
+  writeJson(res, 200, {
+    isLocal: isLoopbackPeer(req),
+    lyrics: { lrclibEnabled: config.features.lyrics },
+  });
 }
 
 /**

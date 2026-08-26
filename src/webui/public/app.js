@@ -5,9 +5,17 @@
 //   POST /api/controls/*       — pause/resume/next/previous/seek/volume
 //   GET  /api/cover/:id        — proxied album art (signed server-side)
 //   GET  /api/network-info     — bind/expose state + reachable URLs
+//   GET  /api/lyrics/:songId   — resolved lyrics for one live-queue entry
 //
 // Reconnect interval is enforced by the server (retry: 10000). The browser's
 // EventSource implementation handles the reconnect itself.
+
+import {
+  applyOffset,
+  createSeekDetector,
+  findActiveLine,
+  isInterlude,
+} from './lyrics-sync.js';
 
 (() => {
   'use strict';
@@ -70,6 +78,30 @@
     setStatus: $('settings-status'),
     settingsSave: $('settings-save'),
     powerBtn: $('power-btn'),
+    openLyrics: $('open-lyrics'),
+    lyricsView: $('lyrics-view'),
+    lyricsBack: $('lyrics-back'),
+    lyricsTitle: $('lyrics-title'),
+    lyricsArtist: $('lyrics-artist'),
+    lyricsCover: $('lyrics-cover'),
+    lyricsScroll: $('lyrics-scroll'),
+    lyricsStatus: $('lyrics-status'),
+    lyricsLines: $('lyrics-lines'),
+    lyricsSeekLine: $('lyrics-seek-line'),
+    lyricsPosition: $('lyrics-position'),
+    lyricsDuration: $('lyrics-duration'),
+    lyricsPrev: $('lyrics-prev'),
+    lyricsPlay: $('lyrics-play-pause'),
+    lyricsNext: $('lyrics-next'),
+    lyricsIconPlay: $('lyrics-icon-play'),
+    lyricsIconPause: $('lyrics-icon-pause'),
+    lyricsSizeDown: $('lyrics-size-down'),
+    lyricsSizeUp: $('lyrics-size-up'),
+    lyricsSettings: $('lyrics-settings'),
+    lyricsSettingsDialog: $('lyrics-settings-dialog'),
+    lyricsOffsetDown: $('lyrics-offset-down'),
+    lyricsOffsetUp: $('lyrics-offset-up'),
+    lyricsOffsetValue: $('lyrics-offset-value'),
   };
 
   // ---------- state ----------
@@ -107,6 +139,33 @@
     // first paint) — NOT on every 1Hz time-pos snapshot, which would
     // otherwise yank the list whenever the user has manually scrolled.
     lastCurrentIndex: null,
+    lyricsOpen: false,
+    // Starts undefined rather than null so the very first snapshot always
+    // paints an initial lyrics state, even with nothing playing.
+    lyricsSongId: undefined,
+    // Bumped on every track change. A lyrics response carrying an older
+    // generation is discarded instead of painted over the newer track.
+    lyricsGeneration: 0,
+    // Only shapes the empty-state message; assumed on until player-state answers.
+    lyricsLrclibEnabled: true,
+    // Lyrics clock. Additive to posBaseSeconds/posBaseTimestampMs above: the
+    // highlight needs a clock that slews toward each snapshot and the progress
+    // bar needs one that does not, so they cannot be the same clock.
+    lyricsBaseMs: 0,
+    lyricsBaseWallMs: 0,
+    // Outstanding correction, drained toward zero so a snapshot that disagrees
+    // with the interpolation does not twitch the highlight once per second.
+    lyricsSlewMs: 0,
+    // Set by a seek, an SSE reconnect or a return to visibility: the next
+    // snapshot lands the clock instead of animating a scroll through the song.
+    lyricsSnapNext: true,
+    // Reading preferences, restored from localStorage. Both are per device, not
+    // per song: a speaker's latency and a reader's eyesight belong to the device.
+    lyricsOffsetMs: 0,
+    // Index into LYRIC_SIZE_STEPS. Step 1 is the size the overlay ships at.
+    lyricsSizeStep: 1,
+    // False once the reader has scrolled the words themselves.
+    lyricsFollowing: true,
   };
 
   // ---------- helpers ----------
@@ -180,7 +239,12 @@
       try { eventSource.close(); } catch { /* noop */ }
     }
     eventSource = new EventSource('/api/events');
-    eventSource.onopen = () => { if (!sseStopped) setConnState('connected'); };
+    eventSource.onopen = () => {
+      // A reconnect may have missed any amount of the song, so the first
+      // snapshot after it lands the lyrics clock rather than animating to it.
+      state.lyricsSnapNext = true;
+      if (!sseStopped) setConnState('connected');
+    };
     eventSource.onerror = () => {
       if (sseStopped) return; // we shut down on purpose; keep the terminal state
       // EventSource flips to readyState=CONNECTING during the auto-reconnect
@@ -214,7 +278,10 @@
     renderPlayState();
     renderVolume();
     rebaseProgress();
+    rebaseLyricsClock();
     renderCover();
+    syncLyrics();
+    syncWakeHold();
     updateLocalControls();
     // Auto-scroll the queue so the currently-playing row is on-screen.
     // Called LAST so the DOM reflects the snapshot before we measure.
@@ -467,6 +534,14 @@
     els.btnPrev.disabled = !hasTrack;
     els.btnNext.disabled = !hasTrack;
     els.seek.disabled = !hasTrack || np?.isRadio === true;
+
+    // The lyrics overlay carries its own compact copy of the transport.
+    setHidden(els.lyricsIconPlay, !state.paused);
+    setHidden(els.lyricsIconPause, state.paused);
+    els.lyricsPlay.setAttribute('aria-label', state.paused ? 'Play' : 'Pause');
+    els.lyricsPlay.disabled = els.btnPlay.disabled;
+    els.lyricsPrev.disabled = els.btnPrev.disabled;
+    els.lyricsNext.disabled = els.btnNext.disabled;
   }
 
   function renderVolume() {
@@ -514,24 +589,21 @@
     els.duration.textContent = fmtTime(state.duration);
   }
 
-  function renderCover() {
-    // Cover art keys off the current queue item's songId. The Subsonic
-    // getCoverArt endpoint accepts a song id and returns the album art, so
-    // a single proxy lookup per current track is enough.
-    const np = state.nowPlaying;
-    let songId = null;
-    if (np?.engineRunning && typeof np.queueIndex === 'number') {
-      const current = state.queue.items.find((it) => it.index === np.queueIndex);
-      if (current && current.songId) songId = current.songId;
-    }
-    if (songId === state.coverSongId) return;
-    state.coverSongId = songId;
+  // The songId of one queue row. Both the cover art and the lyrics overlay key
+  // off it, because the now-playing snapshot carries no songId of its own.
+  function queueSongId(index) {
+    const item = state.queue.items.find((it) => it.index === index);
+    return item && item.songId ? item.songId : null;
+  }
 
+  // Swap the art inside one .cover box. `stillCurrent` is re-checked on load so
+  // a slow image for an already-replaced track never paints over the new one.
+  function mountCover(wrap, songId, stillCurrent) {
     // Clear any existing image; placeholder reappears via the .cover.has-art
     // class toggle.
-    const existing = els.coverWrap.querySelector('img');
+    const existing = wrap.querySelector('img');
     if (existing !== null) existing.remove();
-    els.coverWrap.classList.remove('has-art');
+    wrap.classList.remove('has-art');
 
     if (songId === null) return;
 
@@ -539,14 +611,26 @@
     img.alt = '';
     img.src = `/api/cover/${encodeURIComponent(songId)}`;
     img.addEventListener('load', () => {
-      if (state.coverSongId === songId) {
-        els.coverWrap.classList.add('has-art');
-      }
+      if (stillCurrent()) wrap.classList.add('has-art');
     });
     img.addEventListener('error', () => {
       img.remove();
     });
-    els.coverWrap.appendChild(img);
+    wrap.appendChild(img);
+  }
+
+  function renderCover() {
+    // Cover art keys off the current queue item's songId. The Subsonic
+    // getCoverArt endpoint accepts a song id and returns the album art, so
+    // a single proxy lookup per current track is enough.
+    const np = state.nowPlaying;
+    let songId = null;
+    if (np?.engineRunning && typeof np.queueIndex === 'number') {
+      songId = queueSongId(np.queueIndex);
+    }
+    if (songId === state.coverSongId) return;
+    state.coverSongId = songId;
+    mountCover(els.coverWrap, songId, () => state.coverSongId === songId);
   }
 
   // ---------- progress interpolation loop ----------
@@ -569,13 +653,15 @@
   }
 
   // ---------- input handlers ----------
+  // Optimistic-but-conservative: don't toggle local state until the SSE event
+  // confirms. The next snapshot lands within ~50ms over LAN.
+  function togglePlayPause() {
+    if (state.paused) post('/api/controls/resume');
+    else post('/api/controls/pause');
+  }
+
   function bindControls() {
-    els.btnPlay.addEventListener('click', () => {
-      // Optimistic-but-conservative: don't toggle local state until the SSE
-      // event confirms. The next snapshot lands within ~50ms over LAN.
-      if (state.paused) post('/api/controls/resume');
-      else post('/api/controls/pause');
-    });
+    els.btnPlay.addEventListener('click', togglePlayPause);
     els.btnPrev.addEventListener('click', () => post('/api/controls/previous'));
     els.btnNext.addEventListener('click', () => post('/api/controls/next'));
 
@@ -759,6 +845,8 @@
       setConnState('disconnected');
       document.body.classList.add('player-stopped');
     });
+
+    bindLyricsControls();
   }
 
   function switchTab(name) {
@@ -919,6 +1007,760 @@
     }
   }
 
+  // ---------- lyrics overlay ----------
+  // A track's lyrics never change, so an answered lookup is held for the life of
+  // the page. Only answers are cached: a transient failure must stay retryable.
+  const lyricsCache = new Map();
+  const lyricsInFlight = new Map();
+
+  async function requestLyrics(songId) {
+    try {
+      const res = await fetch(`/api/lyrics/${encodeURIComponent(songId)}`);
+      if (!res.ok) {
+        console.warn('webui: lyrics fetch failed', res.status);
+        return null;
+      }
+      return await res.json();
+    } catch (err) {
+      console.warn('webui: lyrics fetch failed', err);
+      return null;
+    }
+  }
+
+  // One request per songId at a time: the prefetch of the next queue entry and
+  // an open of that same entry would otherwise race two identical lookups.
+  function lyricsGet(songId) {
+    const cached = lyricsCache.get(songId);
+    if (cached !== undefined) return Promise.resolve(cached);
+    const pending = lyricsInFlight.get(songId);
+    if (pending !== undefined) return pending;
+
+    // requestLyrics never rejects, so the in-flight entry is always cleared.
+    const request = requestLyrics(songId).then((dto) => {
+      lyricsInFlight.delete(songId);
+      if (dto !== null) lyricsCache.set(songId, dto);
+      return dto;
+    });
+    lyricsInFlight.set(songId, request);
+    return request;
+  }
+
+  // ---------- lyrics clock ----------
+  /** How far the highlight's clock may run fast or slow while it absorbs a
+   *  correction. A quarter of real time clears a sub-threshold drift in about
+   *  two seconds, which the reader does not perceive as a change of pace. */
+  const LYRICS_SLEW_RATE = 0.25;
+
+  /** A gap this long reads as an instrumental break rather than a verse pause.
+   *  LRC line gaps run 2 to 3 seconds, so this sits clear of them. */
+  const LYRICS_INTERLUDE_MS = 4000;
+
+  const lyricsSeekDetector = createSeekDetector();
+
+  // Media position the highlight is drawn at. The slew term is what stops a
+  // snapshot that disagrees with the interpolation from twitching the words.
+  function lyricsShownMs(nowMs) {
+    const elapsedMs = state.paused ? 0 : nowMs - state.lyricsBaseWallMs;
+    return Math.max(0, state.lyricsBaseMs + elapsedMs + state.lyricsSlewMs);
+  }
+
+  function drainLyricsSlew(frameDeltaMs) {
+    const step = frameDeltaMs * LYRICS_SLEW_RATE;
+    if (state.lyricsSlewMs > step) state.lyricsSlewMs -= step;
+    else if (state.lyricsSlewMs < -step) state.lyricsSlewMs += step;
+    else state.lyricsSlewMs = 0;
+  }
+
+  // Every snapshot rebases this clock, overlay open or not, so the seek detector
+  // keeps an unbroken view of the position and a reopen is already in step.
+  function rebaseLyricsClock() {
+    // INPUT
+    const np = state.nowPlaying;
+    const nowMs = Date.now();
+    const running = np !== null && np.engineRunning === true;
+    const mediaMs = (running && typeof np.position === 'number')
+      ? Math.round(np.position * 1000)
+      : 0;
+    const shownMs = lyricsShownMs(nowMs);
+    const seeked = lyricsSeekDetector.check(mediaMs, nowMs, !state.paused);
+
+    // PROCESS
+    state.lyricsBaseMs = mediaMs;
+    state.lyricsBaseWallMs = nowMs;
+    if (state.lyricsSnapNext || seeked || !running) state.lyricsSlewMs = 0;
+    else state.lyricsSlewMs = shownMs - mediaMs;
+
+    // OUTPUT
+    state.lyricsSnapNext = false;
+  }
+
+  // ---------- lyrics follow ----------
+  // Both nodes belong to the follow behaviour alone, so they are built here
+  // rather than carried as empty markup in index.html.
+  const lyricsInterludeEl = buildInterludeEl();
+  const lyricsPill = buildFollowPill();
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  // The timed lines and the rows drawn from them, held together so the follow
+  // loop never re-reads the document.
+  let lyricsTimed = [];
+  let lyricsRows = [];
+  let lyricsCursor = null;
+  let lyricsActiveIndex = -1;
+  let lyricsInInterlude = false;
+  let lyricsFrameWallMs = 0;
+
+  function buildInterludeEl() {
+    const li = document.createElement('li');
+    li.className = 'lyric-interlude';
+    li.setAttribute('aria-hidden', 'true');
+    for (let dot = 0; dot < 3; dot += 1) li.appendChild(document.createElement('span'));
+    return li;
+  }
+
+  function buildFollowPill() {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'lyrics-follow-pill';
+    btn.textContent = 'Jump to current';
+    btn.setAttribute('hidden', '');
+    els.lyricsView.appendChild(btn);
+    return btn;
+  }
+
+  function scrollBehavior(instant) {
+    return (instant || reducedMotion.matches) ? 'auto' : 'smooth';
+  }
+
+  // Centre one row by computing the lyrics container's own scrollTop.
+  // Element.scrollIntoView walks every scrollable ancestor and would move the
+  // view behind the overlay with it.
+  function centerRow(row, behavior) {
+    // INPUT
+    const boxRect = els.lyricsScroll.getBoundingClientRect();
+    const rowRect = row.getBoundingClientRect();
+    const limit = els.lyricsScroll.scrollHeight - els.lyricsScroll.clientHeight;
+    let target = 0;
+
+    // PROCESS
+    target = els.lyricsScroll.scrollTop
+      + (rowRect.top - boxRect.top)
+      - (boxRect.height - rowRect.height) / 2;
+    target = Math.max(0, Math.min(limit, target));
+
+    // OUTPUT
+    els.lyricsScroll.scrollTo({ top: target, behavior });
+  }
+
+  // Drop every reference into the previous track's rows: the follow loop reads
+  // these each frame and a stale row would keep a removed node alive.
+  function resetLyricsFollow() {
+    lyricsTimed = [];
+    lyricsRows = [];
+    lyricsCursor = null;
+    lyricsActiveIndex = -1;
+    lyricsInInterlude = false;
+    lyricsInterludeEl.remove();
+    els.lyricsLines.classList.remove('is-synced');
+  }
+
+  function setFollowing(following) {
+    state.lyricsFollowing = following;
+    setHidden(lyricsPill, following);
+  }
+
+  // A pointer or wheel gesture on the words is the only signal saying the reader
+  // moved the view rather than the player. The scroll event cannot tell the two
+  // apart, so it is never listened for.
+  function suspendFollow() {
+    // Plain lyrics carry no timed line to jump back to, so nothing to suspend.
+    if (lyricsTimed.length === 0) return;
+    setFollowing(false);
+  }
+
+  function resumeFollow() {
+    const row = lyricsRows[lyricsActiveIndex];
+    setFollowing(true);
+    if (row !== undefined) centerRow(row, scrollBehavior(false));
+  }
+
+  // The only place following writes to the DOM. Reached when the active line or
+  // the interlude changes, never on an ordinary frame.
+  function paintActiveLine(previousIndex, instant) {
+    // INPUT
+    const previousRow = lyricsRows[previousIndex];
+    const row = lyricsRows[lyricsActiveIndex];
+
+    // PROCESS
+    if (previousRow !== undefined && previousRow !== row) {
+      previousRow.classList.remove('is-active', 'is-interlude');
+    }
+    lyricsInterludeEl.remove();
+    if (row === undefined) return;
+    row.classList.add('is-active');
+    row.classList.toggle('is-interlude', lyricsInInterlude);
+    if (lyricsInInterlude) row.insertAdjacentElement('afterend', lyricsInterludeEl);
+
+    // OUTPUT
+    if (state.lyricsFollowing) centerRow(row, scrollBehavior(instant));
+  }
+
+  // Runs every frame, writes only on a change. Anything but a step to the very
+  // next line is a seek or a resync, which lands without a long animated scroll.
+  function tickLyricsFollow(nowMs) {
+    // INPUT
+    const frameDeltaMs = lyricsFrameWallMs === 0 ? 0 : nowMs - lyricsFrameWallMs;
+    const previousIndex = lyricsActiveIndex;
+    let timeMs = 0;
+    let active = null;
+    let interlude = false;
+
+    lyricsFrameWallMs = nowMs;
+    if (lyricsTimed.length === 0) return;
+
+    // PROCESS
+    drainLyricsSlew(frameDeltaMs);
+    timeMs = applyOffset(lyricsShownMs(nowMs), state.lyricsOffsetMs);
+    active = findActiveLine(lyricsTimed, timeMs, lyricsCursor);
+    lyricsCursor = active.cursor;
+    interlude = isInterlude(lyricsTimed, active.index, timeMs, LYRICS_INTERLUDE_MS);
+    if (active.index === previousIndex && interlude === lyricsInInterlude) return;
+
+    // OUTPUT
+    lyricsActiveIndex = active.index;
+    lyricsInInterlude = interlude;
+    paintActiveLine(previousIndex, active.index !== previousIndex + 1);
+  }
+
+  // Tap a line to seek there. Reuses the transport's own seek endpoint, and moves
+  // the lyrics clock at once so the highlight does not wait for a snapshot.
+  function seekToTappedLine(ev) {
+    // INPUT
+    const row = ev.target.closest('.lyric-line');
+    const index = row === null ? -1 : Number(row.dataset.index);
+    const line = lyricsTimed[index];
+
+    // PROCESS
+    if (line === undefined) return;
+    // The container's own click toggles immersive mode, which a seek must not.
+    ev.stopPropagation();
+    post('/api/controls/seek', { seconds: line.timeMs / 1000, mode: 'absolute' });
+
+    // OUTPUT
+    state.lyricsBaseMs = line.timeMs;
+    state.lyricsBaseWallMs = Date.now();
+    state.lyricsSlewMs = 0;
+    state.lyricsSnapNext = true;
+    resumeFollow();
+  }
+
+  // ---------- lyrics reading controls ----------
+  /** Five fixed sizes for the words. A stepper rather than a slider: the reader
+   *  picks one of five legible sizes instead of hunting for a value. */
+  const LYRIC_SIZE_STEPS = ['1.05rem', '1.25rem', '1.5rem', '1.85rem', '2.2rem'];
+  const LYRIC_SIZE_KEY = 'navidrome-mcp.lyric-size';
+
+  const LYRIC_OFFSET_KEY = 'navidrome-mcp.lyric-offset';
+  const LYRIC_OFFSET_STEP_MS = 100;
+  /** Past a few seconds the nudge stops correcting latency and starts guessing. */
+  const LYRIC_OFFSET_LIMIT_MS = 5000;
+
+  // localStorage throws outright where site data is blocked, so both accessors
+  // are wrapped and a failure leaves the default in place.
+  function prefRead(key) {
+    try {
+      return window.localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function prefWrite(key, value) {
+    try {
+      window.localStorage.setItem(key, value);
+    } catch {
+      // The choice still holds for the life of this page, so there is nothing
+      // to recover and nothing worth telling the reader.
+    }
+  }
+
+  function readStoredInt(key, min, max) {
+    const parsed = Number.parseInt(prefRead(key) ?? '', 10);
+    if (!Number.isInteger(parsed) || parsed < min || parsed > max) return null;
+    return parsed;
+  }
+
+  function applyLyricSize() {
+    els.lyricsView.style.setProperty('--lyric-size', LYRIC_SIZE_STEPS[state.lyricsSizeStep]);
+    els.lyricsSizeDown.disabled = state.lyricsSizeStep === 0;
+    els.lyricsSizeUp.disabled = state.lyricsSizeStep === LYRIC_SIZE_STEPS.length - 1;
+  }
+
+  // A resize moves every row below the active one, so the centred line is put
+  // back under the reader's eyes instead of drifting off the screen with them.
+  function recenterActiveLine() {
+    const row = lyricsRows[lyricsActiveIndex];
+    if (state.lyricsFollowing && row !== undefined) centerRow(row, 'auto');
+  }
+
+  function stepLyricSize(delta) {
+    const next = Math.max(0, Math.min(LYRIC_SIZE_STEPS.length - 1, state.lyricsSizeStep + delta));
+    if (next === state.lyricsSizeStep) return;
+    state.lyricsSizeStep = next;
+    prefWrite(LYRIC_SIZE_KEY, String(next));
+    applyLyricSize();
+    recenterActiveLine();
+  }
+
+  function fmtOffset(offsetMs) {
+    const sign = offsetMs > 0 ? '+' : (offsetMs < 0 ? '-' : '');
+    return `${sign}${(Math.abs(offsetMs) / 1000).toFixed(1)} s`;
+  }
+
+  function renderLyricOffset() {
+    els.lyricsOffsetValue.textContent = fmtOffset(state.lyricsOffsetMs);
+    els.lyricsOffsetDown.disabled = state.lyricsOffsetMs <= -LYRIC_OFFSET_LIMIT_MS;
+    els.lyricsOffsetUp.disabled = state.lyricsOffsetMs >= LYRIC_OFFSET_LIMIT_MS;
+  }
+
+  function nudgeLyricOffset(deltaMs) {
+    const raw = state.lyricsOffsetMs + deltaMs;
+    const next = Math.max(-LYRIC_OFFSET_LIMIT_MS, Math.min(LYRIC_OFFSET_LIMIT_MS, raw));
+    if (next === state.lyricsOffsetMs) return;
+    state.lyricsOffsetMs = next;
+    prefWrite(LYRIC_OFFSET_KEY, String(next));
+    renderLyricOffset();
+  }
+
+  // Only timed lines carry a sync worth nudging, so anything else takes the
+  // whole affordance away rather than offering a control that changes nothing.
+  function setOffsetControlVisible(visible) {
+    setHidden(els.lyricsSettings, !visible);
+    if (!visible && els.lyricsSettingsDialog.open) els.lyricsSettingsDialog.close();
+  }
+
+  function loadLyricPrefs() {
+    // INPUT
+    const size = readStoredInt(LYRIC_SIZE_KEY, 0, LYRIC_SIZE_STEPS.length - 1);
+    const offset = readStoredInt(LYRIC_OFFSET_KEY, -LYRIC_OFFSET_LIMIT_MS, LYRIC_OFFSET_LIMIT_MS);
+
+    // PROCESS
+    if (size !== null) state.lyricsSizeStep = size;
+    // A stored value off the 100ms grid would hold every later nudge off it too.
+    if (offset !== null) {
+      state.lyricsOffsetMs = Math.round(offset / LYRIC_OFFSET_STEP_MS) * LYRIC_OFFSET_STEP_MS;
+    }
+
+    // OUTPUT
+    applyLyricSize();
+    renderLyricOffset();
+  }
+
+  // ---------- screen wake ----------
+  /** The fallback video's source scheme. The CSP `media-src` directive has to
+   *  permit exactly this, because a `default-src 'self'` fallback blocks it. */
+  const WAKE_VIDEO_SCHEME = 'data:';
+
+  /** Five seconds of 32x32 black H.264, five frames, looped. Playing video is the
+   *  only lever a plain-http origin has, because `navigator.wakeLock` exists only
+   *  in a secure context. Several frames, not one: a single-frame clip never
+   *  leaves HAVE_METADATA in Chrome, so its clock never runs and nothing is held. */
+  const WAKE_VIDEO_SRC = `${WAKE_VIDEO_SCHEME}video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMBbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAE4gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlB0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAE4gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAABOIAAAAAAABAAAAAAHIbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAABQABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABc21pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAATNzdGJsAAAAu3N0c2QAAAAAAAAAAQAAAKthdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAAAAABDExhdmMgbGlieDI2NAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAMWF2Y0MBZBAK/+EAFGdkEAqsuS2AiAAAAwAIAAADABAgAQAGaO4BlLIs/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAARgAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAFAABAAAAAABxzdHNjAAAAAAAAAAEAAAABAAAABQAAAAEAAAAoc3RzegAAAAAAAAAAAAAABQAAAmgAAAAVAAAAFQAAABUAAAAVAAAAFHN0Y28AAAAAAAAAAQAAAzEAAAA9dWR0YQAAADVtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAAhpbHN0AAAACGZyZWUAAALEbWRhdAAAAlEGBf//TdxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjUgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MSBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTMzIG1lPXVtaCBzdWJtZT0xMCBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0wIG1lX3JhbmdlPTI0IGNocm9tYV9tZT0xIHRyZWxsaXM9MiA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0aHJlYWRzPTEgbG9va2FoZWFkX3RocmVhZHM9MSBzbGljZWRfdGhyZWFkcz0wIG5yPTAgZGVjaW1hdGU9MSBpbnRlcmxhY2VkPTAgYmx1cmF5X2NvbXBhdD0wIGNvbnN0cmFpbmVkX2ludHJhPTAgYmZyYW1lcz0wIHdlaWdodHA9MCBrZXlpbnQ9MSBrZXlpbnRfbWluPTEgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjPWNyZiBtYnRyZWU9MCBjcmY9NTEuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAAAA9liIQEv/yD3Ao1LjjJn8EAAAARZYiCAc/+2QfApf2pQjl6n8AAAAARZYiEBz/+2QfApf2pQjl6n8EAAAARZYiCAc/+2QfApf2pQjl6n8AAAAARZYiEBz/+2QfApf2pQjl6n8E=`;
+
+  // Holds the device screen awake while the words are moving. One `held` flag
+  // decides for both paths, so a repeat acquire and a stray release do nothing.
+  const wakeHold = (() => {
+    let held = false;
+    let generation = 0;
+    let sentinel = null;
+    let video = null;
+
+    function hasWakeLock() {
+      return typeof navigator.wakeLock?.request === 'function';
+    }
+
+    async function lockScreen() {
+      // A request in flight outlives the hold that started it, so the grant is
+      // stamped with that hold and discarded when it comes back to a later one.
+      // Without the stamp an orphaned lock keeps the screen awake forever.
+      const mine = generation;
+      let granted = null;
+      try {
+        granted = await navigator.wakeLock.request('screen');
+      } catch {
+        // Refused by policy, or the page hid while the request was in flight.
+        // The reader has nothing to act on either way, so the hold is dropped.
+        return;
+      }
+      if (!held || generation !== mine || sentinel !== null) {
+        void granted.release().catch(() => { /* nothing left to hold */ });
+        return;
+      }
+      // The platform drops the lock whenever the page hides, so the handle goes
+      // with it and the visibilitychange listener below asks for a fresh one.
+      granted.addEventListener('release', () => {
+        if (sentinel === granted) sentinel = null;
+      });
+      sentinel = granted;
+    }
+
+    function stopVideo() {
+      if (video === null) return;
+      video.pause();
+      video.removeAttribute('src');
+      video.remove();
+      video = null;
+    }
+
+    function startVideo() {
+      const el = document.createElement('video');
+      el.loop = true;
+      el.muted = true;
+      el.playsInline = true;
+      // iOS reads the markup attributes, not the IDL properties, when it decides
+      // whether an autoplay is permitted.
+      el.setAttribute('muted', '');
+      el.setAttribute('playsinline', '');
+      el.setAttribute('aria-hidden', 'true');
+      el.tabIndex = -1;
+      // Laid out but imperceptible: a video the layout drops entirely stops
+      // counting as playing video, which is the only reason this element exists.
+      el.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+      el.src = WAKE_VIDEO_SRC;
+      video = el;
+      document.body.appendChild(el);
+      el.play().catch(() => {
+        // An autoplay refusal degrades to no hold rather than leaving a paused
+        // element in the page holding nothing.
+        if (video === el) stopVideo();
+      });
+    }
+
+    function acquire() {
+      if (held) return;
+      held = true;
+      generation += 1;
+      if (hasWakeLock()) {
+        void lockScreen();
+        return;
+      }
+      startVideo();
+    }
+
+    function release() {
+      if (!held) return;
+      const granted = sentinel;
+      held = false;
+      generation += 1;
+      sentinel = null;
+      if (granted !== null) void granted.release().catch(() => { /* already gone */ });
+      stopVideo();
+    }
+
+    // A wake lock is dropped automatically whenever the page hides, and the same
+    // transition pauses the fallback video, so coming back re-arms both.
+    document.addEventListener('visibilitychange', () => {
+      if (!held || document.visibilityState !== 'visible') return;
+      if (hasWakeLock()) {
+        if (sentinel === null) void lockScreen();
+        return;
+      }
+      if (video !== null && video.paused) {
+        void video.play().catch(() => { /* the hold is lost, and unreportable */ });
+      }
+    });
+
+    // pagehide rather than beforeunload, which iOS never fires.
+    window.addEventListener('pagehide', release);
+
+    return { acquire, release };
+  })();
+
+  // The hold answers to one condition, so the open, close and play/pause paths
+  // all route through here instead of each deciding for itself.
+  function syncWakeHold() {
+    const np = state.nowPlaying;
+    // An idle mpv reports paused:false with queueIndex -1, so `paused` alone
+    // would keep holding the screen after the last queue entry has played out.
+    const playing = np?.engineRunning === true && (np.queueIndex ?? -1) >= 0 && !state.paused;
+    if (state.lyricsOpen && playing) wakeHold.acquire();
+    else wakeHold.release();
+  }
+
+  // ---------- lyrics content states ----------
+  function clearLyricsBody() {
+    resetLyricsFollow();
+    els.lyricsLines.replaceChildren();
+    els.lyricsStatus.replaceChildren();
+    setOffsetControlVisible(false);
+  }
+
+  function setLyricsStatus(text) {
+    clearLyricsBody();
+    els.lyricsStatus.textContent = text;
+  }
+
+  // A placard is more than one run of text, so it is built as nodes rather than
+  // pushed through setLyricsStatus. `link` is { text, href } or null.
+  function renderPlacard(headline, note, link) {
+    // INPUT
+    const head = document.createElement('span');
+    const detail = document.createElement('span');
+    const anchor = link === null ? null : document.createElement('a');
+
+    // PROCESS
+    head.className = 'lyrics-placard-head';
+    head.textContent = headline;
+    detail.className = 'lyrics-placard-note';
+    detail.textContent = note;
+    if (anchor !== null) {
+      anchor.className = 'lyrics-placard-link';
+      anchor.href = link.href;
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      anchor.textContent = link.text;
+    }
+
+    // OUTPUT
+    clearLyricsBody();
+    els.lyricsStatus.append(head, detail);
+    if (anchor !== null) els.lyricsStatus.appendChild(anchor);
+  }
+
+  // The attribution url is server-supplied text, so only an http(s) origin is
+  // allowed to reach an href.
+  function lrclibPublishUrl(dto) {
+    const base = typeof dto.attribution?.url === 'string' ? dto.attribution.url.trim() : '';
+    if (!/^https?:\/\//i.test(base)) return null;
+    return `${base.replace(/\/+$/, '')}/publish`;
+  }
+
+  // An unconfigured server has to read as unconfigured: with no second sentence
+  // a disabled LRCLIB looks like a library that simply has no lyrics.
+  function renderNoLyrics(dto) {
+    // INPUT
+    const enabled = state.lyricsLrclibEnabled;
+    const publishUrl = enabled ? lrclibPublishUrl(dto) : null;
+    const note = enabled
+      ? 'The file carries none, and LRCLIB has no match for this track.'
+      : 'The file carries none, and LRCLIB lookup is disabled.';
+
+    // OUTPUT
+    renderPlacard(
+      'No lyrics found',
+      note,
+      publishUrl === null ? null : { text: 'Add them on LRCLIB', href: publishUrl },
+    );
+  }
+
+  function lyricsLineEl(text, index) {
+    const li = document.createElement('li');
+    li.className = 'lyric-line';
+    // Lyrics are untrusted third-party text: textContent only, never innerHTML.
+    li.textContent = text;
+    // Only a timed row can be tapped to seek, so only a timed row is indexed.
+    if (index !== null) li.dataset.index = String(index);
+    return li;
+  }
+
+  // Four content states share one entry point: instrumental, timed, plain, and
+  // nothing found. Only the timed state follows the player.
+  function renderLyricsLines(dto) {
+    // INPUT
+    const timed = dto.hasSynced === true && Array.isArray(dto.synced) ? dto.synced : [];
+    const plain = typeof dto.unsynced === 'string' ? dto.unsynced : '';
+    let rows = [];
+
+    if (dto.isInstrumental === true) {
+      renderPlacard('Instrumental', 'This track has no words.', null);
+      return;
+    }
+
+    // PROCESS
+    clearLyricsBody();
+    if (timed.length > 0) {
+      rows = timed.map((line, index) => lyricsLineEl(line.text, index));
+    } else if (plain.trim() !== '') {
+      rows = plain.split(/\r?\n/).map((text) => lyricsLineEl(text, null));
+    }
+
+    // OUTPUT
+    if (rows.length === 0) {
+      renderNoLyrics(dto);
+      return;
+    }
+    lyricsTimed = timed;
+    lyricsRows = timed.length > 0 ? rows : [];
+    els.lyricsLines.classList.toggle('is-synced', timed.length > 0);
+    els.lyricsLines.replaceChildren(...rows);
+    setOffsetControlVisible(timed.length > 0);
+    // A snapshot may have landed while the lookup was in flight, leaving a
+    // correction that belongs to no row on screen.
+    state.lyricsSnapNext = true;
+  }
+
+  async function loadLyrics(songId, generation) {
+    const dto = await lyricsGet(songId);
+    // A track change while this was in flight already claimed the view.
+    if (generation !== state.lyricsGeneration) return;
+    if (dto === null) {
+      setLyricsStatus('Could not load lyrics.');
+      return;
+    }
+    renderLyricsLines(dto);
+  }
+
+  function renderLyricsHeader() {
+    const np = state.nowPlaying;
+    const running = np?.engineRunning === true;
+    els.lyricsTitle.textContent = running ? (np.title ?? 'Unknown title') : 'No track loaded';
+    els.lyricsArtist.textContent = running ? (np.artist ?? '') : '';
+  }
+
+  // The overlay's own labels and seek line. This READS the existing progress
+  // clock and never writes to it, so the main progress bar keeps its behavior.
+  function renderLyricsTransport() {
+    // INPUT
+    const duration = state.duration;
+    let displayed = state.posBaseSeconds;
+    let percent = 0;
+
+    // PROCESS
+    if (!state.paused) {
+      displayed = state.posBaseSeconds + (Date.now() - state.posBaseTimestampMs) / 1000;
+      if (duration > 0 && displayed > duration) displayed = duration;
+    }
+    percent = duration > 0 ? (displayed / duration) * 100 : 0;
+
+    // OUTPUT
+    els.lyricsPosition.textContent = fmtTime(displayed);
+    els.lyricsDuration.textContent = fmtTime(duration);
+    setProgressVar(els.lyricsSeekLine, percent);
+  }
+
+  // A loop of its own, running only while the overlay is up, so the main
+  // tickProgress loop stays untouched.
+  let lyricsRaf = null;
+  function tickLyrics() {
+    const nowMs = Date.now();
+    renderLyricsTransport();
+    tickLyricsFollow(nowMs);
+    lyricsRaf = requestAnimationFrame(tickLyrics);
+  }
+
+  function openLyrics() {
+    if (state.lyricsOpen) return;
+    state.lyricsOpen = true;
+    setHidden(els.lyricsView, false);
+    renderLyricsHeader();
+    renderLyricsTransport();
+    // The loop was not running while the overlay was down, so the frame clock
+    // and any outstanding correction are stale.
+    lyricsFrameWallMs = 0;
+    state.lyricsSlewMs = 0;
+    resumeFollow();
+    if (lyricsRaf === null) lyricsRaf = requestAnimationFrame(tickLyrics);
+    syncWakeHold();
+    // preventScroll: focusing a control would otherwise scroll the main view
+    // behind the overlay, which the reader would find moved on the way back.
+    els.lyricsBack.focus({ preventScroll: true });
+  }
+
+  // Nothing here touches window scroll, so the main view comes back exactly
+  // where the reader left it.
+  function closeLyrics() {
+    if (!state.lyricsOpen) return;
+    state.lyricsOpen = false;
+    els.lyricsView.classList.remove('is-immersive');
+    setHidden(els.lyricsView, true);
+    if (lyricsRaf !== null) {
+      cancelAnimationFrame(lyricsRaf);
+      lyricsRaf = null;
+    }
+    syncWakeHold();
+    els.openLyrics.focus({ preventScroll: true });
+  }
+
+  // Track-change hook: repaint the overlay for the new song and warm the next
+  // queue entry. A radio stream carries no Navidrome songId at all, so it has
+  // no lyrics path and the button goes away.
+  function syncLyrics() {
+    // INPUT
+    const np = state.nowPlaying;
+    const isRadio = np?.isRadio === true;
+    const index = (np?.engineRunning === true && typeof np.queueIndex === 'number')
+      ? np.queueIndex
+      : null;
+    const inQueue = index !== null && !isRadio;
+    const songId = inQueue ? queueSongId(index) : null;
+    const nextSongId = inQueue ? queueSongId(index + 1) : null;
+    let generation = 0;
+
+    // PROCESS
+    setHidden(els.openLyrics, isRadio);
+    if (isRadio) closeLyrics();
+    renderLyricsHeader();
+    if (songId === state.lyricsSongId) return;
+
+    state.lyricsSongId = songId;
+    state.lyricsGeneration += 1;
+    // A new track starts followed, and lands without animating through it.
+    setFollowing(true);
+    state.lyricsSnapNext = true;
+    generation = state.lyricsGeneration;
+    mountCover(els.lyricsCover, songId, () => state.lyricsSongId === songId);
+
+    // OUTPUT
+    // A null songId also covers the window before the queue snapshot lands:
+    // the id is unknown, and /api/lyrics/:songId 404s on an id not in the queue.
+    if (songId === null) {
+      setLyricsStatus('Nothing is playing.');
+      return;
+    }
+    setLyricsStatus('Loading lyrics…');
+    void loadLyrics(songId, generation);
+    if (nextSongId !== null) void lyricsGet(nextSongId);
+  }
+
+  function bindLyricsControls() {
+    els.openLyrics.addEventListener('click', openLyrics);
+    els.lyricsBack.addEventListener('click', closeLyrics);
+    els.lyricsScroll.addEventListener('click', () => {
+      els.lyricsView.classList.toggle('is-immersive');
+      // A gesture that ends in a click was a tap, not a scroll, so the suspend
+      // its pointerdown armed is taken back here.
+      resumeFollow();
+    });
+    els.lyricsScroll.addEventListener('pointerdown', suspendFollow);
+    els.lyricsScroll.addEventListener('touchstart', suspendFollow, { passive: true });
+    els.lyricsScroll.addEventListener('wheel', suspendFollow, { passive: true });
+    els.lyricsLines.addEventListener('click', seekToTappedLine);
+    lyricsPill.addEventListener('click', resumeFollow);
+    els.lyricsPrev.addEventListener('click', () => post('/api/controls/previous'));
+    els.lyricsPlay.addEventListener('click', togglePlayPause);
+    els.lyricsNext.addEventListener('click', () => post('/api/controls/next'));
+    els.lyricsSizeDown.addEventListener('click', () => stepLyricSize(-1));
+    els.lyricsSizeUp.addEventListener('click', () => stepLyricSize(1));
+    els.lyricsSettings.addEventListener('click', () => {
+      if (typeof els.lyricsSettingsDialog.showModal === 'function') {
+        els.lyricsSettingsDialog.showModal();
+      }
+    });
+    els.lyricsOffsetDown.addEventListener('click', () => nudgeLyricOffset(-LYRIC_OFFSET_STEP_MS));
+    els.lyricsOffsetUp.addEventListener('click', () => nudgeLyricOffset(LYRIC_OFFSET_STEP_MS));
+    // Back from a backgrounded tab the interpolation is arbitrarily stale.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') state.lyricsSnapNext = true;
+    });
+    // Immersive mode hides the back control, so Escape is the way out. The
+    // settings dialog answers Escape itself, and its keydown reaches here too.
+    document.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Escape' || els.lyricsSettingsDialog.open) return;
+      if (state.lyricsOpen) closeLyrics();
+    });
+    loadLyricPrefs();
+  }
+
   // ---------- bootstrap ----------
   async function fetchLocalFlag() {
     try {
@@ -926,6 +1768,9 @@
       if (res.ok) {
         const s = await res.json();
         state.isLocal = s.isLocal === true;
+        // An absent flag means "assume enabled", so the empty state never
+        // claims LRCLIB is off when the server's answer was unreadable.
+        state.lyricsLrclibEnabled = s.lyrics?.lrclibEnabled !== false;
         updateLocalControls();
       }
     } catch (err) {

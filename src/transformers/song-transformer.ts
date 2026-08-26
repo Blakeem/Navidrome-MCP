@@ -17,6 +17,7 @@
  */
 
 import type { SongDTO } from '../types/index.js';
+import { parseLocalLyrics } from '../tools/lyrics.js';
 import { formatDuration, extractGenre, extractAllGenres, shouldEmit, type TransformOptions } from './shared-transformers.js';
 
 /**
@@ -43,6 +44,7 @@ export interface RawSong {
   playDate?: string;
   createdAt?: string;
   path?: string;
+  lyrics?: string;
   [key: string]: unknown; // Allow other fields we don't use
 }
 
@@ -56,6 +58,10 @@ export interface RawSong {
  * @returns Clean song DTO for LLM consumption
  */
 export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions): SongDTO {
+  // Only the presence and the timing of the file's lyrics survive. Carrying the
+  // text itself would put a full lyric sheet on every row of every listing.
+  const localLyrics = parseLocalLyrics(rawSong.lyrics);
+
   // Identity block — always emitted (these are what makes a song actionable).
   const dto: SongDTO = {
     id: rawSong.id,
@@ -65,6 +71,7 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     album: rawSong.album || '',
     albumId: rawSong.albumId,
     durationFormatted: formatDuration(rawSong.duration),
+    ...(localLyrics !== null ? { lyrics: localLyrics.hasSynced ? 'synced' as const : 'plain' as const } : {}),
   };
 
   // Secondary fields — emitted only in verbose mode (or when force-kept). Each

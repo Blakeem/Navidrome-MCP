@@ -22,6 +22,8 @@
 export interface LyricsLine {
   /** Time in milliseconds */
   timeMs: number;
+  /** Time in milliseconds at which this line stops being the current line */
+  endMs: number;
   /** Lyrics text for this line */
   text: string;
 }
@@ -45,15 +47,50 @@ export interface LyricsDTO {
   synced?: LyricsLine[];
   /** Plain unsynced lyrics */
   unsynced?: string;
+  /** Whether the result carries timed lines */
+  hasSynced: boolean;
   /** Whether track is instrumental */
   isInstrumental: boolean;
-  /** Lyrics provider */
-  provider: 'lrclib';
+  /** Source that answered: the audio file's own tags, or LRCLIB */
+  provider: 'local' | 'lrclib';
   /** Attribution information */
   attribution: {
     /** Provider URL */
     url: string;
     /** License information */
     license?: string;
+  };
+}
+/**
+ * One LRCLIB search hit. The lyric text is left out on purpose: candidates are
+ * a menu, and get_lyrics fetches the chosen record by its lrclibId.
+ */
+export interface LyricsCandidateDTO {
+  /** LRCLIB record ID, passed back to get_lyrics */
+  lrclibId: string;
+  /** Track title as LRCLIB holds it */
+  trackName: string;
+  /** Artist name as LRCLIB holds it */
+  artistName: string;
+  /** Album name as LRCLIB holds it, when present */
+  albumName?: string;
+  /** Duration in milliseconds, when LRCLIB reports one */
+  durationMs?: number;
+  /** Whether the record carries timed lines */
+  hasSynced: boolean;
+}
+
+/**
+ * Lyrics search response DTO
+ */
+export interface LyricsSearchDTO {
+  /** LRCLIB records matching the metadata, best match first */
+  candidates: LyricsCandidateDTO[];
+  /** The library song matching the metadata, when one exists */
+  librarySong?: {
+    /** Navidrome song ID, passed back to get_lyrics */
+    songId: string;
+    /** Lyrics carried by that song's own audio file, if any */
+    lyrics?: 'synced' | 'plain';
   };
 }

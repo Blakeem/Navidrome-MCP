@@ -110,9 +110,9 @@ export async function testConnection(
             enabled: hasLyrics,
             description: hasLyrics
               ? 'Lyrics integration enabled via LRCLIB - synced and unsynced lyrics available'
-              : 'Lyrics integration disabled - set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json (run navidrome-config to edit)',
+              : 'Lyrics integration disabled - get_lyrics still reads the lyrics stored in the audio file. Set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json (run navidrome-config to edit)',
             tools: hasLyrics
-              ? ['get_lyrics']
+              ? ['search_lyrics']
               : []
           }
         }

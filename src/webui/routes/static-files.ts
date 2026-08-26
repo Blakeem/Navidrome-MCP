@@ -45,6 +45,23 @@ function resolvePublicDir(): string {
 const PUBLIC_DIR: string = resolvePublicDir();
 
 /**
+ * Every directive is named so none of them silently inherits `default-src`.
+ * `data:` is in `img-src` for the inline SVG favicon and in `media-src` for the
+ * muted wake-lock fallback video, which the plain-http LAN origin depends on
+ * because `navigator.wakeLock` exists only in a secure context.
+ */
+const CONTENT_SECURITY_POLICY: string = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  'media-src data:',
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join('; ');
+
+/**
  * MIME-type table for the asset shapes we actually ship. Anything outside
  * the table falls back to `application/octet-stream` — but since the only
  * files in `public/` are .html/.css/.js/.svg/.ico, that branch should never
@@ -113,6 +130,7 @@ export async function handleStatic(res: ServerResponse, pathname: string): Promi
       // a hard refresh). Browsers will still revalidate cheaply via
       // If-Modified-Since.
       'Cache-Control': 'no-cache, must-revalidate',
+      'Content-Security-Policy': CONTENT_SECURITY_POLICY,
     });
     res.end(body);
   } catch (err) {

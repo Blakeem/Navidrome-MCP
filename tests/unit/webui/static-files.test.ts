@@ -6,31 +6,38 @@
  * refactor of the `..${sep}` / per-segment checks could silently reopen a
  * directory-traversal hole. These drive the public `handleStatic` entry (the
  * guard is exercised via its 400/404/200 responses).
+ *
+ * The Content-Security-Policy assertions pin the directive list. Every directive
+ * is named in the header rather than inherited from `default-src`, so dropping
+ * one has to fail here instead of surfacing as a blocked asset in a browser.
  */
 
 import { describe, expect, it } from 'vitest';
 import type { ServerResponse } from 'node:http';
 import { handleStatic } from '../../../src/webui/routes/static-files.js';
 
-/** Capture the status written to a ServerResponse without a real socket. */
+/** Capture the status and headers written to a ServerResponse without a real socket. */
 interface CapturedRes {
   res: ServerResponse;
   status: () => number | undefined;
+  headers: () => Record<string, string>;
 }
 
 function fakeRes(): CapturedRes {
   let status: number | undefined;
+  let headers: Record<string, string> = {};
   const res = {
     writableEnded: false,
-    writeHead(code: number): ServerResponse {
+    writeHead(code: number, sent?: Record<string, string>): ServerResponse {
       status = code;
+      headers = sent ?? {};
       return res;
     },
     end(): void {
       // Body content is irrelevant to these tests; only the status matters.
     },
   } as unknown as ServerResponse;
-  return { res, status: () => status };
+  return { res, status: () => status, headers: () => headers };
 }
 
 describe('handleStatic path-traversal guard', () => {
@@ -71,5 +78,30 @@ describe('handleStatic path-traversal guard', () => {
     const cap = fakeRes();
     await handleStatic(cap.res, '/does-not-exist.js');
     expect(cap.status()).toBe(404);
+  });
+});
+
+describe('handleStatic Content-Security-Policy', () => {
+  it.each([
+    ["default-src 'self'"],
+    ["script-src 'self'"],
+    ["style-src 'self'"],
+    ["img-src 'self' data:"],
+    ['media-src data:'],
+    ["connect-src 'self'"],
+    ["frame-ancestors 'none'"],
+    ["object-src 'none'"],
+  ])('names the %s directive', async (directive) => {
+    const cap = fakeRes();
+    await handleStatic(cap.res, '/index.html');
+    const policy = cap.headers()['Content-Security-Policy'] ?? '';
+    expect(policy.split('; ')).toContain(directive);
+  });
+
+  it('serves the policy on every asset, not just the document', async () => {
+    const cap = fakeRes();
+    await handleStatic(cap.res, '/styles.css');
+    expect(cap.status()).toBe(200);
+    expect(cap.headers()['Content-Security-Policy']).toBeDefined();
   });
 });

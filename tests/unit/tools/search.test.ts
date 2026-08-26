@@ -430,6 +430,20 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       expect(typeof result.total).toBe('number');
     });
 
+    // Lives here rather than beside the transformer unit tests: every extra file
+    // that authenticates adds a concurrent login, and a fifth one rate-limits
+    // (429) the whole live suite.
+    it.skipIf(shouldSkipLiveTests())('emits the lyrics flag as absent or one of the two literals', async () => {
+      const result = await searchSongs(liveClient, config, { limit: 5 });
+
+      expect(Array.isArray(result.songs)).toBe(true);
+      for (const song of result.songs) {
+        if (song.lyrics !== undefined) {
+          expect(['synced', 'plain']).toContain(song.lyrics);
+        }
+      }
+    });
+
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchAlbums', async () => {
       const result = await searchAlbums(liveClient, config, { limit: 1 });
 

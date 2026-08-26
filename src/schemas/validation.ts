@@ -240,6 +240,28 @@ export const GetLyricsSchema = z.object({
   id: z.string().optional(),
 });
 
+// The get_lyrics tool takes an identity, never metadata. Metadata search moved
+// to search_lyrics, whose candidates carry the lrclibId this schema accepts.
+export const GetLyricsIdentitySchema = z.object({
+  songId: z.string().min(1).regex(ID_PATTERN, 'Song ID contains invalid characters').optional(),
+  lrclibId: z.string().min(1).regex(/^\d+$/, 'LRCLIB record ID must be numeric').optional(),
+}).superRefine((value, ctx) => {
+  if (value.songId === undefined && value.lrclibId === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Either songId (a Navidrome song ID) or lrclibId (an LRCLIB record ID) is required',
+      path: ['songId'],
+    });
+  }
+});
+
+export const SearchLyricsSchema = z.object({
+  title: z.string().min(1),
+  artist: z.string().min(1),
+  album: z.string().optional(),
+  durationMs: z.number().min(0).optional(),
+});
+
 // Filter options discovery schema (get_filter_options tool).
 // The six filterType values mirror the FilterType union in
 // services/filter-cache-manager.ts. `limit` is clamped to [1,200]; a `limit`

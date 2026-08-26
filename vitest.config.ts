@@ -27,6 +27,15 @@ export default defineConfig({
     // Provision a temp settings.json store (seeded from env/.env) before each
     // test file, since runtime config now comes only from the store.
     setupFiles: ['tests/helpers/setup-config-store.ts'],
+    // Live-read blocks skip here so this run is deterministic. They authenticate
+    // against a real Navidrome, and vitest's forks pool gives each file its own
+    // worker: four concurrent logins all get 429, and their keep-alive sockets
+    // raced fork teardown as ERR_IPC_CHANNEL_CLOSED. They run via
+    // `pnpm test:live` (vitest.live.config.ts), which shares one fork.
+    // Set in config rather than the npm script so it holds on every platform.
+    env: {
+      SKIP_INTEGRATION_TESTS: 'true',
+    },
     testTimeout: 10000,
     hookTimeout: 10000,
   },

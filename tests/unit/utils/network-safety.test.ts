@@ -51,6 +51,26 @@ describe('network-safety', () => {
       expect(isHttpUrlScheme('not-a-url')).toBe(false);
       expect(isHttpUrlScheme('')).toBe(false);
     });
+
+    // The WHATWG URL parser strips tab/LF/CR before parsing, so these all yield
+    // a clean http: URL. Callers store and play the ORIGINAL string, so a value
+    // that parses is not automatically a value that is safe to pass onward.
+    it('rejects control characters the URL parser would silently strip', () => {
+      expect(isHttpUrlScheme('http://example.com/live\nHost: internal.local')).toBe(false);
+      expect(isHttpUrlScheme('http://example.com/live\r\nX-Injected: 1')).toBe(false);
+      expect(isHttpUrlScheme('http://example.com/\tlive')).toBe(false);
+      expect(isHttpUrlScheme('http://example.com/live\n')).toBe(false);
+      expect(isHttpUrlScheme(`http://example.com/live${String.fromCharCode(0)}`)).toBe(false);
+      expect(isHttpUrlScheme(`http://example.com/live${String.fromCharCode(127)}`)).toBe(false);
+    });
+
+    it('confirms the parser really does normalize those away', () => {
+      // Guards the reason the check above exists: if this ever stops being true,
+      // the control-char guard is no longer load-bearing.
+      const raw = 'http://example.com/live\nHost: internal.local';
+      expect(new URL(raw).protocol).toBe('http:');
+      expect(new URL(raw).href).not.toContain('\n');
+    });
   });
 
   describe('isPrivateOrLocalIp — IPv4', () => {

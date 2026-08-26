@@ -59,7 +59,9 @@ export type {
 // Export all lyrics DTOs
 export type {
   LyricsLine,
-  LyricsDTO
+  LyricsDTO,
+  LyricsCandidateDTO,
+  LyricsSearchDTO
 } from './lyrics.js';
 
 // Export all library DTOs

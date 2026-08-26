@@ -48,9 +48,13 @@ Find similar artists and tracks, fetch biographies and top tracks, and browse gl
 
 ### 🎤 Synchronized Lyrics
 
-> Enabled in the settings page (LRCLIB provider + a user agent). No API key needed.
+> LRCLIB is set in the settings page and needs no API key. Lyrics stored in your files work without it.
 
-Fetch time-synced lyrics (LRC format, millisecond timestamps) from LRCLIB's community database, matched by title, artist, album, and duration. Plain text is returned when no synced version exists.
+Lyrics come from the audio file's own tags first and fall back to LRCLIB's community database. Timed lyrics carry millisecond timestamps, and plain text is used when no timed version exists.
+
+The web player shows a lyrics view that highlights the current line and scrolls to follow it. Click a line to jump playback there. Scrolling pauses the follow so you can read ahead, and a control returns you to the current line. Font size and sync offset are adjustable, and both are kept per device. The screen stays awake while the view is open and playing.
+
+[![Lyrics view](navidome-mcp-lyrics-remote-small.png)](navidome-mcp-lyrics-remote-large.png)
 
 ### 📻 Internet Radio
 
@@ -154,11 +158,12 @@ Tool categories whose heading says **requires ...** are only registered when tha
 | `get_artist_albums` | Full discography with release types and years (MusicBrainz), genres and popularity (Last.fm), and an in-library flag per album. Answers "what albums by X am I missing?" |
 | `get_album_info` | Album detail: tracklist with durations, year and type, genres, wiki summary, popularity, and library membership. Works for albums you don't own |
 
-### Lyrics (requires the LRCLIB provider, set in the settings page)
+### Lyrics
 
 | Tool | Description |
 |------|-------------|
-| `get_lyrics` | Time-synced (LRC) and plain-text lyrics, matched by title/artist/album/duration |
+| `get_lyrics` | Lyrics for one song, by Navidrome song ID or by LRCLIB record ID. Time-synced (LRC) lines when the source carries them |
+| `search_lyrics` | Search LRCLIB by title and artist. Returns candidate records plus the matching library song. Requires the LRCLIB provider, set in the settings page |
 
 ### Radio Management
 

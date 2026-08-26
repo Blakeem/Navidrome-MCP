@@ -84,6 +84,9 @@ const EXPECTED_CORE_TOOLS = [
   'search_by_tags',
   'get_tag_distribution',
   'get_filter_options',
+
+  // Lyrics category (local file lyrics need no LRCLIB, so get_lyrics is core)
+  'get_lyrics',
 ];
 
 // Conditional tools based on feature flags
@@ -97,8 +100,9 @@ const EXPECTED_LASTFM_TOOLS = [
   'get_album_info',
 ];
 
+// LRCLIB-gated half of the lyrics category
 const EXPECTED_LYRICS_TOOLS = [
-  'get_lyrics',
+  'search_lyrics',
 ];
 
 const EXPECTED_RADIO_BROWSER_TOOLS = [
@@ -193,14 +197,11 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
+      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
 
       // Add conditional tools based on configuration
       if (config.features.lastfm) {
         registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
-      }
-
-      if (config.features.lyrics) {
-        registry.register('lyrics', createLyricsToolCategory(liveClient, config));
       }
 
       if (config.features.playback) {
@@ -257,6 +258,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
+      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
 
       const allTools = registry.getAllTools();
       const actualToolNames = allTools.map(tool => tool.name);
@@ -323,10 +325,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
 
-      // Conditionally add lyrics based on config
-      if (config.features.lyrics) {
-        registry.register('lyrics', createLyricsToolCategory(liveClient, config));
-      }
+      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
 
       if (config.features.playback) {
         registry.register('playback', createPlaybackToolCategory(liveClient, config));
@@ -335,16 +334,33 @@ describe('Tools Registry - Tool Count Verification', () => {
       const allTools = registry.getAllTools();
       const actualToolNames = allTools.map(tool => tool.name);
 
-      // Validate lyrics tools presence based on feature flag
+      // Validate LRCLIB-gated lyrics tools presence based on feature flag
       const actualLyricsTools = actualToolNames.filter(name => EXPECTED_LYRICS_TOOLS.includes(name));
 
       if (config.features.lyrics) {
-        // When enabled, all lyrics tools should be present
+        // When enabled, all LRCLIB-gated lyrics tools should be present
         expect(actualLyricsTools).toEqual(EXPECTED_LYRICS_TOOLS);
       } else {
-        // When disabled, no lyrics tools should be present
+        // When disabled, only the LRCLIB-gated tools drop out
         expect(actualLyricsTools).toEqual([]);
       }
+
+      // get_lyrics reads the lyrics stored in the audio file, so it is present
+      // either way.
+      expect(actualToolNames).toContain('get_lyrics');
+    });
+
+    it('should register the lyrics category when LRCLIB is disabled', () => {
+      const localOnlyConfig = makeTestConfig({
+        features: { lastfm: false, radioBrowser: false, lyrics: false, playback: false },
+      });
+      const registry = new ToolRegistry();
+
+      registry.register('lyrics', createLyricsToolCategory(liveClient, localOnlyConfig));
+
+      const actualToolNames = registry.getAllTools().map(tool => tool.name);
+
+      expect(actualToolNames).toEqual(['get_lyrics']);
     });
 
     it('should have unique tool names and match expected configuration', () => {
@@ -359,13 +375,10 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
+      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
 
       if (config.features.lastfm) {
         registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
-      }
-
-      if (config.features.lyrics) {
-        registry.register('lyrics', createLyricsToolCategory(liveClient, config));
       }
 
       if (config.features.playback) {

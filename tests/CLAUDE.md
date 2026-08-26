@@ -79,6 +79,33 @@ Tests skip cleanly when either is missing. Use `describePlayback` /
 raw `describe`/`it`. Use `waitFor` for async mpv state polling instead
 of fixed `setTimeout`.
 
+### Live Read Tests (separate suite)
+
+Live reads run against a real Navidrome. `pnpm test:run` sets
+`SKIP_INTEGRATION_TESTS` in `vitest.config.ts`, so their `describeLive` /
+`skipIf(shouldSkipLiveTests())` blocks skip there and the default run stays
+deterministic. Run them on demand:
+
+```bash
+pnpm test:live   # vitest.live.config.ts
+```
+
+Two reasons they are separated, both measured:
+
+- **Navidrome rate-limits concurrent logins.** Four simultaneous `/auth/login`
+  calls all return 429 while two succeed. Vitest's default forks pool gives each
+  file its own worker, so four live files authenticated at once and failed
+  together. `vitest.live.config.ts` uses `singleFork` + `isolate: false` so all
+  four share one process and the suite authenticates exactly **once**.
+- **Their keep-alive sockets raced fork teardown**, surfacing as an
+  `ERR_IPC_CHANNEL_CLOSED` unhandled rejection: exit code 1 with zero test
+  failures, on roughly 2 runs in 5. Keeping them out of the parallel pool
+  removes that race.
+
+`include` in that config is an explicit file list because live blocks sit inside
+files that also hold mocked tests. **A new file with a `describeLive` block must
+be added there**, or its live tests never run.
+
 ### Current Test Coverage (160+ tests)
 1. **Playlist** - 22 tests (data modification safety)
 2. **Search** - 22 tests (high user impact)
@@ -133,14 +160,19 @@ import { mockPlaylist } from '../../factories/mock-data.js';
 
 **MUST pass before completion:**
 ```bash
-pnpm test:run         # 160+ tests pass
+pnpm test:run         # mocked suite, deterministic
 pnpm lint            # 0 errors/warnings
 pnpm typecheck       # 0 type errors
 pnpm check:dead-code # 0 unused exports
 
 # Or run all at once:
-pnpm check:all       # Comprehensive validation
+pnpm check:all       # lint + typecheck + dead-code
+pnpm test:all        # test:run + test:live + check:all
 ```
+
+`pnpm test:run` no longer covers Navidrome API compatibility, since the live
+blocks skip there. Run `pnpm test:live` (or `pnpm test:all`) before a release,
+or a breaking Navidrome change will not surface.
 
 ---
 
