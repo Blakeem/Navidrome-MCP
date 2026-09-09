@@ -117,6 +117,7 @@ async function mbFetch(
         timeoutMs: getExternalApiTimeoutMs(),
         retryPolicy: 'safe',
         operationLabel: `MusicBrainz ${path}`,
+        respectProxy: true,
       },
     );
 
