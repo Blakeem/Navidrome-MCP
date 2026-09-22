@@ -26,11 +26,12 @@ import {
 import { logger } from './logger.js';
 
 /**
- * Dispatcher honoring HTTP_PROXY/HTTPS_PROXY/NO_PROXY (read once at process
- * start). Node's native `fetch` silently ignores these env vars, so external
- * APIs (Last.fm, MusicBrainz, LRCLIB, Radio Browser) go out direct and can be
- * blocked where only a proxied path reaches the internet. Built lazily so a
- * process that never sets a proxy var pays zero cost.
+ * Dispatcher honoring HTTP_PROXY/HTTPS_PROXY/NO_PROXY. Node's native `fetch`
+ * silently ignores those vars, so external APIs (Last.fm, MusicBrainz, LRCLIB,
+ * Radio Browser) go out direct and are unreachable on a host where only a
+ * proxied path leaves the network. Built on the first proxied request so a
+ * process that never sets a proxy var pays nothing, then cached — the agent
+ * snapshots the env at construction, so changing the vars needs a restart.
  */
 let envProxyAgent: EnvHttpProxyAgent | undefined;
 function getEnvProxyAgent(): EnvHttpProxyAgent {
@@ -38,18 +39,21 @@ function getEnvProxyAgent(): EnvHttpProxyAgent {
   return envProxyAgent;
 }
 
+const PROXY_ENV_VARS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy'] as const;
+
 /**
- * Whether any proxy env var is actually set. Gates the undici-dispatcher path
- * so a process with no proxy configured (the common case, and every existing
+ * Whether any proxy env var holds a non-empty value. Gates the undici-dispatcher
+ * path so a process with no proxy configured (the common case, and every existing
  * test) keeps using plain global `fetch` byte-for-byte — including staying
  * mockable via `global.fetch = ...` in tests, which an unconditional switch
  * to undici's own `fetch` would silently bypass.
+ *
+ * Empty counts as unset so the gate matches EnvHttpProxyAgent, which skips an
+ * empty var and falls through to the next. A short-circuit on `HTTP_PROXY=""`
+ * (how compose files and CI emit an unset var) would strand a real HTTPS_PROXY.
  */
 function hasProxyEnvConfigured(): boolean {
-  return Boolean(
-    process.env['HTTP_PROXY'] ?? process.env['http_proxy'] ??
-    process.env['HTTPS_PROXY'] ?? process.env['https_proxy'],
-  );
+  return PROXY_ENV_VARS.some((name) => (process.env[name] ?? '') !== '');
 }
 
 /**

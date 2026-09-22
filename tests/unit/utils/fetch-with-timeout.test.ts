@@ -8,9 +8,29 @@
  * Strategy: mock `global.fetch` so it returns a never-settling promise that
  * rejects only when the AbortSignal it was passed fires. Drive
  * `AbortSignal.timeout()` deterministically with `vi.useFakeTimers()`.
+ *
+ * The proxy branch additionally mocks undici's own `fetch`, so which of the two
+ * transports ran is observable without any real proxy or network.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
+
+/**
+ * The undici mock must exist before `vi.mock`'s hoisted factory runs, hence
+ * `vi.hoisted`. Only `fetch` is replaced — the real `EnvHttpProxyAgent` is kept
+ * because constructing one opens no socket, and the code under test only has to
+ * hand it to the (mocked) fetch.
+ */
+const { mockUndiciFetch } = vi.hoisted(() => ({
+  mockUndiciFetch:
+    vi.fn<(url: string, init: { signal?: AbortSignal; dispatcher?: unknown }) => Promise<Response>>(),
+}));
+
+vi.mock('undici', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return { ...actual, fetch: mockUndiciFetch };
+});
+
 import {
   fetchWithTimeout,
   FetchTimeoutError,
@@ -379,6 +399,131 @@ describe('timeout env var resolvers', () => {
       expect(getExternalApiTimeoutMs()).toBe(DEFAULT_EXTERNAL_API_TIMEOUT_MS);
       // One warn per env-var name, despite the identical raw value.
       expect(warnSpy).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+describe('proxy transport selection', () => {
+  const PROXY_ENV_VARS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy'] as const;
+
+  // Windows `process.env` is case-insensitive, so deleting all four names also
+  // covers the lowercase aliases of the same variable.
+  function clearProxyEnv(): void {
+    for (const name of PROXY_ENV_VARS) {
+      delete process.env[name];
+    }
+  }
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockUndiciFetch.mockReset();
+    clearProxyEnv();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    clearProxyEnv();
+  });
+
+  describe('takes the direct transport (global fetch)', () => {
+    it('when respectProxy is true but no proxy var is set', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const response = await fetchWithTimeout('http://x/y', {}, baseOptions({ respectProxy: true }));
+
+      expect(response.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockUndiciFetch).not.toHaveBeenCalled();
+    });
+
+    it('when respectProxy is omitted (the Navidrome/LAN default) despite a proxy being set', async () => {
+      process.env['HTTPS_PROXY'] = 'http://proxy.test:8080';
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      await fetchWithTimeout('http://navidrome.lan/api/album', {}, baseOptions());
+
+      // An internet proxy must never divert Navidrome REST/Subsonic/auth traffic.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockUndiciFetch).not.toHaveBeenCalled();
+    });
+
+    it('when every proxy var is set but empty', async () => {
+      for (const name of PROXY_ENV_VARS) {
+        process.env[name] = '';
+      }
+      mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      await fetchWithTimeout('http://x/y', {}, baseOptions({ respectProxy: true }));
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockUndiciFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('takes the proxied transport (undici fetch + EnvHttpProxyAgent)', () => {
+    it('when respectProxy is true and HTTPS_PROXY is set', async () => {
+      process.env['HTTPS_PROXY'] = 'http://proxy.test:8080';
+      mockUndiciFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const response = await fetchWithTimeout(
+        'https://ws.audioscrobbler.com/2.0/',
+        { headers: { 'X-Test': '1' } },
+        baseOptions({ respectProxy: true }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockUndiciFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      const [, init] = mockUndiciFetch.mock.calls[0]!;
+      expect(init.dispatcher).toBeDefined();
+      // The timeout signal must survive the switch of transport.
+      expect(init.signal).toBeDefined();
+    });
+
+    it('when only the lowercase http_proxy is set', async () => {
+      process.env['http_proxy'] = 'http://proxy.test:8080';
+      mockUndiciFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      await fetchWithTimeout('http://x/y', {}, baseOptions({ respectProxy: true }));
+
+      expect(mockUndiciFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('when HTTP_PROXY is empty but HTTPS_PROXY is real', async () => {
+      // Bug-fix lock-in: a `??` chain stopped at the empty HTTP_PROXY and never
+      // read HTTPS_PROXY, so the request went out direct and failed on a
+      // proxy-only host. Compose files and CI emit `HTTP_PROXY=` this way.
+      process.env['HTTP_PROXY'] = '';
+      process.env['HTTPS_PROXY'] = 'http://proxy.test:8080';
+      mockUndiciFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      await fetchWithTimeout('https://lrclib.net/api/search', {}, baseOptions({ respectProxy: true }));
+
+      expect(mockUndiciFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('still applies the timeout and the single safe retry', async () => {
+      vi.useFakeTimers();
+      process.env['HTTPS_PROXY'] = 'http://proxy.test:8080';
+      mockUndiciFetch
+        .mockImplementationOnce(hangingFetch())
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const promise = fetchWithTimeout(
+        'https://lrclib.net/api/search',
+        {},
+        baseOptions({ timeoutMs: 1000, retryPolicy: 'safe', respectProxy: true }),
+      );
+
+      await vi.advanceTimersByTimeAsync(1001);
+
+      const response = await promise;
+      expect(response.status).toBe(200);
+      expect(mockUndiciFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 });

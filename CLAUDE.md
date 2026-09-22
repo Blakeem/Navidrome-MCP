@@ -104,11 +104,21 @@ auto-opens on first run of an unconfigured MCP server. The form pre-fills from a
 legacy env/`.env`. After saving, **restart** the server to apply. A few low-level
 operational env vars remain env-only and out of the store: timeouts
 (`NAVIDROME_REQUEST_TIMEOUT_MS`, `NAVIDROME_AUTH_TIMEOUT_MS`,
-`EXTERNAL_API_TIMEOUT_MS`), `XDG_RUNTIME_DIR`,
+`EXTERNAL_API_TIMEOUT_MS`), the proxy vars
+(`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, see below), `XDG_RUNTIME_DIR`,
 `NAVIDROME_CONFIG_PATH` (a *location* override, not a value override),
 and `NAVIDROME_DEV` (a dev-only launch-routing override that forces spawning
 `src/web/main.ts` via tsx instead of the compiled `dist/web/main.js` — not
 application config).
+
+**Outbound proxy.** `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` (either case) route
+the third-party API calls only: Last.fm, MusicBrainz, LRCLIB, Radio Browser.
+Those call sites opt in with `respectProxy: true` on `fetchWithTimeout`. With no
+proxy var set the request takes plain global `fetch`, unchanged. Navidrome REST,
+Subsonic, auth, and the cover-art proxy always go direct, so an internet proxy
+never diverts the LAN route. Radio-stream validation also stays direct, since a
+proxy would blind the private-IP guard in `safeFetch`. The vars are read once
+per process, so a change needs a restart.
 
 Tests write a throwaway store via `NAVIDROME_CONFIG_PATH` (see `tests/CLAUDE.md`),
 so the suite never touches the real store.

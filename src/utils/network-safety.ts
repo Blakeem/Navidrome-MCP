@@ -250,6 +250,12 @@ export function describeFetchError(err: unknown): string {
  * every redirect hop — is refused if it lands on a private/local IP, defeating
  * SSRF via redirects or DNS rebinding. Callers still get a standard `Response`,
  * so no downstream code changes.
+ *
+ * Deliberately stays off the HTTP_PROXY path that `fetchWithTimeout`'s
+ * `respectProxy` option takes. Behind a proxy the socket peer is the proxy, so
+ * the connector below would validate the proxy's address instead of the target's
+ * and the SSRF guard would pass everything. Untrusted URLs are unreachable on a
+ * proxy-only host as a result, which is the safe side of that trade.
  */
 export async function safeFetch(url: string, init: RequestInit): Promise<Response> {
   // Use undici's OWN fetch: Node's bundled fetch rejects an externally-installed
