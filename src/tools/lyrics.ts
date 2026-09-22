@@ -484,6 +484,7 @@ async function fetchLrclibBody(rung: LrclibRung, config: Config): Promise<unknow
       timeoutMs: getExternalApiTimeoutMs(),
       retryPolicy: 'safe',
       operationLabel: label,
+      respectProxy: true,
     },
   );
 

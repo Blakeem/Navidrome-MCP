@@ -15,6 +15,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+import { EnvHttpProxyAgent, fetch as undiciFetch } from 'undici';
 import {
   DEFAULT_EXTERNAL_API_TIMEOUT_MS,
   DEFAULT_NAVIDROME_AUTH_TIMEOUT_MS,
@@ -23,6 +24,33 @@ import {
   MIN_FETCH_TIMEOUT_MS,
 } from '../constants/timeouts.js';
 import { logger } from './logger.js';
+
+/**
+ * Dispatcher honoring HTTP_PROXY/HTTPS_PROXY/NO_PROXY (read once at process
+ * start). Node's native `fetch` silently ignores these env vars, so external
+ * APIs (Last.fm, MusicBrainz, LRCLIB, Radio Browser) go out direct and can be
+ * blocked where only a proxied path reaches the internet. Built lazily so a
+ * process that never sets a proxy var pays zero cost.
+ */
+let envProxyAgent: EnvHttpProxyAgent | undefined;
+function getEnvProxyAgent(): EnvHttpProxyAgent {
+  envProxyAgent ??= new EnvHttpProxyAgent();
+  return envProxyAgent;
+}
+
+/**
+ * Whether any proxy env var is actually set. Gates the undici-dispatcher path
+ * so a process with no proxy configured (the common case, and every existing
+ * test) keeps using plain global `fetch` byte-for-byte — including staying
+ * mockable via `global.fetch = ...` in tests, which an unconditional switch
+ * to undici's own `fetch` would silently bypass.
+ */
+function hasProxyEnvConfigured(): boolean {
+  return Boolean(
+    process.env['HTTP_PROXY'] ?? process.env['http_proxy'] ??
+    process.env['HTTPS_PROXY'] ?? process.env['https_proxy'],
+  );
+}
 
 /**
  * Methods that are safe to retry on timeout.
@@ -43,6 +71,12 @@ export interface FetchWithTimeoutOptions {
   readonly retryPolicy: RetryPolicy;
   /** Operation label used in timeout error messages surfaced to the LLM. */
   readonly operationLabel: string;
+  /**
+   * Route this request through HTTP_PROXY/HTTPS_PROXY/NO_PROXY if set.
+   * Defaults to `false` — Navidrome/local calls stay direct. Set `true` for
+   * third-party internet APIs, which may be unreachable without a proxy.
+   */
+  readonly respectProxy?: boolean;
 }
 
 /**
@@ -179,7 +213,7 @@ export async function fetchWithTimeout(
   init: RequestInit,
   options: FetchWithTimeoutOptions,
 ): Promise<Response> {
-  const { timeoutMs, retryPolicy, operationLabel } = options;
+  const { timeoutMs, retryPolicy, operationLabel, respectProxy = false } = options;
   const maxAttempts = retryPolicy === 'safe' ? 2 : 1;
 
   let lastError: unknown = null;
@@ -193,6 +227,20 @@ export async function fetchWithTimeout(
         : timeoutSignal;
 
     try {
+      // Node's native fetch rejects an externally-installed undici dispatcher
+      // (version-skewed internals), so the proxy path must go through
+      // undici's own fetch rather than the global one (see network-safety.ts).
+      // Only taken when a proxy is actually configured, so the common
+      // no-proxy case (and every test mocking global.fetch) is unaffected.
+      if (respectProxy && hasProxyEnvConfigured()) {
+        type UndiciInit = NonNullable<Parameters<typeof undiciFetch>[1]>;
+        const response = await undiciFetch(url, {
+          ...(init as unknown as UndiciInit),
+          signal,
+          dispatcher: getEnvProxyAgent(),
+        });
+        return response as unknown as Response;
+      }
       return await fetch(url, { ...init, signal });
     } catch (err) {
       lastError = err;

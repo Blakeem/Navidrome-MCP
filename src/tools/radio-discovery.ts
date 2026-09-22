@@ -375,6 +375,7 @@ export async function discoverRadioStations(
         timeoutMs: getExternalApiTimeoutMs(),
         retryPolicy: 'safe',
         operationLabel: 'Radio Browser /json/stations/search',
+        respectProxy: true,
       },
     );
 
@@ -465,6 +466,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     const filterFetchOptions = {
       timeoutMs: getExternalApiTimeoutMs(),
       retryPolicy: 'safe' as const,
+      respectProxy: true,
     };
     const filterHeaders = {
       headers: { 'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT, 'Accept': 'application/json' }
@@ -601,6 +603,7 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
         timeoutMs: getExternalApiTimeoutMs(),
         retryPolicy: 'safe',
         operationLabel: 'Radio Browser /json/stations/byuuid',
+        respectProxy: true,
       },
     );
 
@@ -672,6 +675,7 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
         timeoutMs: getExternalApiTimeoutMs(),
         retryPolicy: 'never',
         operationLabel: 'Radio Browser /json/url (click)',
+        respectProxy: true,
       },
     );
 
@@ -749,6 +753,7 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
         timeoutMs: getExternalApiTimeoutMs(),
         retryPolicy: 'never',
         operationLabel: 'Radio Browser /json/vote',
+        respectProxy: true,
       },
     );
 

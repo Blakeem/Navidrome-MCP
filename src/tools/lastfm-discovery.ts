@@ -178,6 +178,7 @@ async function callLastFmApi(method: string, params: Record<string, string>, api
       timeoutMs: getExternalApiTimeoutMs(),
       retryPolicy: 'safe',
       operationLabel: `Last.fm ${method}`,
+      respectProxy: true,
     },
   );
 
