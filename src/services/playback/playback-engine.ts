@@ -53,6 +53,7 @@ const OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [8, 'idle-active'],
   [9, 'volume'],
   [10, 'eof-reached'],
+  [11, 'path'],
 ];
 
 // Seek robustness. On a transcoded HTTP stream, mpv can intermittently reject a
@@ -182,11 +183,12 @@ class PlaybackEngine {
   // `songId` is null.
   private currentRadioStation: { name: string } | null = null;
   // Monotonic counter bumped at the start of every full-replace load (the
-  // `enqueue(replace)` path and `enqueueRadio`). A replace always lands the new
-  // track at queue position 0, identical to the previous load, so consumers that
-  // cache per-position state (e.g. `now_playing`'s VBR duration-repair and
-  // not-radio caches) key on this generation to avoid a new track colliding with
-  // the previous track's cached state at the same index.
+  // `enqueue(replace)` path and `enqueueRadio`), by `shuffleQueueFromTop` and
+  // by `clearPlaylist`. Each can land a new track at queue position 0, which the previous
+  // track may have held, so consumers that cache per-position state (e.g.
+  // `now_playing`'s VBR duration-repair and not-radio caches) key on this
+  // generation to avoid a new track colliding with the previous track's cached
+  // state at the same index.
   private queueGeneration = 0;
   // Serializes mutating queue operations (enqueue, enqueueRadio, clear,
   // shuffle, move, remove). Without this, two concurrent play_* calls
@@ -361,7 +363,9 @@ class PlaybackEngine {
    *   and unpause so playback starts immediately.
    * - `mode='append'`: append each new track to the existing playlist via
    *   `loadfile <url> append`. Does NOT clear the queue and does NOT unpause —
-   *   existing playback state (including pause) is preserved.
+   *   existing playback state (including pause) is preserved. When no entry is
+   *   current (an empty or finished queue), the first appended track becomes
+   *   current, paused.
    *
    * Caller is responsible for ordering / shuffle of `songIds`. Lazy-spawns
    * mpv on first call.
@@ -470,8 +474,17 @@ class PlaybackEngine {
         // Merge the new batch's metadata over any prior entries — duplicates
         // are overwritten with the freshest values from the caller.
         this.ingestMetadata(metadata);
+        // Read fresh because the observed cache can lag. mpv selects nothing for
+        // tracks appended while no entry is current, which leaves a dead position.
+        const posBeforeAppend = await ipc.command('get_property', 'playlist-pos');
+        const countBeforeAppend = await ipc.command('get_property', 'playlist-count');
         for (const id of songIds) {
           await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+        }
+        const hadNoCurrentEntry = typeof posBeforeAppend === 'number' && posBeforeAppend < 0;
+        if (hadNoCurrentEntry && typeof countBeforeAppend === 'number') {
+          await ipc.command('set_property', 'pause', true);
+          await ipc.command('set_property', 'playlist-pos', countBeforeAppend);
         }
       }
 
@@ -585,6 +598,8 @@ class PlaybackEngine {
   async clearPlaylist(): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
+      // An append after a clear lands a new track at index 0, so per-position caches must not match it.
+      this.queueGeneration++;
       await this.requireIpc().command('stop');
       this.currentRadioStation = null;
       this.metadataCache.clear();
@@ -657,8 +672,9 @@ class PlaybackEngine {
 
   /**
    * Monotonic counter identifying the current full-replace load. Incremented
-   * whenever the queue is wholly replaced (`enqueue(replace)` / `enqueueRadio`),
-   * so per-position caches can distinguish "same position, new load" from "same
+   * whenever the queue is wholly replaced (`enqueue(replace)` / `enqueueRadio`)
+   * or reshuffled from the top (`shuffleQueueFromTop`), so per-position caches
+   * can distinguish "same position, new load" from "same
    * position, same load". Append does not bump it (appended tracks get new,
    * non-colliding positions).
    */
@@ -690,6 +706,32 @@ class PlaybackEngine {
       if (typeof pos === 'number' && pos > 0) {
         await ipc.command('playlist-move', pos, 0);
       }
+    });
+    this.emitStateChange({ kind: 'queue' });
+  }
+
+  /**
+   * Shuffle the whole queue and make the new top track current, keeping the
+   * play or pause state. The web remote's shuffle restarts from the top, while
+   * `shufflePlaylist` keeps the playing track on top for `shuffle_play_queue`.
+   */
+  async shuffleQueueFromTop(): Promise<void> {
+    await this.ensureRunning();
+    await this.withMutationLock(async () => {
+      const ipc = this.requireIpc();
+      // Read fresh because the observed cache can lag a just-finished mutation.
+      const count = await ipc.command('get_property', 'playlist-count');
+      const pos = await ipc.command('get_property', 'playlist-pos');
+      const paused = await ipc.command('get_property', 'pause');
+      if (typeof count !== 'number' || count <= 0) return;
+
+      const wasPlaying = typeof pos === 'number' && pos >= 0 && paused === false;
+      this.queueGeneration++;
+      await ipc.command('playlist-shuffle');
+      if (!wasPlaying) {
+        await ipc.command('set_property', 'pause', true);
+      }
+      await ipc.command('set_property', 'playlist-pos', 0);
     });
     this.emitStateChange({ kind: 'queue' });
   }

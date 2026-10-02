@@ -114,6 +114,16 @@ describe('config resolution', () => {
       expect((await loadConfig()).webui.host).toBe('127.0.0.1');
     });
 
+    it('maps a stored web remote theme', async () => {
+      write({ ...BASE, webui: { theme: 'dark' } });
+      expect((await loadConfig()).webui.theme).toBe('dark');
+    });
+
+    it.each(['blue', 'system'])('reads an unknown or legacy stored theme %j as unset', async (theme) => {
+      write({ ...BASE, webui: { theme } });
+      expect((await loadConfig()).webui.theme).toBeNull();
+    });
+
     it('defaults the transport to stdio on loopback:3000 when unset', async () => {
       write(BASE);
       const c = await loadConfig();

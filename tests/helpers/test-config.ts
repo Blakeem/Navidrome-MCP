@@ -36,6 +36,7 @@ const BASE: Config = {
     expose: false,
     autoOpenBrowser: false,
     persistAfterMcpExit: false,
+    theme: null,
   },
 };
 

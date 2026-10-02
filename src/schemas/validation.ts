@@ -17,7 +17,7 @@
  */
 
 import { z } from 'zod';
-import { DEFAULT_VALUES } from '../constants/defaults.js';
+import { DEFAULT_VALUES, WEBUI_THEMES } from '../constants/defaults.js';
 import {
   EnhancedSearchSchema,
   ItemTypeSchema,
@@ -27,6 +27,7 @@ import {
   VerboseSchema,
   createLimitSchema,
   ID_PATTERN,
+  SEARCH_QUERY_MAX_LENGTH,
 } from './common.js';
 
 // User preferences validation
@@ -120,7 +121,7 @@ export const SaveQueueSchema = z.object({
 // LLM drop down to single-type search_* tools when it needs to deep-paginate
 // just one type).
 export const SearchAllSchema = EnhancedSearchSchema.extend({
-  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
+  query: z.string().max(SEARCH_QUERY_MAX_LENGTH, `Query must be ${SEARCH_QUERY_MAX_LENGTH} characters or fewer`).optional().default(''), // Override required query to be optional
   artistCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   albumCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   songCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
@@ -287,3 +288,49 @@ export const SetActiveLibrariesSchema = z.object({
 export const GetSongPlaylistsSchema = z.object({
   songId: z.string().min(1, 'Song ID is required').regex(ID_PATTERN, 'Song ID contains invalid characters'),
 });
+
+// Web remote library play request
+const LibraryPlayOptionsShape = {
+  mode: z.enum(['replace', 'append']),
+  shuffleSongs: z.boolean().default(false),
+  shuffleAlbums: z.boolean().default(false),
+};
+
+export const LibraryPlayRequestSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.enum(['artist', 'album', 'song', 'playlist']),
+    id: z
+      .string({ error: (issue) => (issue.input === undefined ? 'ID is required' : undefined) })
+      .min(1, 'ID is required')
+      .regex(ID_PATTERN, 'ID contains invalid characters'),
+    ...LibraryPlayOptionsShape,
+  }),
+  z.object({
+    type: z.enum(['starred-songs', 'starred-albums']),
+    ...LibraryPlayOptionsShape,
+  }),
+], { error: 'type must be one of artist, album, song, playlist, starred-songs, starred-albums' });
+
+// Playback controls shared by the MCP tools and the web remote routes
+export const SetVolumeSchema = z.object({
+  // The tool contract promises clamping to [0, 100] in playback-engine.setVolume,
+  // so the schema rejects only non-finite values, never out-of-range ones.
+  level: z.number().finite(),
+});
+
+export const SeekSchema = z.object({
+  seconds: z.number(),
+  mode: z.enum(['absolute', 'relative']).default('relative'),
+});
+
+export const PlayQueueIndexSchema = z.object({
+  index: z.number().int().min(0),
+});
+
+export const PlayerSettingsPatchSchema = z.strictObject({
+  persistAfterMcpExit: z.boolean().optional(),
+  autoOpenBrowser: z.boolean().optional(),
+  theme: z.enum(WEBUI_THEMES).optional(),
+});
+
+export const LibrarySearchQuerySchema = z.string().trim().min(1).max(SEARCH_QUERY_MAX_LENGTH);

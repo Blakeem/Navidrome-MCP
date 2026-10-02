@@ -93,17 +93,25 @@ export const DEFAULT_LRCLIB_BASE = 'https://lrclib.net';
 
 /**
  * Per-page size when expanding `play_albums` / `play_albums_search` requests.
- * `fetchAlbumTrackIds` paginates with this page size and follows X-Total-Count
+ * `fetchPages` paginates with this page size and follows X-Total-Count
  * until the full track list is fetched, so multi-disc boxsets play through
  * completely instead of truncating at the first 500 tracks.
  */
 export const MAX_ALBUM_TRACKS = 500;
 
 /**
- * Safety cap on the number of pages `fetchAlbumTrackIds` will follow before
+ * Safety cap on the number of pages `fetchPages` will follow before
  * giving up and returning what it has. Protects against an inconsistent
  * X-Total-Count loop. 20 × 500 = 10000 tracks per album is well past any
  * realistic release, including the "complete works" boxsets the original
  * 500-track ceiling used to silently truncate.
  */
 export const MAX_ALBUM_PAGES = 20;
+/** The web remote's color themes. With none set, each device follows its own light or dark preference. */
+export const WEBUI_THEMES = ['light', 'dark'] as const;
+export type WebuiTheme = (typeof WEBUI_THEMES)[number];
+
+// A hand-edited or legacy value reads as unset, so it never voids the settings store.
+export function parseWebuiTheme(value: unknown): WebuiTheme | null {
+  return WEBUI_THEMES.find((theme) => theme === value) ?? null;
+}

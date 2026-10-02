@@ -82,6 +82,28 @@ describe('settings server seed/save', () => {
     expect(readSettings()?.navidrome?.password).toBe('secret');
   });
 
+  it('keeps the stored player theme, which the form does not carry', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      webui: { theme: 'dark' },
+    }));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK }, webui: { expose: true } });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.webui).toMatchObject({ expose: true, theme: 'dark' });
+  });
+
+  it('drops a legacy stored theme on save', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      webui: { theme: 'system' },
+    }));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK } });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.webui?.theme).toBeUndefined();
+  });
+
   it('persists an explicitly changed password', async () => {
     writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } }));
     const base = await start();

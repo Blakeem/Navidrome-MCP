@@ -23,7 +23,7 @@ import {
   type StateChangeEvent,
 } from '../services/playback/playback-engine.js';
 import { getPlayQueue, nowPlaying, playbackStatus } from '../tools/playback.js';
-import { getPersist, hasLiveParent } from '../web/player-runtime.js';
+import { getTheme } from '../web/player-runtime.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -34,18 +34,14 @@ import { logger } from '../utils/logger.js';
  *     `loadfile` sequence (one event per loaded track — hundreds, for a
  *     "play 500 starred albums" stress test).
  *
- * Without coalescing, each event would trigger a full `buildSnapshot` that
- * runs `getPlayQueue` against a *growing* playlist on every step of a bulk
- * load — gratuitous CPU/IPC churn, and historically the proximate trigger
- * of the 64KB mpv-IPC buffer overflow.
+ * Coalescing keeps `buildSnapshot` from re-reading a growing queue over mpv
+ * IPC on every event of a bulk load.
  *
  * 1000ms (1Hz) is fine for the progress bar (the UI interpolates between
  * server values), and is the right ceiling for bulk-load coalescing too.
  *
- * `kind: 'queue'` events (the explicit post-enqueue emit) are NOT throttled
- * — those mark "the user-facing operation is done, the UI should reflect
- * it now." Same for `kind: 'station'` (radio start/stop) and any future
- * non-property kinds.
+ * `kind: 'queue'` events (the explicit post-enqueue emit) are NOT throttled.
+ * They mark "the user-facing operation is done, the UI should reflect it now."
  */
 const BROADCAST_THROTTLE_MS = 1000;
 
@@ -53,9 +49,12 @@ const BROADCAST_THROTTLE_MS = 1000;
  * EventSource reconnect interval the server advertises on connect. Browsers
  * respect this verbatim, so a value here is what determines how often a phone
  * laid down on a desk silently re-tries after the server restarts or the
- * Wi-Fi drops. 10s mirrors what the user requested.
+ * Wi-Fi drops. 10s reconnects soon without polling the server hard.
  */
 const SSE_RETRY_MS = 10_000;
+
+// Stays under common reverse-proxy idle timeouts (nginx proxy_read_timeout is 60s) and bounds dead-client reaping latency.
+const SSE_HEARTBEAT_MS = 10_000;
 
 /**
  * Broadcasts engine state snapshots to a set of SSE clients.
@@ -68,8 +67,8 @@ const SSE_RETRY_MS = 10_000;
  *   - `stop()` unsubscribes and ends every active SSE response cleanly.
  *
  * Throttling: all property-change events are debounced (leading + trailing)
- * to at most one broadcast per `BROADCAST_THROTTLE_MS`. Non-property events
- * (queue mutations, station start/stop) flush immediately so user-actioned
+ * to at most one broadcast per `BROADCAST_THROTTLE_MS`. `kind: 'queue'` events
+ * (the post-enqueue emit) flush immediately so user-actioned
  * boundaries land in the UI within one frame.
  *
  * Snapshot construction reuses the existing `nowPlaying`, `getPlayQueue`,
@@ -101,7 +100,7 @@ export class SseBroadcaster {
     // stack gives up and destroys the socket — a TCP-level heartbeat can't beat
     // that without an app-level ack. Unref'd so it never keeps the process
     // alive on its own.
-    this.heartbeatTimer = setInterval(() => { this.sendHeartbeat(); }, SSE_RETRY_MS);
+    this.heartbeatTimer = setInterval(() => { this.sendHeartbeat(); }, SSE_HEARTBEAT_MS);
     this.heartbeatTimer.unref();
   }
 
@@ -209,11 +208,16 @@ export class SseBroadcaster {
       return;
     }
 
-    // Non-property events (queue mutations, station start/stop, etc.):
+    // `kind: 'queue'` events (the post-enqueue emit):
     // immediate fan-out — these mark user-facing operation boundaries and
     // the UI should reflect them within one frame. Also reset the
     // trailing-edge timer's deadline since the snapshot we're about to
     // send is fresher than any queued throttled broadcast.
+    this.broadcastNow();
+  }
+
+  /** Immediate fan-out, also used by a player-settings change that no engine event announces. */
+  broadcastNow(): void {
     this.lastBroadcastMs = Date.now();
     if (this.pendingBroadcastTimer !== null) {
       clearTimeout(this.pendingBroadcastTimer);
@@ -284,11 +288,8 @@ export class SseBroadcaster {
       return null;
     }
 
-    // `player` carries process-global lifecycle state so the frontend can
-    // recompute the power-button visibility live (it flips the instant MCP
-    // disconnects or persist is toggled). It is NOT per-peer — the client
-    // combines this with its own `isLocal` (one-time /api/player-state fetch).
-    const player = { hasLiveParent: hasLiveParent(), persist: getPersist() };
+    // `player` carries process-global state, so every open remote follows a theme change.
+    const player = { theme: getTheme() };
     return JSON.stringify({ nowPlaying: np, queue, status, player });
   }
 }

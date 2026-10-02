@@ -17,7 +17,7 @@
  */
 
 import type { ServerResponse } from 'node:http';
-import { Readable } from 'node:stream';
+import { pipeline, Readable } from 'node:stream';
 import type { Config } from '../../config.js';
 import { IdSchema } from '../../schemas/common.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
@@ -39,6 +39,15 @@ const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set([
   'image/avif',
 ]);
 
+const MIN_COVER_SIZE = 16;
+const MAX_COVER_SIZE = 1024;
+
+function parseCoverSize(rawSize: string): string | null {
+  if (!/^\d{1,4}$/.test(rawSize)) return null;
+  const size = Number.parseInt(rawSize, 10);
+  return size >= MIN_COVER_SIZE && size <= MAX_COVER_SIZE ? String(size) : null;
+}
+
 /**
  * GET /api/cover/:id — Proxy the Subsonic `getCoverArt.view` endpoint.
  *
@@ -53,11 +62,14 @@ const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set([
  * separators is rejected as 400 with no upstream call. The Subsonic endpoint
  * accepts both album and song IDs (it returns the album-level art for either),
  * so we accept either kind without disambiguating.
+ *
+ * The optional `size` lets a list view fetch a thumbnail instead of full-resolution art.
  */
 export async function handleCover(
   res: ServerResponse,
   config: Config,
   rawId: string,
+  rawSize: string | null,
 ): Promise<void> {
   const parsed = IdSchema.safeParse({ id: rawId });
   if (!parsed.success) {
@@ -66,10 +78,16 @@ export async function handleCover(
   }
   const id = parsed.data.id;
 
+  const size = rawSize === null ? null : parseCoverSize(rawSize);
+  if (rawSize !== null && size === null) {
+    writeError(res, 400, 'Invalid size');
+    return;
+  }
+
   const params = buildSubsonicAuthParams(
     config.navidromeUsername,
     config.navidromePassword,
-    { id },
+    size === null ? { id } : { id, size },
   );
   const base = config.navidromeUrl.replace(/\/+$/, '');
   const url = `${base}/rest/getCoverArt.view?${params.toString()}`;
@@ -98,11 +116,7 @@ export async function handleCover(
 
   if (!upstream.ok || upstream.body === null) {
     // Navidrome returns 404 for unknown IDs; pass it through.
-    res.writeHead(upstream.status === 404 ? 404 : 502, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
-    });
-    res.end(JSON.stringify({ error: `Upstream returned ${upstream.status}` }));
+    writeError(res, upstream.status === 404 ? 404 : 502, `Upstream returned ${upstream.status}`);
     upstream.body?.cancel().catch(() => undefined);
     return;
   }
@@ -135,13 +149,8 @@ export async function handleCover(
   if (contentLength !== null) headers['Content-Length'] = contentLength;
   res.writeHead(200, headers);
 
-  // Stream the body through. Convert the WHATWG ReadableStream to a Node
-  // Readable; piping streams is preferable to buffering because some album
-  // art (animated, high-res) can be several MB.
-  const nodeStream = Readable.fromWeb(upstream.body);
-  nodeStream.on('error', (err) => {
-    logger.debug(`webui: cover stream error for id=${id}: ${err.message}`);
-    if (!res.writableEnded) res.end();
+  // A stream error must abort the response, because a cleanly ended chunked body would be cached as a complete image.
+  pipeline(Readable.fromWeb(upstream.body), res, (err) => {
+    if (err) logger.debug(`webui: cover stream error for id=${id}: ${err.message}`);
   });
-  nodeStream.pipe(res);
 }

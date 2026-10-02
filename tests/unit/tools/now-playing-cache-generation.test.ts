@@ -80,6 +80,7 @@ describe('now_playing per-position cache keying', () => {
         duration: 100,
         'media-title': 'Track A',
         metadata: { artist: 'Artist A' },
+        path: 'http://nd.local/rest/stream?id=A',
       }),
     );
     getPlaylistMock.mockResolvedValueOnce([
@@ -96,6 +97,7 @@ describe('now_playing per-position cache keying', () => {
     const poll2 = await nowPlaying({});
     expect(getPlaylistMock).toHaveBeenCalledTimes(1);
     expect(poll2.isRadio).toBeUndefined();
+    expect(poll2.duration).toBe(300);
 
     // ---- Poll 3: a mode:'replace' reload bumps the generation to 11. Track B
     // now occupies index 0 and mpv again under-reports its VBR duration (100).
@@ -111,6 +113,7 @@ describe('now_playing per-position cache keying', () => {
         duration: 100,
         'media-title': 'Track B',
         metadata: { artist: 'Artist B' },
+        path: 'http://nd.local/rest/stream?id=B',
       }),
     );
     getPlaylistMock.mockResolvedValueOnce([
@@ -120,5 +123,60 @@ describe('now_playing per-position cache keying', () => {
     const poll3 = await nowPlaying({});
     expect(poll3.duration).toBe(280);
     expect(getPlaylistMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reapply a cached duration when a new file loads at the same generation and index', async () => {
+    // Another process sharing mpv, or removal of the playing entry, loads a new
+    // file at index 0 without bumping this process's generation.
+    getQueueGenerationMock.mockReturnValue(20);
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 0,
+        'playlist-count': 3,
+        duration: 100,
+        'media-title': 'Track C',
+        metadata: { artist: 'Artist C' },
+        path: 'http://nd.local/rest/stream?id=C',
+      }),
+    );
+    getPlaylistMock.mockResolvedValueOnce([
+      { index: 0, songId: 'C', isCurrent: true, isPlaying: true, title: 'Track C', artist: 'Artist C', duration: 400 },
+    ]);
+    const poll1 = await nowPlaying({});
+    expect(poll1.duration).toBe(400);
+
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 0,
+        'playlist-count': 3,
+        duration: 200,
+        'media-title': 'Track D',
+        metadata: { artist: 'Artist D' },
+        path: 'http://nd.local/rest/stream?id=D',
+      }),
+    );
+    getPlaylistMock.mockResolvedValueOnce([
+      { index: 0, songId: 'D', isCurrent: true, isPlaying: true, title: 'Track D', artist: 'Artist D', duration: 200 },
+    ]);
+    const poll2 = await nowPlaying({});
+    expect(poll2.duration).toBe(200);
+    expect(getPlaylistMock).toHaveBeenCalledTimes(2);
+
+    // A radio stream loaded the same way reports no duration and must not inherit one.
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 0,
+        'playlist-count': 1,
+        'media-title': 'Some Station',
+        path: 'http://radio.example/stream',
+      }),
+    );
+    getPlaylistMock.mockResolvedValueOnce([
+      { index: 0, songId: null, isCurrent: true, isPlaying: true, title: 'Some Station' },
+    ]);
+    const poll3 = await nowPlaying({});
+    expect(poll3.duration).toBeUndefined();
+    expect(poll3.isRadio).toBe(true);
+    expect(getPlaylistMock).toHaveBeenCalledTimes(3);
   });
 });

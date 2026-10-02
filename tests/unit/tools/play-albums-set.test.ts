@@ -1,0 +1,142 @@
+/**
+ * Covers the shared album-set path behind play_albums and play_albums_search:
+ * one chunked `/song` read for many albums, input album order, and the shuffle modes.
+ * The playback engine and the album search are mocked, so no mpv or Navidrome is touched.
+ */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
+
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const searchAlbumsMock = vi.fn();
+
+vi.mock('../../../src/services/playback/playback-engine.js', () => ({
+  playbackEngine: {
+    enqueue: enqueueMock,
+    ensureRunning: vi.fn().mockResolvedValue(undefined),
+    isRunning: () => true,
+    getCurrentRadioStation: () => null,
+  },
+}));
+
+vi.mock('../../../src/tools/search/index.js', () => ({
+  searchAlbums: searchAlbumsMock,
+  searchSongs: vi.fn(),
+}));
+
+const { playAlbums, playAlbumsSearch } = await import('../../../src/tools/playback.js');
+
+interface SongRecord {
+  id: string;
+  albumId: string;
+  discNumber: number;
+  trackNumber: number;
+}
+
+function albumSongs(albumId: string, count: number): SongRecord[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `${albumId}-t${index + 1}`,
+    albumId,
+    discNumber: 1,
+    trackNumber: index + 1,
+  }));
+}
+
+function enqueuedIds(): string[] {
+  return enqueueMock.mock.calls[0]?.[0] as string[];
+}
+
+function requestedAlbumIds(callIndex: number): string[] {
+  const endpoint = String(client.requestWithLibraryFilterAndMeta.mock.calls[callIndex]?.[0]);
+  return new URLSearchParams(endpoint.split('?')[1]).getAll('album_id');
+}
+
+let client: MockNavidromeClient;
+
+describe('album-set playback', () => {
+  beforeEach(() => {
+    client = createMockClient();
+    enqueueMock.mockClear();
+    searchAlbumsMock.mockReset();
+  });
+
+  it('reads every album in one request and restores the input album order', async () => {
+    // Navidrome answers in album-name order, which differs from the requested order.
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
+      data: [...albumSongs('beta', 2), ...albumSongs('alpha', 3)],
+      total: 5,
+    });
+
+    const result = await playAlbums(client as never, {
+      albumIds: ['alpha', 'beta'],
+      mode: 'replace',
+      shuffle: 'none',
+    });
+
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
+    expect(requestedAlbumIds(0)).toEqual(['alpha', 'beta']);
+    expect(enqueuedIds()).toEqual(['alpha-t1', 'alpha-t2', 'alpha-t3', 'beta-t1', 'beta-t2']);
+    expect(result).toMatchObject({ success: true, albumCount: 2, trackCount: 5 });
+  });
+
+  it('splits more than 100 albums into chunked reads', async () => {
+    const albumIds = Array.from({ length: 150 }, (_, index) => `album-${index}`);
+    client.requestWithLibraryFilterAndMeta
+      .mockResolvedValueOnce({ data: albumSongs('album-0', 1), total: 1 })
+      .mockResolvedValueOnce({ data: albumSongs('album-149', 1), total: 1 });
+
+    await playAlbums(client as never, { albumIds, mode: 'append', shuffle: 'none' });
+
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(2);
+    expect(requestedAlbumIds(0)).toHaveLength(100);
+    expect(requestedAlbumIds(1)).toEqual(albumIds.slice(100));
+  });
+
+  it('keeps each album in track order when only the albums are shuffled', async () => {
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
+      data: [...albumSongs('alpha', 4), ...albumSongs('beta', 4)],
+      total: 8,
+    });
+
+    await playAlbums(client as never, { albumIds: ['alpha', 'beta'], mode: 'replace', shuffle: 'albums' });
+
+    const ids = enqueuedIds();
+    const alphaFirst = ids[0]?.startsWith('alpha') === true;
+    const expected = alphaFirst
+      ? [...albumSongs('alpha', 4), ...albumSongs('beta', 4)]
+      : [...albumSongs('beta', 4), ...albumSongs('alpha', 4)];
+    expect(ids).toEqual(expected.map((song) => song.id));
+  });
+
+  it('throws when the albums hold no tracks', async () => {
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
+
+    await expect(
+      playAlbums(client as never, { albumIds: ['empty'], mode: 'replace', shuffle: 'none' }),
+    ).rejects.toThrow(/No tracks found across all albums/);
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('plays the matched albums of a search through the same read', async () => {
+    searchAlbumsMock.mockResolvedValueOnce({
+      albums: [{ id: 'alpha' }, { id: 'beta' }],
+      appliedFilters: { genre: 'Rock' },
+    });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
+      data: [...albumSongs('beta', 1), ...albumSongs('alpha', 2)],
+      total: 3,
+    });
+
+    const result = await playAlbumsSearch(client as never, {} as never, { genre: 'Rock', mode: 'append' });
+
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
+    expect(enqueuedIds()).toEqual(['alpha-t1', 'alpha-t2', 'beta-t1']);
+    expect(result).toMatchObject({
+      success: true,
+      matchCount: 2,
+      albumCount: 2,
+      trackCount: 3,
+      appliedFilters: { genre: 'Rock' },
+    });
+  });
+});

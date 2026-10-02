@@ -32,7 +32,7 @@ This works with voice transports (Whisper STT + TTS) for a hands-free music devi
 
 > Requires `mpv` (same as Local Audio Playback). On by default and starts with the server.
 
-A web UI at `http://localhost:8808` gives any browser the Local Playback controls: now playing with cover art, transport and seek, volume, and a live queue you can click to jump around, updated in real time. A built-in picker starts any playlist, your starred songs, or your starred albums from the page, so it works as a remote without the assistant. Enable **Expose on LAN** to control playback from a phone or tablet. Audio always comes out of the machine running the server. Setup, lifetime, and security details are in [MPV Remote setup](#mpv-remote-setup).
+A web UI at `http://localhost:8808` gives any browser the Local Playback controls: now playing with cover art, transport and seek, volume, and a live queue you can click to jump around, updated in real time. A built-in Play Music window searches artists, albums, and songs. It also starts any playlist, your starred songs, or your starred albums. Each pick adds to the queue or replaces it, with an option to shuffle songs or albums. So the page works as a remote without the assistant. Enable **Expose on LAN** to control playback from a phone or tablet. Audio always comes out of the machine running the server. Setup, lifetime, and security details are in [MPV Remote setup](#mpv-remote-setup).
 
 [![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)](navidome-mcp-mpv-remote-large.png)
 
@@ -328,7 +328,7 @@ A pre-built binary from [mpv.io](https://mpv.io/installation/) also works. Verif
 
 #### Enabling & lifetime
 
-The panel is on by default. The server starts it as a separate `navidrome-web` process and the port binds immediately, so the page is reachable before anything plays. Hosts without mpv don't start it. Player settings live behind the in-player gear icon, and the gear and power buttons only appear for browsers on the host machine.
+The panel is on by default. The server starts it as a separate `navidrome-web` process and the port binds immediately, so the page is reachable before anything plays. Hosts without mpv don't start it. The in-player gear icon opens the player settings, including the theme that every device uses. The gear and power buttons only appear for browsers on the host machine.
 
 Whether playback survives closing your AI client:
 
@@ -372,7 +372,7 @@ Re-run the generator after moving or rebuilding the project to refresh the paths
 
 #### Configuration
 
-All settings are optional and live in the **Web UI** section of the settings page, keyed below by their `settings.json` paths. Restart the client after saving. The exception is `persistAfterMcpExit`, which the gear modal applies live.
+All settings are optional and live in the **Web UI** section of the settings page, keyed below by their `settings.json` paths. Restart the client after saving. The exceptions are `persistAfterMcpExit` and `theme`, which the gear modal applies live.
 
 | Setting (`settings.json`) | Default | Effect |
 |---|---|---|
@@ -382,6 +382,7 @@ All settings are optional and live in the **Web UI** section of the settings pag
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
 | `webui.autoOpenBrowser` | `false` | Open the player in your browser when the MCP server starts. Running `navidrome-web` directly always opens a browser. |
 | `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player (and mpv) running after the MCP server closes or restarts. Toggle it live in the in-player gear modal. |
+| `webui.theme` | unset | Forces `light` or `dark` on every device viewing the player. Unset, each device follows its own setting. It is set only in the in-player gear modal. |
 
 #### Using it as a phone/tablet remote
 

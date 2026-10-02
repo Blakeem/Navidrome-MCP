@@ -367,6 +367,13 @@ describe('handlePlayerState lyrics flag', () => {
 
     expect(cap.json()).toMatchObject({ lyrics: { lrclibEnabled: false } });
   });
+
+  it('reports the live theme to every peer', () => {
+    const cap = fakeRes();
+    handlePlayerState(fakeReq('203.0.113.5'), cap.res, LYRICS_OFF);
+
+    expect(cap.json()).toMatchObject({ isLocal: false, theme: null });
+  });
 });
 
 describe('lyrics route wiring', () => {

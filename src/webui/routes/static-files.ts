@@ -123,12 +123,7 @@ export async function handleStatic(res: ServerResponse, pathname: string): Promi
     res.writeHead(200, {
       'Content-Type': mimeFor(filePath),
       'Content-Length': body.byteLength.toString(),
-      // No persistent caching for any webui asset. The panel is served to
-      // LAN clients, all files are KB-scale, and aggressive caching on
-      // app.js/styles.css had been silently locking users on stale JS
-      // (volume-icon state machine missing from cached bundle even after
-      // a hard refresh). Browsers will still revalidate cheaply via
-      // If-Modified-Since.
+      // no-cache so a LAN client never runs a stale app.js after an upgrade.
       'Cache-Control': 'no-cache, must-revalidate',
       'Content-Security-Policy': CONTENT_SECURITY_POLICY,
     });

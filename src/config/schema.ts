@@ -17,7 +17,7 @@
  */
 
 import { z } from 'zod';
-import { DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
+import { DEFAULT_LRCLIB_BASE, WEBUI_THEMES } from '../constants/defaults.js';
 
 /**
  * The canonical runtime configuration shape. This is a *flat* projection of the
@@ -137,6 +137,8 @@ export const ConfigSchema = z.object({
     // launch yourself (`navidrome-web`) always persists regardless. Can be
     // toggled live in the player's loopback-only settings modal.
     persistAfterMcpExit: z.boolean().default(false),
+    // Every device viewing the player uses this theme. Null leaves each device on its own setting.
+    theme: z.enum(WEBUI_THEMES).nullable().default(null),
   }),
 });
 

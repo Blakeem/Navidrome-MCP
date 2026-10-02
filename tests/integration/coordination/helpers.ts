@@ -122,7 +122,11 @@ export function spawnWeb(storePath: string, extraEnv: NodeJS.ProcessEnv = {}): C
  * (3) quit any mpv still lingering. Keeps each test self-contained. */
 export async function killAllChildren(): Promise<void> {
   for (const port of usedPorts.splice(0)) {
-    await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: 'POST' }).catch(() => undefined);
+    await fetch(`http://127.0.0.1:${port}/api/shutdown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }).catch(() => undefined);
   }
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {

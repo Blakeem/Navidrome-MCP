@@ -2,11 +2,11 @@
  * Navidrome MCP Server - playAlbums pagination tests
  * Copyright (C) 2025
  *
- * Covers M4 from docs/review/02-playback-deep-review.md: fetchAlbumTrackIds
+ * Covers M4 from docs/review/02-playback-deep-review.md: fetchAlbumSongs
  * used to hardcode a 500-track ceiling and silently truncate. The fix
  * paginates via X-Total-Count so multi-disc boxsets play through completely.
  *
- * `fetchAlbumTrackIds` is module-private; we exercise it through `playAlbums`
+ * `fetchAlbumSongs` is module-private; we exercise it through `playAlbums`
  * with the playbackEngine module mocked so no real mpv is touched.
  */
 
@@ -31,7 +31,7 @@ function trackPage(start: number, count: number): unknown[] {
   return Array.from({ length: count }, (_, i) => ({ id: `track-${start + i}` }));
 }
 
-describe('fetchAlbumTrackIds pagination (M4)', () => {
+describe('fetchAlbumSongs pagination (M4)', () => {
   let client: MockNavidromeClient;
 
   beforeEach(() => {

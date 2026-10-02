@@ -20,17 +20,22 @@ import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import {
+  LibraryPlayRequestSchema,
   NonEmptyStringArraySchema,
+  PlayQueueIndexSchema,
   PlaylistIdSchema,
   SearchAlbumsSchema,
   SearchSongsSchema,
-} from '../schemas/common.js';
+  SeekSchema,
+  SetVolumeSchema,
+} from '../schemas/index.js';
 import {
   playbackEngine,
   type PlaybackStatus,
   type PlaylistEntry,
   type QueueTrackMetadata,
 } from '../services/playback/playback-engine.js';
+import { fisherYatesShuffle, orderQueueSongs } from './queue-order.js';
 import { searchAlbums, searchSongs } from './search/index.js';
 import { parseDuration } from '../transformers/shared-transformers.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
@@ -107,16 +112,9 @@ interface PlayPlaylistResult {
   demoted?: true;
 }
 
-interface PlayStarredSongsResult {
+interface PlaySongSetResult {
   success: true;
   count: number;
-  demoted?: true;
-}
-
-interface PlayStarredAlbumsResult {
-  success: true;
-  albumCount: number;
-  trackCount: number;
   demoted?: true;
 }
 
@@ -187,6 +185,12 @@ interface ShufflePlayQueueResult {
   success: true;
 }
 
+interface ShuffleQueueFromTopResult {
+  success: boolean;
+  // Present only when there was nothing to shuffle (no live mpv).
+  message?: string;
+}
+
 interface MoveInPlayQueueResult {
   success: true;
   noop?: true;
@@ -200,13 +204,6 @@ interface PlayQueueIndexResult {
   success: boolean;
   message?: string;
 }
-
-const SetVolumeSchema = z.object({
-  // Accept any finite number and let the engine clamp to [0, 100]
-  // (playback-engine.setVolume). The tool contract promises clamping, so the
-  // schema must NOT reject out-of-range input — only non-finite values.
-  level: z.number().finite(),
-});
 
 const QueueModeSchema = z.enum(['replace', 'append']).default('replace');
 
@@ -232,37 +229,9 @@ const PlaySongsSearchSchema = SearchSongsSchema.extend({
   shuffle: z.boolean().default(false),
 });
 
-// Exported so the webui route boundary (handlePlayPlaylist) can re-validate the
-// request body up front and return HTTP 400 for malformed input, instead of
-// letting the ZodError flow through runAction as a generic 500.
-export const PlayPlaylistSchema = PlaylistIdSchema.extend({
+const PlayPlaylistSchema = PlaylistIdSchema.extend({
   mode: QueueModeSchema,
   shuffle: z.boolean().default(false),
-});
-
-// Exported so the webui route boundary (handlePlayStarredSongs) can re-validate
-// the request body up front and return HTTP 400 for malformed input, instead of
-// letting the ZodError flow through runAction as a generic 500. There is no ID
-// to supply — the starred set is the whole "hearted" library — so the body is
-// just the queue mode + shuffle flag.
-export const PlayStarredSongsSchema = z.object({
-  mode: QueueModeSchema,
-  shuffle: z.boolean().default(false),
-});
-
-// Exported so the webui route boundary (handlePlayStarredAlbums) can re-validate
-// the request body up front and return HTTP 400 for malformed input. Albums get
-// the three-way album-aware shuffle (mirroring PlayAlbumsSchema's `shuffle`)
-// rather than the songs route's boolean: 'none' keeps album+track order,
-// 'albums' permutes the album blocks, 'songs' flattens then fully shuffles.
-export const PlayStarredAlbumsSchema = z.object({
-  mode: QueueModeSchema,
-  shuffle: z.enum(['none', 'albums', 'songs']).default('none'),
-});
-
-const SeekSchema = z.object({
-  seconds: z.number(),
-  mode: z.enum(['absolute', 'relative']).default('relative'),
 });
 
 const MoveInPlayQueueSchema = z.object({
@@ -271,10 +240,6 @@ const MoveInPlayQueueSchema = z.object({
 });
 
 const RemoveFromPlayQueueSchema = z.object({
-  index: z.number().int().min(0),
-});
-
-const PlayQueueIndexSchema = z.object({
   index: z.number().int().min(0),
 });
 
@@ -408,8 +373,8 @@ export async function playSongs(client: NavidromeClient, args: unknown): Promise
 }
 
 /**
- * Play one or many albums through the local speakers. Resolves each album
- * to its ordered track list, applies the requested shuffle mode, then loads
+ * Play one or many albums through the local speakers. Reads the albums'
+ * ordered track lists, applies the requested shuffle mode, then loads
  * the result into the mpv playlist via `enqueue`.
  *
  * Shuffle modes:
@@ -438,20 +403,9 @@ export async function playAlbums(client: NavidromeClient, args: unknown): Promis
 }
 
 /**
- * Resolve an ordered album-ID list to its tracks, apply the requested shuffle
- * mode, and load the result into the live mpv queue in a single enqueue.
- * Shared core of `playAlbums` and `playStarredAlbums` — both take an ordered
- * album-ID list and differ only in how that list is sourced.
- *
- * Shuffle modes (see `playAlbums` doc):
- *   - `'none'`: input album order, natural track order within each album
- *   - `'albums'`: shuffle the album order; within-album order preserved
- *   - `'songs'`: flatten all tracks then shuffle the flat list
- *
- * Albums that resolve to zero tracks are silently skipped. If every album
- * resolves to zero tracks, throws `'No tracks found across all albums'`. The
- * `demoted` field is omitted unless the engine demoted `append` → `replace`,
- * mirroring the result shapes' `demoted?: true` typing.
+ * Load the tracks of an ordered album-ID list into the live mpv queue in a single enqueue.
+ * Albums with no tracks add nothing, and a set with no tracks at all throws.
+ * `demoted` is present only when the engine turned `append` into `replace`.
  */
 async function enqueueAlbumsByIds(
   client: NavidromeClient,
@@ -459,53 +413,18 @@ async function enqueueAlbumsByIds(
   mode: 'replace' | 'append',
   shuffle: 'none' | 'albums' | 'songs',
 ): Promise<{ albumCount: number; trackCount: number; demoted?: true }> {
-  // Resolve each album to its track IDs (and the metadata we'll later hand
-  // to the engine cache so `get_play_queue` can report titles for the full
-  // queue, not just the currently-playing track). Skip albums that come
-  // back empty; surface a clear error only if every album is empty.
-  const albumTracks: string[][] = [];
-  const metaByAlbum: QueueTrackMetadata[][] = [];
-  for (const albumId of albumIds) {
-    const { ids, metadata } = await fetchAlbumTrackIds(client, albumId);
-    if (ids.length > 0) {
-      albumTracks.push(ids);
-      metaByAlbum.push(metadata);
-    } else {
-      logger.debug(`playback: enqueueAlbumsByIds skipping empty album ${albumId}`);
-    }
-  }
-
-  if (albumTracks.length === 0) {
+  const rows = await fetchAlbumSetSongs(client, albumIds, 'Album set');
+  if (rows.length === 0) {
     throw new Error('No tracks found across all albums');
   }
 
-  let flat: string[];
-  switch (shuffle) {
-    case 'albums':
-      flat = fisherYatesShuffle(albumTracks).flat();
-      break;
-    case 'songs':
-      flat = fisherYatesShuffle(albumTracks.flat());
-      break;
-    case 'none':
-    default:
-      flat = albumTracks.flat();
-      break;
-  }
-
-  if (shuffle !== 'none') {
-    logger.debug(`playback: enqueueAlbumsByIds shuffled (${shuffle}) → ${flat.length} tracks`);
-  }
-
-  // Metadata is order-invariant — the engine indexes by `songId`, not by
-  // queue position — so we can flatten regardless of the shuffle strategy.
-  const metadata = metaByAlbum.flat();
-
-  const { demoted } = await playbackEngine.enqueue(flat, mode, metadata);
+  const ordered = orderQueueSongs(rows, { shuffleSongs: shuffle === 'songs', shuffleAlbums: shuffle === 'albums' });
+  const ids = ordered.map((row) => row.songId);
+  const { demoted } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
 
   const out: { albumCount: number; trackCount: number; demoted?: true } = {
-    albumCount: albumTracks.length,
-    trackCount: flat.length,
+    albumCount: new Set(rows.map((row) => row.albumId)).size,
+    trackCount: ids.length,
   };
   if (demoted) out.demoted = true;
   return out;
@@ -543,56 +462,15 @@ export async function playAlbumsSearch(
       throw new Error('No albums matched the search filters');
     }
 
-    // Resolve each album's track list (with metadata for the engine queue
-    // cache — see playAlbums for the rationale). Skip albums that come back
-    // empty; surface a clear error only if every album is empty.
-    const albumTracks: string[][] = [];
-    const metaByAlbum: QueueTrackMetadata[][] = [];
-    for (const album of result.albums) {
-      const { ids, metadata } = await fetchAlbumTrackIds(client, album.id);
-      if (ids.length > 0) {
-        albumTracks.push(ids);
-        metaByAlbum.push(metadata);
-      } else {
-        logger.debug(`playback: play_albums_search skipping empty album ${album.id}`);
-      }
-    }
-
-    if (albumTracks.length === 0) {
-      throw new Error('Found albums but none had any tracks');
-    }
-
-    let flat: string[];
-    switch (shuffle) {
-      case 'albums':
-        flat = fisherYatesShuffle(albumTracks).flat();
-        break;
-      case 'songs':
-        flat = fisherYatesShuffle(albumTracks.flat());
-        break;
-      case 'none':
-      default:
-        flat = albumTracks.flat();
-        break;
-    }
-
-    if (shuffle !== 'none') {
-      logger.debug(`playback: play_albums_search shuffled (${shuffle}) → ${flat.length} tracks`);
-    }
-
-    const metadata = metaByAlbum.flat();
-    const { demoted } = await playbackEngine.enqueue(flat, mode, metadata);
-
+    const enqueued = await enqueueAlbumsByIds(client, result.albums.map((album) => album.id), mode, shuffle);
     const out: PlayAlbumsSearchResult = {
       success: true,
       matchCount: result.albums.length,
-      albumCount: albumTracks.length,
-      trackCount: flat.length,
+      ...enqueued,
     };
     if (result.appliedFilters !== undefined) {
       out.appliedFilters = result.appliedFilters;
     }
-    if (demoted) out.demoted = true;
     return out;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_albums_search', error));
@@ -686,10 +564,11 @@ export async function playPlaylist(client: NavidromeClient, args: unknown): Prom
   try {
     logger.debug(`playback: play_playlist id=${parsed.playlistId} mode=${parsed.mode} shuffle=${parsed.shuffle}`);
 
-    const { ids, metadata } = await fetchPlaylistTrackIds(client, parsed.playlistId);
-    if (ids.length === 0) {
+    const rows = await fetchPlaylistSongs(client, parsed.playlistId);
+    if (rows.length === 0) {
       throw new Error('Playlist has no tracks');
     }
+    const ids = rows.map((row) => row.songId);
 
     const ordered = parsed.shuffle ? fisherYatesShuffle(ids) : ids;
     if (parsed.shuffle) {
@@ -699,7 +578,7 @@ export async function playPlaylist(client: NavidromeClient, args: unknown): Prom
     // Metadata is indexed by songId in the engine cache, not by queue
     // position (see playback-engine.ts:metadataCache), so the unshuffled
     // metadata array stays valid even when `ordered` is permuted.
-    const { demoted } = await playbackEngine.enqueue(ordered, parsed.mode, metadata);
+    const { demoted } = await playbackEngine.enqueue(ordered, parsed.mode, rows.map(toQueueMetadata));
 
     const out: PlayPlaylistResult = {
       success: true,
@@ -712,385 +591,263 @@ export async function playPlaylist(client: NavidromeClient, args: unknown): Prom
   }
 }
 
+type LibraryPlayRequest = z.infer<typeof LibraryPlayRequestSchema>;
+
+const EMPTY_LIBRARY_SOURCE_MESSAGES: Record<LibraryPlayRequest['type'], string> = {
+  song: 'Song not found in the active libraries',
+  album: 'Album has no songs',
+  artist: 'Artist has no songs',
+  playlist: 'Playlist has no tracks',
+  'starred-songs': 'No starred songs',
+  'starred-albums': 'No songs in starred albums',
+};
+
+// Thrown unwrapped so the web route can tell an empty source from a failure.
+export class EmptyLibrarySourceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'EmptyLibrarySourceError';
+  }
+}
+
 /**
- * Load the user's entire "starred" (hearted) song set into the live mpv queue
- * in a single call — the web-remote counterpart to `play_playlist`, but for the
- * starred collection instead of a named playlist. Mirrors `playPlaylist`'s
- * shape: parse → fetch all ids+metadata → empty-check → optional shuffle →
- * enqueue.
- *
- * Songs are loaded `playDate` ASC (least-recently-played first) so repeated
- * plays naturally cycle the whole collection over time. `shuffle: true` applies
- * Fisher-Yates to the flat ID list before enqueue. `mode: 'append'` adds to the
- * existing queue without clearing or unpausing (same semantics as the sibling
- * tools). An empty starred set raises `'No starred songs'`.
+ * Web-remote only. Every browse source resolves to one row list so the
+ * remote's two shuffle toggles order all sources the same way.
  */
-export async function playStarredSongs(
+export async function playLibrarySource(
   client: NavidromeClient,
   args: unknown,
-): Promise<PlayStarredSongsResult> {
-  let parsed: z.infer<typeof PlayStarredSongsSchema>;
+): Promise<PlaySongSetResult> {
+  let parsed: LibraryPlayRequest;
   try {
-    parsed = PlayStarredSongsSchema.parse(args);
+    parsed = LibraryPlayRequestSchema.parse(args);
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_starred_songs', error));
+    throw new Error(ErrorFormatter.toolExecution('play_library_source', error));
   }
 
   try {
-    logger.debug(`playback: play_starred_songs mode=${parsed.mode} shuffle=${parsed.shuffle}`);
+    const { type, mode, shuffleSongs, shuffleAlbums } = parsed;
+    logger.debug(
+      `playback: play_library_source type=${type} mode=${mode} shuffleSongs=${shuffleSongs} shuffleAlbums=${shuffleAlbums}`,
+    );
 
-    const { ids, metadata } = await fetchStarredSongIds(client);
-    if (ids.length === 0) {
-      throw new Error('No starred songs');
+    const rows = await fetchLibrarySourceRows(client, parsed);
+    if (rows.length === 0) {
+      throw new EmptyLibrarySourceError(EMPTY_LIBRARY_SOURCE_MESSAGES[type]);
     }
 
-    const ordered = parsed.shuffle ? fisherYatesShuffle(ids) : ids;
-    if (parsed.shuffle) {
-      logger.debug(`playback: play_starred_songs shuffled ${ordered.length} tracks`);
-    }
+    const ordered = orderQueueSongs(rows, { shuffleSongs, shuffleAlbums });
+    const ids = ordered.map((row) => row.songId);
+    const { demoted } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
 
-    // Metadata is indexed by songId in the engine cache, not by queue position
-    // (see playback-engine.ts:metadataCache), so the unshuffled metadata array
-    // stays valid even when `ordered` is permuted.
-    const { demoted } = await playbackEngine.enqueue(ordered, parsed.mode, metadata);
-
-    const out: PlayStarredSongsResult = {
+    const out: PlaySongSetResult = {
       success: true,
-      count: ordered.length,
+      count: ids.length,
     };
     if (demoted) out.demoted = true;
     return out;
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_starred_songs', error));
+    if (error instanceof EmptyLibrarySourceError) throw error;
+    throw new Error(ErrorFormatter.toolExecution('play_library_source', error));
   }
 }
 
-/**
- * Load the user's entire "starred" (hearted) ALBUM set into the live mpv queue
- * in a single call — the album counterpart to `play_starred_songs`. Paginates
- * `/album?starred=true` sorted `playDate` ASC (least-recently-played first) so
- * repeated plays cycle the collection over time, resolves each album's ordered
- * track list, applies the album-aware shuffle mode, then enqueues once.
- *
- * Shuffle modes (see `enqueueAlbumsByIds`): `'none'` plays albums in playDate
- * order with natural track order; `'albums'` randomizes the album order;
- * `'songs'` flattens every starred-album track then fully shuffles. `mode:
- * 'append'` adds to the existing queue without clearing or unpausing. An empty
- * starred-album set raises `'No starred albums'`.
- */
-export async function playStarredAlbums(
+// Album position lets the web play path group and sort albums after the read.
+interface QueueSongRow extends QueueTrackMetadata {
+  albumId?: string;
+  discNumber?: number;
+  trackNumber?: number;
+}
+
+// Bounds the URL length of each album-set song read, since every album id repeats the `album_id` key.
+const ALBUM_ID_CHUNK_SIZE = 100;
+
+function toQueueSongRow(songId: string, record: Record<string, unknown>): QueueSongRow {
+  const row: QueueSongRow = { songId };
+  if (typeof record['title'] === 'string') row.title = record['title'];
+  if (typeof record['artist'] === 'string') row.artist = record['artist'];
+  if (typeof record['album'] === 'string') row.album = record['album'];
+  if (typeof record['duration'] === 'number') row.duration = record['duration'];
+  if (typeof record['albumId'] === 'string' && record['albumId'] !== '') row.albumId = record['albumId'];
+  if (typeof record['discNumber'] === 'number') row.discNumber = record['discNumber'];
+  if (typeof record['trackNumber'] === 'number') row.trackNumber = record['trackNumber'];
+  return row;
+}
+
+// The engine caches whole metadata objects, so album position stays out of its cache.
+function toQueueMetadata(row: QueueSongRow): QueueTrackMetadata {
+  const metadata: QueueTrackMetadata = { songId: row.songId };
+  if (row.title !== undefined) metadata.title = row.title;
+  if (row.artist !== undefined) metadata.artist = row.artist;
+  if (row.album !== undefined) metadata.album = row.album;
+  if (row.duration !== undefined) metadata.duration = row.duration;
+  return metadata;
+}
+
+async function fetchLibrarySourceRows(
   client: NavidromeClient,
-  args: unknown,
-): Promise<PlayStarredAlbumsResult> {
-  let parsed: z.infer<typeof PlayStarredAlbumsSchema>;
-  try {
-    parsed = PlayStarredAlbumsSchema.parse(args);
-  } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_starred_albums', error));
-  }
-
-  try {
-    logger.debug(`playback: play_starred_albums mode=${parsed.mode} shuffle=${parsed.shuffle}`);
-
-    const albumIds = await fetchStarredAlbumIds(client);
-    if (albumIds.length === 0) {
-      throw new Error('No starred albums');
-    }
-
-    return { success: true, ...await enqueueAlbumsByIds(client, albumIds, parsed.mode, parsed.shuffle) };
-  } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('play_starred_albums', error));
+  request: LibraryPlayRequest,
+): Promise<QueueSongRow[]> {
+  switch (request.type) {
+    case 'song':
+      return fetchSongPages(client, { id: request.id }, `Song ${request.id}`);
+    case 'album':
+      return fetchAlbumSongs(client, request.id);
+    case 'artist':
+      // Songs, not albums: `/album?artist_id=` also returns albums holding none of this artist's tracks.
+      // `artists_id` matches featured and album-artist credits. `artist_id` holds only the first artist.
+      return fetchSongPages(client, { artists_id: request.id, _sort: 'album', _order: 'ASC' }, `Artist ${request.id}`);
+    case 'playlist':
+      return fetchPlaylistSongs(client, request.id);
+    case 'starred-songs':
+      return fetchStarredSongs(client);
+    case 'starred-albums':
+      return fetchStarredAlbumSongs(client);
   }
 }
 
-/**
- * Fetch the ordered track ID list for a single album from Navidrome.
- *
- * Uses `album_id` (snake_case) for the filter — Navidrome's REST API
- * convention. Sorts by `album` ascending which produces natural disc/track
- * order (handles multi-disc releases correctly; the default sort is
- * unstable).
- *
- * Pagination: reads `X-Total-Count` from the first page and follows up with
- * additional MAX_ALBUM_TRACKS-sized pages until the full track list is
- * fetched. Boxsets / "complete works" releases easily exceed the per-page
- * limit; the previous single-page fetch silently truncated them, so a
- * `play_albums` invocation against a 1500-track Bach collection played
- * only the first 500 tracks.
- *
- * Safety cap: bails out after MAX_ALBUM_PAGES pages (= MAX_ALBUM_TRACKS *
- * MAX_ALBUM_PAGES tracks total) to bound the worst case if Navidrome ever
- * returns an inconsistent X-Total-Count.
- *
- * Returns `[]` for albums with no tracks; callers decide whether that is
- * a hard error or a skip case.
- */
-async function fetchAlbumTrackIds(
+async function fetchStarredAlbumSongs(client: NavidromeClient): Promise<QueueSongRow[]> {
+  return fetchAlbumSetSongs(client, await fetchStarredAlbumIds(client), 'Starred albums');
+}
+
+// Navidrome ORs repeated `album_id` keys, so one paged read per chunk replaces one read per album.
+async function fetchAlbumSetSongs(
   client: NavidromeClient,
-  albumId: string,
-): Promise<{ ids: string[]; metadata: QueueTrackMetadata[] }> {
-  const ids: string[] = [];
-  const metadata: QueueTrackMetadata[] = [];
+  albumIds: readonly string[],
+  label: string,
+): Promise<QueueSongRow[]> {
+  const rows: QueueSongRow[] = [];
+  for (let start = 0; start < albumIds.length; start += ALBUM_ID_CHUNK_SIZE) {
+    const chunk = albumIds.slice(start, start + ALBUM_ID_CHUNK_SIZE);
+    const page = await fetchSongPages(
+      client,
+      { album_id: chunk, _sort: 'album', _order: 'ASC' },
+      `${label} ${start + 1}-${start + chunk.length}`,
+    );
+    rows.push(...page);
+  }
+  return sortRowsByAlbumOrder(rows, albumIds);
+}
+
+// The chunked read returns album-name order. A stable sort restores the input order and keeps each album's track order.
+function sortRowsByAlbumOrder(rows: readonly QueueSongRow[], albumIds: readonly string[]): QueueSongRow[] {
+  const albumRank = new Map(albumIds.map((albumId, index) => [albumId, index]));
+  const rankOf = (row: QueueSongRow): number => {
+    const rank = row.albumId === undefined ? undefined : albumRank.get(row.albumId);
+    return rank ?? albumIds.length;
+  };
+  return rows.slice().sort((a, b) => rankOf(a) - rankOf(b));
+}
+
+/**
+ * Shared paging loop for every Navidrome list read that feeds the queue. `extract` returns null to skip a row.
+ * MAX_ALBUM_PAGES bounds the walk in case Navidrome reports an inflated X-Total-Count.
+ */
+async function fetchPages<T>(
+  client: NavidromeClient,
+  path: string,
+  filter: Record<string, string | readonly string[]>,
+  extract: (record: Record<string, unknown>) => T | null,
+  label: string,
+): Promise<T[]> {
+  const items: T[] = [];
+  const filterParams = new URLSearchParams();
+  let rowsRead = 0;
   let totalReported: number | null = null;
+  for (const [key, value] of Object.entries(filter)) {
+    for (const item of typeof value === 'string' ? [value] : value) filterParams.append(key, item);
+  }
   for (let page = 0; page < MAX_ALBUM_PAGES; page++) {
     const start = page * MAX_ALBUM_TRACKS;
-    const params = new URLSearchParams({
-      album_id: albumId,
-      _start: String(start),
-      _end: String(start + MAX_ALBUM_TRACKS),
-      _sort: 'album',
-      _order: 'ASC',
-    });
-    const endpoint = `/song?${params.toString()}`;
-    // Scope to the active libraries so a multi-library setup never enqueues
-    // tracks from a deactivated library. When libraryManager isn't
-    // initialized or every library is active, this behaves like the
-    // unfiltered request.
+    const params = new URLSearchParams(filterParams);
+    params.set('_start', String(start));
+    params.set('_end', String(start + MAX_ALBUM_TRACKS));
+    const endpoint = `${path}?${params.toString()}`;
     const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(endpoint);
     if (page === 0) totalReported = total;
 
     if (!Array.isArray(data)) {
       throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
     }
-    for (const track of data) {
-      if (typeof track === 'object' && track !== null) {
-        const record = track as Record<string, unknown>;
-        const id = record['id'];
-        if (typeof id === 'string' && id !== '') {
-          ids.push(id);
-          // Collect what we need for the in-engine queue cache. The /song
-          // endpoint returns these fields directly on each row, so no
-          // transformer round-trip is needed.
-          const entry: QueueTrackMetadata = { songId: id };
-          if (typeof record['title'] === 'string') entry.title = record['title'];
-          if (typeof record['artist'] === 'string') entry.artist = record['artist'];
-          if (typeof record['album'] === 'string') entry.album = record['album'];
-          if (typeof record['duration'] === 'number') entry.duration = record['duration'];
-          metadata.push(entry);
-        }
-      }
+    rowsRead += data.length;
+    for (const entry of data) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const item = extract(entry as Record<string, unknown>);
+      if (item !== null) items.push(item);
     }
-    // Unconditional break on empty page — protects against a server that
-    // reports a stale/inflated X-Total-Count and returns empty pages forever.
+    // A stale X-Total-Count can promise rows that never come, so an empty page always ends the walk.
     if (data.length === 0) break;
-    // Stop early when we know we've covered the full result set. If
-    // X-Total-Count is missing (server quirk), fall back to "stop when the
-    // page came back smaller than requested" — same heuristic the rest of
-    // the codebase uses for paginated reads.
-    const collected = ids.length;
+    // Without X-Total-Count, a short page is the only end-of-set signal.
     if (total !== null) {
-      if (collected >= total) break;
+      if (rowsRead >= total) break;
     } else if (data.length < MAX_ALBUM_TRACKS) {
       break;
     }
   }
-  // If the server told us the album has more tracks than our hard cap, we've
-  // silently truncated. Warn so it's diagnosable in DEBUG logs at least —
-  // realistic albums don't hit 10k tracks but boxsets/complete-works might.
   if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * MAX_ALBUM_TRACKS) {
     logger.warn(
-      `Album ${albumId} has ${totalReported} tracks but only the first ${ids.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
+      `${label} has ${totalReported} rows but only the first ${items.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
     );
   }
-  return { ids, metadata };
+  return items;
 }
 
-/**
- * Fetch every track ID + queue metadata for a playlist. Paginated reads
- * of `/playlist/{id}/tracks` follow X-Total-Count just like
- * `fetchAlbumTrackIds` so playlists longer than one page load completely.
- * The MAX_ALBUM_* caps are reused as a generic per-page / max-pages bound
- * — Navidrome's pagination cap is the same for every paginated read,
- * regardless of which collection is being walked.
- *
- * Returns `[]` for empty playlists; callers decide whether to treat that
- * as a hard error.
- */
-async function fetchPlaylistTrackIds(
+function recordId(record: Record<string, unknown>): string | null {
+  const id = record['id'];
+  return typeof id === 'string' && id !== '' ? id : null;
+}
+
+function songRowFromRecord(record: Record<string, unknown>): QueueSongRow | null {
+  const id = recordId(record);
+  return id === null ? null : toQueueSongRow(id, record);
+}
+
+function fetchSongPages(
   client: NavidromeClient,
-  playlistId: string,
-): Promise<{ ids: string[]; metadata: QueueTrackMetadata[] }> {
-  const ids: string[] = [];
-  const metadata: QueueTrackMetadata[] = [];
-  let totalReported: number | null = null;
-  for (let page = 0; page < MAX_ALBUM_PAGES; page++) {
-    const start = page * MAX_ALBUM_TRACKS;
-    const params = new URLSearchParams({
-      _start: String(start),
-      _end: String(start + MAX_ALBUM_TRACKS),
-    });
-    const endpoint = `/playlist/${encodeURIComponent(playlistId)}/tracks?${params.toString()}`;
-    // Scope to the active libraries — `/playlist/{id}/tracks?library_id=X`
-    // filters tracks (and X-Total-Count reflects the filtered count), so a
-    // multi-library setup never enqueues tracks from a deactivated library.
-    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(endpoint);
-    if (page === 0) totalReported = total;
-
-    if (!Array.isArray(data)) {
-      throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
-    }
-    for (const track of data) {
-      if (typeof track !== 'object' || track === null) continue;
-      const record = track as Record<string, unknown>;
-      // Playlist rows carry the play-target as `mediaFileId`; the row's
-      // own `id` is the playlist-position record, not the song. Fall back
-      // to `id` (stringified if numeric) only if `mediaFileId` is missing,
-      // matching the transformer in playlist-export.ts.
-      const rawMediaFileId = record['mediaFileId'];
-      const rawId = record['id'];
-      let songId = '';
-      if (typeof rawMediaFileId === 'string' && rawMediaFileId !== '') {
-        songId = rawMediaFileId;
-      } else if (typeof rawId === 'string' && rawId !== '') {
-        songId = rawId;
-      } else if (typeof rawId === 'number') {
-        songId = String(rawId);
-      }
-      if (songId === '') continue;
-      ids.push(songId);
-      const entry: QueueTrackMetadata = { songId };
-      if (typeof record['title'] === 'string') entry.title = record['title'];
-      if (typeof record['artist'] === 'string') entry.artist = record['artist'];
-      if (typeof record['album'] === 'string') entry.album = record['album'];
-      if (typeof record['duration'] === 'number') entry.duration = record['duration'];
-      metadata.push(entry);
-    }
-    if (data.length === 0) break;
-    if (total !== null) {
-      if (ids.length >= total) break;
-    } else if (data.length < MAX_ALBUM_TRACKS) {
-      break;
-    }
-  }
-  if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * MAX_ALBUM_TRACKS) {
-    logger.warn(
-      `Playlist ${playlistId} has ${totalReported} tracks but only the first ${ids.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
-    );
-  }
-  return { ids, metadata };
+  filter: Record<string, string | readonly string[]>,
+  label: string,
+): Promise<QueueSongRow[]> {
+  return fetchPages(client, '/song', filter, songRowFromRecord, label);
 }
 
-/**
- * Fetch every starred (hearted) song ID + queue metadata for the current user.
- * Near-copy of `fetchPlaylistTrackIds`, but hits `/song?starred=true` sorted by
- * `playDate` ASC (least-recently-played first). The reference URL the Navidrome
- * web UI itself uses is
- * `/api/song?_order=ASC&_sort=playDate&starred=true&library_id=1`.
- *
- * Each `/song` row carries `id`/`title`/`artist`/`album`/`duration` directly
- * (like `fetchAlbumTrackIds`), so no transformer round-trip is needed. Reads are
- * scoped to the active libraries via `requestWithLibraryFilterAndMeta` so a
- * multi-library setup never enqueues tracks from a deactivated library.
- *
- * Returns `[]` when nothing is starred; the caller decides whether that is a
- * hard error.
- */
-async function fetchStarredSongIds(
-  client: NavidromeClient,
-): Promise<{ ids: string[]; metadata: QueueTrackMetadata[] }> {
-  const ids: string[] = [];
-  const metadata: QueueTrackMetadata[] = [];
-  let totalReported: number | null = null;
-  for (let page = 0; page < MAX_ALBUM_PAGES; page++) {
-    const start = page * MAX_ALBUM_TRACKS;
-    const params = new URLSearchParams({
-      starred: 'true',
-      _sort: 'playDate',
-      _order: 'ASC',
-      _start: String(start),
-      _end: String(start + MAX_ALBUM_TRACKS),
-    });
-    const endpoint = `/song?${params.toString()}`;
-    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(endpoint);
-    if (page === 0) totalReported = total;
-
-    if (!Array.isArray(data)) {
-      throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
-    }
-    for (const track of data) {
-      if (typeof track !== 'object' || track === null) continue;
-      const record = track as Record<string, unknown>;
-      const id = record['id'];
-      if (typeof id !== 'string' || id === '') continue;
-      ids.push(id);
-      const entry: QueueTrackMetadata = { songId: id };
-      if (typeof record['title'] === 'string') entry.title = record['title'];
-      if (typeof record['artist'] === 'string') entry.artist = record['artist'];
-      if (typeof record['album'] === 'string') entry.album = record['album'];
-      if (typeof record['duration'] === 'number') entry.duration = record['duration'];
-      metadata.push(entry);
-    }
-    if (data.length === 0) break;
-    if (total !== null) {
-      if (ids.length >= total) break;
-    } else if (data.length < MAX_ALBUM_TRACKS) {
-      break;
-    }
-  }
-  if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * MAX_ALBUM_TRACKS) {
-    logger.warn(
-      `Starred set has ${totalReported} songs but only the first ${ids.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
-    );
-  }
-  return { ids, metadata };
+// `_sort=album` yields disc and track order. The default sort is unstable on multi-disc releases.
+function fetchAlbumSongs(client: NavidromeClient, albumId: string): Promise<QueueSongRow[]> {
+  return fetchSongPages(client, { album_id: albumId, _sort: 'album', _order: 'ASC' }, `Album ${albumId}`);
 }
 
-/**
- * Fetch every starred (hearted) ALBUM ID for the current user, ordered
- * `playDate` ASC (least-recently-played first). Near-copy of
- * `fetchStarredSongIds`, but hits `/album?starred=true` and collects only the
- * album `id` (the per-album track resolution happens later in
- * `enqueueAlbumsByIds`). The reference URL the Navidrome web UI itself uses is
- * `/api/album?_order=ASC&_sort=playDate&starred=true&library_id=1`.
- *
- * Reads are scoped to the active libraries via `requestWithLibraryFilterAndMeta`
- * so a multi-library setup never enqueues albums from a deactivated library.
- * Pagination follows `X-Total-Count`, falling back to the short-page heuristic
- * when the server omits it, and breaks on an empty page (stale-count guard).
- * The MAX_ALBUM_* caps are reused as the generic per-page / max-pages bound.
- *
- * Returns `[]` when nothing is starred; the caller decides whether that is a
- * hard error.
- */
-async function fetchStarredAlbumIds(client: NavidromeClient): Promise<string[]> {
-  const ids: string[] = [];
-  let totalReported: number | null = null;
-  for (let page = 0; page < MAX_ALBUM_PAGES; page++) {
-    const start = page * MAX_ALBUM_TRACKS;
-    const params = new URLSearchParams({
-      starred: 'true',
-      _sort: 'playDate',
-      _order: 'ASC',
-      _start: String(start),
-      _end: String(start + MAX_ALBUM_TRACKS),
-    });
-    const endpoint = `/album?${params.toString()}`;
-    const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(endpoint);
-    if (page === 0) totalReported = total;
+// The library filter also narrows X-Total-Count, so a deactivated library's tracks never enqueue.
+function fetchPlaylistSongs(client: NavidromeClient, playlistId: string): Promise<QueueSongRow[]> {
+  return fetchPages(
+    client,
+    `/playlist/${encodeURIComponent(playlistId)}/tracks`,
+    {},
+    (record) => playlistSongRow(playlistId, record),
+    `Playlist ${playlistId}`,
+  );
+}
 
-    if (!Array.isArray(data)) {
-      throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
-    }
-    for (const album of data) {
-      if (typeof album !== 'object' || album === null) continue;
-      const record = album as Record<string, unknown>;
-      const id = record['id'];
-      if (typeof id !== 'string' || id === '') continue;
-      ids.push(id);
-    }
-    if (data.length === 0) break;
-    if (total !== null) {
-      if (ids.length >= total) break;
-    } else if (data.length < MAX_ALBUM_TRACKS) {
-      break;
-    }
-  }
-  if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * MAX_ALBUM_TRACKS) {
-    logger.warn(
-      `Starred album set has ${totalReported} albums but only the first ${ids.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
-    );
-  }
-  return ids;
+// A playlist row's own `id` is its playlist position, never a song, so only `mediaFileId` can be played.
+function playlistSongRow(playlistId: string, record: Record<string, unknown>): QueueSongRow | null {
+  const mediaFileId = record['mediaFileId'];
+  if (typeof mediaFileId === 'string' && mediaFileId !== '') return toQueueSongRow(mediaFileId, record);
+  logger.warn(`playback: playlist ${playlistId} row ${String(record['id'])} has no mediaFileId, skipping it`);
+  return null;
+}
+
+// `playDate` ASC plays the least-recently-played first, so repeated plays cycle the whole collection.
+function fetchStarredSongs(client: NavidromeClient): Promise<QueueSongRow[]> {
+  return fetchSongPages(client, { starred: 'true', _sort: 'playDate', _order: 'ASC' }, 'Starred set');
+}
+
+// Same least-recently-played order as the starred songs. The songs are read later per album chunk.
+function fetchStarredAlbumIds(client: NavidromeClient): Promise<string[]> {
+  return fetchPages(
+    client,
+    '/album',
+    { starred: 'true', _sort: 'playDate', _order: 'ASC' },
+    recordId,
+    'Starred album set',
+  );
 }
 
 /**
@@ -1138,12 +895,7 @@ async function fetchSongMetadata(
         const record = track as Record<string, unknown>;
         const id = record['id'];
         if (typeof id !== 'string' || id === '') continue;
-        const entry: QueueTrackMetadata = { songId: id };
-        if (typeof record['title'] === 'string') entry.title = record['title'];
-        if (typeof record['artist'] === 'string') entry.artist = record['artist'];
-        if (typeof record['album'] === 'string') entry.album = record['album'];
-        if (typeof record['duration'] === 'number') entry.duration = record['duration'];
-        out.push(entry);
+        out.push(toQueueMetadata(toQueueSongRow(id, record)));
       }
     } catch (err) {
       // Best-effort enrichment — failure just means the queue entries fall
@@ -1235,21 +987,11 @@ function looksLikeHttpUrl(value: string): boolean {
   }
 }
 
-// Tracks the queue position for which VBR duration repair has already been
-// applied from the cache. Once repaired, `now_playing` polls for that same
-// track skip the per-poll getPlaylist() IPC instead of firing it forever just
-// because a normal sub-10-minute track stays below the 600s threshold. The key
-// folds the engine's queue-generation counter with the queue index, so it
-// resets both when the queue position changes (next/prev/auto-advance) AND when
-// a full-replace load lands a new track at the same position (a `mode:'replace'`
-// reload always drops the new track at index 0). Each new track gets one repair
-// pass.
-let durationRepairedForKey: string | null = null;
-// Tracks the (generation, position) key that a getPlaylist() reconciliation
-// confirmed is NOT radio (a real Navidrome songId was present). Without this,
-// `needsRadioFallback` is true for the entire steady state of ordinary playback
-// and forces a getPlaylist() IPC on every poll even when duration/metadata are
-// already fully resolved. Same reset semantics as `durationRepairedForKey`.
+// The authoritative duration for one loaded file, kept so later polls reapply it
+// without IPC while mpv's VBR duration is still under-reported.
+let durationRepair: { key: string; duration: number } | null = null;
+// The key a getPlaylist() reconciliation confirmed is NOT radio. Without it,
+// `needsRadioFallback` forces a getPlaylist() IPC on every poll of ordinary playback.
 let notRadioConfirmedForKey: string | null = null;
 
 /**
@@ -1291,8 +1033,8 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
 
     // Never surface a URL-shaped media-title: during the track-load window mpv
     // reports the raw stream URL (with auth token + salt) here. Suppress it and
-    // let the songId-based reconciliation below fill in the real title — the
-    // same way get_play_queue stays correct (see Issue #3).
+    // let the songId-based reconciliation below fill in the real title, the
+    // same way get_play_queue stays correct.
     const title = playbackEngine.getCachedProperty('media-title');
     if (typeof title === 'string' && !looksLikeHttpUrl(title)) result.title = title;
 
@@ -1305,46 +1047,19 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
       if (album !== null && !looksLikeHttpUrl(album)) result.album = album;
     }
 
-    // Surface radio context AND repair duration for VBR MP3s.
-    //
-    // Two reasons we may need to call `getPlaylist()` here:
-    //
-    //   (1) RADIO DETECTION fallback — when the engine's session-scoped
-    //       `currentRadioStation` flag was lost (different MCP session
-    //       attached to existing mpv), we still want to flag `isRadio: true`
-    //       when the current queue entry has no Navidrome songId.
-    //
-    //   (2) DURATION REPAIR for VBR MP3s — mpv streams VBR MP3 over HTTP and
-    //       reports `duration` based on bytes-seen-so-far until it scans the
-    //       full file (~20-30s into playback, or after any absolute seek).
-    //       During that window mpv's number is a fraction of the real value.
-    //       Navidrome's per-song metadata has the pre-scanned, authoritative
-    //       duration, which Batch 3 piped into the engine's `metadataCache`
-    //       keyed by songId. `getPlaylist()` already merges that cache into
-    //       each entry's `duration` field, so the current entry's duration
-    //       is the authoritative number when the cache has it. Prefer it
-    //       whenever it's meaningfully larger than mpv's number (>5s gap
-    //       covers all early-VBR cases without overriding legitimate mpv
-    //       updates for tracks where mpv has finished its scan).
-    //
-    // `now_playing` is polled often, so we keep IPC pressure low: skip the
-    // `getPlaylist()` call when neither fix is needed — i.e. the engine
-    // already knows it's radio (no duration to repair) AND we have nothing
-    // to fall back to.
+    // getPlaylist() runs for three triggers: radio fallback, VBR duration repair and metadata repair.
+    // `now_playing` runs on every poll, so the per-key caches skip that IPC once a key is resolved.
     const radioStation = playbackEngine.getCurrentRadioStation();
     if (radioStation !== null) {
       result.isRadio = true;
       result.radioStation = radioStation;
     }
-    // Cheap, pre-getPlaylist track identity: the queue position folded with the
-    // engine's queue-generation counter. Keying on generation too means a
-    // `mode:'replace'` reload that lands a new track at the same position
-    // (always index 0) gets a fresh key instead of colliding with the previous
-    // track's cached repair/not-radio state. The key resets when the position
-    // changes (track advance/skip) OR when a full-replace load bumps generation.
+    // mpv's `path` is in the key because the generation is per process: another process
+    // sharing this mpv, or removal of the playing entry, loads a new file at the same index.
+    const loadedPath = playbackEngine.getCachedProperty('path');
     const repairKey =
-      typeof queueIndex === 'number'
-        ? `${String(playbackEngine.getQueueGeneration())}:idx:${String(queueIndex)}`
+      typeof queueIndex === 'number' && typeof loadedPath === 'string' && loadedPath !== ''
+        ? `${String(playbackEngine.getQueueGeneration())}:idx:${String(queueIndex)}:${loadedPath}`
         : null;
     // Once a position is confirmed NOT radio (a real songId was seen there),
     // stop re-firing getPlaylist() for the radio fallback on every poll — this
@@ -1353,8 +1068,11 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
     const notRadioConfirmed =
       repairKey !== null && notRadioConfirmedForKey === repairKey;
     const needsRadioFallback = radioStation === null && !notRadioConfirmed;
-    const alreadyRepaired =
-      repairKey !== null && durationRepairedForKey === repairKey;
+    const cachedRepair = repairKey !== null && durationRepair?.key === repairKey ? durationRepair : null;
+    const alreadyRepaired = cachedRepair !== null;
+    if (cachedRepair !== null && (result.duration === undefined || cachedRepair.duration > result.duration + 5)) {
+      result.duration = cachedRepair.duration;
+    }
     const needsDurationRepair =
       radioStation === null &&
       !alreadyRepaired &&
@@ -1380,9 +1098,6 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
           if (needsRadioFallback && current.songId === null) {
             result.isRadio = true;
           }
-          // Confirmed NOT radio at this (generation, position): cache it so
-          // subsequent polls skip the radio-fallback getPlaylist() until the
-          // queue position changes or a full-replace load bumps the generation.
           if (current.songId !== null && repairKey !== null) {
             notRadioConfirmedForKey = repairKey;
           }
@@ -1429,13 +1144,10 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
             if (result.duration === undefined || current.duration > result.duration + 5) {
               result.duration = current.duration;
             }
-            // Either way we've reconciled against the authoritative number, so
-            // mark this queue position done: subsequent polls skip the
-            // getPlaylist() IPC until the track changes (position moves). When
-            // the cache is not yet warm (no duration) we leave it unmarked and
-            // retry on the next poll.
+            // Later polls for this key reapply the stored value without IPC. A cold cache
+            // (no duration) stores nothing, so the next poll retries.
             if (repairKey !== null) {
-              durationRepairedForKey = repairKey;
+              durationRepair = { key: repairKey, duration: current.duration };
             }
           }
         }
@@ -1589,6 +1301,24 @@ export async function shufflePlayQueue(_args: unknown): Promise<ShufflePlayQueue
 }
 
 /**
+ * Shuffle the live queue and start it from the new top track (the web remote's
+ * shuffle). Attaches but never spawns mpv, since a fresh mpv has no queue.
+ */
+export async function shuffleQueueFromTop(_args: unknown): Promise<ShuffleQueueFromTopResult> {
+  try {
+    logger.debug('playback: shuffle_queue_from_top');
+    await playbackEngine.ensureAttached();
+    if (!playbackEngine.isRunning()) {
+      return { success: false, message: 'Nothing to shuffle, no active playback.' };
+    }
+    await playbackEngine.shuffleQueueFromTop();
+    return { success: true };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('shuffle_queue_from_top', error));
+  }
+}
+
+/**
  * Move a play-queue entry from one index to another. Short-circuits with
  * `{ noop: true }` when `from === to`. Out-of-range indices are NOT
  * pre-validated — mpv errors and the message surfaces via ErrorFormatter
@@ -1676,20 +1406,6 @@ export async function removeFromPlayQueue(args: unknown): Promise<RemoveFromPlay
 }
 
 // ---------- helpers ----------
-
-/**
- * Return a new array shuffled with Fisher-Yates. Pure; does not mutate input.
- */
-function fisherYatesShuffle<T>(input: readonly T[]): T[] {
-  const out = input.slice();
-  for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = out[i] as T;
-    out[i] = out[j] as T;
-    out[j] = tmp;
-  }
-  return out;
-}
 
 /**
  * Read the first key from `obj` whose value is a non-empty string.

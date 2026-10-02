@@ -2,18 +2,17 @@
  * Navidrome MCP Server - Player runtime unit tests
  * Copyright (C) 2025
  *
- * Covers the persist flag accessors and the pure power/settings affordance
- * decision (lifecycle §B.1).
+ * Covers the live persist flag and theme accessors.
  */
 
 import { describe, expect, it } from 'vitest';
 
 import {
-  type PlayerFlags,
-  computePlayerFlags,
   getPersist,
+  getTheme,
   initPersist,
   setPersist,
+  setTheme,
 } from '../../../src/web/player-runtime.js';
 
 describe('persist flag', () => {
@@ -26,30 +25,15 @@ describe('persist flag', () => {
   });
 });
 
-describe('computePlayerFlags', () => {
-  it('hides everything for a non-local (LAN) caller', () => {
-    const f: PlayerFlags = computePlayerFlags({ isLocal: false, hasLiveParent: false, persist: true });
-    expect(f).toEqual({ canEditSettings: false, canPowerOff: false });
+describe('theme', () => {
+  it('starts unset, so each device follows its own setting', () => {
+    expect(getTheme()).toBeNull();
   });
 
-  it('local + no live parent (standalone, or MCP already gone) → power offered', () => {
-    expect(computePlayerFlags({ isLocal: true, hasLiveParent: false, persist: false })).toEqual({
-      canEditSettings: true,
-      canPowerOff: true,
-    });
-  });
-
-  it('local + live MCP parent + persist OFF → power hidden (MCP owns teardown)', () => {
-    expect(computePlayerFlags({ isLocal: true, hasLiveParent: true, persist: false })).toEqual({
-      canEditSettings: true,
-      canPowerOff: false,
-    });
-  });
-
-  it('local + live MCP parent + persist ON → power offered (it will survive MCP)', () => {
-    expect(computePlayerFlags({ isLocal: true, hasLiveParent: true, persist: true })).toEqual({
-      canEditSettings: true,
-      canPowerOff: true,
-    });
+  it('set / get round-trip, including back to unset', () => {
+    setTheme('dark');
+    expect(getTheme()).toBe('dark');
+    setTheme(null);
+    expect(getTheme()).toBeNull();
   });
 });

@@ -27,6 +27,11 @@ interface NetworkInterfaceDescriptor {
   url: string;
 }
 
+// The resolved bind host alone decides reachability, because an explicit host wins over expose.
+export function isLanReachable(host: string): boolean {
+  return !(host === 'localhost' || host === '::1' || host.startsWith('127.'));
+}
+
 /**
  * Enumerate non-internal IPv4 addresses reachable on the host, paired with
  * a ready-to-paste URL for the running web UI. Skips loopback (the user

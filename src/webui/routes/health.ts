@@ -21,6 +21,7 @@ import type { Config } from '../../config.js';
 import { getPackageVersion } from '../../utils/version.js';
 import { writeError, writeJson } from '../http-helpers.js';
 import { isLoopbackPeer } from '../loopback.js';
+import { isLanReachable } from '../network.js';
 
 /**
  * The signature `acquireOrAttach` (src/web/acquire.ts) probes to distinguish
@@ -38,11 +39,8 @@ export const HEALTH_APP_ID = 'navidrome-mcp-web';
  * gate never interferes with coexistence.
  */
 export function handleHealth(req: IncomingMessage, res: ServerResponse, config: Config): void {
-  // LAN-reachability matches network-info.ts and main.ts's logBanner: either an
-  // explicit expose, or a wildcard bind (`0.0.0.0`) that reaches the LAN even with
-  // expose=false. Gate /healthz to loopback peers in either case so the version
-  // fingerprint never leaks off-box.
-  if ((config.webui.expose || config.webui.host === '0.0.0.0') && !isLoopbackPeer(req)) {
+  // A LAN-reachable bind gates the version fingerprint to loopback peers.
+  if (isLanReachable(config.webui.host) && !isLoopbackPeer(req)) {
     writeError(res, 404, 'Not found');
     return;
   }

@@ -51,7 +51,11 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     expect((await healthz(port))?.app).toBe('navidrome-mcp-web');
 
     // Clean up the survivor via its own (loopback) power endpoint.
-    await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: 'POST' }).catch(() => undefined);
+    await fetch(`http://127.0.0.1:${port}/api/shutdown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }).catch(() => undefined);
     await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 6000 });
   });
 
@@ -65,9 +69,9 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     expect(await waitFor(async () => (await healthz(port)) !== null)).toBe(true);
 
     const list = (await (await fetch(`http://127.0.0.1:${port}/api/playlists`)).json()) as {
-      playlists?: Array<{ id: string }>;
+      playlists?: Array<{ playlistId: string }>;
     };
-    const id = list.playlists?.[0]?.id;
+    const id = list.playlists?.[0]?.playlistId;
     if (id === undefined) {
       owner.kill('SIGKILL'); // empty library — nothing to play, skip the assertion
       return;
@@ -78,7 +82,7 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }).catch(() => undefined);
-    await post('/api/playlists/play', { playlistId: id, mode: 'replace' });
+    await post('/api/library/play', { type: 'playlist', id, mode: 'replace' });
     await post('/api/controls/volume', { level: 0 }); // keep the test quiet
     expect(await waitFor(() => mpvAlive(), { timeoutMs: 10000 })).toBe(true);
 

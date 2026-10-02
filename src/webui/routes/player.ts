@@ -19,16 +19,18 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
 import { readSettings, writeSettings, SettingsFileSchema } from '../../config/store.js';
+import { PlayerSettingsPatchSchema } from '../../schemas/index.js';
 import { logger } from '../../utils/logger.js';
-import { getPersist, setPersist } from '../../web/player-runtime.js';
+import { getPersist, getTheme, setPersist, setTheme } from '../../web/player-runtime.js';
+import type { SseBroadcaster } from '../broadcaster.js';
 import { readJsonBody, writeError, writeJson } from '../http-helpers.js';
 import { isLoopbackPeer } from '../loopback.js';
 
 /**
- * GET /api/player-state — per-peer flags the frontend needs at load to decide
- * whether to render the local-only affordances (gear/power). `isLocal` reflects
- * THIS request's peer; combined client-side with the SSE `player` snapshot
- * (hasLiveParent/persist) to compute the power button's visibility live.
+ * GET /api/player-state — per-peer flags the frontend needs at load. `isLocal` reflects
+ * THIS request's peer and decides the local-only affordances (settings gear, power).
+ *
+ * `theme` is the live color theme every peer renders, or null to follow each device.
  *
  * `lyrics.lrclibEnabled` only shapes the lyrics overlay's empty-state message.
  * The overlay itself still opens when the flag is false, because a song can
@@ -37,6 +39,7 @@ import { isLoopbackPeer } from '../loopback.js';
 export function handlePlayerState(req: IncomingMessage, res: ServerResponse, config: Config): void {
   writeJson(res, 200, {
     isLocal: isLoopbackPeer(req),
+    theme: getTheme(),
     lyrics: { lrclibEnabled: config.features.lyrics },
   });
 }
@@ -55,20 +58,23 @@ export function handleGetPlayerSettings(req: IncomingMessage, res: ServerRespons
   writeJson(res, 200, {
     persistAfterMcpExit: getPersist(),
     autoOpenBrowser: stored.autoOpenBrowser ?? false,
+    theme: getTheme(),
   });
 }
 
 /**
  * POST /api/player/settings — update player-scoped settings (loopback-only).
- * Body `{ persistAfterMcpExit?: boolean, autoOpenBrowser?: boolean }`.
- * `persistAfterMcpExit` takes effect immediately (governs the disconnect
- * decision) AND is persisted; `autoOpenBrowser` is persisted for next launch.
+ * Body `{ persistAfterMcpExit?: boolean, autoOpenBrowser?: boolean, theme?: WebuiTheme }`.
+ * `persistAfterMcpExit` and `theme` take effect immediately AND are persisted,
+ * and the snapshot broadcast carries them to every open remote.
+ * `autoOpenBrowser` is persisted for next launch.
  * Only the webui keys are touched (read-merge-write) so other settings — and
  * credentials — are never clobbered.
  */
 export async function handleSetPlayerSettings(
   req: IncomingMessage,
   res: ServerResponse,
+  broadcaster: Pick<SseBroadcaster, 'broadcastNow'>,
 ): Promise<void> {
   if (!isLoopbackPeer(req)) {
     writeError(res, 404, 'Not found');
@@ -82,31 +88,35 @@ export async function handleSetPlayerSettings(
     writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
     return;
   }
-  // Narrow the unknown JSON body to a plain object before reading fields.
-  // A non-object body (array, string, number, null) carries no settings keys,
-  // so we treat it as an empty patch rather than indexing into it blindly.
-  const input: { persistAfterMcpExit?: unknown; autoOpenBrowser?: unknown } =
-    typeof body === 'object' && body !== null && !Array.isArray(body) ? body : {};
+  const validation = PlayerSettingsPatchSchema.safeParse(body);
+  if (!validation.success) {
+    const message = validation.error.issues.map((issue) => issue.message).join('; ');
+    writeError(res, 400, message !== '' ? message : 'invalid request body');
+    return;
+  }
+  const input = validation.data;
 
   // Apply the live flag first (this is the part that matters for the running
   // process); persistence to disk is best-effort below.
-  if (typeof input.persistAfterMcpExit === 'boolean') {
+  if (input.persistAfterMcpExit !== undefined) {
     setPersist(input.persistAfterMcpExit);
+  }
+  if (input.theme !== undefined) {
+    setTheme(input.theme);
   }
 
   const current = readSettings();
   if (current === null) {
-    // No store on disk (shouldn't happen for a configured, running server).
-    // Don't write a near-empty file that would clobber config — apply live only.
+    // No usable store is normal in env-fallback mode (or a corrupt file). Writing a near-empty
+    // file here would replace that config, so the change applies live only.
     logger.warn('player settings: settings.json missing; applied for this session only');
   } else {
     const webui = { ...(current.webui ?? {}) };
-    if (typeof input.persistAfterMcpExit === 'boolean') webui.persistAfterMcpExit = input.persistAfterMcpExit;
-    if (typeof input.autoOpenBrowser === 'boolean') webui.autoOpenBrowser = input.autoOpenBrowser;
+    if (input.persistAfterMcpExit !== undefined) webui.persistAfterMcpExit = input.persistAfterMcpExit;
+    if (input.autoOpenBrowser !== undefined) webui.autoOpenBrowser = input.autoOpenBrowser;
+    if (input.theme !== undefined) webui.theme = input.theme;
     const merged = { ...current, webui };
-    // Defense-in-depth: never persist a file that wouldn't parse back. We only
-    // ever flip two booleans on an already-valid file, so this should always
-    // pass — but validating keeps this writer honest alongside the config-app one.
+    // Never persist a file that would not parse back, the same guard the config-app writer keeps.
     const check = SettingsFileSchema.safeParse(merged);
     if (!check.success) {
       logger.warn('player settings: merged settings failed validation; not writing (applied live only)');
@@ -125,11 +135,10 @@ export async function handleSetPlayerSettings(
   // would make a re-read report stale/un-persisted values as if applied.
   writeJson(res, 200, {
     persistAfterMcpExit: getPersist(),
-    autoOpenBrowser:
-      typeof input.autoOpenBrowser === 'boolean'
-        ? input.autoOpenBrowser
-        : (current?.webui?.autoOpenBrowser ?? false),
+    autoOpenBrowser: input.autoOpenBrowser ?? current?.webui?.autoOpenBrowser ?? false,
+    theme: getTheme(),
   });
+  broadcaster.broadcastNow();
 }
 
 /**

@@ -45,10 +45,10 @@ import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
 import { logger, type LogLevel } from '../utils/logger.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { SseBroadcaster } from '../webui/broadcaster.js';
-import { listLanInterfaces } from '../webui/network.js';
+import { isLanReachable, listLanInterfaces } from '../webui/network.js';
 import { createServer } from '../webui/server.js';
 import { acquireOrAttach } from './acquire.js';
-import { getPersist, initPersist } from './player-runtime.js';
+import { getPersist, initPersist, setTheme } from './player-runtime.js';
 
 // Belt-and-suspenders against any unhandled rejection escaping the system —
 // without this, Node 20+ terminates the process by default, and (MCP-spawned)
@@ -126,9 +126,9 @@ function maybeOpenBrowser(port: number): void {
   if (shouldOpen) openBrowser(loopbackUrl(port));
 }
 
-function logBanner(port: number, host: string, expose: boolean): void {
+function logBanner(port: number, host: string): void {
   logger.info(`navidrome-web listening on ${loopbackUrl(port)}`);
-  if (expose || host === '0.0.0.0') {
+  if (isLanReachable(host)) {
     for (const iface of listLanInterfaces(port)) {
       logger.info(`  LAN: ${iface.url} (${iface.iface})`);
     }
@@ -261,8 +261,9 @@ async function main(): Promise<void> {
   // (headless/container, or an MCP client's `env:` block). Reusing the snapshot
   // also closes the TOCTOU window a second independent disk read would open.
   const { config, client } = await createRuntime(state.config);
-  // Seed the persist flag (may be toggled live via the settings modal).
+  // Seed the live flags, which the settings modal may toggle.
   initPersist(config.webui.persistAfterMcpExit);
+  setTheme(config.webui.theme);
 
   const broadcaster = new SseBroadcaster(client);
   const makeServer = (): Server =>
@@ -305,7 +306,7 @@ async function main(): Promise<void> {
     }
   }
 
-  logBanner(config.webui.port, config.webui.host, config.webui.expose);
+  logBanner(config.webui.port, config.webui.host);
   maybeOpenBrowser(config.webui.port);
   installShutdownTriggers();
 

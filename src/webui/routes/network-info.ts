@@ -18,7 +18,7 @@
 
 import type { ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
-import { listLanInterfaces } from '../network.js';
+import { isLanReachable, listLanInterfaces } from '../network.js';
 import { writeJson } from '../http-helpers.js';
 
 /**
@@ -33,14 +33,14 @@ import { writeJson } from '../http-helpers.js';
 export function handleNetworkInfo(res: ServerResponse, config: Config): void {
   const port = config.webui.port;
   const localhost = `http://127.0.0.1:${port}`;
-  const lan = config.webui.expose || config.webui.host === '0.0.0.0'
-    ? listLanInterfaces(port)
-    : [];
+  const lanReachable = isLanReachable(config.webui.host);
+  const lan = lanReachable ? listLanInterfaces(port) : [];
 
   writeJson(res, 200, {
     host: config.webui.host,
     port,
     expose: config.webui.expose,
+    lanReachable,
     localhostUrl: localhost,
     interfaces: lan,
   });

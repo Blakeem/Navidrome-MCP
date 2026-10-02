@@ -3,7 +3,8 @@
 :root {
   /* Dark theme defaults — the panel sits on a music-listening surface most of
      the time and the user shouldn't be flash-bombed when opening it on a
-     phone in a dim room. Light theme follows prefers-color-scheme. */
+     phone in a dim room. The light theme follows prefers-color-scheme unless
+     the Settings theme choice sets data-theme on the root. */
   --bg: #0b0f17;
   --surface: #131927;
   --surface-2: #1a2235;
@@ -15,14 +16,18 @@
   --good: #4ade80;
   --warn: #f5c14b;
   --bad: #f87171;
+  --on-fill: #0b0f17;
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   --radius-lg: 18px;
   --radius-md: 12px;
   --radius-sm: 8px;
+  --tip-delay: 500ms;
 }
 
+/* CSS cannot share one declaration block between a media query and an attribute
+   selector, so the light palette appears in both rules below. */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #f4f6fb;
     --surface: #ffffff;
     --surface-2: #eef2fb;
@@ -34,9 +39,29 @@
     --good: #1b9a52;
     --warn: #b07a00;
     --bad: #c43b3b;
+    --on-fill: #ffffff;
     --shadow: 0 6px 16px rgba(30, 40, 70, 0.08);
   }
 }
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6fb;
+  --surface: #ffffff;
+  --surface-2: #eef2fb;
+  --border: #d6def0;
+  --text: #15203a;
+  --text-muted: #5d6b8c;
+  --accent: #3955c8;
+  --accent-strong: #2a3fa1;
+  --good: #1b9a52;
+  --warn: #b07a00;
+  --bad: #c43b3b;
+  --on-fill: #ffffff;
+  --shadow: 0 6px 16px rgba(30, 40, 70, 0.08);
+}
+
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
@@ -45,6 +70,19 @@
    namespace. Explicitly hide SVGs marked hidden so el.hidden = true works
    on every <svg> in this UI (volume/mute and play/pause toggles rely on it). */
 svg[hidden] { display: none; }
+
+/* Hidden from sight but still read by screen readers and still focusable. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 
 html, body {
   margin: 0;
@@ -136,9 +174,7 @@ main {
   animation: pulse 1.4s ease-in-out infinite;
 }
 .conn[data-state="disconnected"] .conn-dot { background: var(--bad); }
-/* Label text is owned by JS (setConnState writes textContent). Keep only the
-   per-state color overrides here — earlier `::after { content: "..." }` rules
-   doubled the visible label ("LiveLive"). */
+/* JS owns the label text (setConnState writes textContent), so CSS sets only the per-state color. */
 .conn-label { font-variant-numeric: tabular-nums; }
 .conn[data-state="connected"] .conn-label { color: var(--good); }
 .conn[data-state="connecting"] .conn-label { color: var(--warn); }
@@ -162,11 +198,68 @@ main {
   min-width: 36px;
   transition: background 150ms, color 150ms, border-color 150ms;
 }
-.ghost-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
+.ghost-btn:not(:disabled):hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
 .ghost-btn:active { transform: translateY(1px); }
 .ghost-btn.small { padding: 4px; min-width: 0; }
-.ghost-btn.danger:hover { color: #fff; background: var(--danger, #c0392b); border-color: var(--danger, #c0392b); }
+.ghost-btn.danger:hover { color: var(--on-fill); background: var(--bad); border-color: var(--bad); }
 .ghost-btn[hidden] { display: none; }
+.ghost-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* With all five buttons shown, the full-size top bar needs about 540px on one line.
+   The connection label is clipped, not removed, so screen readers still hear the live region. */
+@media (max-width: 560px) {
+  .topbar { gap: 8px; }
+  .title { font-size: 0.85rem; letter-spacing: 0; white-space: nowrap; }
+  .topbar-actions { gap: 4px; }
+  .topbar-actions .ghost-btn { padding: 4px; min-width: 32px; min-height: 32px; }
+  .conn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+/* ───────────────── tooltip ───────────────── */
+/* A tip grows rightward from its element's left edge, so it fits a 360px screen only on left-half elements. */
+[data-tip] { position: relative; }
+/* The top-bar buttons sit at the right edge, so their tips grow leftward. */
+.topbar [data-tip]::after { left: auto; right: 0; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 3;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms, visibility 0s 120ms;
+}
+/* The delay shows the tip only on a deliberate hover. Touch screens get none,
+   because a tap would leave a sticky :hover behind. */
+@media (hover: hover) {
+  [data-tip]:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 120ms var(--tip-delay), visibility 0s var(--tip-delay);
+  }
+}
+/* A mode-toggle label never takes focus itself, so its tip follows the focused radio. */
+[data-tip]:focus-visible::after,
+.mode-toggle input:focus-visible + [data-tip]::after {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 120ms var(--tip-delay), visibility 0s var(--tip-delay);
+}
 
 /* ───────────────── now playing card ───────────────── */
 .now-playing-card {
@@ -235,9 +328,9 @@ main {
   margin-bottom: 6px;
 }
 
-.badge[data-state="playing"] { background: rgba(74, 222, 128, 0.16); color: var(--good); }
-.badge[data-state="paused"]  { background: rgba(245, 193, 75, 0.16); color: var(--warn); }
-.badge[data-state="radio"]   { background: rgba(124, 156, 255, 0.16); color: var(--accent); }
+.badge[data-state="playing"] { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+.badge[data-state="paused"]  { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.badge[data-state="radio"]   { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .badge[data-state="idle"]    { background: var(--surface-2); color: var(--text-muted); }
 
 .track-title {
@@ -369,20 +462,20 @@ main {
   width: 28px; height: 28px;
 }
 
-.transport-btn:hover { background: var(--surface-2); border-color: var(--accent); }
+.transport-btn:not(:disabled):hover { background: var(--surface-2); border-color: var(--accent); }
 .transport-btn:active { transform: scale(0.94); }
-.transport-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.transport-btn:disabled { opacity: 0.4; cursor: default; }
 
 .play-btn {
   background: var(--accent);
-  color: white;
+  color: var(--on-fill);
   border-color: var(--accent);
   width: 72px;
   height: 72px;
 }
-.play-btn:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+.play-btn:not(:disabled):hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 .play-btn svg { width: 36px; height: 36px; }
-.play-btn svg path { fill: white; }
+.play-btn svg path { fill: var(--on-fill); }
 
 /* ───────────────── volume ───────────────── */
 .volume-section {
@@ -432,8 +525,9 @@ main {
   padding: 0 14px 6px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
 }
+.queue-header #clear-queue { margin-left: auto; }
 
 .queue-header h3 {
   margin: 0;
@@ -482,14 +576,14 @@ main {
 }
 
 .queue-list li.current {
-  background: linear-gradient(90deg, rgba(124, 156, 255, 0.12), transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent);
   color: var(--text);
   /* Clicking the current row is a no-op — signal that with a default cursor. */
   cursor: default;
 }
 
 .queue-list li.current:hover {
-  background: linear-gradient(90deg, rgba(124, 156, 255, 0.18), transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent);
 }
 
 .queue-list .qnum {
@@ -558,7 +652,8 @@ main {
   width: 100%;
 }
 
-.modal::backdrop {
+.modal::backdrop,
+.lyrics-backdrop {
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(2px);
 }
@@ -574,6 +669,34 @@ main {
   margin: 0;
   font-size: 1.1rem;
 }
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: -6px -8px -6px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+.modal-close[hidden] { display: none; }
+.modal-close:hover { background: var(--surface-2); color: var(--text); }
+.modal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.modal-close svg { width: 22px; height: 22px; }
 
 .modal-help, .modal-hint {
   margin: 0;
@@ -617,17 +740,9 @@ main {
 }
 .network-list a:hover { text-decoration: underline; }
 
-.modal-actions {
-  margin: 6px 0 0 0;
-  padding: 0;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
 .primary-btn {
   background: var(--accent);
-  color: white;
+  color: var(--on-fill);
   border: 0;
   border-radius: var(--radius-sm);
   padding: 8px 18px;
@@ -647,7 +762,8 @@ main {
   cursor: pointer;
   min-height: 40px;
 }
-.btn-secondary:hover { border-color: var(--accent); }
+.btn-secondary:not(:disabled):hover { border-color: var(--accent); }
+.btn-secondary:disabled { opacity: 0.4; cursor: default; }
 
 /* Settings modal checkbox rows */
 .modal-content label.check {
@@ -660,6 +776,18 @@ main {
 }
 .modal-content label.check input { margin-top: 3px; accent-color: var(--accent); }
 .modal-content label.check .modal-hint { display: block; margin-top: 2px; }
+
+.settings-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.settings-group + .settings-group { margin-top: 10px; }
+.settings-heading { padding: 0; }
+.theme-toggle { justify-self: start; }
 
 /* Terminal state after the power button shuts the player down. */
 body.player-stopped main,
@@ -677,13 +805,17 @@ body.player-stopped::after {
 }
 
 /* ---------- modal tabs ---------- */
+/* One row that scrolls sideways, so the tabs never wrap on a narrow phone. */
 .modal-tabs {
   display: flex;
   gap: 4px;
   margin-bottom: 12px;
   border-bottom: 1px solid var(--border, var(--surface-2));
+  overflow-x: auto;
 }
 .modal-tab {
+  flex: none;
+  white-space: nowrap;
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -702,64 +834,267 @@ body.player-stopped::after {
 /* A hidden pane is collapsed via the native [hidden] attribute. */
 .modal-pane[hidden] { display: none; }
 
-/* Starred action row: side-by-side play buttons (two on the songs tab, three
-   on the albums tab). `flex-wrap` lets the third button drop to a new line on
-   narrow viewports instead of overflowing the modal. */
-.starred-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 8px;
+/* ---------- full-screen modal ---------- */
+/* Long result lists need the whole height below the top bar. --modal-top is set
+   from modal-placement.js. Sized in dvh, never vh, so a collapsing URL bar keeps the bottom on screen.
+   The 760px cap matches the player column so a wide screen does not stretch the list. */
+.modal.modal-full,
+.lyrics-view.is-window {
+  --modal-gutter: 16px;
+  width: calc(100% - 2 * var(--modal-gutter));
+  max-width: 760px;
+  max-height: none;
+  height: calc(100dvh - var(--modal-top, 0px) - var(--modal-gutter));
+  margin: var(--modal-top, 0px) auto auto;
+}
+.modal-full .modal-content { height: 100%; }
+.modal-full .modal-header,
+.modal-full .modal-tabs,
+.modal-full .play-toolbar { flex: none; }
+/* Only the active pane scrolls, so the header, tabs and toolbar stay put. */
+.modal-full .modal-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-/* ---------- playlist picker ---------- */
-.playlist-options {
+@media (max-width: 480px) {
+  .modal.modal-full,
+  .lyrics-view.is-window {
+    --modal-gutter: 8px;
+    border-radius: var(--radius-md);
+  }
+  .modal-full .modal-content { padding: 14px 12px; }
+}
+
+/* ---------- library search tab ---------- */
+/* :not([hidden]) keeps `.modal-pane[hidden]` in charge of hiding the pane. */
+#pl-pane-search:not([hidden]),
+#pl-pane-playlists:not([hidden]),
+#pl-pane-favorites:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Only the results scroll, so the search row and captions stay pinned. */
+#lib-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+#lib-caption { overflow-wrap: anywhere; }
+
+.lib-search {
+  display: flex;
+  gap: 8px;
+}
+/* 1rem keeps iOS from zooming the page when the field takes focus. */
+.lib-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+}
+.lib-search input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+.lib-search .primary-btn { flex: none; }
+
+/* ---------- play toolbar ---------- */
+/* Sits above the panes, so every tab plays with one queue mode and one pair of shuffle settings. */
+.play-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px 18px;
-  margin-bottom: 4px;
+  gap: 8px;
+}
+
+/* Exclusive toggle. The labels are the buttons, so the native radios keep arrow-key selection and change events. */
+.mode-toggle {
+  position: relative;
+  display: inline-flex;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.mode-toggle-btn,
+.shuffle-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 40px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 150ms, color 150ms, border-color 150ms;
+}
+.mode-toggle-btn:first-of-type { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.mode-toggle-btn:not(:first-of-type) { margin-left: -1px; }
+.mode-toggle-btn:last-of-type { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.theme-toggle .mode-toggle-btn {
+  width: auto;
+  min-width: 76px;
+  padding: 0 14px;
   font-size: 0.9rem;
 }
-.playlist-options .pl-mode {
-  border: 0;
+.shuffle-toggle {
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+.mode-toggle-btn svg,
+.shuffle-toggle svg { width: 22px; height: 22px; }
+.mode-toggle-btn:hover,
+.shuffle-toggle:hover { color: var(--text); background: var(--surface-2); }
+/* z-index lifts the selected button so its accent border draws over the shared edge. */
+.mode-toggle input:checked + .mode-toggle-btn,
+.shuffle-toggle[aria-pressed="true"] {
+  z-index: 1;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent-strong);
+}
+.mode-toggle input:focus-visible + .mode-toggle-btn,
+.shuffle-toggle:focus-visible {
+  z-index: 2;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.lib-group + .lib-group { margin-top: 14px; }
+.lib-group-title,
+.settings-heading {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.lib-list {
+  list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
-  gap: 14px;
+  flex-direction: column;
+  gap: 4px;
 }
-.playlist-options label {
-  display: inline-flex;
+
+.lib-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  cursor: pointer;
-}
-.playlist-options input { accent-color: var(--accent); }
-
-/* The picker reuses .network-list layout but each row is a full-width button. */
-.playlist-list li { background: transparent; padding: 0; }
-.playlist-list { max-height: 50svh; overflow-y: auto; }
-
-.playlist-item {
-  width: 100%;
-  text-align: left;
-  background: var(--surface-2);
-  border: 1px solid transparent;
+  gap: 10px;
+  min-height: 48px;
+  padding: 4px 6px 4px 8px;
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  cursor: pointer;
-  color: var(--text);
+  background: var(--surface-2);
+}
+.lib-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.lib-text {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-height: 44px;
 }
-.playlist-item:hover { border-color: var(--accent); background: var(--surface); }
-.playlist-item:active { transform: translateY(1px); }
-.playlist-item .pl-name { font-size: 0.98rem; font-weight: 600; }
-.playlist-item .pl-meta {
-  font-size: 0.78rem;
+.lib-name, .lib-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-name { font-size: 0.95rem; font-weight: 600; }
+.lib-meta { font-size: 0.78rem; color: var(--text-muted); }
+
+.lib-thumb {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--surface);
+}
+/* The child combinator keeps an artist's nested album covers square. */
+.lib-node[data-kind="artist"] > .lib-row .lib-thumb { border-radius: 50%; }
+.lib-thumb-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--text-muted);
+}
+.lib-thumb-glyph { width: 20px; height: 20px; opacity: 0.6; }
+
+.lib-action,
+.lib-toggle {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+}
+.lib-action svg,
+.lib-toggle svg { width: 22px; height: 22px; }
+/* The dialog's data-mode follows the queue-mode radios, so every row in every pane swaps icon at once. */
+.lib-icon-play { display: none; }
+#playlists-dialog[data-mode="replace"] .lib-icon-add { display: none; }
+#playlists-dialog[data-mode="replace"] .lib-icon-play { display: block; }
+
+.lib-toggle svg { transition: transform 150ms ease; }
+.lib-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.lib-node:is([data-kind="artist"], [data-kind="album"]) > .lib-row > .lib-main { cursor: pointer; }
+.lib-node.is-expanded > .lib-row {
+  background: color-mix(in srgb, var(--accent) 24%, var(--surface-2));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.lib-children {
+  list-style: none;
+  margin: 4px 0 0 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  /* Mixed into --surface-2 because a translucent tint over the dialog surface lands on the flat rows' fill. */
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+}
+.lib-children .lib-children { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); }
+/* The display rule above would otherwise override the hidden attribute. */
+.lib-children[hidden] { display: none; }
+.lib-children .lib-row {
+  min-height: 44px;
+  padding: 2px 2px 2px 6px;
+  gap: 8px;
+  background: transparent;
+}
+.lib-children .lib-main { gap: 8px; }
+.lib-children .lib-name { font-size: 0.88rem; }
+.lib-children .lib-meta { font-size: 0.74rem; }
+.lib-children .lib-thumb { width: 32px; height: 32px; }
+.lib-children .lib-action,
+.lib-children .lib-toggle { width: 36px; height: 36px; }
+.lib-children .lib-action svg,
+.lib-children .lib-toggle svg { width: 20px; height: 20px; }
+.lib-notice {
+  padding: 8px 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lib-toggle svg { transition: none; }
 }
 
 /* ───────────────── lyrics overlay ───────────────── */
@@ -816,12 +1151,6 @@ body.player-stopped::after {
 .lyric-size-glyph { font-weight: 700; line-height: 1; }
 .lyric-size-glyph.is-small { font-size: 0.8rem; }
 .lyric-size-glyph.is-large { font-size: 1.15rem; }
-.lyric-size-btn:disabled { opacity: 0.4; cursor: default; }
-.lyric-size-btn:disabled:hover {
-  background: transparent;
-  color: var(--text-muted);
-  border-color: var(--border);
-}
 
 .lyrics-offset-row {
   display: flex;
@@ -834,8 +1163,6 @@ body.player-stopped::after {
   font-size: 1.05rem;
   font-variant-numeric: tabular-nums;
 }
-.lyrics-offset-row .btn-secondary:disabled { opacity: 0.4; cursor: default; }
-.lyrics-offset-row .btn-secondary:disabled:hover { border-color: var(--border); }
 
 .lyrics-aside {
   grid-area: lyrics-aside;
@@ -943,6 +1270,31 @@ body.player-stopped::after {
 .lyrics-buttons .play-btn { width: 54px; height: 54px; }
 .lyrics-buttons .play-btn svg { width: 28px; height: 28px; }
 
+/* ───────────────── lyrics window view ───────────────── */
+.lyrics-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+}
+.lyrics-view.is-window {
+  inset: 0;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.lyrics-view.is-window .lyrics-header { padding-top: 12px; }
+/* The full view shows the art beside the words on a wide screen, so only the window carries it in the header. */
+.lyrics-thumb { display: none; }
+.lyrics-view.is-window .lyrics-thumb {
+  display: flex;
+  flex: none;
+  width: 44px;
+  border-radius: var(--radius-sm);
+}
+/* The header's right edge holds the toggle and the X, so their tips grow leftward. */
+.lyrics-header [data-tip]::after { left: auto; right: 0; }
+
 /* Immersive: the chrome gets out of the way of the words. */
 .lyrics-view.is-immersive .lyrics-header { display: none; }
 .lyrics-view.is-immersive .lyrics-times { display: none; }
@@ -1016,20 +1368,18 @@ body.player-stopped::after {
 
 /* Two columns from the same DOM: art and transport left, words right. */
 @media (min-width: 900px) {
-  .lyrics-view {
+  .lyrics-view:not(.is-window) {
     grid-template-columns: minmax(260px, 340px) 1fr;
     grid-template-areas:
       "lyrics-head  lyrics-head"
       "lyrics-aside lyrics-body"
       "lyrics-foot  lyrics-body";
   }
-  .lyrics-aside { display: flex; }
-  .lyrics-scroll { padding: 40px 48px 56px; border-left: 1px solid var(--border); }
-  /* `ch` resolves against THIS element's font size, not the `--lyric-size` its
-     children use, so match them. Left at the inherited 16px the cap stayed near
-     414px while the text grew, wrapping lines at a third of the column. The cap
-     keeps `margin: 0 auto` something to centre, matching the narrow layout. */
+  .lyrics-view:not(.is-window) .lyrics-aside { display: flex; }
+  .lyrics-view:not(.is-window) .lyrics-scroll { padding: 40px 48px 56px; border-left: 1px solid var(--border); }
+  /* ch resolves against this element's font size, so match --lyric-size to keep the 48ch cap in step with the text.
+     The cap gives margin: 0 auto something to centre, matching the narrow layout. */
   .lyrics-lines { font-size: var(--lyric-size); max-width: 48ch; }
-  .lyrics-transport { background: transparent; border-top: 0; }
-  .lyrics-follow-pill { left: auto; right: 32px; bottom: 32px; transform: none; }
+  .lyrics-view:not(.is-window) .lyrics-transport { background: transparent; border-top: 0; }
+  .lyrics-view:not(.is-window) .lyrics-follow-pill { left: auto; right: 32px; bottom: 32px; transform: none; }
 }

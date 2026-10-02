@@ -147,9 +147,11 @@ export const UrlSchema = z.string().url('URL must be a valid URL');
 export const StringArraySchema = z.array(z.string());
 export const NonEmptyStringArraySchema = z.array(z.string()).min(1, 'At least one item is required');
 
+export const SEARCH_QUERY_MAX_LENGTH = 500;
+
 // Individual search tool schemas (query optional for listing functionality)
 export const SearchSongsSchema = EnhancedSearchSchema.extend({
-  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
+  query: z.string().max(SEARCH_QUERY_MAX_LENGTH, `Query must be ${SEARCH_QUERY_MAX_LENGTH} characters or fewer`).optional().default(''), // Override required query to be optional
   limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
   offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
@@ -160,7 +162,7 @@ export const SearchSongsSchema = EnhancedSearchSchema.extend({
 });
 
 export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
-  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
+  query: z.string().max(SEARCH_QUERY_MAX_LENGTH, `Query must be ${SEARCH_QUERY_MAX_LENGTH} characters or fewer`).optional().default(''), // Override required query to be optional
   limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
   offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([
@@ -175,7 +177,7 @@ export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
 // (the filter chain wouldn't send it for /api/artist anyway, but stripping
 // it at the schema layer keeps the type honest for any non-LLM caller).
 export const SearchArtistsSchema = EnhancedSearchSchema.omit({ year: true }).extend({
-  query: z.string().max(500, 'Query must be 500 characters or fewer').optional().default(''), // Override required query to be optional
+  query: z.string().max(SEARCH_QUERY_MAX_LENGTH, `Query must be ${SEARCH_QUERY_MAX_LENGTH} characters or fewer`).optional().default(''), // Override required query to be optional
   limit: createLimitSchema(1, 500, 100), // Increased max limit for browsing
   offset: OffsetSchema, // Add offset support for pagination
   sort: z.enum([

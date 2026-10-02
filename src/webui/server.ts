@@ -27,12 +27,21 @@ import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { SseBroadcaster } from './broadcaster.js';
 import { writeError } from './http-helpers.js';
+import { isLanReachable } from './network.js';
 import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
 import { handleHealth } from './routes/health.js';
+import {
+  handleAlbumSongs,
+  handleArtistAlbums,
+  handleLibraryFavorites,
+  handleLibraryPlay,
+  handleLibraryRecent,
+  handleLibrarySearch,
+} from './routes/library.js';
 import { handleLyrics } from './routes/lyrics.js';
 import { handleNetworkInfo } from './routes/network-info.js';
-import { handleListPlaylists, handlePlayPlaylist, handlePlayStarredAlbums, handlePlayStarredSongs } from './routes/playlists.js';
+import { handleListPlaylists } from './routes/playlists.js';
 import {
   handleClear,
   handleNext,
@@ -41,6 +50,7 @@ import {
   handlePrevious,
   handleResume,
   handleSeek,
+  handleShuffle,
   handleVolume,
 } from './routes/controls.js';
 import {
@@ -49,8 +59,9 @@ import {
   handleSetPlayerSettings,
   handleShutdown,
 } from './routes/player.js';
-import { handleNowPlaying, handleQueue } from './routes/snapshot.js';
 import { handleStatic } from './routes/static-files.js';
+
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 interface ServerDeps {
   config: Config;
@@ -110,18 +121,22 @@ async function handleRequest(
   const path = parsed.pathname;
   const method = req.method ?? 'GET';
 
+  // DNS-rebinding guard for a loopback bind, the same model as the MCP transport's Host allowlist.
+  if (!isLanReachable(deps.config.webui.host) && !isLoopbackHostHeader(req.headers.host)) {
+    writeError(res, 403, 'Forbidden host');
+    return;
+  }
+
+  // A cross-site page cannot send this header without a CORS preflight, which this server never approves.
+  if (method === 'POST' && !isJsonContentType(req.headers['content-type'])) {
+    writeError(res, 415, 'Content-Type must be application/json');
+    return;
+  }
+
   // --- Health signature (port-as-lock coexistence) ---
   if (method === 'GET' && path === '/healthz') {
     handleHealth(req, res, deps.config);
     return;
-  }
-
-  // --- API: snapshot reads ---
-  if (method === 'GET' && path === '/api/now-playing') {
-    return handleNowPlaying(res, deps.client);
-  }
-  if (method === 'GET' && path === '/api/queue') {
-    return handleQueue(res, deps.client);
   }
 
   // --- API: SSE stream ---
@@ -138,6 +153,7 @@ async function handleRequest(
   if (method === 'POST' && path === '/api/controls/volume')     return handleVolume(req, res);
   if (method === 'POST' && path === '/api/controls/play-index') return handlePlayQueueIndex(req, res);
   if (method === 'POST' && path === '/api/controls/clear')      return handleClear(res);
+  if (method === 'POST' && path === '/api/controls/shuffle')    return handleShuffle(res);
 
   // --- API: network info ---
   if (method === 'GET' && path === '/api/network-info') {
@@ -146,15 +162,20 @@ async function handleRequest(
   }
 
   // --- API: playlists ---
-  if (method === 'GET'  && path === '/api/playlists')      return handleListPlaylists(res, deps.client);
-  if (method === 'POST' && path === '/api/playlists/play') return handlePlayPlaylist(req, res, deps.client);
-  if (method === 'POST' && path === '/api/starred/songs/play') return handlePlayStarredSongs(req, res, deps.client);
-  if (method === 'POST' && path === '/api/starred/albums/play') return handlePlayStarredAlbums(req, res, deps.client);
+  if (method === 'GET' && path === '/api/playlists') return handleListPlaylists(res, deps.client);
+
+  // --- API: library browse ---
+  if (method === 'GET' && path === '/api/library/recent')        return handleLibraryRecent(res, deps.client);
+  if (method === 'GET' && path === '/api/library/search')        return handleLibrarySearch(res, deps.client, deps.config, parsed.searchParams.get('q'));
+  if (method === 'GET' && path === '/api/library/artist-albums') return handleArtistAlbums(res, deps.client, parsed.searchParams.get('id'));
+  if (method === 'GET' && path === '/api/library/album-songs')   return handleAlbumSongs(res, deps.client, parsed.searchParams.get('id'));
+  if (method === 'GET' && path === '/api/library/favorites')     return handleLibraryFavorites(res, deps.client);
+  if (method === 'POST' && path === '/api/library/play')         return handleLibraryPlay(req, res, deps.client);
 
   // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
   if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res, deps.config); return; }
   if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res); return; }
-  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res);
+  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res, deps.broadcaster);
   if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
 
   // --- API: cover art proxy ---
@@ -168,7 +189,7 @@ async function handleRequest(
       writeError(res, 400, 'Malformed cover id');
       return;
     }
-    return handleCover(res, deps.config, id);
+    return handleCover(res, deps.config, id, parsed.searchParams.get('size'));
   }
 
   // --- API: lyrics for one live-queue entry ---
@@ -191,4 +212,16 @@ async function handleRequest(
   }
 
   writeError(res, 404, 'Not found');
+}
+
+// Port is ignored: a client omits a default port such as 80, and DNS rebinding controls only the hostname.
+function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
+  if (hostHeader === undefined) return false;
+  const hostname = hostHeader.toLowerCase().replace(/:\d+$/, '');
+  return LOOPBACK_HOSTNAMES.has(hostname);
+}
+
+function isJsonContentType(contentType: string | undefined): boolean {
+  const baseType = contentType?.split(';')[0]?.trim().toLowerCase();
+  return baseType === 'application/json';
 }

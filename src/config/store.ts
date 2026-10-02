@@ -78,6 +78,8 @@ export const SettingsFileSchema = z.object({
     expose: z.boolean().optional(),
     autoOpenBrowser: z.boolean().optional(),
     persistAfterMcpExit: z.boolean().optional(),
+    // A plain string, so a hand-edited unknown theme reads as unset instead of voiding the store.
+    theme: z.string().optional(),
   }).optional(),
   advanced: z.object({
     debug: z.boolean().optional(),

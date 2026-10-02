@@ -3,13 +3,14 @@
  * Copyright (C) 2025
  *
  * Covers the one-shot `play_playlist` tool: the schema, the paginated
- * `fetchPlaylistTrackIds` helper, and the shuffle / mode / empty-playlist
+ * `fetchPlaylistSongs` helper, and the shuffle / mode / empty-playlist
  * paths. The playbackEngine is mocked so no real mpv is touched —
  * end-to-end mpv behavior is covered by the playback integration suite.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
+import { logger } from '../../../src/utils/logger.js';
 
 const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
 const ensureRunningMock = vi.fn().mockResolvedValue(undefined);
@@ -91,6 +92,28 @@ describe('play_playlist', () => {
 
     const enqueuedIds = enqueueMock.mock.calls[0]?.[0] as string[];
     expect(enqueuedIds).toEqual(['real-song-A', 'real-song-B']);
+  });
+
+  it('skips and warns on a row with no mediaFileId instead of playing its position id', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
+      data: [
+        { id: 1, mediaFileId: 'real-song-A' },
+        { id: 2, mediaFileId: '' },
+        { id: 3 },
+      ],
+      total: 3,
+    });
+
+    await playPlaylist(client as never, { playlistId: 'pl-x' });
+
+    const enqueuedIds = enqueueMock.mock.calls[0]?.[0] as string[];
+    expect(enqueuedIds).toEqual(['real-song-A']);
+    // Skipped rows still count as read, so X-Total-Count ends the walk after one page.
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('playlist pl-x row 2');
+    warnSpy.mockRestore();
   });
 
   // ---------------------------------------------------------------------

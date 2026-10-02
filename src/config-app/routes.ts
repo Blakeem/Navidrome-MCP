@@ -19,9 +19,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { z } from 'zod';
 import { buildFormSeed, FORM_SUGGESTIONS } from '../config/seed.js';
-import { writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
 import { mapStoreToConfig } from '../config/map-config.js';
 import { ConfigSchema } from '../config/schema.js';
+import { parseWebuiTheme } from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
 import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
@@ -95,7 +96,7 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 
   try {
-    writeSettings(parsed);
+    writeSettings(withStoredPlayerTheme(parsed));
   } catch (err) {
     logger.error('settings save failed:', err);
     writeError(res, 500, 'Failed to write settings');
@@ -112,6 +113,12 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
       'Desktop — the full toolset appears after a restart) and/or the web player (re-run ' +
       '`navidrome-web`). You can keep changing settings and saving again from this page.',
   });
+}
+
+// The player's gear modal owns webui.theme and this form does not carry it, so a save keeps the stored theme.
+function withStoredPlayerTheme(settings: SettingsFile): SettingsFile {
+  const theme = parseWebuiTheme(readSettings()?.webui?.theme);
+  return theme === null ? settings : { ...settings, webui: { ...settings.webui, theme } };
 }
 
 /** POST /api/settings/test — connect with the entered values without saving. */

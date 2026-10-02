@@ -17,7 +17,7 @@
  */
 
 import { resolveMpvBinary } from '../services/playback/mpv-process.js';
-import { DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
+import { DEFAULT_LRCLIB_BASE, parseWebuiTheme } from '../constants/defaults.js';
 import type { RawConfigInput } from './schema.js';
 import type { SettingsFile } from './store.js';
 
@@ -135,6 +135,7 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
       expose,
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: webui.persistAfterMcpExit ?? false,
+      theme: parseWebuiTheme(webui.theme),
     },
   };
 }

@@ -518,6 +518,124 @@ describe('shufflePlaylist play-head preservation (Issue #5)', () => {
   });
 });
 
+/** Forget startup calls, then answer `get_property` from a fixed map and every other command with null. */
+function answerProperties(ipc: FakeIpc, props: Record<string, unknown>): void {
+  ipc.command.mockClear();
+  // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+  ipc.command.mockImplementation(async (...args: unknown[]) => {
+    if (args[0] === 'get_property') return props[args[1] as string] ?? null;
+    return null;
+  });
+}
+
+/** The issued IPC commands minus reads, with `set_property` folded to "set <name> <value>". */
+function mutatingCommands(ipc: FakeIpc): string[] {
+  return ipc.command.mock.calls
+    .filter((c) => c[0] !== 'get_property')
+    .map((c) => (c[0] === 'set_property' ? `set ${String(c[1])} ${String(c[2])}` : String(c[0])));
+}
+
+// ---------- append into a queue with no current track ----------
+
+describe("enqueue('append') selects a first track when none is current", () => {
+  it('selects index 0 paused when appending into an empty queue', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': -1, 'playlist-count': 0 });
+
+    await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
+
+    expect(mutatingCommands(ipc)).toEqual([
+      'loadfile',
+      'loadfile',
+      'set pause true',
+      'set playlist-pos 0',
+    ]);
+  });
+
+  it('selects the first appended index when appending into a finished queue', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': -1, 'playlist-count': 3 });
+
+    await playbackEngine.enqueue(['song-4'], 'append');
+
+    expect(mutatingCommands(ipc)).toEqual(['loadfile', 'set pause true', 'set playlist-pos 3']);
+  });
+
+  it('leaves pause and the play head alone when a track is current', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': 1, 'playlist-count': 3 });
+
+    await playbackEngine.enqueue(['song-4'], 'append');
+
+    expect(mutatingCommands(ipc)).toEqual(['loadfile']);
+  });
+});
+
+// ---------- shuffleQueueFromTop restarts the queue from the new top track ----------
+
+describe('shuffleQueueFromTop', () => {
+  it('shuffles and selects index 0 without touching pause while playing', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-count': 5, 'playlist-pos': 2, pause: false });
+    const generationBefore = playbackEngine.getQueueGeneration();
+
+    await playbackEngine.shuffleQueueFromTop();
+
+    expect(mutatingCommands(ipc)).toEqual(['playlist-shuffle', 'set playlist-pos 0']);
+    expect(playbackEngine.getQueueGeneration()).toBe(generationBefore + 1);
+  });
+
+  it('pauses before selecting index 0 while paused', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-count': 5, 'playlist-pos': 2, pause: true });
+
+    await playbackEngine.shuffleQueueFromTop();
+
+    expect(mutatingCommands(ipc)).toEqual(['playlist-shuffle', 'set pause true', 'set playlist-pos 0']);
+  });
+
+  it('pauses before selecting index 0 when no track is current', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-count': 3, 'playlist-pos': -1, pause: false });
+
+    await playbackEngine.shuffleQueueFromTop();
+
+    expect(mutatingCommands(ipc)).toEqual(['playlist-shuffle', 'set pause true', 'set playlist-pos 0']);
+  });
+
+  it('sends nothing for an empty queue', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-count': 0, 'playlist-pos': -1, pause: false });
+    const generationBefore = playbackEngine.getQueueGeneration();
+
+    await playbackEngine.shuffleQueueFromTop();
+
+    expect(mutatingCommands(ipc)).toEqual([]);
+    expect(playbackEngine.getQueueGeneration()).toBe(generationBefore);
+  });
+});
+
+describe('clearPlaylist', () => {
+  it('stops playback and raises the queue generation by one', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+    const generationBefore = playbackEngine.getQueueGeneration();
+
+    await playbackEngine.clearPlaylist();
+
+    expect(mutatingCommands(ipc)).toEqual(['stop']);
+    expect(playbackEngine.getQueueGeneration()).toBe(generationBefore + 1);
+  });
+});
+
 // ---------- setVolume clamps out-of-range levels to [0, 100] ----------
 
 describe('setVolume clamps to [0, 100]', () => {
