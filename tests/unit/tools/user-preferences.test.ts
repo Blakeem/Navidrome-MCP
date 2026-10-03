@@ -8,9 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
-import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
-import type { Config } from '../../../src/config.js';
-import { loadConfig } from '../../../src/config.js';
+import { NavidromeNotFoundError, type NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { getSharedLiveClient, createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
@@ -25,16 +23,14 @@ import {
 
 describe('User Preferences Operations - Tier 1 Critical Tests', () => {
   let liveClient: NavidromeClient;
-  let config: Config;
 
   beforeAll(async () => {
     if (shouldSkipLiveTests()) {
       console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
-    // Use shared client and config for read operations testing (avoids rate limiting)
+    // Use shared client for read operations testing (avoids rate limiting)
     liveClient = await getSharedLiveClient();
-    config = await loadConfig();
   });
 
   describeLive('Live Read Operations - API Compatibility', () => {
@@ -55,9 +51,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         expect(typeof result.count).toBe('number');
         expect(Array.isArray(result.items)).toBe(true);
 
-        // Should not return more than requested (but server may have more starred items)
-        // We requested limit: 1, but the implementation might return more due to internal batching
-        expect(result.items.length).toBeGreaterThanOrEqual(0);
+        expect(result.items.length).toBeLessThanOrEqual(1);
 
         // If there are starred items, validate structure
         if (result.items.length > 0) {
@@ -184,7 +178,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        const result = await starItem(mockClient, config, {
+        const result = await starItem(mockClient, {
           itemId: 'song-123',
           type: 'song'
         });
@@ -217,7 +211,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
-        const result = await starItem(mockClient, config, {
+        const result = await starItem(mockClient, {
           itemId: 'album-456',
           type: 'album'
         });
@@ -243,7 +237,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
-        const result = await starItem(mockClient, config, {
+        const result = await starItem(mockClient, {
           itemId: 'artist-789',
           type: 'artist'
         });
@@ -265,7 +259,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         // bug. The response carries no `type` field either way.
         mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
-        const result = await starItem(mockClient, config, {
+        const result = await starItem(mockClient, {
           itemId: 'song-xyz',
           type: 'songs',
         });
@@ -275,6 +269,32 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         expect(result).not.toHaveProperty('type');
         // The internal singular form drives the message text.
         expect(result.message).toBe('Successfully starred song');
+      });
+
+      it('checks the item exists under `type` before starring', async () => {
+        mockClient.request.mockResolvedValue({ id: 'album-456' });
+        mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
+
+        await starItem(mockClient, { itemId: 'album-456', type: 'album' });
+
+        expect(mockClient.request).toHaveBeenCalledWith('/album/album-456');
+        expect(mockClient.subsonicRequest).toHaveBeenCalledWith('/star', { id: 'album-456' });
+      });
+
+      it('rejects an ID that does not match `type` without starring', async () => {
+        mockClient.request.mockRejectedValue(new NavidromeNotFoundError('Navidrome GET /song/album-456'));
+
+        await expect(starItem(mockClient, { itemId: 'album-456', type: 'song' }))
+          .rejects.toThrow("Tool 'star_item' failed: song album-456 not found");
+        expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
+      });
+
+      it('rejects an unknown ID without unstarring', async () => {
+        mockClient.request.mockRejectedValue(new NavidromeNotFoundError('Navidrome GET /artist/gone'));
+
+        await expect(unstarItem(mockClient, { itemId: 'gone', type: 'artist' }))
+          .rejects.toThrow("Tool 'unstar_item' failed: artist gone not found");
+        expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
       });
     });
 
@@ -289,7 +309,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        const result = await unstarItem(mockClient, config, {
+        const result = await unstarItem(mockClient, {
           itemId: 'song-123',
           type: 'song'
         });
@@ -317,7 +337,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        await unstarItem(mockClient, config, {
+        await unstarItem(mockClient, {
           itemId: 'album-456',
           type: 'album'
         });
@@ -340,7 +360,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        await unstarItem(mockClient, config, {
+        await unstarItem(mockClient, {
           itemId: 'artist-789',
           type: 'artist'
         });
@@ -366,7 +386,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
         
-        const result = await setRating(mockClient, config, {
+        const result = await setRating(mockClient, {
           itemId: 'song-123',
           type: 'song',
           rating: 5
@@ -402,7 +422,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
-        const result = await setRating(mockClient, config, {
+        const result = await setRating(mockClient, {
           itemId: 'album-456',
           type: 'album',
           rating: 3
@@ -431,7 +451,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
-        const result = await setRating(mockClient, config, {
+        const result = await setRating(mockClient, {
           itemId: 'song-123',
           type: 'song',
           rating: 0
@@ -460,7 +480,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         mockClient.subsonicRequest.mockResolvedValue(mockResponse);
 
-        const result = await setRating(mockClient, config, {
+        const result = await setRating(mockClient, {
           itemId: 'artist-789',
           type: 'artist',
           rating: 5
@@ -483,7 +503,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockRejectedValue(new Error('Network connection failed'));
       
       await expect(
-        starItem(mockClient, config, { itemId: 'song-123', type: 'song' })
+        starItem(mockClient, { itemId: 'song-123', type: 'song' })
       ).rejects.toThrow('Network connection failed');
     });
 
@@ -491,7 +511,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockRejectedValue(new Error('Item not found'));
       
       await expect(
-        setRating(mockClient, config, { itemId: 'non-existent-id', type: 'song', rating: 3 })
+        setRating(mockClient, { itemId: 'non-existent-id', type: 'song', rating: 3 })
       ).rejects.toThrow('Item not found');
     });
 
@@ -499,7 +519,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       mockClient.subsonicRequest.mockRejectedValue(new Error('Insufficient permissions'));
       
       await expect(
-        unstarItem(mockClient, config, { itemId: 'protected-song', type: 'song' })
+        unstarItem(mockClient, { itemId: 'protected-song', type: 'song' })
       ).rejects.toThrow('Insufficient permissions');
     });
   });
@@ -514,19 +534,19 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
     it('should validate required ID parameter for starring', async () => {
       await expect(
-        starItem(mockClient, config, { itemId: '', type: 'song' })
+        starItem(mockClient, { itemId: '', type: 'song' })
       ).rejects.toThrow();
     });
 
     it('should validate required type parameter', async () => {
       await expect(
-        starItem(mockClient, config, { itemId: 'song-123', type: '' })
+        starItem(mockClient, { itemId: 'song-123', type: '' })
       ).rejects.toThrow();
     });
 
     it('should validate item type enum values for starring', async () => {
       await expect(
-        starItem(mockClient, config, { itemId: 'song-123', type: 'invalid-type' })
+        starItem(mockClient, { itemId: 'song-123', type: 'invalid-type' })
       ).rejects.toThrow();
     });
 
@@ -539,12 +559,12 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
     it('should validate rating range values', async () => {
       // Test below minimum
       await expect(
-        setRating(mockClient, config, { itemId: 'song-123', type: 'song', rating: -1 })
+        setRating(mockClient, { itemId: 'song-123', type: 'song', rating: -1 })
       ).rejects.toThrow();
 
       // Test above maximum
       await expect(
-        setRating(mockClient, config, { itemId: 'song-123', type: 'song', rating: 6 })
+        setRating(mockClient, { itemId: 'song-123', type: 'song', rating: 6 })
       ).rejects.toThrow();
     });
 
@@ -597,12 +617,17 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
     it('reports the X-Total-Count starred total beyond the page', async () => {
       mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
-        data: [{ id: 'song-1', title: 'One' }],
+        data: [{ id: 'song-1', title: 'One', starred: true }],
         total: 37,
       });
 
       const result = await listStarredItems(mockClient, { type: 'songs', limit: 1 });
 
+      // Navidrome keeps starredAt after an unstar, so only the starred=true filter excludes unstarred rows.
+      expect(mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]![0]).toBe(
+        '/song?starred=true&_start=0&_end=1&_sort=starredAt&_order=DESC',
+      );
+      expect((result.items[0] as { starred?: boolean }).starred).toBe(true);
       expect(result.count).toBe(1);
       expect(result.total).toBe(37);
       expect(result).not.toHaveProperty('hasMore');
@@ -625,12 +650,13 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
     });
 
     it('should handle empty top-rated items list gracefully', async () => {
-      mockClient.request.mockResolvedValue([]);
+      mockClient.requestWithLibraryFilter.mockResolvedValue([]);
 
       const result = await listTopRated(mockClient, { type: 'albums', minRating: 5 });
 
       expect(result.items).toEqual([]);
       expect(result.count).toBe(0);
+      expect(result.hasMore).toBe(false);
     });
 
     // The fetch sorts on rating, the field minRating tests, so the server offset is exact.
@@ -707,7 +733,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       // we just verify the correct endpoint and id are forwarded.
       mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
-      const result = await starItem(mockClient, config, {
+      const result = await starItem(mockClient, {
         itemId: 'song-123',
         type: 'song'
       });
@@ -722,7 +748,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       // the endpoint succeeds regardless. Verify the right path and id are sent.
       mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
-      const result = await unstarItem(mockClient, config, {
+      const result = await unstarItem(mockClient, {
         itemId: 'song-123',
         type: 'song'
       });

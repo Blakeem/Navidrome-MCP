@@ -19,16 +19,16 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
 import { FilterOptionsSchema } from '../schemas/index.js';
+import { transformTagsToMeta } from '../transformers/index.js';
 
 const FILTER_TYPES = FilterOptionsSchema.shape.filterType.options;
 
 export type FilterType = (typeof FILTER_TYPES)[number];
 
-// The /api/tag tag_name each filter type loads from. Genres load from /api/genre instead.
-const TAG_NAMES: Record<FilterType, string | null> = {
-  genres: null,
+// The /api/tag tag_name each filter type loads from.
+const TAG_NAMES: Record<FilterType, string> = {
+  genres: 'genre',
   mediaTypes: 'media',
   countries: 'releasecountry',
   releaseTypes: 'releasetype',
@@ -37,7 +37,7 @@ const TAG_NAMES: Record<FilterType, string | null> = {
 };
 
 interface FilterSet {
-  tagName: string | null;
+  tagName: string;
   // Exact and lowercase value to UUID, so resolve() matches case-insensitively.
   ids: Map<string, string>;
   // Lowercase value to original case, so listings show each value once.
@@ -47,17 +47,6 @@ interface FilterSet {
 interface FilterValue {
   id: string;
   value: string;
-}
-
-interface GenreResponse {
-  id: string;
-  name: string;
-}
-
-interface TagResponse {
-  id: string;
-  tagName: string;
-  tagValue: string;
 }
 
 function createFilterSets(): Record<FilterType, FilterSet> {
@@ -71,7 +60,7 @@ function createFilterSets(): Record<FilterType, FilterSet> {
  * Caches small, well-defined filter sets for text-based filtering.
  *
  * When filterCacheEnabled=false the Maps are still used as a working buffer, but
- * ensureFresh() re-fetches all tag/genre data before every resolve operation so
+ * ensureFresh() re-fetches all tag data before every resolve operation so
  * newly-added values are always visible.
  */
 class FilterCacheManager {
@@ -88,9 +77,6 @@ class FilterCacheManager {
 
   private constructor() {}
 
-  /**
-   * Get the singleton instance
-   */
   static getInstance(): FilterCacheManager {
     FilterCacheManager.instance ??= new FilterCacheManager();
     return FilterCacheManager.instance;
@@ -120,10 +106,6 @@ class FilterCacheManager {
     this.initialized = true;
   }
 
-  /**
-   * Fetch all filter data from the Navidrome API into the in-memory Maps.
-   * Used by initialize() and ensureFresh().
-   */
   private async fetchAllData(client: NavidromeClient): Promise<void> {
     await Promise.all(FILTER_TYPES.map(type => this.loadFilterSet(client, type)));
 
@@ -188,9 +170,7 @@ class FilterCacheManager {
   private async loadFilterSet(client: NavidromeClient, type: FilterType): Promise<void> {
     const set = this.filterSets[type];
     try {
-      const values = set.tagName === null
-        ? await this.fetchGenres(client)
-        : await this.fetchTags(client, set.tagName);
+      const values = await this.fetchTags(client, set.tagName);
       if (values === null) {
         return;
       }
@@ -207,32 +187,20 @@ class FilterCacheManager {
 
       logger.debug(`Loaded ${set.originals.size} ${type} values for filtering`);
     } catch (error) {
-      logger.error(`Failed to load ${type} filter values:`, ErrorFormatter.toolExecution(`loadFilterSet(${type})`, error));
+      logger.error(`Failed to load ${type} filter values:`, error instanceof Error ? error.message : String(error));
     }
-  }
-
-  private async fetchGenres(client: NavidromeClient): Promise<FilterValue[] | null> {
-    const genres = await client.requestWithLibraryFilter<GenreResponse[]>('/genre');
-    if (!Array.isArray(genres)) {
-      logger.warn('Invalid genres response, skipping genre cache');
-      return null;
-    }
-    return genres.map(genre => ({ id: genre.id, value: genre.name }));
   }
 
   private async fetchTags(client: NavidromeClient, tagName: string): Promise<FilterValue[] | null> {
     // /api/tag returns the full set when no _end is given.
-    const tags = await client.requestWithLibraryFilter<TagResponse[]>(`/tag?tag_name=${encodeURIComponent(tagName)}`);
+    const tags = await client.requestWithLibraryFilter<unknown>(`/tag?tag_name=${encodeURIComponent(tagName)}`);
     if (!Array.isArray(tags)) {
       logger.warn(`Invalid tags response for ${tagName}, skipping`);
       return null;
     }
-    return tags.map(tag => ({ id: tag.id, value: tag.tagValue }));
+    return transformTagsToMeta(tags).map((entry) => ({ id: entry.id, value: entry.tag.tagValue }));
   }
 
-  /**
-   * Resolve a filter name to its ID, with case-insensitive fallback
-   */
   resolve(type: FilterType, name: string): string | null {
     if (!this.initialized) {
       throw new Error('FilterCacheManager not initialized');
@@ -242,9 +210,6 @@ class FilterCacheManager {
     return ids.get(name) ?? ids.get(name.toLowerCase()) ?? null;
   }
 
-  /**
-   * Get all available options for a filter type
-   */
   getAvailableOptions(type: FilterType): string[] {
     if (!this.initialized) {
       throw new Error('FilterCacheManager not initialized');
@@ -253,16 +218,7 @@ class FilterCacheManager {
     return Array.from(this.filterSets[type].originals.values()).sort();
   }
 
-  /**
-   * Get all available filter types
-   */
-  getFilterTypes(): FilterType[] {
-    return [...FILTER_TYPES];
-  }
-
-  /**
-   * Find similar filter names (for "did you mean?" suggestions)
-   */
+  /** Feeds "did you mean?" suggestions. */
   findSimilar(type: FilterType, name: string, maxResults = 3): string[] {
     if (!this.initialized) {
       throw new Error('FilterCacheManager not initialized');
@@ -271,7 +227,6 @@ class FilterCacheManager {
     const options = this.getAvailableOptions(type);
     const lowerName = name.toLowerCase();
 
-    // Simple similarity matching
     const similar = options
       .filter(option => {
         const lowerOption = option.toLowerCase();
@@ -282,25 +237,17 @@ class FilterCacheManager {
     return similar;
   }
 
-  /**
-   * Check if filter cache manager is initialized
-   */
   isInitialized(): boolean {
     return this.initialized;
   }
 
-  /**
-   * Get cache statistics for debugging
-   */
   getStats(): Record<FilterType, number> {
     return Object.fromEntries(
       FILTER_TYPES.map(type => [type, this.filterSets[type].originals.size]),
     ) as Record<FilterType, number>;
   }
 
-  /**
-   * Reset the filter cache manager (for testing)
-   */
+  /** Test isolation only. */
   reset(): void {
     for (const set of Object.values(this.filterSets)) {
       set.ids.clear();
@@ -314,5 +261,4 @@ class FilterCacheManager {
   }
 }
 
-// Export singleton instance getter for convenience
 export const filterCacheManager = FilterCacheManager.getInstance();

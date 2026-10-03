@@ -6,7 +6,6 @@ import { prefRead, prefRemove, prefWrite } from './prefs.js';
 
 const THEME_HINT_KEY = 'navidrome-mcp.theme';
 const THEMES = new Set(['light', 'dark']);
-const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
 // Each theme-color meta carries its system-scheme color, which a forced theme overrides.
 const themeColorMetas = Array.from(
   document.querySelectorAll('meta[name="theme-color"]'),
@@ -18,11 +17,6 @@ let appliedTheme;
 
 export function applyThemeHint() {
   applyTheme(prefRead(THEME_HINT_KEY));
-}
-
-// The theme this device shows, which is the system's own when none is forced.
-export function systemTheme() {
-  return systemDark.matches ? 'dark' : 'light';
 }
 
 // Snapshots repeat the theme every second during playback, so an unchanged theme returns early.

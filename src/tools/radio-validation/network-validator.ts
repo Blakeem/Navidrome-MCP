@@ -16,6 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { DEFAULT_USER_AGENT } from '../../constants/defaults.js';
 import { RADIO_VALIDATION } from '../../constants/timeouts.js';
 import {
   describeFetchError,
@@ -35,9 +36,6 @@ interface ValidationContext {
 
 /** Radio stream redirects are almost always 1-2 hops, so anything past 5 is suspicious. */
 const MAX_REDIRECTS = 5;
-
-// Shoutcast DNAS v2 serves its HTML status page to any User-Agent carrying a `Mozilla` token.
-const PROBE_USER_AGENT = 'NavidromeBot/1.0';
 
 interface FetchWithRedirectsResult {
   readonly response: Response | null;
@@ -70,9 +68,7 @@ async function fetchWithManualRedirects(
       return { response, finalUrl: currentUrl, error: null };
     }
 
-    // This 3xx response is discarded from here on (whether the redirect is
-    // followed or refused). Cancel its body so undici returns the socket to the
-    // keep-alive pool immediately instead of waiting on GC. Null for HEAD.
+    // Cancel the discarded 3xx body so undici returns the socket to the pool now.
     if (response.body) {
       await response.body.cancel().catch(() => { /* body already released */ });
     }
@@ -109,12 +105,9 @@ function describeProbeError(err: unknown): string {
   return `${describeFetchError(err)}${marker}`;
 }
 
-/**
- * Perform HEAD request validation
- */
 export async function validateWithHead(
   context: ValidationContext
-): Promise<{ response: Response | null; finalUrl: string; error: string | null }> {
+): Promise<FetchWithRedirectsResult> {
   const headTimeout = Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO);
 
   try {
@@ -130,7 +123,8 @@ export async function validateWithHead(
           method: 'HEAD',
           signal: controller.signal,
           headers: {
-            'User-Agent': PROBE_USER_AGENT,
+            // Shoutcast DNAS v2 serves its HTML status page to any User-Agent carrying a `Mozilla` token.
+            'User-Agent': DEFAULT_USER_AGENT,
             'Accept': 'audio/*',
           },
         },
@@ -152,9 +146,6 @@ export async function validateWithHead(
   }
 }
 
-/**
- * Sample audio data from stream
- */
 export async function sampleAudioData(
   url: string,
   remainingTimeout: number,
@@ -166,16 +157,12 @@ export async function sampleAudioData(
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, remainingTimeout);
-    // Combine our local sample-timeout signal with the caller's overall-deadline
-    // signal so the overall timeout aborts an in-flight sample, not just the
-    // starting of a new one. AbortSignal.any fires when either input aborts.
+    // The overall deadline must abort an in-flight sample too.
     const signal = overallSignal
       ? AbortSignal.any([controller.signal, overallSignal])
       : controller.signal;
 
-    // Keep the abort timer armed through the entire sampling operation
-    // (including the stream-reading phase) so a mid-body stall is interrupted.
-    // It is cleared exactly once in the outer finally below.
+    // The timer stays armed through the body read so a mid-body stall aborts.
     try {
       const result = await fetchWithManualRedirects(
         url,
@@ -183,7 +170,7 @@ export async function sampleAudioData(
           method: 'GET',
           headers: {
             'Range': `bytes=0-${RADIO_VALIDATION.SAMPLE_BUFFER_SIZE - 1}`,
-            'User-Agent': PROBE_USER_AGENT,
+            'User-Agent': DEFAULT_USER_AGENT,
             'Accept': 'audio/*',
           },
           signal,
@@ -216,7 +203,6 @@ export async function sampleAudioData(
       let totalLength = 0;
 
       // Some servers don't handle Range requests properly and hang on arrayBuffer()
-      // Use streaming approach with timeout protection
       try {
         const bodyStream = response.body;
         if (!bodyStream) {
@@ -228,9 +214,7 @@ export async function sampleAudioData(
             error: 'No response body reader available',
           };
         }
-        // Annotate the reader type rather than structurally casting the stream:
-        // response.body resolves to ReadableStream<any> here, so without this the
-        // read-loop chunks would be `any` (unsafe). The reader yields Uint8Array.
+        // response.body is ReadableStream<any>, so the reader is typed to keep chunks off any.
         const reader: ReadableStreamDefaultReader<Uint8Array> = bodyStream.getReader();
 
         try {
@@ -248,13 +232,11 @@ export async function sampleAudioData(
             chunks.push(slice);
             totalLength += slice.length;
 
-            // Stop if we have enough data
             if (totalLength >= maxBytes) {
               break;
             }
           }
 
-          // Combine chunks
           if (totalLength > 0) {
             return {
               buffer: concatChunks(chunks, totalLength),
@@ -273,9 +255,7 @@ export async function sampleAudioData(
             };
           }
         } finally {
-          // Always release the reader on every exit path (success, timeout,
-          // break, or thrown error). cancel() is a safe no-op on an already
-          // drained/cancelled reader and must not throw out of the finally.
+          // cancel() is a no-op on a drained reader and must not throw out of finally.
           await reader.cancel().catch(() => { /* reader already released */ });
         }
       } catch (streamErr) {

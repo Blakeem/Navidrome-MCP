@@ -22,18 +22,16 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-// Import tool functions
 import {
   getSavedQueue,
   saveQueue,
   clearSavedQueue,
 } from '../queue-management.js';
 
-// Tool definitions for the saved-queue category
 const tools: Tool[] = [
   {
     name: 'get_saved_queue',
-    description: 'Read the saved playback queue stored on the Navidrome server. This is the queue shown in the web interface and synced across Navidrome clients — it is not live playback state and reading it does not affect any audio.',
+    description: 'Read the saved playback queue stored on the Navidrome server. This is the queue shown in the web interface and synced across Navidrome clients. It is not live playback state, and reading it does not affect any audio. `currentIndex` is a 0-based index into `tracks`. `position` is seconds within the current track, the unit now_playing reports.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -41,7 +39,7 @@ const tools: Tool[] = [
   },
   {
     name: 'save_queue',
-    description: 'Save a playback queue to the Navidrome server so it appears in the web interface and syncs to other Navidrome clients. Does not start playback.',
+    description: 'Save a playback queue to the Navidrome server so it appears in the web interface and syncs to other Navidrome clients. Does not start playback. `currentIndex` is a 0-based index into `songIds`. `position` is seconds within the current track, so now_playing\'s `position` passes through unchanged. It replaces the entire saved queue, including its current index and position. To add tracks, call get_saved_queue first and pass the merged songIds.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -50,15 +48,15 @@ const tools: Tool[] = [
           items: { type: 'string' },
           description: 'Array of song IDs to save into the queue',
         },
-        current: {
-          type: 'number',
-          description: 'Index of current track (0-based)',
+        currentIndex: {
+          type: 'integer',
+          description: '0-based index of the current track in songIds',
           minimum: 0,
           default: 0,
         },
         position: {
           type: 'number',
-          description: 'Playback position in milliseconds within the current track',
+          description: 'Playback position in seconds within the current track',
           minimum: 0,
           default: 0,
         },
@@ -76,7 +74,6 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating queue tool category with dependencies  
 export function createQueueToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
   return {
     tools,
@@ -89,7 +86,7 @@ export function createQueueToolCategory(client: NavidromeClient, _config: Config
         case 'clear_saved_queue':
           return await clearSavedQueue(client, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`queue ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

@@ -12,6 +12,7 @@ export async function playLibraryItem(button, kind, id, name, status) {
   const mode = playMode();
   const favorite = FAVORITE_SOURCES[kind];
   const body = { type: kind, id, mode, ...shuffleOptions() };
+  const hadFocus = document.activeElement === button;
 
   // PROCESS
   button.disabled = true;
@@ -19,6 +20,8 @@ export async function playLibraryItem(button, kind, id, name, status) {
   playChain = request;
   const { ok, data } = await request;
   button.disabled = false;
+  // Disabling the focused button dropped focus to body. A user who moved focus during the request keeps it there.
+  if (hadFocus && document.activeElement === document.body) button.focus({ preventScroll: true });
   const emptySource = !ok && data?.code === 'empty-source';
 
   // OUTPUT

@@ -26,9 +26,9 @@ import type {
 } from '../types/index.js';
 import type { Config } from '../config.js';
 import { validateRadioStream } from './radio-validation.js';
-import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
+import { DISCOVERY_VALIDATION_TIMEOUT_MS } from '../constants/timeouts.js';
 import { DEFAULT_VALUES, DEFAULT_USER_AGENT } from '../constants/defaults.js';
-import { DiscoverRadioStationsArgsSchema, GetRadioFiltersArgsSchema, StationUuidSchema } from '../schemas/index.js';
+import { DiscoverRadioStationsSchema, RadioFiltersSchema, StationUuidSchema } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import { safeNumber } from '../utils/safe-number.js';
@@ -38,7 +38,7 @@ import {
   type RetryPolicy,
 } from '../utils/fetch-with-timeout.js';
 import { getRadioBrowserBase, invalidateRadioBrowserBase } from '../utils/radio-browser-resolver.js';
-import { hasRecentlyVoted, hasRecentlyClicked, markVoted, markClicked } from '../utils/radio-browser-rate-limit.js';
+import { hasRecentlyVoted, getClickedStreamUrl, markVoted, markClicked } from '../utils/radio-browser-rate-limit.js';
 
 /**
  * Radio Browser API station response
@@ -106,7 +106,7 @@ interface RadioBrowserActionResponse {
   url?: string;
 }
 
-type RadioFilterKind = z.infer<typeof GetRadioFiltersArgsSchema>['kinds'][number];
+type RadioFilterKind = z.infer<typeof RadioFiltersSchema>['kinds'][number];
 
 interface RadioBrowserRequest {
   retryPolicy: RetryPolicy;
@@ -143,15 +143,15 @@ async function radioBrowserGetJson<T>(
       },
     );
   } catch (error) {
-    invalidateRadioBrowserBase();
+    invalidateRadioBrowserBase(base);
     throw error;
   }
 
   if (response.status >= 500) {
-    invalidateRadioBrowserBase();
+    invalidateRadioBrowserBase(base);
   }
   if (!response.ok) {
-    throw new Error(ErrorFormatter.radioBrowserApi(response));
+    throw new Error(ErrorFormatter.httpRequest(`Radio Browser ${request.label}`, response));
   }
   return await response.json() as T;
 }
@@ -170,13 +170,13 @@ function splitList(value: string | undefined): string[] {
 function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO | null {
   // An empty url_resolved falls back to url. `??` would keep the empty string.
   const stationUuid = station.stationuuid;
-  const name = station.name;
+  const name = station.name?.trim() ?? '';
   const streamUrl = (station.url_resolved !== undefined && station.url_resolved !== '')
     ? station.url_resolved
     : station.url ?? '';
   if (
     stationUuid === undefined || stationUuid === null || stationUuid === '' ||
-    name === undefined || name === null || name === '' ||
+    name === '' ||
     streamUrl === ''
   ) {
     logger.debug('mapStationToDTO: dropping station with missing required field', {
@@ -222,22 +222,20 @@ async function probeStation(
   try {
     const validationResult = await validateRadioStream({
       url: station.streamUrl,
-      timeout: DISCOVERY_VALIDATION_TIMEOUT,
+      timeout: DISCOVERY_VALIDATION_TIMEOUT_MS,
     });
     return {
       ...station,
       validation: {
-        validated: true,
         isValid: validationResult.success,
         status: validationResult.success ? 'OK' : 'FAIL',
-        duration: validationResult.testDuration,
+        durationMs: validationResult.testDurationMs,
       },
     };
   } catch {
     return {
       ...station,
       validation: {
-        validated: true,
         isValid: false,
         status: 'FAIL',
       },
@@ -302,9 +300,9 @@ export async function discoverRadioStations(
   args: unknown
 ): Promise<DiscoverRadioStationsResponse> {
   try {
-    const params = DiscoverRadioStationsArgsSchema.parse(args);
-    // Popularity orders read best first. A name order reads A to Z.
-    const reverse = params.reverse ?? params.order !== 'name';
+    const params = DiscoverRadioStationsSchema.parse(args);
+    // Popularity sorts read best first. A name sort reads A to Z.
+    const order = params.order ?? (params.sort === 'name' ? 'ASC' : 'DESC');
 
     logger.debug('Tool discoverRadioStations called with args:', params);
 
@@ -312,14 +310,16 @@ export async function discoverRadioStations(
 
     const searchParams = new URLSearchParams();
     if (params.query !== undefined && params.query !== '') searchParams.set('name', params.query);
-    if (params.tag !== undefined && params.tag !== '') searchParams.set('tag', params.tag);
+    // Radio Browser matches tag and language case-sensitively and stores both lowercase.
+    if (params.tag !== undefined && params.tag !== '') searchParams.set('tag', params.tag.toLowerCase());
     if (params.countryCode !== undefined && params.countryCode !== '') searchParams.set('countrycode', params.countryCode);
-    if (params.language !== undefined && params.language !== '') searchParams.set('language', params.language);
+    if (params.language !== undefined && params.language !== '') searchParams.set('language', params.language.toLowerCase());
     if (params.codec !== undefined && params.codec !== '') searchParams.set('codec', params.codec);
     if (params.bitrateMin !== undefined) searchParams.set('bitrateMin', String(params.bitrateMin));
-    if (params.isHttps !== undefined) searchParams.set('is_https', params.isHttps ? 'true' : 'false');
-    searchParams.set('order', params.order);
-    searchParams.set('reverse', reverse ? 'true' : 'false');
+    // Radio Browser reads is_https=false as HTTP only, so false sends no filter.
+    if (params.isHttps === true) searchParams.set('is_https', 'true');
+    searchParams.set('order', params.sort);
+    searchParams.set('reverse', order === 'DESC' ? 'true' : 'false');
     searchParams.set('offset', String(params.offset));
     searchParams.set('limit', String(params.limit));
     searchParams.set('hidebroken', params.hideBroken ? 'true' : 'false');
@@ -347,11 +347,13 @@ export async function discoverRadioStations(
 
     const validatedStations = await validateDiscoveredStations(stations);
 
-    const validatedCount = validatedStations.filter(s => s.validation?.validated === true).length;
+    const validatedCount = validatedStations.filter(s => s.validation !== undefined).length;
     const workingCount = validatedStations.filter(s => s.validation?.isValid === true).length;
 
     const result: DiscoverRadioStationsResponse = {
       stations: validatedStations,
+      nextOffset: params.offset + data.length,
+      hasMore: data.length === params.limit,
       source: 'radio-browser',
       mirrorUsed: radioBrowserBase
     };
@@ -443,7 +445,7 @@ type RadioFilterOutcome =
  */
 export async function getRadioFilters(config: Config, args: unknown): Promise<RadioFiltersResponse> {
   try {
-    const params = GetRadioFiltersArgsSchema.parse(args);
+    const params = RadioFiltersSchema.parse(args);
     const result: RadioFiltersResponse = {};
 
     logger.debug('Tool getRadioFilters called with args:', params);
@@ -516,8 +518,8 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
 /**
  * Register a play click for a station (helps with popularity metrics).
  *
- * A second click for the same UUID in this process returns a no-op instead of
- * calling Radio Browser, which counts one click per IP per day.
+ * A second click for the same UUID within a day returns the first click's stream URL
+ * instead of calling Radio Browser, which counts one click per IP per day.
  */
 export async function clickStation(config: Config, args: unknown): Promise<ClickRadioStationResponse> {
   try {
@@ -525,12 +527,13 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
 
     logger.debug('Tool clickStation called with args:', { stationUuid });
 
-    if (hasRecentlyClicked(stationUuid)) {
-      logger.debug(`clickStation: deduped (already clicked ${stationUuid} this session)`);
+    const clickedStreamUrl = getClickedStreamUrl(stationUuid);
+    if (clickedStreamUrl !== undefined) {
+      logger.debug(`clickStation: deduped (already clicked ${stationUuid} within the last day)`);
       return {
-        success: false,
-        streamUrl: '',
-        message: `Already clicked station ${stationUuid} this session. Radio Browser counts unique clicks per IP per day, so additional calls would be no-ops anyway.`
+        success: true,
+        streamUrl: clickedStreamUrl,
+        message: 'Click already registered for this station. Radio Browser counts one click per IP per day.',
       };
     }
 
@@ -546,7 +549,7 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
 
     // A rejected click stays unmarked so the caller can retry it.
     if (ok) {
-      markClicked(stationUuid);
+      markClicked(stationUuid, data.url ?? '');
     }
 
     // Upstream's success text "retrieved station url" reads as an implementation leak, so success gets our own message.
@@ -563,8 +566,8 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
 /**
  * Vote for a radio station.
  *
- * A second vote for the same UUID in this process returns a no-op instead of
- * calling Radio Browser, which accepts one vote per IP per day.
+ * A second vote for the same UUID within 10 minutes returns a no-op instead of
+ * calling Radio Browser, which accepts one vote per IP per station every 10 minutes.
  */
 export async function voteStation(config: Config, args: unknown): Promise<VoteRadioStationResponse> {
   try {
@@ -573,10 +576,10 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
     logger.debug('Tool voteStation called with args:', { stationUuid });
 
     if (hasRecentlyVoted(stationUuid)) {
-      logger.debug(`voteStation: deduped (already voted ${stationUuid} this session)`);
+      logger.debug(`voteStation: deduped (already voted ${stationUuid} within the last 10 minutes)`);
       return {
         success: false,
-        message: `Already voted for station ${stationUuid} this session. Radio Browser counts unique votes per IP per day, so additional calls would be rejected anyway.`
+        message: `Already voted for station ${stationUuid} within the last 10 minutes. Radio Browser accepts one vote per IP per station every 10 minutes, so another vote now would be rejected.`
       };
     }
 

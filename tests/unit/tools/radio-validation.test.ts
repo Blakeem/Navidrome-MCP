@@ -24,6 +24,7 @@ vi.mock('../../../src/utils/network-safety.js', async (importOriginal) => {
 
 import { validateRadioStream } from '../../../src/tools/radio-validation.js';
 import { classifyStream, type StreamProbe } from '../../../src/tools/radio-validation/validation-core.js';
+import { extractStreamingHeaders } from '../../../src/tools/radio-validation/stream-detector.js';
 // Resolves through the vi.mock above, whose factory spreads the ACTUAL module —
 // so this is the real production constant, keeping the mock rejection below in
 // sync with the dispatcher's real message shape.
@@ -48,87 +49,64 @@ describe('Radio Stream Validation', () => {
 
   describe('Input Validation', () => {
     it('should reject invalid URL', async () => {
-      const result = await validateRadioStream({
+      await expect(validateRadioStream({
         url: 'not-a-url',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.status).toBe('error');
-      expect(result.errors[0]).toContain('Invalid parameters');
-      expect(result.recommendations[0]).toBe('Please provide a valid http:// or https:// URL');
+      })).rejects.toThrow(/Tool 'validate_radio_stream' failed: Invalid arguments\. url: URL must be a valid URL/);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('should reject mms:// with a message pointing to play_radio_station', async () => {
-      const result = await validateRadioStream({
+    it('should reject mms:// with a message pointing to the Navidrome web UI', async () => {
+      await expect(validateRadioStream({
         url: 'mms://example.com/stream',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.errors[0]).toContain('Invalid parameters');
-      expect(result.errors[0]).toContain('play_radio_station');
+      })).rejects.toThrow(/Tool 'validate_radio_stream' failed: Invalid arguments\. url: URL must use http:\/\/ or https:\/\/[\s\S]*Navidrome web UI instead\./);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should reject rtsp:// before any fetch is attempted', async () => {
-      const result = await validateRadioStream({
+      await expect(validateRadioStream({
         url: 'rtsp://example.com/live',
-      });
-
-      expect(result.success).toBe(false);
+      })).rejects.toThrow(/Tool 'validate_radio_stream' failed: Invalid arguments\. url: URL must use http:\/\/ or https:\/\//);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should reject file:// URLs', async () => {
-      const result = await validateRadioStream({
+      await expect(validateRadioStream({
         url: 'file:///etc/passwd',
-      });
-
-      expect(result.success).toBe(false);
+      })).rejects.toThrow(/Tool 'validate_radio_stream' failed: Invalid arguments\. url: /);
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should reject timeout too low', async () => {
-      const result = await validateRadioStream({
+      await expect(validateRadioStream({
         url: 'https://example.com/stream.mp3',
         timeout: 500, // Below minimum of 1000
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.status).toBe('error');
-      expect(result.errors[0]).toContain('Invalid parameters');
+      })).rejects.toThrow(/Tool 'validate_radio_stream' failed: Invalid arguments\. timeout: Too small: expected number to be >=1000/);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should reject timeout too high', async () => {
-      const result = await validateRadioStream({
+      await expect(validateRadioStream({
         url: 'https://example.com/stream.mp3',
         timeout: 50000, // Above maximum of 30000
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.status).toBe('error');
-      expect(result.errors[0]).toContain('Invalid parameters');
+      })).rejects.toThrow(/Tool 'validate_radio_stream' failed: Invalid arguments\. timeout: Too big: expected number to be <=30000/);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it('should return the actual URL in the error response, not [object Object]', async () => {
-      // Before the fix, String({ url: 'mms://...' }) = '[object Object]',
-      // making the error response useless for the LLM.
-      const result = await validateRadioStream({
+    it('should name the rejected parameter, not [object Object]', async () => {
+      const error: unknown = await validateRadioStream({
         url: 'mms://example.com/stream',
         timeout: 5000,
-      });
+      }).catch((rejection: unknown) => rejection);
 
-      expect(result.success).toBe(false);
-      // url field should be the actual URL string, not '[object Object]'
-      expect(result.url).toBe('mms://example.com/stream');
-      expect(result.url).not.toBe('[object Object]');
-      expect(result.url).not.toContain('object Object');
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/Invalid arguments\. url: /);
+      expect((error as Error).message).not.toContain('object Object');
     });
 
-    it('should return (invalid input) when args is not an object', async () => {
-      const result = await validateRadioStream('not-an-object');
-
-      expect(result.success).toBe(false);
-      expect(result.url).toBe('(invalid input)');
+    it('should reject args that are not an object', async () => {
+      await expect(validateRadioStream('not-an-object'))
+        .rejects.toThrow(/Tool 'validate_radio_stream' failed: Invalid arguments\. arguments: Invalid input: expected object, received string/);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('should accept valid parameters', async () => {
@@ -231,6 +209,44 @@ describe('Radio Stream Validation', () => {
       expect(result.recommendations).toContain('Stream URL appears to be offline or moved');
     });
 
+    it('reports a sample HTTP status after a failed HEAD as invalid, not as a transport error', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('HEAD failed'));
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        headers: new Headers(),
+      });
+
+      const result = await validateRadioStream({
+        url: 'https://example.com/gone-stream.mp3',
+      });
+
+      expect(result.status).toBe('invalid');
+      expect(result.errors).toEqual(['HTTP 404: Not Found']);
+      expect(result.recommendations).toContain('Stream URL appears to be offline or moved');
+    });
+
+    it('reports a 403 error page as an HTTP error, not as non-audio content', async () => {
+      const forbidden = {
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden',
+        headers: new Headers({ 'content-type': 'text/html' }),
+      };
+      mockFetch.mockResolvedValueOnce(forbidden);
+      mockFetch.mockResolvedValueOnce(forbidden);
+
+      const result = await validateRadioStream({
+        url: 'https://example.com/geo-blocked',
+      });
+
+      expect(result.status).toBe('invalid');
+      expect(result.errors).toEqual(['HTTP 403']);
+      expect(result.recommendations).toContain('The stream may be geo-restricted or require authentication');
+      expect(result.recommendations.some((r) => r.includes('website URL'))).toBe(false);
+    });
+
     it('should detect valid audio content type', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -317,10 +333,12 @@ describe('Radio Stream Validation', () => {
     });
 
     it('names the failing parameter instead of always blaming the URL', async () => {
-      const result = await validateRadioStream({ url: 'https://example.com/stream.mp3', timeout: 60000 });
+      const error: unknown = await validateRadioStream({ url: 'https://example.com/stream.mp3', timeout: 60000 })
+        .catch((rejection: unknown) => rejection);
 
-      expect(result.errors[0]).toMatch(/^Invalid parameters: timeout: /);
-      expect(result.recommendations).toEqual(['Correct the named parameter and retry']);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toMatch(/Invalid arguments\. timeout: /);
+      expect((error as Error).message).not.toMatch(/url: /);
     });
   });
 
@@ -510,7 +528,7 @@ describe('Radio Stream Validation', () => {
         arrayBuffer: () => Promise.resolve(new ArrayBuffer(1024)),
       });
 
-      fileTypeFromBuffer.mockResolvedValue(null);
+      fileTypeFromBuffer.mockResolvedValue(undefined);
 
       const result = await validateRadioStream({
         url: 'https://example.com/unknown-format.stream',
@@ -555,7 +573,7 @@ describe('Radio Stream Validation', () => {
         },
       } as unknown as Response);
 
-      fileTypeFromBuffer.mockResolvedValue(null); // file-type can't detect; falls back to magic bytes
+      fileTypeFromBuffer.mockResolvedValue(undefined); // file-type can't detect; falls back to magic bytes
 
       const result = await validateRadioStream({
         url: 'https://example.com/stream.mp3',
@@ -564,6 +582,41 @@ describe('Radio Stream Validation', () => {
       expect(result.validation.audioDataDetected).toBe(true);
       expect(result.audioFormat?.format).toBe('mp3');
       expect(result.audioFormat?.mime).toBe('audio/mpeg');
+    });
+
+    it('validates an octet-stream stream by its audio data with no content-type error', async () => {
+      const { fileTypeFromBuffer } = vi.mocked(await import('file-type'));
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/octet-stream' }),
+      });
+      const mp3Data = new Uint8Array([0xFF, 0xFB, 0x90, 0x00]);
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 206,
+        headers: new Headers({ 'content-type': 'application/octet-stream' }),
+        body: {
+          getReader: () => {
+            let done = false;
+            return {
+              read: vi.fn().mockImplementation(() => {
+                if (!done) { done = true; return Promise.resolve({ value: mp3Data, done: false }); }
+                return Promise.resolve({ value: undefined, done: true });
+              }),
+              cancel: vi.fn().mockResolvedValue(undefined),
+            };
+          },
+        },
+      } as unknown as Response);
+      fileTypeFromBuffer.mockResolvedValue(undefined);
+
+      const result = await validateRadioStream({
+        url: 'https://example.com/octet-stream',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.errors).toEqual([]);
     });
   });
 
@@ -715,7 +768,7 @@ describe('Radio Stream Validation', () => {
         url: 'https://example.com/stream.mp3',
       });
 
-      expect(result.testDuration).toBe(100);
+      expect(result.testDurationMs).toBe(100);
       mockDateNow.mockRestore();
     });
   });
@@ -908,7 +961,7 @@ describe('Radio Stream Validation', () => {
       });
 
       const { fileTypeFromBuffer } = vi.mocked(await import('file-type'));
-      fileTypeFromBuffer.mockResolvedValue(null); // Force manual signature path
+      fileTypeFromBuffer.mockResolvedValue(undefined); // Force manual signature path
 
       const result = await validateRadioStream({
         url: 'https://misbehaving.example.com/stream',
@@ -1040,5 +1093,17 @@ describe('classifyStream', () => {
     expect(result.status).toBe('invalid');
     expect(result.errors).toEqual(['No audio content type, streaming headers, or audio data detected']);
     expect(result.warnings).toContain('Could not sample audio data from stream');
+  });
+});
+
+describe('extractStreamingHeaders', () => {
+  it('re-decodes UTF-8 ICY bytes that arrive as latin1', () => {
+    const latin1View = Buffer.from('Café Радио', 'utf8').toString('latin1');
+
+    expect(extractStreamingHeaders(new Headers({ 'icy-name': latin1View }))).toEqual({ 'icy-name': 'Café Радио' });
+  });
+
+  it('keeps a value a latin1 server sent as latin1', () => {
+    expect(extractStreamingHeaders(new Headers({ 'icy-name': 'Café' }))).toEqual({ 'icy-name': 'Café' });
   });
 });

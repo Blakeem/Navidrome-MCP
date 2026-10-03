@@ -45,10 +45,7 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   const client = new NavidromeClient(config);
   await client.initialize();
 
-  // Initialize library manager with user data and configuration.
   await libraryManager.initialize(client, config);
-
-  // Initialize filter cache manager for enhanced search functionality.
   await filterCacheManager.initialize(client, config);
 
   // Configure the singleton engine with the loaded config so tools can

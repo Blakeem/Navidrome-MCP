@@ -34,7 +34,7 @@ const rawAlbum = {
 
 const rawArtist = {
   id: 'a1', name: 'Artist', albumCount: 3, songCount: 30,
-  genres: ['Rock'], biography: 'Bio', playCount: 7, rating: 5,
+  genres: [{ id: 'g1', name: 'Rock' }], biography: 'Bio', playCount: 7, rating: 5,
   starred: true, starredAt: '2026-01-01T00:00:00Z',
 };
 
@@ -50,7 +50,7 @@ describe('shouldEmit', () => {
   it('emits everything in verbose mode', () => {
     const opts: TransformOptions = { verbose: true };
     expect(shouldEmit('path', opts)).toBe(true);
-    expect(shouldEmit('anything', opts)).toBe(true);
+    expect(shouldEmit('anything' as Parameters<typeof shouldEmit>[0], opts)).toBe(true);
   });
 
   it('emits only the named fields via keep', () => {
@@ -82,7 +82,7 @@ describe('transformToSongDTO projection', () => {
 });
 
 describe('transformToPlaylistDTO projection', () => {
-  const rawPlaylist = { id: 'pl1', name: 'Mix', songCount: 40, duration: 7800 };
+  const rawPlaylist = { id: 'pl1', name: 'Mix', public: false, songCount: 40, duration: 7800 };
 
   it('compact carries only the formatted duration', () => {
     const dto = transformToPlaylistDTO(rawPlaylist);

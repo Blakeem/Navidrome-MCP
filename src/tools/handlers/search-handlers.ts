@@ -21,6 +21,7 @@ import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { DEFAULT_VALUES } from '../../constants/defaults.js';
+import { SEARCH_QUERY_MAX_LENGTH } from '../../schemas/index.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import {
   searchAll,
@@ -72,7 +73,7 @@ const RANDOM_SEED_PROPERTY = {
 
 const STARRED_PROPERTY = {
   type: 'boolean',
-  description: 'Filter for starred/favorited items only',
+  description: 'true returns only starred items. false returns only unstarred items. Omit for no starred filter.',
 } as const;
 
 // The year filters take a single year. Navidrome has no year-range filter, so a multi-year query takes one call per year.
@@ -83,17 +84,18 @@ const MAX_YEAR = new Date().getFullYear() + 1;
 export const SONG_FILTER_PROPERTIES = {
   query: {
     type: 'string',
+    maxLength: SEARCH_QUERY_MAX_LENGTH,
     description: 'Search terms to look for in song titles, artists, albums, or credited participants (composer, producer, etc.). Navidrome runs a full-text match, so a query like "love" can also match songs by a composer named "Rich Love".',
   },
   limit: {
-    type: 'number',
+    type: 'integer',
     description: 'Maximum number of songs to return',
     minimum: 1,
     maximum: 500,
     default: 100,
   },
   offset: {
-    type: 'number',
+    type: 'integer',
     description: 'Number of songs to skip for pagination',
     minimum: 0,
     default: 0,
@@ -119,17 +121,18 @@ export const SONG_FILTER_PROPERTIES = {
 export const ALBUM_FILTER_PROPERTIES = {
   query: {
     type: 'string',
+    maxLength: SEARCH_QUERY_MAX_LENGTH,
     description: 'Search terms to look for in album names or artists',
   },
   limit: {
-    type: 'number',
+    type: 'integer',
     description: 'Maximum number of albums to return',
     minimum: 1,
     maximum: 500,
     default: 100,
   },
   offset: {
-    type: 'number',
+    type: 'integer',
     description: 'Number of albums to skip for pagination',
     minimum: 0,
     default: 0,
@@ -155,37 +158,38 @@ export const ALBUM_FILTER_PROPERTIES = {
 const tools: Tool[] = [
   {
     name: 'search_all',
-    description: `Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.\n\nNote: \`totalArtists\`, \`totalAlbums\`, and \`totalSongs\` in the response are *match counts* for the current query and filters (how many items in the library would match if you paginated through all of them), not total library size. To see library totals, use get_user_details.\n\nArtists are omitted when a tag or year filter is set. search_artists finds artists by name.\n\n${FILTER_OPTIONS_TIP}`,
+    description: `Search across all content types (artists, albums, songs) with advanced filtering and sorting options. Leave query empty to list all results.\n\nNote: \`totalArtists\`, \`totalAlbums\`, and \`totalSongs\` in the response are *match counts* for the current query and filters (how many items in the library would match if you paginated through all of them), not total library size. To see library totals, use get_user_details. A slice that is not fetched carries no total.\n\nArtists are omitted when a tag or year filter is set. search_artists finds artists by name.\n\n${FILTER_OPTIONS_TIP}`,
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
+          maxLength: SEARCH_QUERY_MAX_LENGTH,
           description: 'Search terms to look for in titles, names, and artists',
         },
         artistCount: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of artists to return',
           minimum: 0,
           maximum: 100,
           default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
         },
         albumCount: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of albums to return',
           minimum: 0,
           maximum: 100,
           default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
         },
         songCount: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of songs to return',
           minimum: 0,
           maximum: 100,
           default: DEFAULT_VALUES.SEARCH_ALL_LIMIT,
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Number of items to skip per type for pagination. The same offset is applied to all three sub-fetches (songs/albums/artists), so a single value pages forward across all types together. For deep single-type pagination, use search_songs/search_albums/search_artists.',
           minimum: 0,
           default: 0,
@@ -194,20 +198,21 @@ const tools: Tool[] = [
         sort: {
           type: 'string',
           enum: ['name', 'title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
-          description: 'Sort field for results. For the artist slice, year, duration, artist, album and recently_added fall back to name.',
+          description: 'Sort field for results. For the artist slice, year, duration, artist, album, recently_added and random fall back to name.',
           default: 'name',
         },
         order: ORDER_PROPERTY,
         randomSeed: RANDOM_SEED_PROPERTY,
         year: {
-          type: 'number',
+          type: 'integer',
           minimum: YEAR_MINIMUM,
+          maximum: MAX_YEAR,
           description: 'Filter to a single year. Songs match the exact year. Albums match when [minYear, maxYear] contains this year. Artists have no year, so a year filter omits the artist slice.',
         },
         starred: STARRED_PROPERTY,
         verbose: {
           type: 'boolean',
-          description: 'When false (default) songs carry id, title, artist, artistId, album, albumId and durationFormatted, albums carry id, name, artist, artistId, songCount and durationFormatted, and artists carry id, name, albumCount and songCount. Set true for full per-item metadata such as genres, year, rating and starred.',
+          description: 'When false (default) songs carry id, title, artist, artistId, album, albumId, durationFormatted and a lyrics flag when the file has lyrics, albums carry id, name, artist, artistId, songCount and durationFormatted, and artists carry id, name, albumCount and songCount. Set true for full per-item metadata such as genres, year, rating and starred.',
           default: false,
         },
       },
@@ -223,7 +228,7 @@ const tools: Tool[] = [
         ...SONG_FILTER_PROPERTIES,
         verbose: {
           type: 'boolean',
-          description: 'When false (default) each song carries only id, title, artist, artistId, album, albumId, durationFormatted and a lyrics flag when the file has lyrics. Set true to add addedDate, genre, genres, year, path, trackNumber, playCount, rating, starred, starredAt, playDate, albumArtist and albumArtistId.',
+          description: 'When false (default) each song carries only id, title, artist, artistId, album, albumId, durationFormatted and a lyrics flag when the file has lyrics. Set true to add addedDate, genre, genres, duration, year, path, trackNumber, playCount, rating, starred, starredAt, playDate, albumArtist and albumArtistId.',
           default: false,
         },
       },
@@ -254,29 +259,29 @@ const tools: Tool[] = [
       properties: {
         query: {
           type: 'string',
+          maxLength: SEARCH_QUERY_MAX_LENGTH,
           description: 'Search terms to look for in artist names',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of artists to return',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Number of artists to skip for pagination',
           minimum: 0,
           default: 0,
         },
         sort: {
           type: 'string',
-          enum: ['name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'],
+          enum: ['name', 'albumCount', 'songCount', 'playCount', 'rating'],
           description: 'Sort field for results',
           default: 'name',
         },
         order: ORDER_PROPERTY,
-        randomSeed: RANDOM_SEED_PROPERTY,
         // /api/artist ignores tag and year filters, so search_artists offers neither.
         starred: STARRED_PROPERTY,
         verbose: {

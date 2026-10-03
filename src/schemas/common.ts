@@ -18,39 +18,28 @@
 
 import { z } from 'zod';
 
-// Navidrome IDs are UUID-shaped (alphanumeric, hyphen, underscore). Reject
-// anything else outright at validation time, BEFORE the value reaches a URL
-// builder. An ID containing `?`, `&`, `..`, or `/` would otherwise inject
-// query params or path segments into the request. encodeURIComponent at the
-// call sites is defense-in-depth on top of this regex.
+// An ID holding `?`, `&`, `..` or `/` would inject query params or path segments into a request URL.
+// encodeURIComponent at the call sites is defense-in-depth on top of this regex.
 export const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-// Basic ID validation schema
+export const IdStringSchema = z.string().min(1, 'ID is required').regex(ID_PATTERN, 'ID contains invalid characters');
+
 export const IdSchema = z.object({
-  id: z.string().min(1, 'ID is required').regex(ID_PATTERN, 'ID contains invalid characters'),
+  id: IdStringSchema,
 });
 
-// Required ID with custom message. Generic over the literal field name so the
-// computed key stays a precise `{ [field]: string }` shape rather than widening
-// to an index signature (which would trip noPropertyAccessFromIndexSignature /
-// noUncheckedIndexedAccess at every call site). The cast restores the literal
-// key that the `[fieldName]` computed-property syntax erases.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory; return type inferred by zod, explicit annotation would be unwieldy
-export const createIdSchema = <F extends string = 'id'>(resourceType: string, fieldName: F = 'id' as F) =>
+// Generic over the literal field name so the key stays a precise `{ [field]: string }` shape, not an index
+// signature. The cast restores the literal key that the `[fieldName]` computed-property syntax erases.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory. Its return type is inferred by zod, and an explicit annotation would be unwieldy
+export const createIdSchema = <F extends string>(resourceType: string, fieldName: F) =>
   z.object({
     [fieldName]: z.string()
       .min(1, `${resourceType} ID is required`)
       .regex(ID_PATTERN, `${resourceType} ID contains invalid characters`),
   } as { [K in F]: z.ZodString });
 
-// Item type enums for user preferences. Both schemas accept BOTH the singular
-// form ('song'/'album'/'artist') and the plural form ('songs'/'albums'/'artists')
-// because LLM call-sites mix them up. `star_item` uses singular, `list_starred_items`
-// uses plural, and that distinction is one of the most common LLM bugs in
-// Subsonic-style APIs. The runtime transform normalizes to the form each
-// downstream caller expects: ItemTypeSchema → singular (Subsonic /star, /unstar,
-// /setRating use singular), ItemListTypeSchema → plural (we use plural to
-// switch on the /song vs /album vs /artist endpoint).
+// LLMs mix singular and plural item types, so both are accepted.
+// Each schema normalizes to the form its endpoints take.
 const ITEM_TYPE_VARIANTS = ['song', 'album', 'artist', 'songs', 'albums', 'artists'] as const;
 
 export const ItemTypeSchema = z.enum(ITEM_TYPE_VARIANTS).transform((v): 'song' | 'album' | 'artist' => {
@@ -67,31 +56,20 @@ export const ItemListTypeSchema = z.enum(ITEM_TYPE_VARIANTS).transform((v): 'son
   return v;
 });
 
-// Common limit validation patterns. `.int()` is required: limit/offset feed
-// `_start`/`_end` in the Navidrome REST URL, and a non-integer (e.g. `50.5`)
-// is silently dropped by Navidrome. The param is ignored and the endpoint
-// returns the ENTIRE unpaginated result set. Reject non-integers up front.
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory; return type inferred by zod, explicit annotation would be unwieldy
-export const createLimitSchema = (min = 1, max = 500, defaultValue?: number) => {
-  if (defaultValue !== undefined) {
-    return z.number().int().min(min).max(max).optional().default(defaultValue);
-  }
-  return z.number().int().min(min).max(max);
-};
+// Navidrome drops a non-integer `_start` or `_end` and returns the whole unpaginated set, so limits must be integers.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory. Its return type is inferred by zod, and an explicit annotation would be unwieldy
+export const createLimitSchema = (min: number, max: number, defaultValue: number) =>
+  z.number().int().min(min).max(max).optional().default(defaultValue);
 
 // Offset schema for pagination (see createLimitSchema for why `.int()`)
 export const OffsetSchema = z.number().int().min(0).optional().default(0);
 
-// Order enum
 export const OrderSchema = z.enum(['ASC', 'DESC']).optional().default('ASC');
 
-// Boolean flag schema
 export const OptionalBooleanSchema = z.boolean().optional();
 
-// Verbosity flag for list/search tools. Default false = compact: tools return
-// only identity fields per item (ids, title/name, artist, album, duration) to
-// keep large array responses under the tool-result token cap. Set true to get
-// the full per-item metadata (path, genres, year, bitrate, rating, etc.).
+// Compact output keeps large array responses under the tool-result token cap.
+// True returns the full per-item metadata (path, genres, year, bitrate, rating).
 export const VerboseSchema = z.boolean().optional().default(false);
 
 export const SEARCH_QUERY_MAX_LENGTH = 500;
@@ -102,7 +80,6 @@ const OptionalSearchQuerySchema = z.string()
   .optional()
   .default('');
 
-// Enhanced search schema with filtering and sorting options
 export const EnhancedSearchSchema = z.object({
   query: OptionalSearchQuerySchema,
 
@@ -114,7 +91,6 @@ export const EnhancedSearchSchema = z.object({
   recordLabel: z.string().optional(),
   mood: z.string().optional(),
   
-  // Advanced sorting options
   sort: z.enum([
     'name', 'title', 'artist', 'album', 'year', 'duration', 
     'playCount', 'rating', 'recently_added', 'starred_at', 'random'
@@ -122,30 +98,19 @@ export const EnhancedSearchSchema = z.object({
   order: OrderSchema,
   randomSeed: z.number().optional(),
   
-  // Single-year filter. Navidrome's REST API does NOT support year ranges.
-  // /api/album?year=N matches albums whose [minYear, maxYear] contains N
-  // (or whose maxYear == N when minYear is 0); /api/song?year=N matches the
-  // exact `year` column. /api/artist has no year column at all and ignores
-  // this param. Use refine so the upper bound re-evaluates at validate time
-  // rather than once at module load.
+  // Navidrome has no year ranges and /api/artist ignores year.
+  // The refine reads the clock at validate time, not at module load.
   year: z.number().int().min(1900).refine(y => y <= new Date().getFullYear() + 1, {
     message: 'year must not be more than one year in the future',
   }).optional(),
 
-  // Boolean filters
   starred: OptionalBooleanSchema,
 });
 
-// Rating validation
 export const RatingSchema = z.number().int().min(0).max(5);
 
-// String array schemas
-export const StringArraySchema = z.array(z.string());
-export const NonEmptyIdArraySchema = z
-  .array(z.string().min(1, 'ID is required').regex(ID_PATTERN, 'ID contains invalid characters'))
-  .min(1, 'At least one item is required');
+export const NonEmptyIdArraySchema = z.array(IdStringSchema).min(1, 'At least one item is required');
 
-// Individual search tool schemas (query optional for listing functionality)
 export const SearchSongsSchema = EnhancedSearchSchema.extend({
   limit: createLimitSchema(1, 500, 100),
   offset: OffsetSchema,
@@ -182,12 +147,11 @@ export const SearchArtistsSchema = EnhancedSearchSchema.extend({
   limit: createLimitSchema(1, 500, 100),
   offset: OffsetSchema,
   sort: z.enum([
-    'name', 'albumCount', 'songCount', 'playCount', 'rating', 'random'
+    'name', 'albumCount', 'songCount', 'playCount', 'rating'
   ]).optional().default('name'),
   verbose: VerboseSchema,
 });
 
-// Common validation schemas for different resource types
 export const PlaylistIdSchema = createIdSchema('Playlist', 'playlistId');
 export const RadioStationIdSchema = createIdSchema('Radio station', 'stationId');
 export const StationUuidSchema = createIdSchema('Station', 'stationUuid');

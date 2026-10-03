@@ -55,11 +55,11 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(typeof result.message).toBe('string');
 
       // Validate server info structure
-      const serverInfo = result.serverInfo;
+      const serverInfo = result.serverInfo!;
       expect(serverInfo).toHaveProperty('url');
       expect(serverInfo).toHaveProperty('authenticated');
       expect(serverInfo).toHaveProperty('timestamp');
-      expect(serverInfo).toHaveProperty('version');
+      expect(serverInfo).toHaveProperty('mcpServerVersion');
       expect(serverInfo).toHaveProperty('features');
       
       // URL should be a string
@@ -71,12 +71,12 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(serverInfo.authenticated).toBe(true);
 
       // Version should be a string with proper format
-      expect(typeof serverInfo.version).toBe('string');
-      expect(serverInfo.version.length).toBeGreaterThan(0);
-      expect(serverInfo.version).toMatch(/^\d+\.\d+\.\d+$/); // Should match semantic versioning pattern
+      expect(typeof serverInfo.mcpServerVersion).toBe('string');
+      expect(serverInfo.mcpServerVersion.length).toBeGreaterThan(0);
+      expect(serverInfo.mcpServerVersion).toMatch(/^\d+\.\d+\.\d+$/); // Should match semantic versioning pattern
 
       // Features should be an object with detailed information
-      const features = serverInfo.features;
+      const features = serverInfo.features!;
       expect(typeof features).toBe('object');
       expect(features).not.toBeNull();
       
@@ -112,7 +112,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(result.success).toBe(true);
       expect(result).toHaveProperty('serverInfo');
       
-      const features = result.serverInfo.features;
+      const features = result.serverInfo!.features!;
 
       // Verify feature detection matches the resolved config (settings.json is
       // the source of truth — no longer process.env).

@@ -21,7 +21,7 @@
  *
  * Use this for every numeric coercion of external-API data.
  *
- * @param value Anything; most commonly `string | number | null | undefined`.
+ * @param value Any value. Most commonly `string | number | null | undefined`.
  * @param fallback Returned when `value` cannot be coerced to a finite number.
  *                 Defaults to `0`.
  */

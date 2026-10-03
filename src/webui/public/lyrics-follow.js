@@ -3,7 +3,7 @@
 import { seekTo } from './controls.js';
 import { byId, setHidden } from './dom.js';
 import { drainSlew, jumpLyricsClock, lyricsShownMs } from './lyrics-clock.js';
-import { lyricOffsetMs } from './lyrics-prefs.js';
+import { lyricsOffsetMs } from './lyrics-prefs.js';
 import { applyOffset, findActiveLine, isInterlude } from './lyrics-sync.js';
 
 /** Time still left before the next line, once a blank LRC end marker has closed the active line, that reads as an instrumental break. */
@@ -56,6 +56,8 @@ export function isFollowing() {
 
 export function setFollowing(next) {
   following = next;
+  // Hiding the focused pill would drop focus to body, so focus moves to the scroll box first.
+  if (next && document.activeElement === pill) scrollBox.focus({ preventScroll: true });
   setHidden(pill, next);
 }
 
@@ -93,7 +95,7 @@ export function tickLyricsFollow(nowMs) {
 
   // PROCESS
   drainSlew(frameDeltaMs);
-  timeMs = applyOffset(lyricsShownMs(nowMs), lyricOffsetMs());
+  timeMs = applyOffset(lyricsShownMs(nowMs), lyricsOffsetMs());
   active = findActiveLine(timed, timeMs, cursor);
   cursor = active.cursor;
   interlude = isInterlude(timed, active.index, timeMs, INTERLUDE_MS);
@@ -105,21 +107,24 @@ export function tickLyricsFollow(nowMs) {
   paintActiveLine(previousIndex, active.index !== previousIndex + 1);
 }
 
-// Tap a line to seek there.
 export function seekToTappedLine(ev) {
   // INPUT
   const row = ev.target.closest('.lyric-line');
   const index = row === null ? -1 : Number(row.dataset.index);
   const line = timed[index];
+  let mediaMs = 0;
 
   // PROCESS
   if (line === undefined) return;
   // The scroll box's own click toggles immersive mode, which a seek must not.
   ev.stopPropagation();
-  seekTo(line.timeMs / 1000);
+  // A positive offset would highlight past the tapped line, so the seek starts earlier by that offset.
+  // A negative offset already matches the device latency it was calibrated for, so it is left alone.
+  mediaMs = Math.max(0, line.timeMs - Math.max(0, lyricsOffsetMs()));
+  void seekTo(mediaMs / 1000);
 
   // OUTPUT
-  jumpLyricsClock(line.timeMs);
+  jumpLyricsClock(mediaMs);
   resumeFollow();
 }
 
@@ -162,7 +167,7 @@ function centerRow(row, behavior) {
   scrollBox.scrollTo({ top: target, behavior });
 }
 
-// The only place follow mode writes to the DOM. Reached when the active line or the interlude changes.
+// The frame loop's only DOM write. Reached when the active line or the interlude changes.
 function paintActiveLine(previousIndex, instant) {
   // INPUT
   const previousRow = rows[previousIndex];

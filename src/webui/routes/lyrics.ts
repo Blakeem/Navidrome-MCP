@@ -46,9 +46,9 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** A DTO carrying no text at all is a miss worth retrying, not an answer worth holding. */
+/** A DTO with no text and no instrumental flag is a miss worth retrying, not an answer worth holding. */
 function isAnswered(dto: LyricsDTO): boolean {
-  return dto.hasSynced || dto.unsynced !== undefined;
+  return dto.hasSynced || dto.unsynced !== undefined || dto.isInstrumental;
 }
 
 /**
@@ -108,7 +108,7 @@ export async function handleLyrics(
 
   let dto: LyricsDTO;
   try {
-    dto = await resolveLyricsByMetadata(config, lookup.metadata, { client, songId, allowLrclib });
+    dto = await resolveLyricsByMetadata(config, lookup.metadata, { local: { client, songId }, allowLrclib });
   } catch (err) {
     logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorText(err)}`);
     writeError(res, 502, 'Lyrics lookup failed');

@@ -42,16 +42,105 @@ describe('listTagValues', () => {
       tagName: 'genre',
     });
 
+    expect(result.tagName).toBe('genre');
     expect(result.total).toBe(2);
     expect(Array.isArray(result.matches)).toBe(true);
     expect(result.matches).toHaveLength(2);
 
     const first = result.matches[0]!;
-    expect(typeof first.id).toBe('string');
-    expect(typeof first.tagName).toBe('string');
+    expect(Object.keys(first).sort()).toEqual(['albumCount', 'songCount', 'tagValue']);
     expect(typeof first.tagValue).toBe('string');
     expect(typeof first.albumCount).toBe('number');
     expect(typeof first.songCount).toBe('number');
+    expect(result.countsIncomplete).toBeUndefined();
+  });
+
+  it('backfills non-genre counts by the row id, which matches every casing of the value', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
+      if (endpoint.startsWith('/tag')) {
+        return Promise.resolve({
+          data: [{ id: 'mood-row-1', tagName: 'mood', tagValue: 'Happy' }],
+          total: 1,
+        });
+      }
+      return Promise.resolve({ data: [], total: 7 });
+    });
+
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'mood' });
+
+    const endpoints = mockClient.requestWithLibraryFilterAndMeta.mock.calls.map(([endpoint]) => endpoint);
+    expect(endpoints).toContain('/album?_start=0&_end=1&mood=mood-row-1');
+    expect(endpoints).toContain('/song?_start=0&_end=1&mood=mood-row-1');
+    expect(result.matches[0]).toEqual({ tagValue: 'Happy', albumCount: 7, songCount: 7 });
+  });
+
+  it('backfills album and song counts from their own X-Total-Count under the lowercased tag name', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
+      if (endpoint.startsWith('/tag?')) {
+        return Promise.resolve({ data: [{ id: 'rt-1', tagName: 'releasetype', tagValue: 'EP' }], total: 1 });
+      }
+      if (endpoint.startsWith('/album?')) return Promise.resolve({ data: [], total: 7 });
+      return Promise.resolve({ data: [], total: 42 });
+    });
+
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'releasetype' });
+
+    expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledWith('/album?_start=0&_end=1&releasetype=rt-1');
+    expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledWith('/song?_start=0&_end=1&releasetype=rt-1');
+    expect(result.matches[0]).toMatchObject({ albumCount: 7, songCount: 42 });
+  });
+
+  it('keeps both counts at 0 when only the song backfill fails', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
+      if (endpoint.startsWith('/tag?')) {
+        return Promise.resolve({ data: [{ id: 'rt-1', tagName: 'releasetype', tagValue: 'EP' }], total: 1 });
+      }
+      if (endpoint.startsWith('/song?')) return Promise.reject(new Error('503'));
+      return Promise.resolve({ data: [], total: 7 });
+    });
+
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'releasetype' });
+
+    expect(result.matches[0]).toMatchObject({ albumCount: 0, songCount: 0 });
+  });
+
+  it('flags countsIncomplete when a backfill request fails', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
+      if (endpoint.startsWith('/tag')) {
+        return Promise.resolve({
+          data: [{ id: 'mood-row-1', tagName: 'mood', tagValue: 'Happy' }],
+          total: 1,
+        });
+      }
+      return Promise.reject(new Error('timeout'));
+    });
+
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'mood' });
+
+    expect(result.countsIncomplete).toBe(true);
+    expect(result.matches[0]?.songCount).toBe(0);
+  });
+
+  it('drops a null /tag row instead of failing the whole call', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
+      data: [null, makeTag()],
+      total: 2,
+    });
+
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'genre' });
+
+    expect(result.matches.map(tag => tag.tagValue)).toEqual(['Rock']);
+  });
+
+  it('sorts a tagName given in any casing as genre', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'Genre' });
+
+    const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
+    expect(endpoint).toContain('_sort=songCount');
+    expect(endpoint).toContain('tag_name=genre');
+    expect(result.tagName).toBe('genre');
   });
 
   it('pages genre by songCount DESC on the server and keeps the server order', async () => {
@@ -68,7 +157,7 @@ describe('listTagValues', () => {
     const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
     expect(endpoint).toContain('_sort=songCount');
     expect(endpoint).toContain('_order=DESC');
-    expect(result.matches.map(tag => tag.id)).toEqual(['high', 'mid']);
+    expect(result.matches.map(tag => tag.tagValue)).toEqual(['Rock', 'Jazz']);
   });
 
   it('pages non-genre tag names alphabetically, since only genre rows carry counts', async () => {
@@ -126,7 +215,7 @@ describe('getTagDistribution', () => {
     mockClient = createMockClient();
   });
 
-  it('returns distributions array + totalTagNames', async () => {
+  it('returns the distributions array', async () => {
     // The /tag fetch now goes through ...AndMeta; X-Total-Count (total) feeds
     // uniqueValues. genre carries API counts, so no backfill calls are made.
     mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
@@ -146,21 +235,20 @@ describe('getTagDistribution', () => {
     // regression that returned empty would silently pass under the old
     // `if (length > 0)` guard.
     expect(result.distributions).toHaveLength(1);
-    expect(result.totalTagNames).toBe(1);
 
     const dist = result.distributions[0]!;
     expect(dist.tagName).toBe('genre');
     expect(dist.uniqueValues).toBe(2);
     expect(dist.totalSongs).toBe(300);
     expect(dist.totalAlbums).toBe(30);
-    expect(dist.mostCommon.tagValue).toBe('Rock');
+    expect(dist.distribution[0]?.tagValue).toBe('Rock');
+    expect(dist).not.toHaveProperty('mostCommon');
     expect(Array.isArray(dist.distribution)).toBe(true);
     expect(dist.distribution.length).toBe(2);
   });
 
   it('skips tag names that return empty arrays', async () => {
-    // Route by endpoint: genre /tag empty, mood /tag returns one value, and
-    // mood (non-genre) backfill /album + /song calls resolve to total 0.
+    // Route by endpoint: genre /tag empty, mood /tag returns one value that carries counts.
     mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
       if (endpoint.includes('tag_name=genre')) return Promise.resolve({ data: [], total: 0 });
       if (endpoint.includes('tag_name=mood')) {
@@ -169,16 +257,14 @@ describe('getTagDistribution', () => {
           total: 1,
         });
       }
-      return Promise.resolve({ data: [], total: 0 }); // backfill /album, /song
+      return Promise.resolve({ data: [], total: 0 });
     });
 
     const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
       tagNames: ['genre', 'mood'],
     });
 
-    // 'genre' is skipped, 'mood' is included
-    const genreDist = result.distributions.find(d => d.tagName === 'genre');
-    expect(genreDist).toBeUndefined();
+    expect(result.distributions.map((d) => d.tagName)).toEqual(['mood']);
   });
 
   it('throws a tool error when a /tag request fails instead of reporting an empty library', async () => {
@@ -227,10 +313,8 @@ describe('getTagDistribution', () => {
     expect(endpoint).toContain('_order=DESC');
   });
 
-  it('flags non-genre distributions as sampled and leaves genre unflagged', async () => {
-    // genre → true top-N (server sorts by count) ⇒ unflagged.
-    // mood → alphabetical sample ⇒ sampled: true. mood rows here carry counts,
-    // so no backfill sub-requests are triggered.
+  it('leaves genre and a complete non-genre distribution unflagged', async () => {
+    // mood rows here carry counts, so no backfill sub-requests are triggered.
     mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
       if (endpoint.includes('tag_name=genre')) {
         return Promise.resolve({
@@ -254,6 +338,70 @@ describe('getTagDistribution', () => {
     const genreDist = result.distributions.find(d => d.tagName === 'genre');
     const moodDist = result.distributions.find(d => d.tagName === 'mood');
     expect(genreDist?.sampled).toBeUndefined();
-    expect(moodDist?.sampled).toBe(true);
+    expect(moodDist?.sampled).toBeUndefined();
+  });
+
+  it('flags a non-genre distribution as sampled when the tag name has more values than the page', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
+      data: [makeTag({ tagName: 'mood', tagValue: 'Happy', songCount: 50, albumCount: 5 })],
+      total: 40,
+    });
+
+    const result = await getTagDistribution(mockClient as unknown as NavidromeClient, { tagNames: ['mood'] });
+
+    expect(result.distributions[0]?.sampled).toBe(true);
+  });
+
+  it('flags countsIncomplete on the distribution whose backfill failed', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
+      if (endpoint.includes('tag_name=genre')) {
+        return Promise.resolve({ data: [makeTag()], total: 1 });
+      }
+      if (endpoint.includes('tag_name=mood')) {
+        return Promise.resolve({ data: [{ id: 'mood-row-1', tagName: 'mood', tagValue: 'Happy' }], total: 1 });
+      }
+      return Promise.reject(new Error('timeout'));
+    });
+
+    const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
+      tagNames: ['genre', 'mood'],
+    });
+
+    expect(result.distributions.find(d => d.tagName === 'genre')?.countsIncomplete).toBeUndefined();
+    expect(result.distributions.find(d => d.tagName === 'mood')?.countsIncomplete).toBe(true);
+  });
+
+  it('bounds backfill requests across every tag name of one call', async () => {
+    let inFlight = 0;
+    let peakInFlight = 0;
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation(async (endpoint) => {
+      if (endpoint.startsWith('/tag')) {
+        const tagName = new URLSearchParams(endpoint.split('?')[1]).get('tag_name') ?? '';
+        const rows = Array.from({ length: 10 }, (_, i) => ({ id: `${tagName}-${i}`, tagName, tagValue: `V${i}` }));
+        return { data: rows, total: 10 };
+      }
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return { data: [], total: 1 };
+    });
+
+    await getTagDistribution(mockClient as unknown as NavidromeClient, {
+      tagNames: ['mood', 'media', 'releasetype'],
+    });
+
+    // Eight entries per chunk, two requests per entry.
+    expect(peakInFlight).toBeLessThanOrEqual(16);
+  });
+
+  it('lowercases requested tag names', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+
+    await getTagDistribution(mockClient as unknown as NavidromeClient, { tagNames: ['Genre'] });
+
+    const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
+    expect(endpoint).toContain('tag_name=genre');
+    expect(endpoint).toContain('_sort=songCount');
   });
 });

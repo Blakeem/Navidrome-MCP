@@ -16,14 +16,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Export all core library DTOs
 export type {
   SongDTO,
   AlbumDTO,
   ArtistDTO
 } from './core.js';
 
-// Export all playlist DTOs
 export type {
   PlaylistDTO,
   PlaylistTrackDTO,
@@ -36,7 +34,6 @@ export type {
   ReorderPlaylistTrackResponse
 } from './playlists.js';
 
-// Export all radio DTOs
 export type {
   RadioStationDTO,
   CreateRadioStationResponse,
@@ -50,14 +47,12 @@ export type {
   StreamValidationResult
 } from './radio.js';
 
-// Export all tag DTOs
 export type {
   TagDTO,
   TagDistribution,
   TagDistributionResponse
 } from './tags.js';
 
-// Export all lyrics DTOs
 export type {
   LyricsLine,
   LyricsDTO,
@@ -65,7 +60,6 @@ export type {
   LyricsSearchDTO
 } from './lyrics.js';
 
-// Export all library DTOs
 export type {
   LibraryDTO,
   UserDetailsDTO,

@@ -16,14 +16,4 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-export {
-  listPlaylists,
-  getPlaylist,
-  createPlaylist,
-  updatePlaylist,
-  deletePlaylist,
-  addTracksToPlaylist,
-  removeTracksFromPlaylist,
-  reorderPlaylistTrack,
-  getPlaylistTracks,
-} from './playlist-management/index.js';
+export * from './playlist-management/index.js';

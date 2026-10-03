@@ -7,8 +7,16 @@
  * matching on name+streamUrl), instead of the placeholder string 'created'.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
-import { createRadioStation, resetRadioStationCacheForTesting } from '../../../src/tools/radio.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Stream validation probes the network, so the batch tests drive its verdict directly.
+vi.mock('../../../src/tools/radio-validation.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/tools/radio-validation.js')>()),
+  validateRadioStream: vi.fn(),
+}));
+
+import { createRadioStation } from '../../../src/tools/radio.js';
+import { validateRadioStream } from '../../../src/tools/radio-validation.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
@@ -17,13 +25,13 @@ import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
  * are sufficient for createRadioStation's post-create id-resolution path —
  * it matches on (name, streamUrl) and reads id/createdAt/updatedAt.
  */
-function makeRestList(stations: Array<{ id: string; name: string; streamUrl: string }>) {
+function makeRestList(stations: Array<{ id: string; name: string; streamUrl: string; createdAt?: string }>) {
   return stations.map(s => ({
     id: s.id,
     name: s.name,
     streamUrl: s.streamUrl,
     homePageUrl: '',
-    createdAt: '2025-09-03T22:07:50Z',
+    createdAt: s.createdAt ?? '2025-09-03T22:07:50Z',
     updatedAt: '2025-09-03T22:07:50Z',
   }));
 }
@@ -32,7 +40,6 @@ describe('createRadioStation real-id resolution', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
-    resetRadioStationCacheForTesting();
     mockClient = createMockClient();
   });
 
@@ -54,6 +61,8 @@ describe('createRadioStation real-id resolution', () => {
     expect(created.station?.id).toBe('real-uuid-001');
     expect(created.station?.id).not.toBe('created');
     expect(created.station?.id).not.toBe('');
+    expect(created.station?.createdAt).toBe('2025-09-03T22:07:50Z');
+    expect(created.station?.updatedAt).toBe('2025-09-03T22:07:50Z');
     // A resent create would insert a duplicate station.
     expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
       '/createInternetRadioStation',
@@ -105,6 +114,9 @@ describe('createRadioStation real-id resolution', () => {
     expect(result.results[0]?.success).toBe(true);
     expect(result.results[0]?.station?.id).toBe('');
     expect(result.results[0]?.note).toMatch(/list_radio_stations/);
+    // Timestamps come only from Navidrome, so an unresolved row reports them as unknown.
+    expect(result.results[0]?.station?.createdAt).toBeNull();
+    expect(result.results[0]?.station?.updatedAt).toBeNull();
   });
 
   it('annotates with a note when create succeeded but station vanished from the listing', async () => {
@@ -121,16 +133,16 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('assigns DISTINCT ids to two same-batch stations with identical (name, streamUrl)', async () => {
-    // User creates two "WBEZ" stations pointing at the same stream — Navidrome
+    // User creates two "WBEZ" stations pointing at the same stream. Navidrome
     // accepts both as separate rows. Without per-batch tracking, both lookups
-    // would land on the same lex-max id and one create would be unreachable.
+    // would land on the same newest row and one create would be unreachable.
     mockClient.subsonicRequest
       .mockResolvedValueOnce({ status: 'ok' })  // create #1
       .mockResolvedValueOnce({ status: 'ok' }); // create #2
     mockClient.request.mockResolvedValueOnce(
       makeRestList([
-        { id: 'aaa', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
-        { id: 'zzz', name: 'WBEZ', streamUrl: 'http://wbez.test/' },
+        { id: 'aaa', name: 'WBEZ', streamUrl: 'http://wbez.test/', createdAt: '2025-09-03T22:07:50Z' },
+        { id: 'zzz', name: 'WBEZ', streamUrl: 'http://wbez.test/', createdAt: '2025-09-03T22:07:51Z' },
       ])
     );
 
@@ -142,27 +154,41 @@ describe('createRadioStation real-id resolution', () => {
     });
 
     const ids = result.results.map(r => r.station?.id);
-    // First lookup gets lex-max ('zzz'), second gets the next unused ('aaa').
+    // First lookup gets the newest ('zzz'), second gets the next unused ('aaa').
     expect(ids).toEqual(['zzz', 'aaa']);
     // Both must be distinct, non-empty.
     expect(new Set(ids).size).toBe(2);
     expect(ids.every(id => id !== '' && id !== undefined)).toBe(true);
   });
 
-  it('on duplicate name+streamUrl, picks the lexicographically max id (newest)', async () => {
+  it('on duplicate name+streamUrl, picks the newest createdAt even when an older id sorts higher', async () => {
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
     mockClient.request.mockResolvedValueOnce(
       makeRestList([
-        { id: 'aaa', name: 'Dup', streamUrl: 'http://dup.test/' },
-        { id: 'zzz', name: 'Dup', streamUrl: 'http://dup.test/' },
-        { id: 'mmm', name: 'Dup', streamUrl: 'http://dup.test/' },
+        { id: 'zzzOlder', name: 'Dup', streamUrl: 'http://dup.test/', createdAt: '2025-01-01T00:00:00.000000001-07:00' },
+        { id: 'aaaNewest', name: 'Dup', streamUrl: 'http://dup.test/', createdAt: '2026-07-08T16:25:48.905110966-07:00' },
+        { id: 'mmmMiddle', name: 'Dup', streamUrl: 'http://dup.test/', createdAt: '2025-06-01T00:00:00Z' },
       ])
     );
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Dup', streamUrl: 'http://dup.test/' }],
     });
-    expect(result.results[0]?.station?.id).toBe('zzz');
+    expect(result.results[0]?.station?.id).toBe('aaaNewest');
+  });
+
+  it('skips the create and counts a validation failure when validateBeforeAdd rejects the stream', async () => {
+    vi.mocked(validateRadioStream).mockResolvedValueOnce({ success: false, errors: ['HTTP 404'] } as never);
+
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
+      stations: [{ name: 'Dead', streamUrl: 'http://stream.test/dead' }],
+      validateBeforeAdd: true,
+    });
+
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[0]?.error).toMatch(/Stream validation failed/);
+    expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
+    expect(result.summary).toContain('(1 due to validation)');
   });
 
   it('skips lookup entirely when no creates succeeded', async () => {
@@ -231,7 +257,6 @@ describe('createRadioStation URL validation', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
-    resetRadioStationCacheForTesting();
     mockClient = createMockClient();
   });
 
@@ -244,6 +269,18 @@ describe('createRadioStation URL validation', () => {
 
     expect(result.results[0]?.success).toBe(false);
     expect(result.results[0]?.error).toMatch(/line breaks or control characters/i);
+    expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
+  });
+
+  it('points an rtsp:// stream to the Navidrome web UI', async () => {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
+      stations: [{ name: 'Camera', streamUrl: 'rtsp://cam.test/live' }],
+    });
+
+    expect(result.results[0]?.success).toBe(false);
+    expect(result.results[0]?.error).toBe(
+      'Stream URL for station "Camera" must use http:// or https://. Add mms://, rtsp:// or rtmp:// stations in the Navidrome web UI instead.',
+    );
     expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
   });
 
@@ -290,6 +327,11 @@ describe('createRadioStation URL validation', () => {
     });
 
     expect(result.results[0]?.success).toBe(true);
+    expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
+      '/createInternetRadioStation',
+      { streamUrl: 'http://stream.test/audio', name: 'Good', homepageUrl: 'https://site.test/about' },
+      { retryPolicy: 'never' },
+    );
   });
 
   // The per-station checks live in the loop precisely so one bad entry does not

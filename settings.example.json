@@ -41,7 +41,6 @@
   },
   "advanced": {
     "debug": false,
-    "cacheTtl": 300,
     "tokenExpiry": 86400
   }
 }

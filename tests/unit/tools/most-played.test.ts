@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { listMostPlayed } from '../../../src/tools/listening-history.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import type { AlbumDTO, ArtistDTO, SongDTO } from '../../../src/types/index.js';
 
 // Minimal raw song row as Navidrome returns it
 function makeSong(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -86,7 +87,7 @@ describe('listMostPlayed — songs', () => {
     expect(Array.isArray(result.items)).toBe(true);
     expect(result.items).toHaveLength(2);
 
-    const first = result.items[0]!;
+    const first = result.items[0] as SongDTO;
     expect(typeof first.id).toBe('string');
     expect(typeof first.title).toBe('string');
     expect(typeof first.artist).toBe('string');
@@ -202,7 +203,7 @@ describe('listMostPlayed — albums', () => {
     const result = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'albums', limit: 5 });
 
     expect(result.count).toBe(1);
-    const item = result.items[0]!;
+    const item = result.items[0] as AlbumDTO;
     expect(typeof item.id).toBe('string');
     expect(typeof item.name).toBe('string');
     expect(typeof item.artist).toBe('string');
@@ -237,7 +238,7 @@ describe('listMostPlayed — artists', () => {
     const result = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'artists', limit: 5 });
 
     expect(result.count).toBe(1);
-    const item = result.items[0]!;
+    const item = result.items[0] as ArtistDTO;
     expect(typeof item.id).toBe('string');
     expect(typeof item.name).toBe('string');
     expect(typeof item.playCount).toBe('number');

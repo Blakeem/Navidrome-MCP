@@ -10,6 +10,7 @@ import { bindSearchPane, resetSearchPane } from './search-pane.js';
 
 const dialog = byId('play-dialog');
 const openButton = byId('open-play-dialog');
+const tabList = byId('play-tabs');
 const TABS = {
   search: { tab: byId('play-tab-search'), pane: byId('play-pane-search') },
   playlists: { tab: byId('play-tab-playlists'), pane: byId('play-pane-playlists') },
@@ -18,6 +19,7 @@ const TABS = {
 
 export function bindPlayDialog() {
   for (const [name, { tab }] of Object.entries(TABS)) tab.addEventListener('click', () => switchTab(name));
+  tabList.addEventListener('keydown', onTabKeydown);
   window.addEventListener('resize', () => {
     if (dialog.open) placeBelowTopbar(dialog);
   });
@@ -41,8 +43,24 @@ function switchTab(name) {
     const active = key === name;
     tab.classList.toggle('is-active', active);
     tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
     pane.hidden = !active;
   }
+}
+
+// The tab roles promise arrow-key movement to screen reader users, so the arrows, Home and End switch tabs.
+function onTabKeydown(ev) {
+  const names = Object.keys(TABS);
+  const index = names.indexOf(ev.target.dataset.tab);
+  let next = null;
+  if (ev.key === 'ArrowRight') next = names[(index + 1) % names.length];
+  else if (ev.key === 'ArrowLeft') next = names[(index - 1 + names.length) % names.length];
+  else if (ev.key === 'Home') next = names[0];
+  else if (ev.key === 'End') next = names[names.length - 1];
+  if (next === null || index === -1) return;
+  ev.preventDefault();
+  switchTab(next);
+  TABS[next].tab.focus();
 }
 
 // The dialog's data-mode picks which icon CSS shows in every pane, and each button's label names the action.

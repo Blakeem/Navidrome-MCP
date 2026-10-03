@@ -22,7 +22,6 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-// Import tool functions
 import {
   listTagValues,
   getTagDistribution,
@@ -30,11 +29,13 @@ import {
 } from '../tags.js';
 import { FilterOptionsSchema } from '../../schemas/index.js';
 
-// Tool definitions for tags category
 const tools: Tool[] = [
   {
     name: 'list_tag_values',
-    description: 'List the values of one tag name (every genre, release type, media format and so on) with their album and song counts. Returns tag values, not music. To find songs or albums by tag value, use search_songs or search_albums. Defaults to genre if no tagName is specified.',
+    description: 'List the values of one tag name (every genre, release type, media format and so on) with their album and song counts. Returns tag values, not music. The result names tagName once, and each row holds tagValue, albumCount and songCount. ' +
+      'Genre values come sorted by song count, highest first. Other tag names come in alphabetical order, so the largest values of a non-genre tag need every page. ' +
+      'search_songs and search_albums filter by six tag names: genre (genre), media (mediaType), releasecountry (country), releasetype (releaseType), recordlabel (recordLabel) and mood (mood). Other tag names have no search filter. ' +
+      'countsIncomplete: true means some counts failed to load and read as 0. Defaults to genre if no tagName is specified.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -48,7 +49,7 @@ const tools: Tool[] = [
           description: 'Optional tag value filter. Matches as a case-insensitive prefix (starts-with), not an exact or substring match. "Alternative" matches "Alternative Rock" and "Alternative Metal". "Rock" matches "Rock" and "Rock & Roll" but not "Alternative Rock". Pass the fullest leading value you can to narrow results.',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of matching tags to return',
           minimum: 1,
           maximum: 100,
@@ -65,7 +66,9 @@ const tools: Tool[] = [
   },
   {
     name: 'get_tag_distribution',
-    description: 'Analyze tag usage counts per tag name. Supports "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood". For genre, distribution is the top distributionLimit values by song count. Other tag names have no server-side counts, so distribution is the first distributionLimit values in alphabetical order, the result carries sampled: true, and mostCommon, totalSongs and totalAlbums cover only that slice. uniqueValues is the library-wide count of distinct values.',
+    description: 'Analyze tag usage counts per tag name. Supports "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood". Each distribution row holds tagValue, albumCount and songCount, sorted by song count. ' +
+      'For genre, distribution is the top distributionLimit values by song count. Other tag names have no server-side counts. When one has more values than distributionLimit, distribution is the first distributionLimit values in alphabetical order, the result carries sampled: true, and totalSongs and totalAlbums cover only that slice. ' +
+      'uniqueValues is the library-wide count of distinct values. countsIncomplete: true means some counts failed to load and read as 0.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -75,14 +78,14 @@ const tools: Tool[] = [
           description: 'Specific tag names to analyze. If omitted, analyzes common types: "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood"',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of tag names to analyze',
           minimum: 1,
           maximum: 50,
           default: 10,
         },
         distributionLimit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of tag values to show in distribution (prevents huge output)',
           minimum: 1,
           maximum: 100,
@@ -103,7 +106,7 @@ const tools: Tool[] = [
           description: 'Type of metadata filter to discover options for. Valid values: "genres" (Rock, Jazz, etc.), "mediaTypes" (CD, Vinyl, etc.), "countries" (ISO 3166-1 alpha-2 codes — "US", "GB", "DE", etc.), "releaseTypes" (lowercase MusicBrainz values — "album", "ep", "single", etc.), "recordLabels" (Sony Music, etc.), "moods" (Energetic, etc.)'
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of options to return',
           minimum: 1,
           maximum: 200,
@@ -121,8 +124,7 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating tags tool category with dependencies  
-export function createTagsToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
+export function createTagToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {

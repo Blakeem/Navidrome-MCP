@@ -8,15 +8,18 @@
  * spawns navidrome-web over an IPC channel, then kill it to simulate MCP exit.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 
-import { detectMpvBinary } from '../../../src/services/playback/mpv-process.js';
+import { isMpvAvailable } from '../../helpers/env-detection.js';
 import {
   describeCoordination,
   healthz,
   killAllChildren,
   makeTempStore,
   mpvAlive,
+  PLAYER_STARTUP_TIMEOUT_MS,
   randomPort,
   spawnIpcParent,
   spawnWeb,
@@ -24,7 +27,8 @@ import {
   waitForExit,
 } from './helpers.js';
 
-const NO_MPV = detectMpvBinary() === null;
+const NO_MPV = !isMpvAvailable();
+const STOPPED_AFTER_MCP_EXIT = /spawning MCP exited during startup\. Standing down\.|navidrome-web shutting down \(mcp-exit\)/;
 
 describeCoordination('player lifecycle (IPC parent link)', () => {
   afterEach(killAllChildren);
@@ -37,6 +41,22 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
 
     parent.kill('SIGTERM'); // simulate the MCP server exiting → child `disconnect`
     expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 20000 })).toBe(true);
+  });
+
+  // The log line proves the child started and then stopped, which a free port alone cannot. A parent gone
+  // before the bind makes the child stand down, and one gone after the bind makes it shut down.
+  it('persist OFF: a player whose MCP exited during its startup does not keep running', async () => {
+    const port = randomPort();
+    const storePath = makeTempStore(port, { persistAfterMcpExit: false });
+    const logPath = join(dirname(storePath), 'navidrome-web.log');
+    spawnIpcParent(storePath, { exitAfterSpawn: true });
+
+    const stopped = await waitFor(
+      () => Promise.resolve(existsSync(logPath) && STOPPED_AFTER_MCP_EXIT.test(readFileSync(logPath, 'utf8'))),
+      { timeoutMs: PLAYER_STARTUP_TIMEOUT_MS },
+    );
+    expect(stopped).toBe(true);
+    expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 5000 })).toBe(true);
   });
 
   it('persist ON: the spawned player survives its MCP exiting', async () => {

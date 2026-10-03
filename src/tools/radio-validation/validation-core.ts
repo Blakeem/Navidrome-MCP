@@ -19,6 +19,7 @@
 import type { z } from 'zod';
 import { ValidateStreamSchema } from '../../schemas/index.js';
 import type { StreamValidationResult } from '../../types/index.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 import {
   isAudioContentType,
   extractStreamingHeaders,
@@ -48,52 +49,26 @@ export interface StreamProbe {
   resolvedFinalUrl: string | null;
   /** HEAD was inconclusive, so sampling ran or ran out of budget. */
   sampled: boolean;
-  /** Sampling failed with no HEAD response, so the endpoint never answered. */
+  /** No HEAD response and no sample status, so the endpoint never answered. */
   transportFailed: boolean;
 }
 
-/**
- * Validate a radio stream URL
- */
 export async function validateRadioStream(args: unknown): Promise<StreamValidationResult> {
   const startTime = Date.now();
-
-  const parsed = ValidateStreamSchema.safeParse(args);
-  if (!parsed.success) {
-    return invalidParametersResult(args, parsed.error, Date.now() - startTime);
+  let params: ValidateStreamParams;
+  try {
+    params = ValidateStreamSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('validate_radio_stream', error));
   }
 
-  const probe = await probeStream(parsed.data, startTime);
+  const probe = await probeStream(params, startTime);
   const audioFormat = probe.buffer !== null && probe.buffer.length > 0 ? await detectAudioFormat(probe.buffer) : null;
-  const result = classifyStream(parsed.data.url, probe, audioFormat);
+  const result = classifyStream(params.url, probe, audioFormat);
 
   result.recommendations = generateRecommendations(result);
-  result.testDuration = Date.now() - startTime;
+  result.testDurationMs = Date.now() - startTime;
   return result;
-}
-
-function invalidParametersResult(args: unknown, error: z.ZodError, testDuration: number): StreamValidationResult {
-  // String(args) would read "[object Object]", and the LLM needs to see the URL it sent.
-  const rawUrl = (typeof args === 'object' && args !== null && 'url' in args && typeof (args as Record<string, unknown>)['url'] === 'string')
-    ? (args as Record<string, unknown>)['url'] as string
-    : '(invalid input)';
-  const urlIsInvalid = error.issues.some((issue) => issue.path[0] === 'url');
-  return {
-    success: false,
-    url: rawUrl,
-    status: 'error',
-    streamingHeaders: {},
-    validation: {
-      httpAccessible: false,
-      hasAudioContentType: false,
-      hasStreamingHeaders: false,
-      audioDataDetected: false,
-    },
-    errors: [`Invalid parameters: ${error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join(', ')}`],
-    warnings: [],
-    recommendations: [urlIsInvalid ? 'Please provide a valid http:// or https:// URL' : 'Correct the named parameter and retry'],
-    testDuration,
-  };
 }
 
 /**
@@ -139,21 +114,22 @@ async function probeStream(params: ValidateStreamParams, startTime: number): Pro
         // Reusing the URL HEAD resolved skips a second walk of the redirect chain and its private-IP checks.
         const sampleResult = await sampleAudioData(probe.resolvedFinalUrl ?? params.url, remainingTime, params.followRedirects, overallController.signal);
         probe.buffer = sampleResult.buffer;
-        probe.headers = sampleResult.headers ?? probe.headResponse?.headers ?? null;
+        probe.headers = sampleResult.headers;
         probe.sampledStatus = sampleResult.httpStatus ?? null;
         probe.sampleError = sampleResult.error;
         if (probe.resolvedFinalUrl === null && sampleResult.finalUrl !== params.url) {
           probe.resolvedFinalUrl = sampleResult.finalUrl;
         }
       } else {
-        probe.sampleError = 'Insufficient time remaining for audio sampling';
+        probe.sampleError = `Timeout too short to sample audio: ${remainingTime}ms left after HEAD, sampling needs more than ${MIN_SAMPLE_BUDGET_MS}ms. Retry with a larger timeout.`;
       }
     }
   } finally {
     clearTimeout(overallTimeoutId);
   }
 
-  probe.transportFailed = probe.headResponse === null && probe.sampleError !== null && probe.sampleError !== '';
+  probe.transportFailed =
+    probe.headResponse === null && probe.sampledStatus === null && probe.sampleError !== null && probe.sampleError !== '';
   return probe;
 }
 
@@ -183,7 +159,7 @@ export function classifyStream(url: string, probe: StreamProbe, audioFormat: Aud
     errors,
     warnings,
     recommendations: [],
-    testDuration: 0,
+    testDurationMs: 0,
   };
 
   if (probe.headError !== null && probe.headError !== '') {
@@ -218,11 +194,6 @@ export function classifyStream(url: string, probe: StreamProbe, audioFormat: Aud
     if (contentType !== null && contentType !== '') {
       result.contentType = contentType;
       result.validation.hasAudioContentType = isAudioContentType(contentType);
-
-      // Icecast mounts that reject HEAD answer text/html yet echo the full ICY header set, which still proves a stream.
-      if (!result.validation.hasAudioContentType && !result.validation.hasStreamingHeaders) {
-        errors.push(`Non-audio content type: ${contentType}`);
-      }
     }
   }
 
@@ -245,13 +216,21 @@ export function classifyStream(url: string, probe: StreamProbe, audioFormat: Aud
       (result.validation.hasAudioContentType || result.validation.audioDataDetected));
 
   if (!result.success && errors.length === 0) {
-    errors.push(
-      result.httpStatus !== undefined && !result.validation.httpAccessible
-        ? `HTTP ${result.httpStatus}`
-        : 'No audio content type, streaming headers, or audio data detected',
-    );
+    errors.push(describeInvalidStream(result));
   }
 
   result.status = result.success ? 'valid' : (probe.transportFailed ? 'error' : 'invalid');
   return result;
+}
+
+// Runs after the verdict, so a stream proven by audio data never carries a content-type error.
+function describeInvalidStream(result: StreamValidationResult): string {
+  const { httpStatus, contentType, validation } = result;
+  if (httpStatus !== undefined && !validation.httpAccessible) {
+    return `HTTP ${httpStatus}`;
+  }
+  if (contentType !== undefined && !validation.hasAudioContentType && !validation.hasStreamingHeaders) {
+    return `Non-audio content type: ${contentType}`;
+  }
+  return 'No audio content type, streaming headers, or audio data detected';
 }

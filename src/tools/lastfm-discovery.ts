@@ -33,10 +33,11 @@ import {
   TrendingMusicSchema,
 } from '../schemas/index.js';
 
+// Discovery rows carry the Last.fm url only under verbose, since no tool consumes it.
 interface LastFmArtist {
   name: string;
   match: number;
-  url: string;
+  url?: string;
   mbid: string | null;
 }
 
@@ -50,7 +51,7 @@ interface LastFmTrack {
   name: string;
   artist: string;
   match: number;
-  url: string;
+  url?: string;
   mbid: string | null;
 }
 
@@ -80,7 +81,7 @@ interface TopTrackResult {
   name: string;
   playcount: number;
   listeners: number;
-  url: string;
+  url?: string;
   mbid: string | null;
 }
 
@@ -94,7 +95,7 @@ interface TrendingArtistItem {
   name: string;
   playcount: number;
   listeners: number;
-  url: string;
+  url?: string;
   mbid: string | null;
 }
 
@@ -104,7 +105,7 @@ interface TrendingTrackItem {
   artist: string;
   playcount: number;
   listeners: number;
-  url: string;
+  url?: string;
   mbid: string | null;
 }
 
@@ -113,19 +114,55 @@ interface TrendingTagItem {
   name: string;
   count: number;
   reach: number;
-  url: string;
+  url?: string;
 }
 
 interface TrendingMusicResult {
   count: number;
   items: TrendingArtistItem[] | TrendingTrackItem[] | TrendingTagItem[];
+  hasMore: boolean;
+}
+
+// Last.fm rejects a chart limit above this.
+const LASTFM_CHART_MAX_LIMIT = 1000;
+
+function verboseUrl(row: Record<string, unknown>, verbose: boolean): { url?: string } {
+  if (!verbose) {
+    return {};
+  }
+  return { url: typeof row['url'] === 'string' ? row['url'] : '' };
+}
+
+function readArtistInfo(data: Record<string, unknown>): Record<string, unknown> {
+  const artistInfoRaw = data['artist'];
+  if (typeof artistInfoRaw !== 'object' || artistInfoRaw === null) {
+    throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing artist'));
+  }
+  return artistInfoRaw as Record<string, unknown>;
+}
+
+function readBiography(artistInfo: Record<string, unknown>): string | null {
+  const bio = artistInfo['bio'] as Record<string, unknown> | undefined;
+  const bioSummary = bio?.['summary'];
+  return typeof bioSummary === 'string' ? stripWikiHtml(bioSummary) : null;
+}
+
+// Last.fm answers a language with no wiki by an anchor-only summary. A failed fallback keeps the primary result.
+async function fetchEnglishBiography(artist: string, apiKey: string): Promise<string | null> {
+  try {
+    const data = await callLastFmApi('artist.getInfo', { artist, lang: 'en', autocorrect: '1' }, apiKey);
+    return readBiography(readArtistInfo(data));
+  } catch (error) {
+    logger.warn(`English biography fallback for "${artist}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
 }
 
 export async function getSimilarArtists(config: Config, args: unknown): Promise<SimilarArtistsResult> {
   try {
-    const { artist, limit } = SimilarArtistsSchema.parse(args);
+    const { artist, limit, verbose } = SimilarArtistsSchema.parse(args);
 
-    logger.debug('Tool getSimilarArtists called with args:', { artist, limit });
+    logger.debug('Tool getSimilarArtists called with args:', { artist, limit, verbose });
 
     const apiKey = requireLastFmApiKey(config);
 
@@ -151,7 +188,7 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
         return {
           name: typeof artist['name'] === 'string' ? artist['name'] : '',
           match: safeNumber(artist['match']),
-          url: typeof artist['url'] === 'string' ? artist['url'] : '',
+          ...verboseUrl(artist, verbose),
           mbid: typeof artist['mbid'] === 'string' ? artist['mbid'] : null,
         };
       }),
@@ -163,9 +200,9 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
 
 export async function getSimilarTracks(config: Config, args: unknown): Promise<SimilarTracksResult> {
   try {
-    const { artist, track, limit } = SimilarTracksSchema.parse(args);
+    const { artist, track, limit, verbose } = SimilarTracksSchema.parse(args);
 
-    logger.debug('Tool getSimilarTracks called with args:', { artist, track, limit });
+    logger.debug('Tool getSimilarTracks called with args:', { artist, track, limit, verbose });
 
     const apiKey = requireLastFmApiKey(config);
 
@@ -190,12 +227,12 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
       similarTracks: similarTracks.map((t: unknown) => {
         const track = t as Record<string, unknown>;
         const trackArtist = track['artist'] as Record<string, unknown> | undefined;
-        const artistName = trackArtist?.['name'] ?? trackArtist?.['#text'];
+        const artistName = trackArtist?.['name'];
         return {
           name: typeof track['name'] === 'string' ? track['name'] : '',
           artist: typeof artistName === 'string' ? artistName : 'Unknown',
           match: safeNumber(track['match']),
-          url: typeof track['url'] === 'string' ? track['url'] : '',
+          ...verboseUrl(track, verbose),
           mbid: typeof track['mbid'] === 'string' ? track['mbid'] : null,
         };
       }),
@@ -221,16 +258,14 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
       autocorrect: '1',
     }, apiKey);
 
-    const artistInfoRaw = data['artist'];
-    if (typeof artistInfoRaw !== 'object' || artistInfoRaw === null) {
-      throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing artist'));
-    }
-    const artistInfo = artistInfoRaw as Record<string, unknown>;
+    const artistInfo = readArtistInfo(data);
     const stats = artistInfo['stats'] as Record<string, unknown> | undefined;
-    const bio = artistInfo['bio'] as Record<string, unknown> | undefined;
     const tags = artistInfo['tags'] as Record<string, unknown> | undefined;
     const similar = artistInfo['similar'] as Record<string, unknown> | undefined;
-    const bioSummary = bio?.['summary'];
+    const localizedBiography = readBiography(artistInfo);
+    const biography = localizedBiography === null && lang !== 'en'
+      ? await fetchEnglishBiography(artist, apiKey)
+      : localizedBiography;
 
     return {
       name: typeof artistInfo['name'] === 'string' ? artistInfo['name'] : '',
@@ -238,7 +273,7 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
       url: typeof artistInfo['url'] === 'string' ? artistInfo['url'] : '',
       listeners: safeNumber(stats?.['listeners']),
       playcount: safeNumber(stats?.['playcount']),
-      biography: typeof bioSummary === 'string' ? stripWikiHtml(bioSummary) : null,
+      biography,
       tags: ((tags?.['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>) => ({
         name: typeof t['name'] === 'string' ? t['name'] : '',
         url: typeof t['url'] === 'string' ? t['url'] : '',
@@ -252,9 +287,9 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
 
 export async function getTopTracksByArtist(config: Config, args: unknown): Promise<TopTracksByArtistResult> {
   try {
-    const { artist, limit } = TopTracksByArtistSchema.parse(args);
+    const { artist, limit, verbose } = TopTracksByArtistSchema.parse(args);
 
-    logger.debug('Tool getTopTracksByArtist called with args:', { artist, limit });
+    logger.debug('Tool getTopTracksByArtist called with args:', { artist, limit, verbose });
 
     const apiKey = requireLastFmApiKey(config);
 
@@ -280,7 +315,7 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
         name: typeof t['name'] === 'string' ? t['name'] : '',
         playcount: safeNumber(t['playcount']),
         listeners: safeNumber(t['listeners']),
-        url: typeof t['url'] === 'string' ? t['url'] : '',
+        ...verboseUrl(t, verbose),
         mbid: typeof t['mbid'] === 'string' ? t['mbid'] : null,
       })),
     };
@@ -291,11 +326,16 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
 
 export async function getTrendingMusic(config: Config, args: unknown): Promise<TrendingMusicResult> {
   try {
-    const { type, limit, page } = TrendingMusicSchema.parse(args);
+    const { type, limit, page, verbose } = TrendingMusicSchema.parse(args);
+    const pageStart = (page - 1) * limit;
 
-    logger.debug('Tool getTrendingMusic called with args:', { type, limit, page });
+    logger.debug('Tool getTrendingMusic called with args:', { type, limit, page, verbose });
 
     const apiKey = requireLastFmApiKey(config);
+
+    if (type === 'tags' && pageStart >= LASTFM_CHART_MAX_LIMIT) {
+      return { count: 0, items: [], hasMore: false };
+    }
 
     logger.info(`Getting global ${type} chart`);
 
@@ -303,10 +343,12 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
                    type === 'tracks' ? 'chart.getTopTracks' :
                    'chart.getTopTags';
 
-    const data = await callLastFmApi(method, {
-      limit: limit.toString(),
-      page: page.toString(),
-    }, apiKey);
+    // chart.getTopTags ignores `page`, so the tags chart is read from row one and sliced to the page.
+    const params: Record<string, string> = type === 'tags'
+      ? { limit: String(Math.min(page * limit, LASTFM_CHART_MAX_LIMIT)) }
+      : { limit: limit.toString(), page: page.toString() };
+
+    const data = await callLastFmApi(method, params, apiKey);
 
     if (type === 'artists') {
       const artistsRaw = data['artists'];
@@ -315,17 +357,18 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
       }
       const artistsContainer = artistsRaw as Record<string, unknown>;
       const artists = ((artistsContainer['artist'] as Record<string, unknown>[] | undefined) ?? []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
-        rank: (page - 1) * limit + index + 1,
+        rank: pageStart + index + 1,
         name: typeof a['name'] === 'string' ? a['name'] : '',
         playcount: safeNumber(a['playcount']),
         listeners: safeNumber(a['listeners']),
-        url: typeof a['url'] === 'string' ? a['url'] : '',
+        ...verboseUrl(a, verbose),
         mbid: typeof a['mbid'] === 'string' ? a['mbid'] : null,
       }));
 
       return {
         count: artists.length,
         items: artists,
+        hasMore: artists.length === limit,
       };
     } else if (type === 'tracks') {
       const tracksRaw = data['tracks'];
@@ -337,12 +380,12 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         const artistObj = t['artist'] as Record<string, unknown> | undefined;
         const artistName = artistObj?.['name'];
         return {
-          rank: (page - 1) * limit + index + 1,
+          rank: pageStart + index + 1,
           name: typeof t['name'] === 'string' ? t['name'] : '',
           artist: typeof artistName === 'string' ? artistName : 'Unknown',
           playcount: safeNumber(t['playcount']),
           listeners: safeNumber(t['listeners']),
-          url: typeof t['url'] === 'string' ? t['url'] : '',
+          ...verboseUrl(t, verbose),
           mbid: typeof t['mbid'] === 'string' ? t['mbid'] : null,
         };
       });
@@ -350,6 +393,7 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
       return {
         count: tracks.length,
         items: tracks,
+        hasMore: tracks.length === limit,
       };
     } else {
       // chart.getTopTags has no count field. `taggings` (total applications) is the
@@ -359,17 +403,19 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tags'));
       }
       const tagsContainer = tagsRaw as Record<string, unknown>;
-      const tags = ((tagsContainer['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
-        rank: (page - 1) * limit + index + 1,
+      const tagRows = (tagsContainer['tag'] as Record<string, unknown>[] | undefined) ?? [];
+      const tags = tagRows.slice(pageStart, pageStart + limit).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
+        rank: pageStart + index + 1,
         name: typeof t['name'] === 'string' ? t['name'] : '',
         count: safeNumber(t['taggings'] ?? t['count']),
         reach: safeNumber(t['reach']),
-        url: typeof t['url'] === 'string' ? t['url'] : '',
+        ...verboseUrl(t, verbose),
       }));
 
       return {
         count: tags.length,
         items: tags,
+        hasMore: tags.length === limit && page * limit < LASTFM_CHART_MAX_LIMIT,
       };
     }
   } catch (error) {

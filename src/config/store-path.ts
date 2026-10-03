@@ -23,17 +23,8 @@ const APP_DIR = 'navidrome-mcp';
 const STORE_FILE = 'settings.json';
 
 /**
- * Absolute path to the canonical `settings.json` store.
- *
- * Mirrors the OS-awareness of `getDefaultIpcPath()` (mpv-process.ts):
- *   - Linux:   `${XDG_CONFIG_HOME:-~/.config}/navidrome-mcp/settings.json`
- *   - macOS:   `~/Library/Application Support/navidrome-mcp/settings.json`
- *   - Windows: `%APPDATA%\navidrome-mcp\settings.json`
- *
- * `NAVIDROME_CONFIG_PATH` overrides the location entirely (it points at the
- * **file**, not the directory). This is a *location* override used by tests
- * (isolated temp file per run), portable installs, and multi-profile setups.
- * It is NOT a config-value override.
+ * The per-OS location mirrors `getDefaultIpcPath()` in mpv-process.ts.
+ * `NAVIDROME_CONFIG_PATH` overrides the file location, not config values.
  */
 export function getSettingsStorePath(): string {
   const override = process.env['NAVIDROME_CONFIG_PATH'];
@@ -53,10 +44,9 @@ export function getSettingsStorePath(): string {
     return join(homedir(), 'Library', 'Application Support', APP_DIR, STORE_FILE);
   }
 
-  // Linux / other POSIX
   const xdgConfig = process.env['XDG_CONFIG_HOME'];
   const base = xdgConfig !== undefined && xdgConfig.trim() !== ''
-    ? xdgConfig.replace(/\/+$/, '')
+    ? xdgConfig
     : join(homedir(), '.config');
   return join(base, APP_DIR, STORE_FILE);
 }

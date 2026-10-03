@@ -62,7 +62,7 @@ vi.mock('../../../src/tools/playback.js', () => ({
   previous: vi.fn(),
   seek: vi.fn(),
   nowPlaying: vi.fn(),
-  getPlayQueue: vi.fn(),
+  getPlayQueuePage: vi.fn(),
   clearPlayQueue: vi.fn(),
   shufflePlayQueue: vi.fn(),
   moveInPlayQueue: vi.fn(),

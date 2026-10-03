@@ -31,14 +31,14 @@ const tools: Tool[] = [
       type: 'object',
       properties: {
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of tracks to return (1-500)',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Number of tracks to skip for pagination',
           minimum: 0,
           default: 0,
@@ -70,14 +70,14 @@ const tools: Tool[] = [
           default: 'songs',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of items to return (1-500)',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Number of items to skip for pagination',
           minimum: 0,
           default: 0,
@@ -108,7 +108,7 @@ export function createListeningHistoryToolCategory(client: NavidromeClient, _con
         case 'list_most_played':
           return await listMostPlayed(client, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`listening-history ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     },
   };

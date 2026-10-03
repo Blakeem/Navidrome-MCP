@@ -16,7 +16,7 @@ import {
   suspendFollow,
   tickLyricsFollow,
 } from './lyrics-follow.js';
-import { bindLyricPrefs, lyricsSettingsOpen } from './lyrics-prefs.js';
+import { bindLyricsPrefs, lyricsSettingsOpen } from './lyrics-prefs.js';
 import { bindLyricsTransport, renderLyricsPlayState, renderLyricsProgress } from './lyrics-transport.js';
 import { placeBelowTopbar } from './modal-placement.js';
 import { isPaused } from './playback-clock.js';
@@ -59,7 +59,9 @@ export function bindLyricsView() {
   backBtn.addEventListener('click', closeLyrics);
   closeBtn.addEventListener('click', closeLyrics);
   viewToggle.addEventListener('click', toggleViewMode);
-  scrollBox.addEventListener('click', () => {
+  scrollBox.addEventListener('click', (ev) => {
+    // Following a placard link opens a new tab, so it must not also hide the overlay header.
+    if (ev.target.closest('a') !== null) return;
     view.classList.toggle('is-immersive');
     // A gesture that ends in a click was a tap, so it takes back only the suspend its own pointerdown armed.
     if (followedAtPointerDown) resumeFollow();
@@ -87,7 +89,7 @@ export function bindLyricsView() {
     if (ev.key === 'Escape' && open && !lyricsSettingsOpen()) closeLyrics();
   });
   bindFollow();
-  bindLyricPrefs(recenterActiveLine);
+  bindLyricsPrefs(recenterActiveLine);
   bindLyricsTransport();
   bindWakeHold();
   applyViewMode();

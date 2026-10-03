@@ -65,6 +65,26 @@ describe('play_songs active-library lookup', () => {
     expect(enqueueMock.mock.calls[0]?.[0]).toEqual(['song-1', 'song-3']);
     expect(result).toEqual({ success: true, count: 2 });
   });
+
+  // Navidrome paginates even an id-filtered read, so each chunk must span its own length.
+  it('reads more than 100 IDs in 100-ID chunks, each with _start=0 and _end=chunk length', async () => {
+    const songIds = Array.from({ length: 150 }, (_, i) => `song-${i}`);
+    client.requestWithLibraryFilter.mockImplementation((endpoint: string) =>
+      Promise.resolve(new URLSearchParams(endpoint.split('?')[1]).getAll('id').map((id) => ({ id }))),
+    );
+
+    await playSongs(client as never, { songIds, mode: 'replace' });
+
+    expect(client.requestWithLibraryFilter).toHaveBeenCalledTimes(2);
+    const queries = client.requestWithLibraryFilter.mock.calls.map((c) => new URLSearchParams(String(c[0]).split('?')[1]));
+    expect(queries[0]?.getAll('id')).toHaveLength(100);
+    expect(queries[0]?.get('_start')).toBe('0');
+    expect(queries[0]?.get('_end')).toBe('100');
+    expect(queries[1]?.getAll('id')).toHaveLength(50);
+    expect(queries[1]?.get('_start')).toBe('0');
+    expect(queries[1]?.get('_end')).toBe('50');
+    expect(enqueueMock.mock.calls[0]?.[0]).toEqual(songIds);
+  });
 });
 
 describe('play_songs and play_albums ID validation', () => {

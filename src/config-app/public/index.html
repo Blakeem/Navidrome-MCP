@@ -129,7 +129,7 @@
         <label>Port
           <input id="webuiPort" type="number" min="1" max="65535" placeholder="8808" />
         </label>
-        <label>Bind host <span class="hint">advanced. Usually leave blank</span>
+        <label>Bind host <span class="hint">advanced. Usually leave blank. An explicit host overrides Expose on LAN. <code>0.0.0.0</code> or <code>::</code> exposes the player (no auth) to your network</span>
           <input id="webuiHost" type="text" placeholder="127.0.0.1" />
         </label>
         <label class="check">
@@ -151,9 +151,6 @@
         <label class="check">
           <input id="debug" type="checkbox" />
           <span>Verbose debug logging</span>
-        </label>
-        <label>Cache TTL (seconds)
-          <input id="cacheTtl" type="number" min="1" placeholder="300" />
         </label>
         <label>Token expiry (seconds)
           <input id="tokenExpiry" type="number" min="1" placeholder="86400" />

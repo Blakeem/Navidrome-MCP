@@ -26,18 +26,21 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import { nowPlaying, resetNowPlayingCache } from '../../../src/tools/playback.js';
 
 // A realistic credential-bearing stream URL, shaped like what mpv reports as
 // `media-title` before metadata loads. Contains the auth token + salt.
 const LEAKY_URL =
   'http://192.168.86.100:4533/rest/stream?u=blake&t=c7d099345f8b1a2b3c4d5e6f&s=603dbb5c&id=song-123&format=raw';
+// mpv's filename fallback for the same stream: the URL-unescaped basename, with no scheme.
+const LEAKY_BASENAME = 'stream?u=blake&t=c7d099345f8b1a2b3c4d5e6f&s=603dbb5c&id=song-123&format=raw';
 
-const ensureAttachedMock = vi.fn().mockResolvedValue(undefined);
-const getStatusMock = vi.fn();
-const getCachedPropertyMock = vi.fn();
-const getQueueGenerationMock = vi.fn();
-const getQueueMock = vi.fn();
-const ingestQueueMetadataMock = vi.fn();
+const ensureAttachedMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const getStatusMock = vi.hoisted(() => vi.fn());
+const getCachedPropertyMock = vi.hoisted(() => vi.fn());
+const getQueueGenerationMock = vi.hoisted(() => vi.fn());
+const getQueueMock = vi.hoisted(() => vi.fn());
+const ingestQueueMetadataMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -50,8 +53,6 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   },
 }));
 
-const { nowPlaying } = await import('../../../src/tools/playback.js');
-
 /** Build a getCachedProperty implementation from a property map. */
 function cachedProps(props: Record<string, unknown>): (name: string) => unknown {
   return (name: string) => props[name];
@@ -60,6 +61,7 @@ function cachedProps(props: Record<string, unknown>): (name: string) => unknown 
 describe('now_playing title reconciliation (Issue #3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetNowPlayingCache();
     getStatusMock.mockReturnValue({ engineRunning: true });
     getQueueGenerationMock.mockReturnValue(0);
   });
@@ -100,6 +102,30 @@ describe('now_playing title reconciliation (Issue #3)', () => {
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain('c7d099345f8b1a2b3c4d5e6f');
     expect(serialized).not.toContain('603dbb5c');
+    expect(serialized).not.toContain('stream?u=');
+  });
+
+  it('suppresses the filename-fallback basename media-title and reconciles the real title by songId', async () => {
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 0,
+        'playlist-count': 1,
+        pause: false,
+        'time-pos': 0,
+        duration: 200,
+        'media-title': LEAKY_BASENAME,
+        metadata: null,
+      }),
+    );
+    getQueueMock.mockResolvedValue([
+      { index: 0, songId: 'song-123', isCurrent: true, isPlaying: true, title: 'Real Song Title', artist: 'Real Artist', duration: 200 },
+    ]);
+
+    const result = await nowPlaying({});
+
+    expect(result.title).toBe('Real Song Title');
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('c7d099345f8b1a2b3c4d5e6f');
     expect(serialized).not.toContain('stream?u=');
   });
 
@@ -215,6 +241,86 @@ describe('now_playing title reconciliation (Issue #3)', () => {
 
     expect(result.isRadio).toBe(true);
     expect(result.radioStation).toEqual({ name: 'Unknown station' });
+  });
+
+  it('names a playlist-file station by mpv playlist-path when path is the expanded URL', async () => {
+    const props = radioProps('http://expanded.example/live');
+    getCachedPropertyMock.mockImplementation((name: string) =>
+      name === 'playlist-path' ? 'http://saved.example/station.pls' : props(name),
+    );
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const client = radioClient([{ id: 'r1', name: 'Saved', streamUrl: 'http://saved.example/station.pls' }]);
+
+    const result = await nowPlaying({}, client);
+
+    expect(result.radioStation).toEqual({ name: 'Saved' });
+  });
+
+  it('labels a radio stream "Unknown station" when the station list read fails', async () => {
+    getCachedPropertyMock.mockImplementation(radioProps('http://reject.example/stream'));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const client = { request: vi.fn().mockRejectedValue(new Error('Navidrome down')) } as unknown as NavidromeClient;
+
+    const result = await nowPlaying({}, client);
+
+    expect(result.radioStation).toEqual({ name: 'Unknown station' });
+  });
+
+  it('retries a failed station read on the next poll instead of keeping "Unknown station"', async () => {
+    const streamUrl = 'http://retry.example/stream';
+    getCachedPropertyMock.mockImplementation(radioProps(streamUrl));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('Navidrome down'))
+      .mockResolvedValueOnce([{ id: 'r1', name: 'Recovered Station', streamUrl }]);
+    const client = { request } as unknown as NavidromeClient;
+
+    const first = await nowPlaying({}, client);
+    const second = await nowPlaying({}, client);
+
+    expect(first.radioStation).toEqual({ name: 'Unknown station' });
+    expect(second.radioStation).toEqual({ name: 'Recovered Station' });
+  });
+
+  it('keeps mpv cached properties when the queue read fails', async () => {
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 0,
+        'playlist-count': 1,
+        'media-title': 'Song',
+        duration: 200,
+        path: '/fail/ipc',
+      }),
+    );
+    getQueueMock.mockRejectedValueOnce(new Error('ipc'));
+
+    const result = await nowPlaying({});
+
+    expect(result.title).toBe('Song');
+    expect(result.duration).toBe(200);
+  });
+
+  it('resolves without metadata when the Navidrome lookup fails', async () => {
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 0,
+        'playlist-count': 1,
+        pause: false,
+        'time-pos': 0,
+        duration: 0,
+        'media-title': LEAKY_URL,
+        metadata: null,
+        path: '/fail/navidrome',
+      }),
+    );
+    getQueueMock.mockResolvedValue([{ index: 0, songId: 'song-123', isCurrent: true, isPlaying: true }]);
+    const client = { request: vi.fn().mockRejectedValue(new Error('Navidrome down')) } as unknown as NavidromeClient;
+
+    const result = await nowPlaying({}, client);
+
+    expect(result.title).toBeUndefined();
+    expect(ingestQueueMetadataMock).not.toHaveBeenCalled();
   });
 });
 

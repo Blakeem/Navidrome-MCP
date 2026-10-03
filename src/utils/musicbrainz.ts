@@ -26,15 +26,16 @@
  *   - ≤ 1 request/second: every call is serialized through a module-level
  *     queue that spaces dispatches by MIN_INTERVAL_MS, across concurrent tool
  *     invocations. Exceeding the limit gets the client IP blocked.
- *   - Meaningful User-Agent: required; generic agents may be blocked.
+ *   - Meaningful User-Agent: required. Generic agents may be blocked.
  */
 
 import type { Config } from '../config.js';
-import { logger } from '../utils/logger.js';
+import { logger } from './logger.js';
 import { ErrorFormatter } from './error-formatter.js';
 import { normTitle } from './normalize-title.js';
 import { DEFAULT_MUSICBRAINZ_USER_AGENT } from '../constants/defaults.js';
 import {
+  FetchTimeoutError,
   fetchWithTimeout,
   getExternalApiTimeoutMs,
 } from './fetch-with-timeout.js';
@@ -44,15 +45,18 @@ const MB_API_BASE = 'https://musicbrainz.org/ws/2';
 // 1 req/s plus margin so clock jitter can't put two requests in one second.
 const MIN_INTERVAL_MS = 1100;
 
-// Browse paging: 100 is the MB max page size; 10 pages = 1000 release groups,
+// Browse paging: 100 is the MB max page size. 10 pages = 1000 release groups,
 // far beyond any real single-artist discography at type=album|ep.
 const BROWSE_PAGE_SIZE = 100;
 const BROWSE_MAX_PAGES = 10;
 
 // Accept index-0 fuzzy search hits only at/above this MB relevance score
-// (0-100). Verified live: exact matches score 100; same-name different-artist
+// (0-100). Verified live: exact matches score 100. Same-name different-artist
 // decoys score ≤ 89. Applies to both artist and release-group searches.
 const SEARCH_MIN_SCORE = 85;
+
+// A popular group's light release browse stops here (300 releases), bounding the added throttled requests.
+const TRACKLIST_LIGHT_MAX_PAGES = 3;
 
 // --- Throttle: module-level promise-chain queue --------------------------
 
@@ -61,14 +65,15 @@ let lastDispatchAt = 0;
 
 function throttled<T>(task: () => Promise<T>): Promise<T> {
   const run = queueTail.then(async () => {
-    const wait = lastDispatchAt + MIN_INTERVAL_MS - Date.now();
+    // A backward wall-clock step must not stall the queue past one interval.
+    const wait = Math.min(MIN_INTERVAL_MS, lastDispatchAt + MIN_INTERVAL_MS - Date.now());
     if (wait > 0) {
       await new Promise(resolve => setTimeout(resolve, wait));
     }
     lastDispatchAt = Date.now();
     return task();
   });
-  // The next task waits for this one to settle; swallow rejections so one
+  // The next task waits for this one to settle. Swallow rejections so one
   // failed request never poisons the chain for subsequent callers.
   queueTail = run.then(
     () => undefined,
@@ -101,13 +106,9 @@ async function mbFetch(
 
   const userAgent = config.musicBrainzUserAgent ?? DEFAULT_MUSICBRAINZ_USER_AGENT;
 
-  return throttled(async () => {
+  const attempt = (): Promise<Record<string, unknown>> => throttled(async () => {
     logger.debug(`Calling MusicBrainz API: ${path}`, params);
 
-    // Reads only, so safe to retry on timeout. fetchWithTimeout retries solely
-    // on AbortError (never on HTTP 503), so MB rate-limit responses are not
-    // hammered, and a timeout-retry is already spaced past MIN_INTERVAL_MS by
-    // the elapsed timeout itself.
     const response = await fetchWithTimeout(
       url.toString(),
       {
@@ -118,7 +119,7 @@ async function mbFetch(
       },
       {
         timeoutMs: getExternalApiTimeoutMs(),
-        retryPolicy: 'safe',
+        retryPolicy: 'never',
         operationLabel: `MusicBrainz ${path}`,
         respectProxy: true,
       },
@@ -133,6 +134,15 @@ async function mbFetch(
 
     return await response.json() as Record<string, unknown>;
   });
+
+  // Reads are safe to retry on timeout, and the retry goes through the throttle so
+  // every request MB sees is spaced by MIN_INTERVAL_MS.
+  try {
+    return await attempt();
+  } catch (error) {
+    if (!(error instanceof FetchTimeoutError)) throw error;
+    return await attempt();
+  }
 }
 
 // --- Narrowing helpers (codebase style: hand-rolled, zod is for inputs) ---
@@ -141,7 +151,7 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-// MB sends a missing release date or country as "", which must not sort or read as a value.
+// MB sends a missing date, country or disambiguation as "", which must not sort or read as a value.
 function asNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
@@ -154,7 +164,7 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
 }
 
-/** Lucene phrase query value; escapes embedded quotes/backslashes. */
+/** MB search parses the query as Lucene, so a quote or backslash in a name must be escaped to stay one phrase. */
 function luceneQuote(s: string): string {
   return `"${s.replace(/[\\"]/g, '\\$&')}"`;
 }
@@ -172,7 +182,7 @@ function parseArtistRow(row: Record<string, unknown>, score: number): MbArtistMa
   const mbid = asString(row['id']);
   const name = asString(row['name']);
   if (mbid === null || name === null) return null;
-  return { mbid, name, score, disambiguation: asString(row['disambiguation']) };
+  return { mbid, name, score, disambiguation: asNonEmptyString(row['disambiguation']) };
 }
 
 /**
@@ -231,9 +241,9 @@ export interface MbReleaseGroup {
   year: number | null;
   /** e.g. "Album", "EP", "Single", capitalized as MB returns it. */
   primaryType: string | null;
-  /** Lowercased (MB returns "Remix"/"Live"; the exclude filter compares lowercase). */
+  /** Lowercased. MB returns "Remix"/"Live", and the exclude filter compares lowercase. */
   secondaryTypes: string[];
-  /** Genre names, lowercased, highest vote-count first; [] when MB has none. */
+  /** Genre names, lowercased, highest vote-count first. [] when MB has none. */
   genres: string[];
   disambiguation: string | null;
 }
@@ -269,7 +279,7 @@ function parseReleaseGroup(raw: unknown): MbReleaseGroup | null {
       .filter((t): t is string => t !== null)
       .map(t => t.toLowerCase()),
     genres,
-    disambiguation: asString(row['disambiguation']),
+    disambiguation: asNonEmptyString(row['disambiguation']),
   };
 }
 
@@ -305,7 +315,7 @@ export async function browseMbReleaseGroups(
       ? data['release-group-count']
       : groups.length;
 
-    // Advance by rows actually returned (per MB paging guidance); an empty
+    // Advance by rows actually returned (per MB paging guidance). An empty
     // page means the server has nothing more regardless of the claimed total.
     offset += rows.length;
     if (rows.length === 0 || offset >= total) break;
@@ -317,18 +327,10 @@ export async function browseMbReleaseGroups(
 
 // --- Release-group detail (get_album_info) -----------------------------------
 
-export interface MbReleaseGroupDetail {
-  mbid: string;
-  title: string;
-  /** First credited artist name; null when MB returns no artist-credit. */
+/** Search hits carry no genres and may omit secondary types, so both can be []. */
+export interface MbReleaseGroupDetail extends MbReleaseGroup {
+  /** First credited artist name, or null when MB returns no artist-credit. */
   artistName: string | null;
-  year: number | null;
-  primaryType: string | null;
-  /** Lowercased. Search results may omit secondary types entirely ⇒ []. */
-  secondaryTypes: string[];
-  /** Genre names, highest vote-count first. Search results carry none ⇒ []. */
-  genres: string[];
-  disambiguation: string | null;
 }
 
 function parseReleaseGroupDetail(raw: unknown): MbReleaseGroupDetail | null {
@@ -364,10 +366,23 @@ export async function lookupMbReleaseGroup(
   }
 }
 
+function primaryTypeRank(primaryType: string | null): number {
+  if (primaryType === 'Album') return 0;
+  if (primaryType === 'EP') return 1;
+  return 2;
+}
+
+// An album named after its title track shares that title with its Single, so type breaks the tie.
+function outranksReleaseGroup(candidate: MbReleaseGroupDetail, current: MbReleaseGroupDetail): boolean {
+  const typeDelta = primaryTypeRank(candidate.primaryType) - primaryTypeRank(current.primaryType);
+  if (typeDelta !== 0) return typeDelta < 0;
+  return candidate.secondaryTypes.length < current.secondaryTypes.length;
+}
+
 /**
- * Resolve artist + album names to a release group. Picks the first hit whose
- * normalized title matches, else the top hit at/above SEARCH_MIN_SCORE, else
- * null. Note: search hits carry year/types/artist-credit but never genres.
+ * Resolve artist + album names to a release group. Among hits whose normalized title matches, prefers
+ * Album, then EP, then fewest secondary types, keeping MB score order on ties. Else the top hit at/above
+ * SEARCH_MIN_SCORE, else null.
  */
 export async function searchMbReleaseGroup(
   artistName: string,
@@ -376,7 +391,7 @@ export async function searchMbReleaseGroup(
 ): Promise<MbReleaseGroupDetail | null> {
   const data = await mbFetch('/release-group', {
     query: `releasegroup:${luceneQuote(albumTitle)} AND artist:${luceneQuote(artistName)}`,
-    limit: '5',
+    limit: '25',
   }, config);
 
   const candidates: Array<{ detail: MbReleaseGroupDetail; score: number }> = [];
@@ -388,7 +403,11 @@ export async function searchMbReleaseGroup(
   }
 
   const targetTitle = normTitle(albumTitle);
-  const exact = candidates.find(c => normTitle(c.detail.title) === targetTitle);
+  let exact: (typeof candidates)[number] | undefined;
+  for (const candidate of candidates) {
+    if (normTitle(candidate.detail.title) !== targetTitle) continue;
+    if (exact === undefined || outranksReleaseGroup(candidate.detail, exact.detail)) exact = candidate;
+  }
   const top = candidates[0];
   const picked = exact ?? (top !== undefined && top.score >= SEARCH_MIN_SCORE ? top : null);
 
@@ -410,7 +429,10 @@ export interface MbTrack {
 }
 
 export interface MbTracklist {
-  /** The release whose tracklist was chosen (Official preferred, then earliest). */
+  /**
+   * The release whose tracklist was chosen: Official preferred, then earliest, across the group's
+   * releases up to TRACKLIST_LIGHT_MAX_PAGES browse pages.
+   */
   releaseMbid: string;
   status: string | null;
   date: string | null;
@@ -418,12 +440,17 @@ export interface MbTracklist {
   tracks: MbTrack[];
 }
 
-interface ParsedRelease {
-  mbid: string;
-  status: string | null;
-  date: string | null;
-  country: string | null;
-  tracks: MbTrack[];
+type MbReleaseSummary = Omit<MbTracklist, 'tracks'>;
+
+function parseReleaseSummary(row: Record<string, unknown>): MbReleaseSummary | null {
+  const releaseMbid = asString(row['id']);
+  if (releaseMbid === null) return null;
+  return {
+    releaseMbid,
+    status: asString(row['status']),
+    date: asNonEmptyString(row['date']),
+    country: asNonEmptyString(row['country']),
+  };
 }
 
 function parseReleaseTracks(row: Record<string, unknown>): MbTrack[] {
@@ -451,6 +478,59 @@ function parseReleaseTracks(row: Record<string, unknown>): MbTrack[] {
 }
 
 /**
+ * Official releases first, then the earliest date, the canonical original that matches
+ * first-release-date semantics. Partial dates ("2023") sort before full ones, which is acceptable.
+ */
+function pickPreferredRelease<T extends MbReleaseSummary>(releases: T[]): T | null {
+  const officials = releases.filter(r => r.status === 'Official');
+  const pool = officials.length > 0 ? officials : [...releases];
+  pool.sort((a, b) => {
+    if (a.date === null) return b.date === null ? 0 : 1;
+    if (b.date === null) return -1;
+    return a.date.localeCompare(b.date);
+  });
+  return pool[0] ?? null;
+}
+
+/**
+ * Chooses across a light browse (no recordings) of up to TRACKLIST_LIGHT_MAX_PAGES pages, then
+ * fetches only the chosen release's tracks. Returns null when the chosen release has no tracklist.
+ */
+async function lookupPreferredRelease(releaseGroupMbid: string, config: Config): Promise<MbTracklist | null> {
+  const summaries: MbReleaseSummary[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < TRACKLIST_LIGHT_MAX_PAGES; page++) {
+    const data = await mbFetch('/release', {
+      'release-group': releaseGroupMbid,
+      limit: String(BROWSE_PAGE_SIZE),
+      offset: String(offset),
+    }, config);
+
+    const rows = asArray(data['releases']);
+    for (const raw of rows) {
+      const summary = parseReleaseSummary(asRecord(raw));
+      if (summary !== null) summaries.push(summary);
+    }
+
+    const total = typeof data['release-count'] === 'number' ? data['release-count'] : summaries.length;
+    offset += rows.length;
+    if (rows.length === 0 || offset >= total) break;
+  }
+
+  const preferred = pickPreferredRelease(summaries);
+  if (preferred === null) return null;
+
+  const release = await mbFetch(
+    `/release/${encodeURIComponent(preferred.releaseMbid)}`,
+    { inc: 'recordings media' },
+    config,
+  );
+  const tracks = parseReleaseTracks(release);
+  return tracks.length > 0 ? { ...preferred, tracks } : null;
+}
+
+/**
  * Fetch the tracklist for a release group by browsing its releases with
  * recordings + media riding the same request (verified live: `inc=recordings`
  * works on a browse). MB is the PRIMARY tracklist source. Last.fm durations
@@ -464,52 +544,35 @@ export async function browseMbReleaseTracklist(
   const data = await mbFetch('/release', {
     'release-group': releaseGroupMbid,
     inc: 'recordings media',
-    limit: '100',
+    limit: String(BROWSE_PAGE_SIZE),
   }, config);
 
-  const releases: ParsedRelease[] = [];
-  for (const raw of asArray(data['releases'])) {
+  const rows = asArray(data['releases']);
+  const releaseCount = typeof data['release-count'] === 'number' ? data['release-count'] : rows.length;
+  const firstPage: MbTracklist[] = [];
+  for (const raw of rows) {
     const row = asRecord(raw);
-    const mbid = asString(row['id']);
-    if (mbid === null) continue;
+    const summary = parseReleaseSummary(row);
+    if (summary === null) continue;
     const tracks = parseReleaseTracks(row);
     if (tracks.length === 0) continue;
-    releases.push({
-      mbid,
-      status: asString(row['status']),
-      date: asNonEmptyString(row['date']),
-      country: asNonEmptyString(row['country']),
-      tracks,
-    });
+    firstPage.push({ ...summary, tracks });
   }
-  if (releases.length === 0) {
+  const firstPageChoice = pickPreferredRelease(firstPage);
+
+  // MB caps a recordings browse near 500 tracks, so a popular group's first page is an arbitrary subset.
+  const chosen = releaseCount > rows.length
+    ? (await lookupPreferredRelease(releaseGroupMbid, config)) ?? firstPageChoice
+    : firstPageChoice;
+
+  if (chosen === null) {
     logger.debug(`MusicBrainz release browse: no usable tracklist for ${releaseGroupMbid}`);
     return null;
   }
 
-  // Prefer Official releases; within the pool, earliest date wins (the
-  // canonical original, matching first-release-date semantics). Partial dates
-  // ("2023") sort before full ones lexicographically, which is acceptable. Undated last.
-  const officials = releases.filter(r => r.status === 'Official');
-  const pool = officials.length > 0 ? officials : releases;
-  pool.sort((a, b) => {
-    if (a.date === null) return b.date === null ? 0 : 1;
-    if (b.date === null) return -1;
-    return a.date.localeCompare(b.date);
-  });
-
-  const chosen = pool[0];
-  if (chosen === undefined) return null;
-
   logger.debug(
-    `MusicBrainz tracklist for ${releaseGroupMbid}: release ${chosen.mbid} ` +
+    `MusicBrainz tracklist for ${releaseGroupMbid}: release ${chosen.releaseMbid} ` +
     `(${chosen.status ?? 'no status'}, ${chosen.date ?? 'undated'}), ${chosen.tracks.length} tracks`,
   );
-  return {
-    releaseMbid: chosen.mbid,
-    status: chosen.status,
-    date: chosen.date,
-    country: chosen.country,
-    tracks: chosen.tracks,
-  };
+  return chosen;
 }

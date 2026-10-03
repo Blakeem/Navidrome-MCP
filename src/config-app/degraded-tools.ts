@@ -19,35 +19,66 @@
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { getSettingsStorePath } from '../config/store-path.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { redact } from '../utils/logger.js';
 
-/**
- * Register the minimal toolset for an unconfigured server, or for one whose
- * saved settings failed at startup (`failureReason`). The full toolset is
- * withheld until the settings work. These two tools exist only to route the
- * user into the settings page. The settings URL is surfaced in every response
- * (the channel the user actually sees in their AI client) because the
- * auto-opened browser silently no-ops on headless/SSH hosts.
- */
-export function registerDegradedTools(server: Server, settingsUrl: string, failureReason?: string): void {
-  const headline =
-    failureReason === undefined
-      ? 'Navidrome MCP is not configured yet.'
-      : `Navidrome MCP could not start with the saved settings: ${failureReason}`;
-  const notice =
-    `${headline}\nOpen the settings page to set it up:\n  ${settingsUrl}\n` +
-    `Enter your Navidrome URL, username, and password (plus any optional features), Save, then restart this server.\n` +
-    `On a headless machine or in a container (where that loopback URL is unreachable), set environment ` +
-    `variables instead and restart: NAVIDROME_URL, NAVIDROME_USERNAME, NAVIDROME_PASSWORD. They are used ` +
-    `automatically whenever no usable settings.json exists.`;
+export interface StartupFailure {
+  reason: string;
+  /** Navidrome could not be reached, so the configuration was never judged. */
+  unreachable: boolean;
+}
+
+/** settings.json wins over env vars on every restart, so env advice alone cannot fix a failing store. */
+function configFixHint(): string {
+  return (
+    `Fix the values on the settings page, or edit or remove settings.json at ${getSettingsStorePath()}. ` +
+    'The environment variables NAVIDROME_URL, NAVIDROME_USERNAME and NAVIDROME_PASSWORD apply only ' +
+    'when no settings.json with a Navidrome URL exists.'
+  );
+}
+
+/** Shared by the setup-mode log line and both degraded tools, so the remedy text has one source. */
+export function buildSetupNotice(settingsUrl: string, failure?: StartupFailure): string {
+  const openSettings = `Open the settings page to set it up:\n  ${settingsUrl}\n`;
+  const saveAndRestart =
+    'Enter your Navidrome URL, username, and password (plus any optional features), Save, then restart this server.\n';
+
+  if (failure === undefined) {
+    return (
+      `Navidrome MCP is not configured yet.\n${openSettings}${saveAndRestart}` +
+      'On a headless machine or in a container (where that loopback URL is unreachable), set environment ' +
+      'variables instead and restart: NAVIDROME_URL, NAVIDROME_USERNAME, NAVIDROME_PASSWORD (plus ' +
+      'MCP_TRANSPORT=http and MCP_HTTP_EXPOSE=true for a remote-reachable container). They are used ' +
+      'automatically whenever no usable settings.json exists.'
+    );
+  }
+  // fetch echoes a credential-bearing URL verbatim in its error, and this notice reaches the LLM.
+  const reason = redact(failure.reason) as string;
+  if (failure.unreachable) {
+    return (
+      `Navidrome MCP could not reach Navidrome at the configured URL: ${reason}\n` +
+      'The configuration was not rejected. Restart the MCP client once Navidrome is reachable.\n' +
+      `To change the settings anyway, open the settings page:\n  ${settingsUrl}`
+    );
+  }
+  return (
+    `Navidrome MCP could not start with the current configuration: ${reason}\n` +
+    `${openSettings}${saveAndRestart}${configFixHint()}`
+  );
+}
+
+/** The settings URL goes in every response because the auto-opened browser no-ops on headless or SSH hosts. */
+export function registerDegradedTools(server: Server, settingsUrl: string, failure?: StartupFailure): void {
+  const notice = buildSetupNotice(settingsUrl, failure);
 
   const tools: Tool[] = [
     {
       name: 'open_settings',
       description:
         'Open the Navidrome MCP settings page in a browser and return its local URL. ' +
-        'Use this when the server is not configured or its saved settings failed at startup.',
+        'Use this when the server is not configured or its configuration failed at startup.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
     {
@@ -61,17 +92,18 @@ export function registerDegradedTools(server: Server, settingsUrl: string, failu
 
   server.setRequestHandler(CallToolRequestSchema, (request) => {
     const { name } = request.params;
-    // Only the two degraded-mode tools are registered; reject anything else
-    // instead of masking an unknown tool with a success notice (matches the
-    // registry convention).
-    if (name !== 'open_settings' && name !== 'test_connection') {
+    const content = [{ type: 'text' as const, text: notice }];
+    // An unknown name must fail like the full registry does, not return the setup notice.
+    if (!tools.some((tool) => tool.name === name)) {
       throw new McpError(ErrorCode.InvalidParams, ErrorFormatter.toolUnknown(name));
     }
     if (name === 'open_settings') {
       openBrowser(settingsUrl);
     }
-    return {
-      content: [{ type: 'text' as const, text: notice }],
-    };
+    // A degraded server has no working connection, so test_connection reports a failed check.
+    if (name === 'test_connection') {
+      return { content, isError: true };
+    }
+    return { content };
   });
 }

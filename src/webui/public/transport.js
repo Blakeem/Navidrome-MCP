@@ -1,8 +1,8 @@
 // The main transport: play/pause, previous, next and the seek slider with its time labels.
 
-import { controlAvailability, nextTrack, previousTrack, seekTo, togglePlayPause } from './controls.js';
-import { byId, setHidden, setProgressVar } from './dom.js';
-import { durationSeconds, isPaused, positionSeconds } from './playback-clock.js';
+import { controlAvailability, nextTrack, previousTrack, renderPlayButtons, seekTo, togglePlayPause } from './controls.js';
+import { byId, setProgressVar } from './dom.js';
+import { durationSeconds, positionSeconds } from './playback-clock.js';
 import { formatTime } from './time-format.js';
 
 const btnPlay = byId('btn-play-pause');
@@ -13,18 +13,13 @@ const iconPause = byId('icon-pause');
 const seek = byId('seek-slider');
 const positionLabel = byId('position-label');
 const durationLabel = byId('duration-label');
+const playButtons = { iconPlay, iconPause, playBtn: btnPlay, prevBtn: btnPrev, nextBtn: btnNext };
 
 let seekDragging = false;
 
 export function renderTransport(np) {
-  const paused = isPaused();
-  const { running, hasTrack } = controlAvailability(np);
-  setHidden(iconPlay, !paused);
-  setHidden(iconPause, paused);
-  btnPlay.setAttribute('aria-label', paused ? 'Play' : 'Pause');
-  btnPlay.disabled = !running;
-  btnPrev.disabled = !hasTrack;
-  btnNext.disabled = !hasTrack;
+  const { hasTrack } = controlAvailability(np);
+  renderPlayButtons(playButtons, np);
   seek.disabled = !hasTrack || np?.isRadio === true;
   durationLabel.textContent = formatTime(durationSeconds());
 }
@@ -50,7 +45,7 @@ export function bindTransport() {
     const duration = durationSeconds();
     seekDragging = false;
     if (duration <= 0) return;
-    seekTo((Number(seek.value) / 100) * duration);
+    void seekTo((Number(seek.value) / 100) * duration);
   });
 
   requestAnimationFrame(tickProgress);

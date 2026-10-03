@@ -29,7 +29,7 @@ function buildGetLyricsTool(hasLrclib: boolean): Tool {
     songId: {
       type: 'string',
       description: hasLrclib
-        ? "Navidrome song ID. Returns timed lyrics from the audio file, then timed lyrics from LRCLIB found with that song's metadata, then plain lyrics from the file, then plain lyrics from LRCLIB. Required unless lrclibId is given."
+        ? "Navidrome song ID. Returns timed lyrics from the audio file, then timed lyrics from LRCLIB found with that song's metadata, then plain lyrics from the file, then plain lyrics from LRCLIB. Pass songId or lrclibId, not both."
         : 'Navidrome song ID. Reads the lyrics stored in the audio file.',
     },
   };
@@ -37,7 +37,7 @@ function buildGetLyricsTool(hasLrclib: boolean): Tool {
   if (hasLrclib) {
     properties['lrclibId'] = {
       type: 'string',
-      description: 'LRCLIB record ID, as returned by search_lyrics. Fetches that record directly. Required unless songId is given.',
+      description: 'LRCLIB record ID, as returned by search_lyrics. Fetches that record directly. Pass lrclibId or songId, not both.',
     };
   }
 

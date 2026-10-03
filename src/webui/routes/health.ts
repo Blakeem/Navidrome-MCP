@@ -21,7 +21,7 @@ import type { Config } from '../../config.js';
 import { playbackEngine } from '../../services/playback/playback-engine.js';
 import { getPackageVersion } from '../../utils/version.js';
 import { writeError, writeJson } from '../http-helpers.js';
-import { isLoopbackPeer } from '../loopback.js';
+import { isLocalRequest } from '../loopback.js';
 import { isLanReachable } from '../network.js';
 
 /**
@@ -41,7 +41,7 @@ export const HEALTH_APP_ID = 'navidrome-mcp-web';
  * never interferes with coexistence.
  */
 export function handleHealth(req: IncomingMessage, res: ServerResponse, config: Config): void {
-  if (isLanReachable(config.webui.host) && !isLoopbackPeer(req)) {
+  if (isLanReachable(config.webui.host) && !isLocalRequest(req)) {
     writeError(res, 404, 'Not found');
     return;
   }

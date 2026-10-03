@@ -77,6 +77,7 @@ import { fetchWithTimeout } from '../../../src/utils/fetch-with-timeout.js';
 import { HEALTH_APP_ID, handleHealth } from '../../../src/webui/routes/health.js';
 import {
   handleGetPlayerSettings,
+  handlePlayerState,
   handleSetPlayerSettings,
   handleShutdown,
 } from '../../../src/webui/routes/player.js';
@@ -115,12 +116,13 @@ function fakeRes(): CapturedRes {
   };
 }
 
-/** IncomingMessage stand-in with a fixed peer address and an optional JSON body. */
-function fakeReq(remoteAddress: string, bodyChunks: Buffer[] = []): IncomingMessage {
+/** IncomingMessage stand-in with a fixed peer address, Host header and an optional JSON body. */
+function fakeReq(remoteAddress: string, bodyChunks: Buffer[] = [], host = '127.0.0.1:8808'): IncomingMessage {
   const emitter = new EventEmitter() as IncomingMessage & {
     socket: { remoteAddress: string };
   };
   emitter.socket = { remoteAddress } as never;
+  emitter.headers = { host };
   queueMicrotask(() => {
     for (const c of bodyChunks) emitter.emit('data', c);
     emitter.emit('end');
@@ -128,19 +130,21 @@ function fakeReq(remoteAddress: string, bodyChunks: Buffer[] = []): IncomingMess
   return emitter;
 }
 
-function configWith(webui: { expose: boolean; host: string }): Config {
+function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: boolean }): Config {
   return makeTestConfig({
     webui: {
       enabled: true,
       host: webui.host,
       port: 8808,
       expose: webui.expose,
-      autoOpenBrowser: false,
+      autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: false,
       theme: null,
     },
   });
 }
+
+const LOOPBACK_CONFIG = configWith({ expose: false, host: '127.0.0.1' });
 
 function fakeBroadcaster(): { broadcastNow: ReturnType<typeof vi.fn> } {
   return { broadcastNow: vi.fn() };
@@ -238,7 +242,7 @@ describe('LAN reachability follows the resolved bind host', () => {
 describe('player routes reject non-loopback peers', () => {
   it('handleGetPlayerSettings returns 404 to a LAN peer without reading the store', () => {
     const cap = fakeRes();
-    handleGetPlayerSettings(fakeReq(LAN_PEER), cap.res);
+    handleGetPlayerSettings(fakeReq(LAN_PEER), cap.res, LOOPBACK_CONFIG);
     expect(cap.status()).toBe(404);
     expect(readSettings).not.toHaveBeenCalled();
   });
@@ -248,6 +252,7 @@ describe('player routes reject non-loopback peers', () => {
     await handleSetPlayerSettings(
       fakeReq(LAN_PEER, [Buffer.from(JSON.stringify({ autoOpenBrowser: true }))]),
       cap.res,
+      LOOPBACK_CONFIG,
       fakeBroadcaster(),
     );
     expect(cap.status()).toBe(404);
@@ -275,6 +280,50 @@ describe('player routes reject non-loopback peers', () => {
   });
 });
 
+describe('local-only routes reject a loopback peer with a foreign Host (DNS rebinding)', () => {
+  const REBOUND_HOST = 'evil.example:8808';
+
+  it('handleShutdown returns 404 and never invokes the shutdown callback', () => {
+    const cap = fakeRes();
+    const shutdown = vi.fn();
+    handleShutdown(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, shutdown);
+    expect(cap.status()).toBe(404);
+    expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it('handleGetPlayerSettings returns 404 without reading the store', () => {
+    const cap = fakeRes();
+    handleGetPlayerSettings(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, LOOPBACK_CONFIG);
+    expect(cap.status()).toBe(404);
+    expect(readSettings).not.toHaveBeenCalled();
+  });
+
+  it('handleSetPlayerSettings returns 404 and never writes', async () => {
+    const cap = fakeRes();
+    await handleSetPlayerSettings(
+      fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ theme: 'dark' }))], REBOUND_HOST),
+      cap.res,
+      LOOPBACK_CONFIG,
+      fakeBroadcaster(),
+    );
+    expect(cap.status()).toBe(404);
+    expect(setTheme).not.toHaveBeenCalled();
+    expect(writeSettings).not.toHaveBeenCalled();
+  });
+
+  it('handleHealth hides itself (404) on a 0.0.0.0 bind', () => {
+    const cap = fakeRes();
+    handleHealth(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, configWith({ expose: false, host: '0.0.0.0' }));
+    expect(cap.status()).toBe(404);
+  });
+
+  it('handlePlayerState reports isLocal false', () => {
+    const cap = fakeRes();
+    handlePlayerState(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, configWith({ expose: false, host: '0.0.0.0' }));
+    expect(cap.json()).toMatchObject({ isLocal: false });
+  });
+});
+
 describe('handleSetPlayerSettings input validation', () => {
   it.each([
     ['a wrongly typed field', { persistAfterMcpExit: 'yes' }],
@@ -282,7 +331,7 @@ describe('handleSetPlayerSettings input validation', () => {
     ['an array body', [1]],
   ])('rejects %s with 400 and applies nothing', async (_label, body) => {
     const cap = fakeRes();
-    await handleSetPlayerSettings(fakeReq(LOOPBACK, [Buffer.from(JSON.stringify(body))]), cap.res, fakeBroadcaster());
+    await handleSetPlayerSettings(fakeReq(LOOPBACK, [Buffer.from(JSON.stringify(body))]), cap.res, LOOPBACK_CONFIG, fakeBroadcaster());
     expect(cap.status()).toBe(400);
     expect(setPersist).not.toHaveBeenCalled();
     expect(writeSettings).not.toHaveBeenCalled();
@@ -313,6 +362,7 @@ describe('handleSetPlayerSettings preserves unrelated stored settings', () => {
     await handleSetPlayerSettings(
       fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ autoOpenBrowser: true }))]),
       cap.res,
+      LOOPBACK_CONFIG,
       fakeBroadcaster(),
     );
 
@@ -333,6 +383,31 @@ describe('handleSetPlayerSettings preserves unrelated stored settings', () => {
   });
 });
 
+describe('handleSetPlayerSettings persistAfterMcpExit', () => {
+  it('applies the flag to the running player and persists it', async () => {
+    vi.mocked(readSettings).mockReturnValue({
+      navidrome: { url: 'http://music.local', username: 'admin', password: 'p' },
+      webui: { persistAfterMcpExit: false },
+    });
+    let written: SettingsFile | undefined;
+    vi.mocked(writeSettings).mockImplementation((s) => {
+      written = s;
+    });
+
+    const cap = fakeRes();
+    await handleSetPlayerSettings(
+      fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ persistAfterMcpExit: true }))]),
+      cap.res,
+      LOOPBACK_CONFIG,
+      fakeBroadcaster(),
+    );
+
+    expect(cap.status()).toBe(200);
+    expect(setPersist).toHaveBeenCalledWith(true);
+    expect(written?.webui?.persistAfterMcpExit).toBe(true);
+  });
+});
+
 describe('handleSetPlayerSettings theme', () => {
   it('applies the theme live, persists it, and broadcasts it to every remote', async () => {
     vi.mocked(readSettings).mockReturnValue({
@@ -349,6 +424,7 @@ describe('handleSetPlayerSettings theme', () => {
     await handleSetPlayerSettings(
       fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ theme: 'dark' }))]),
       cap.res,
+      LOOPBACK_CONFIG,
       broadcaster,
     );
 
@@ -359,12 +435,36 @@ describe('handleSetPlayerSettings theme', () => {
     expect(broadcaster.broadcastNow).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a null theme, which returns every device to its own setting', async () => {
+    vi.mocked(readSettings).mockReturnValue({
+      navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
+      webui: { theme: 'dark' },
+    });
+    let written: SettingsFile | undefined;
+    vi.mocked(writeSettings).mockImplementation((s) => {
+      written = s;
+    });
+
+    const cap = fakeRes();
+    await handleSetPlayerSettings(
+      fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ theme: null }))]),
+      cap.res,
+      LOOPBACK_CONFIG,
+      fakeBroadcaster(),
+    );
+
+    expect(cap.status()).toBe(200);
+    expect(setTheme).toHaveBeenCalledWith(null);
+    expect(written?.webui?.theme).toBeNull();
+  });
+
   it('rejects an unknown theme with 400 and changes nothing', async () => {
     const broadcaster = fakeBroadcaster();
     const cap = fakeRes();
     await handleSetPlayerSettings(
       fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ theme: 'blue' }))]),
       cap.res,
+      LOOPBACK_CONFIG,
       broadcaster,
     );
 
@@ -386,6 +486,7 @@ describe('handleSetPlayerSettings reports autoOpenBrowser as stored', () => {
     await handleSetPlayerSettings(
       fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ autoOpenBrowser: true }))]),
       cap.res,
+      LOOPBACK_CONFIG,
       fakeBroadcaster(),
     );
     expect(cap.status()).toBe(200);
@@ -395,7 +496,7 @@ describe('handleSetPlayerSettings reports autoOpenBrowser as stored', () => {
   it('reports the written value once settings.json is saved', async () => {
     vi.mocked(readSettings).mockReturnValue(STORED);
 
-    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: true });
+    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: true, persisted: true });
   });
 
   it('reports the stored value when the write fails', async () => {
@@ -404,14 +505,30 @@ describe('handleSetPlayerSettings reports autoOpenBrowser as stored', () => {
       throw new Error('disk full');
     });
 
-    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: false });
+    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: false, persisted: false });
   });
 
-  it('reports false when no settings.json exists to hold the value', async () => {
+  it('reports the launch config value when no settings.json exists to hold the value', async () => {
     vi.mocked(readSettings).mockReturnValue(null);
 
-    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: false });
+    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: false, persisted: false });
     expect(writeSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleGetPlayerSettings reports autoOpenBrowser', () => {
+  it('reports the env-fallback launch config when no settings.json exists', () => {
+    vi.mocked(readSettings).mockReturnValue(null);
+    const cap = fakeRes();
+
+    handleGetPlayerSettings(
+      fakeReq(LOOPBACK),
+      cap.res,
+      configWith({ expose: false, host: '127.0.0.1', autoOpenBrowser: true }),
+    );
+
+    expect(cap.status()).toBe(200);
+    expect(cap.json()).toEqual({ persistAfterMcpExit: false, autoOpenBrowser: true, theme: null });
   });
 });
 
@@ -622,13 +739,15 @@ describe('Host allowlist', () => {
     expect(reply.status).toBe(403);
   });
 
-  it('accepts any Host on a non-loopback bind', async () => {
-    const reply = await requestServer('GET', '/healthz', {
+  // /healthz is local-only on a LAN bind, so a route every peer may read shows the server-wide gate is off.
+  it('accepts any Host on a non-loopback bind, but the local-only flag stays off', async () => {
+    const reply = await requestServer('GET', '/api/player-state', {
       bindHost: '0.0.0.0',
       hostHeader: (port) => `evil.example:${port}`,
     });
 
     expect(reply.status).toBe(200);
+    expect(JSON.parse(reply.body)).toMatchObject({ isLocal: false });
   });
 });
 

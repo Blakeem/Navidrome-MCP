@@ -34,7 +34,7 @@ interface TestConnectionResult {
     url: string;
     authenticated: boolean;
     timestamp: string;
-    version: string;
+    mcpServerVersion: string;
     features?: {
       lastfm: {
         enabled: boolean;
@@ -69,10 +69,9 @@ export async function testConnection(
     const params = TestConnectionSchema.parse(args);
     logger.debug('Tool testConnection called with args:', params);
 
-    // Try to make a simple API call to verify authentication using working /song endpoint
     const queryParams = new URLSearchParams({
       _start: '0',
-      _end: '1', // Just get 1 song to test connectivity
+      _end: '1',
     });
 
     await client.request(`/song?${queryParams.toString()}`);
@@ -83,7 +82,6 @@ export async function testConnection(
     };
 
     if (params.includeServerInfo) {
-      // Use feature flags from config
       const hasLastFm = config.features.lastfm;
       const hasRadioBrowser = config.features.radioBrowser;
       const hasLyrics = config.features.lyrics;
@@ -93,7 +91,7 @@ export async function testConnection(
         url: config.navidromeUrl,
         authenticated: true,
         timestamp: new Date().toISOString(),
-        version: getPackageVersion(),
+        mcpServerVersion: getPackageVersion(),
         features: {
           lastfm: {
             enabled: hasLastFm,

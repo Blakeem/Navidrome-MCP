@@ -144,6 +144,15 @@ describe('get_lyrics identity inputs', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('reads the song row once for a songId lookup', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilter.mockResolvedValue(songRow({ lyrics: syncedTag() }));
+
+    await category.handleToolCall('get_lyrics', { songId: 'song-1' });
+
+    expect(client.requestWithLibraryFilter).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to LRCLIB using the metadata of the song row', async () => {
     const { category, client } = makeCategory();
     client.requestWithLibraryFilter.mockResolvedValue(songRow());
@@ -281,6 +290,7 @@ describe('search_lyrics candidates', () => {
       albumName: 'Pablo Honey',
       durationMs: 238000,
       hasSynced: true,
+      isInstrumental: false,
     });
     expect(result.candidates[1]?.hasSynced).toBe(false);
     expect(result.librarySong).toBeUndefined();
@@ -301,6 +311,40 @@ describe('search_lyrics candidates', () => {
 
     expect(result.librarySong).toEqual({ songId: 'song-1', lyrics: 'synced' });
     expect(result.candidates).toHaveLength(1);
+  });
+
+  it('flags an instrumental LRCLIB record on its candidate', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+    global.fetch = vi.fn().mockResolvedValue(
+      makeResponse(200, [lrclibRecord({ instrumental: true, plainLyrics: undefined, syncedLyrics: undefined })]),
+    );
+
+    const result = (await category.handleToolCall('search_lyrics', {
+      title: 'Creep',
+      artist: 'Radiohead',
+    })) as LyricsSearchDTO;
+
+    expect(result.candidates[0]).toMatchObject({ hasSynced: false, isInstrumental: true });
+  });
+
+  it('prefers the exact library title over an instrumental variant listed first', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({
+      data: [
+        songRow({ id: 'song-instrumental', title: 'Scrape (Instrumental)', artist: 'Band' }),
+        songRow({ id: 'song-original', title: 'Scrape', artist: 'Band' }),
+      ],
+      total: 2,
+    });
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, []));
+
+    const result = (await category.handleToolCall('search_lyrics', {
+      title: 'Scrape',
+      artist: 'Band',
+    })) as LyricsSearchDTO;
+
+    expect(result.librarySong?.songId).toBe('song-original');
   });
 
   it('searches the library with the title and artist terms together', async () => {

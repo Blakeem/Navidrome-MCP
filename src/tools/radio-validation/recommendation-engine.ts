@@ -19,9 +19,6 @@
 import type { StreamValidationResult } from '../../types/index.js';
 import { NON_STANDARD_HTTP_RESPONSE, PRIVATE_ADDRESS_REFUSAL } from '../../utils/network-safety.js';
 
-/**
- * Generate recommendations based on validation results
- */
 export function generateRecommendations(result: StreamValidationResult): string[] {
   const recommendations: string[] = [];
 
@@ -47,9 +44,8 @@ export function generateRecommendations(result: StreamValidationResult): string[
   } else if (result.status === 'invalid') {
     recommendations.push('Stream validation failed');
 
-    if (result.httpStatus === 404) {
-      recommendations.push('Stream URL appears to be offline or moved');
-      recommendations.push('Check the station\'s official website for updated URLs');
+    if (result.httpStatus !== undefined && !result.validation.httpAccessible) {
+      recommendations.push(...httpErrorAdvice(result.httpStatus));
     } else if (!result.validation.hasAudioContentType) {
       recommendations.push('URL does not serve audio content');
       recommendations.push('Ensure you\'re using the stream URL, not the website URL');
@@ -76,4 +72,15 @@ export function generateRecommendations(result: StreamValidationResult): string[
   }
 
   return recommendations;
+}
+
+// An error page is text/html, so a non-2xx status must be advised on before the content type.
+function httpErrorAdvice(httpStatus: number): string[] {
+  if (httpStatus === 404 || httpStatus === 410) {
+    return ['Stream URL appears to be offline or moved', 'Check the station\'s official website for updated URLs'];
+  }
+  if (httpStatus === 401 || httpStatus === 403 || httpStatus === 451) {
+    return ['The stream may be geo-restricted or require authentication'];
+  }
+  return ['The server returned an error. Try again later'];
 }

@@ -22,14 +22,13 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { DEFAULT_VALUES } from '../../constants/defaults.js';
 import {
-  MAX_VALIDATION_TIMEOUT,
-  MIN_VALIDATION_TIMEOUT,
-  SINGLE_VALIDATION_TIMEOUT,
+  MAX_VALIDATION_TIMEOUT_MS,
+  MIN_VALIDATION_TIMEOUT_MS,
+  SINGLE_VALIDATION_TIMEOUT_MS,
 } from '../../constants/timeouts.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { respawnWebForPlay } from './respawn-on-play.js';
 
-// Import tool functions
 import {
   listRadioStations,
   createRadioStation,
@@ -70,18 +69,15 @@ const BASE_RADIO_TOOLS: Tool[] = [
             properties: {
               name: {
                 type: 'string',
-                description: 'Station name (required)',
-                minLength: 1,
+                description: 'Station name (required, non-empty)',
               },
               streamUrl: {
                 type: 'string',
-                description: 'Stream URL (required) - must be valid HTTP/HTTPS URL',
-                pattern: '^https?://.+$',
+                description: 'Stream URL (required). Must use http:// or https://.',
               },
               homePageUrl: {
                 type: 'string',
-                description: 'Optional homepage URL for the station',
-                pattern: '^https?://.+$',
+                description: 'Optional homepage URL. Must use http:// or https:// when set.',
               },
             },
             required: ['name', 'streamUrl'],
@@ -130,7 +126,7 @@ const BASE_RADIO_TOOLS: Tool[] = [
   },
   {
     name: 'validate_radio_stream',
-    description: 'Tests if an HTTP/HTTPS radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and samples a small audio chunk. This validator probes only http:// and https:// URLs. An mms://, rtsp:// or rtmp:// station must first be added in the Navidrome web UI, and play_radio_station then plays it by stationId. URLs and redirect targets that resolve to private, loopback or link-local addresses are refused, so only publicly reachable streams can be validated.',
+    description: 'Tests if an HTTP/HTTPS radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and samples a small audio chunk only when the HEAD response does not already show audio. audioDataDetected is false when no sample was taken. This validator probes only http:// and https:// URLs. Add an mms://, rtsp:// or rtmp:// station in the Navidrome web UI instead. URLs and redirect targets that resolve to private, loopback or link-local addresses are refused, so only publicly reachable streams can be validated.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -141,10 +137,10 @@ const BASE_RADIO_TOOLS: Tool[] = [
         },
         timeout: {
           type: 'number',
-          description: `Timeout in milliseconds (default: ${SINGLE_VALIDATION_TIMEOUT}, max: ${MAX_VALIDATION_TIMEOUT})`,
-          minimum: MIN_VALIDATION_TIMEOUT,
-          maximum: MAX_VALIDATION_TIMEOUT,
-          default: SINGLE_VALIDATION_TIMEOUT,
+          description: `Timeout in milliseconds (default: ${SINGLE_VALIDATION_TIMEOUT_MS}, max: ${MAX_VALIDATION_TIMEOUT_MS})`,
+          minimum: MIN_VALIDATION_TIMEOUT_MS,
+          maximum: MAX_VALIDATION_TIMEOUT_MS,
+          default: SINGLE_VALIDATION_TIMEOUT_MS,
         },
         followRedirects: {
           type: 'boolean',
@@ -165,6 +161,7 @@ const PLAY_RADIO_STATION_TOOL: Tool = {
     properties: {
       stationId: {
         type: 'string',
+        minLength: 1,
         description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
       },
     },
@@ -206,25 +203,26 @@ const RADIO_BROWSER_TOOLS: Tool[] = [
         },
         isHttps: {
           type: 'boolean',
-          description: 'Require secure HTTPS streams (recommended for security)',
+          description: 'true returns only HTTPS streams. false or omitted applies no HTTPS filter.',
         },
-        order: {
+        sort: {
           type: 'string',
           description: 'Sort results by: "votes"=popularity, "name"=alphabetical, "clickcount"=most played, "bitrate"=quality, "lastcheckok"=reliability, "random"=shuffle',
           enum: ['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random'],
           default: 'votes',
         },
-        reverse: {
-          type: 'boolean',
-          description: 'Reverse sort order (true=descending/best first, false=ascending). Omitted means false for "name" (A to Z) and true for every other order (highest first).',
+        order: {
+          type: 'string',
+          description: 'Sort direction. Omitted means ASC for "name" (A to Z) and DESC for every other sort (highest first).',
+          enum: ['ASC', 'DESC'],
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Skip first N results for pagination',
           minimum: 0,
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of stations to return (15=quick discovery, 50=extensive search, 500=maximum)',
           minimum: 1,
           maximum: 500,
@@ -306,7 +304,6 @@ const RADIO_BROWSER_TOOLS: Tool[] = [
 export const RADIO_PLAYBACK_TOOL_NAMES = [PLAY_RADIO_STATION_TOOL.name];
 export const RADIO_BROWSER_TOOL_NAMES = RADIO_BROWSER_TOOLS.map((tool) => tool.name);
 
-// Helper function to get radio tools based on config
 function getRadioTools(config: Config): Tool[] {
   const tools: Tool[] = [...BASE_RADIO_TOOLS];
 
@@ -322,23 +319,22 @@ function getRadioTools(config: Config): Tool[] {
   return tools;
 }
 
-// Factory function for creating radio tool category with dependencies
 export function createRadioToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools: getRadioTools(config),
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
         case 'list_radio_stations':
-          return await listRadioStations(client, args, config);
+          return await listRadioStations(client, args);
         case 'create_radio_station':
           return await createRadioStation(client, args);
         case 'delete_radio_station':
           return await deleteRadioStation(client, args);
         case 'get_radio_station':
-          return await getRadioStation(client, args, config);
+          return await getRadioStation(client, args);
         case 'play_radio_station':
           await respawnWebForPlay(config);
-          return await playRadioStation(client, args, config);
+          return await playRadioStation(client, args);
         case 'validate_radio_stream':
           return await validateRadioStream(args);
         case 'discover_radio_stations':
@@ -352,7 +348,7 @@ export function createRadioToolCategory(client: NavidromeClient, config: Config)
         case 'vote_station':
           return await voteStation(config, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`radio ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

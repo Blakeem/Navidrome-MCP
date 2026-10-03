@@ -34,10 +34,8 @@ import {
  * field, only `albumArtist`/`albumArtistId`. We carry both shapes here so the
  * transformer can fall back cleanly when the REST surface omits `artist`.
  *
- * Year is exposed as `maxYear` / `minYear` (release date range) and
- * `maxOriginalYear` / `minOriginalYear` (original release date range). We
- * synthesize `releaseYear` from `maxYear` (preferred) with `minYear` /
- * `maxOriginalYear` as fallbacks.
+ * `releaseYear` comes from the first nonzero of maxYear, then minYear, then maxOriginalYear,
+ * then minOriginalYear.
  */
 export interface RawAlbum {
   id: string;
@@ -46,7 +44,6 @@ export interface RawAlbum {
   artistId?: string;
   albumArtist?: string;
   albumArtistId?: string;
-  releaseYear?: number;
   maxYear?: number;
   minYear?: number;
   maxOriginalYear?: number;
@@ -96,14 +93,10 @@ function pickYear(...candidates: Array<number | undefined>): number | undefined 
  * Transform a raw album from Navidrome API to a clean DTO
  * @param rawAlbum Raw album data from API
  * @param options Verbosity controls (see {@link TransformOptions}). Default
- *   compact: only the identity block is emitted; verbose/keep restore the rest.
+ *   compact: only the identity block is emitted. Verbose/keep restore the rest.
  * @returns Clean album DTO for LLM consumption
  */
 export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptions): AlbumDTO {
-  // The REST `/api/album` listing leaves the top-level `artist` field unset;
-  // only `albumArtist` is populated. Fall back to `albumArtist` so the DTO
-  // never carries an empty `artist` string when there's a perfectly good
-  // value one field over.
   const artist = pickString(rawAlbum.artist, rawAlbum.albumArtist) ?? '';
   const artistId = pickString(rawAlbum.artistId, rawAlbum.albumArtistId) ?? '';
 
@@ -126,13 +119,8 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
     dto.albumArtistId = rawAlbum.albumArtistId;
   }
 
-  // Year handling: API exposes maxYear / minYear (release date range) and
-  // maxOriginalYear / minOriginalYear (original release date). Prefer the
-  // explicit `releaseYear` if a caller already normalised it; otherwise use
-  // the latest release year, falling back to the earliest, then the original.
   if (shouldEmit('releaseYear', options)) {
     const releaseYear = pickYear(
-      rawAlbum.releaseYear,
       rawAlbum.maxYear,
       rawAlbum.minYear,
       rawAlbum.maxOriginalYear,
@@ -161,7 +149,7 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
     dto.compilation = rawAlbum.compilation;
   }
 
-  // Navidrome omits playCount for never-played rows (see the artist transformer).
+  // Navidrome omits playCount for never-played rows, so an explicit 0 separates never played from unavailable.
   if (shouldEmit('playCount', options)) {
     dto.playCount = rawAlbum.playCount ?? 0;
   }

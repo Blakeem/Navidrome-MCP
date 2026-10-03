@@ -189,6 +189,14 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   }
 
   async function handlePost(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // A non-JSON essence lets a browser send this request without a CORS preflight.
+    const contentType = headerValue(req, 'content-type') ?? '';
+    const mediaType = (contentType.split(';')[0] ?? '').trim().toLowerCase();
+    if (mediaType !== 'application/json') {
+      writeJsonRpcError(res, 415, 'Unsupported Media Type: Content-Type must be application/json');
+      return;
+    }
+
     // Read the body ourselves so we can route on it (decide new-session vs.
     // existing-session) before handing it to the transport. The SDK accepts a
     // pre-parsed body as the third arg, so it does not re-read the stream.

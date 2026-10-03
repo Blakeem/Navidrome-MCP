@@ -26,7 +26,7 @@ import { getPlayQueue, nowPlaying, playbackStatus } from '../tools/playback.js';
 import { getTheme } from '../web/player-runtime.js';
 import { logger } from '../utils/logger.js';
 
-// mpv fires time-pos every 250 ms and a bulk loadfile fires one queue event per track, so property events are throttled.
+// mpv fires time-pos every 250 ms and a bulk loadfile fires one playlist-count change per track, so property events are throttled.
 const BROADCAST_THROTTLE_MS = 1000;
 
 // Browsers retry at this interval verbatim, so it sets how soon an idle phone reconnects without polling the server hard.
@@ -48,6 +48,8 @@ export class SseBroadcaster {
   private pendingBroadcastTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private unsubscribe: (() => void) | null = null;
+  private buildInFlight = false;
+  private rebuildRequested = false;
 
   constructor(private readonly client: NavidromeClient) {}
 
@@ -111,9 +113,7 @@ export class SseBroadcaster {
     res.on('close', () => { this.clients.delete(res); });
     res.on('drain', () => { this.handleDrain(res); });
 
-    const snapshot = await this.buildSnapshot();
-    // The client may have closed during the await, and its 'close' handler already removed it.
-    if (snapshot !== null && this.clients.has(res)) this.writeToClient(res, snapshot);
+    await this.broadcast();
   }
 
   private handleEvent(evt: StateChangeEvent): void {
@@ -151,12 +151,29 @@ export class SseBroadcaster {
     void this.broadcast();
   }
 
+  // One build at a time, so a slow build never overwrites a newer snapshot and requests during a build coalesce into one rebuild.
   private async broadcast(): Promise<void> {
     if (this.clients.size === 0) return;
-    const snapshot = await this.buildSnapshot();
-    if (snapshot === null) return;
-    for (const res of this.clients) {
-      if (!this.writeToClient(res, snapshot)) this.clients.delete(res);
+    if (this.buildInFlight) {
+      this.rebuildRequested = true;
+      return;
+    }
+    this.buildInFlight = true;
+    try {
+      let rebuild = true;
+      while (rebuild) {
+        this.rebuildRequested = false;
+        const snapshot = await this.buildSnapshot();
+        if (snapshot !== null) {
+          for (const res of this.clients) {
+            if (!this.writeToClient(res, snapshot)) this.clients.delete(res);
+          }
+        }
+        // A broadcast() call during the await above set this flag.
+        rebuild = this.rebuildRequested;
+      }
+    } finally {
+      this.buildInFlight = false;
     }
   }
 

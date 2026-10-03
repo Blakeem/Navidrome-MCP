@@ -29,9 +29,6 @@ import {
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 
-/**
- * JSON-mode response: structured track DTOs plus the paginated total.
- */
 interface GetPlaylistTracksJsonResponse {
   format: 'json';
   tracks: PlaylistTrackDTO[];

@@ -25,6 +25,7 @@ import {
   PlayAlbumsSearchSchema,
   PlayPlaylistSchema,
   PlayQueueIndexSchema,
+  PlayQueuePaginationSchema,
   PlaySongsSchema,
   PlaySongsSearchSchema,
   SeekSchema,
@@ -37,7 +38,7 @@ import {
   type QueueTrackMetadata,
 } from '../services/playback/playback-engine.js';
 import { fisherYatesShuffle, orderQueueSongs } from './queue-order.js';
-import { listRadioStations } from './radio.js';
+import { fetchRadioStations } from './radio.js';
 import {
   fetchAlbumSetSongs,
   fetchLibrarySourceRows,
@@ -50,6 +51,7 @@ import { searchAlbums, searchSongs } from './search/index.js';
 import { parseDuration } from '../transformers/shared-transformers.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
+import { hasSubsonicAuthParams } from '../utils/sanitize-url.js';
 
 interface PauseResult {
   success: boolean;
@@ -75,9 +77,6 @@ interface SetVolumeResult {
 interface PlaySongsResult {
   success: true;
   count: number;
-  /** Set to true ONLY when the request was `mode: 'append'` but a radio
-      stream in the queue forced a clear-and-replace. Omitted in the normal
-      case so its presence is itself the signal. */
   demoted?: true;
 }
 
@@ -165,6 +164,11 @@ interface GetPlayQueueResult {
   currentIndex?: number;
 }
 
+interface PlayQueuePageResult extends GetPlayQueueResult {
+  offset: number;
+  limit: number;
+}
+
 interface ClearPlayQueueResult {
   success: true;
 }
@@ -196,6 +200,21 @@ interface PlayQueueIndexResult {
   message?: string;
 }
 
+interface LiveQueueState {
+  position: number;
+  count: number;
+}
+
+/**
+ * mpv idles with its IPC still connected after a clear or a finished queue, so a live
+ * socket alone does not mean anything plays. Attaches but never spawns, and returns null with no mpv.
+ */
+async function readLiveQueueState(): Promise<LiveQueueState | null> {
+  await playbackEngine.ensureAttached();
+  if (!playbackEngine.isRunning()) return null;
+  return playbackEngine.readQueueState();
+}
+
 /**
  * Pause local audio playback. Attaches to a live mpv but never spawns one,
  * since pausing a fresh, empty mpv is meaningless.
@@ -203,8 +222,8 @@ interface PlayQueueIndexResult {
 export async function pause(_args: unknown): Promise<PauseResult> {
   try {
     logger.debug('playback: pause');
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.position < 0) {
       return { success: false, message: 'Nothing to pause. No active playback.' };
     }
     await playbackEngine.pause();
@@ -221,8 +240,8 @@ export async function pause(_args: unknown): Promise<PauseResult> {
 export async function resume(_args: unknown): Promise<ResumeResult> {
   try {
     logger.debug('playback: resume');
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.position < 0) {
       return { success: false, message: 'Nothing to resume. No active playback. Start something with a play tool.' };
     }
     await playbackEngine.resume();
@@ -315,16 +334,11 @@ export async function playSongs(client: NavidromeClient, args: unknown): Promise
 
 /**
  * Play one or many albums through the local speakers. Reads the albums'
- * ordered track lists, applies the requested shuffle mode, then loads
+ * ordered track lists, orders them with `orderQueueSongs`, then loads
  * the result into the mpv playlist via `enqueue`.
  *
- * Shuffle modes:
- *   - `'none'`: input album order, natural track order within each album
- *   - `'albums'`: shuffle the album order, natural track order within each album
- *   - `'songs'`: flatten all tracks then shuffle the flat list
- *
  * Albums that resolve to zero tracks are silently skipped. If every album
- * resolves to zero tracks, throws `'No tracks found across all albums'`.
+ * resolves to zero tracks, throws `'No tracks found in the active libraries for these album IDs...'`.
  */
 export async function playAlbums(client: NavidromeClient, args: unknown): Promise<PlayAlbumsResult> {
   let parsed: z.infer<typeof PlayAlbumsSchema>;
@@ -335,8 +349,11 @@ export async function playAlbums(client: NavidromeClient, args: unknown): Promis
   }
 
   try {
-    logger.debug(`playback: play_albums count=${parsed.albumIds.length} mode=${parsed.mode} shuffle=${parsed.shuffle}`);
-    return { success: true, ...await enqueueAlbumsByIds(client, parsed.albumIds, parsed.mode, parsed.shuffle) };
+    const { albumIds, mode, shuffleSongs, shuffleAlbums } = parsed;
+    logger.debug(
+      `playback: play_albums count=${albumIds.length} mode=${mode} shuffleSongs=${shuffleSongs} shuffleAlbums=${shuffleAlbums}`,
+    );
+    return { success: true, ...await enqueueAlbumsByIds(client, albumIds, mode, { shuffleSongs, shuffleAlbums }) };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_albums', error));
   }
@@ -345,20 +362,19 @@ export async function playAlbums(client: NavidromeClient, args: unknown): Promis
 /**
  * Load the tracks of an ordered album-ID list into the live mpv queue in a single enqueue.
  * Albums with no tracks add nothing, and a set with no tracks at all throws.
- * `demoted` is present only when the engine turned `append` into `replace`.
  */
 async function enqueueAlbumsByIds(
   client: NavidromeClient,
   albumIds: readonly string[],
   mode: z.infer<typeof PlayAlbumsSchema>['mode'],
-  shuffle: z.infer<typeof PlayAlbumsSchema>['shuffle'],
+  shuffle: Pick<z.infer<typeof PlayAlbumsSchema>, 'shuffleSongs' | 'shuffleAlbums'>,
 ): Promise<{ albumCount: number; trackCount: number; demoted?: true }> {
   const rows = await fetchAlbumSetSongs(client, albumIds, 'Album set');
   if (rows.length === 0) {
-    throw new Error('No tracks found across all albums');
+    throw new Error('No tracks found in the active libraries for these album IDs. Check the IDs with search_albums, or the active libraries with get_user_details.');
   }
 
-  const ordered = orderQueueSongs(rows, { shuffleSongs: shuffle === 'songs', shuffleAlbums: shuffle === 'albums' });
+  const ordered = orderQueueSongs(rows, shuffle);
   const ids = ordered.map((row) => row.songId);
   const { demoted } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
 
@@ -392,15 +408,15 @@ export async function playAlbumsSearch(
   }
 
   try {
-    const { mode, shuffle, ...searchArgs } = parsed;
-    logger.debug(`playback: play_albums_search mode=${mode} shuffle=${shuffle}`);
+    const { mode, shuffleSongs, shuffleAlbums, ...searchArgs } = parsed;
+    logger.debug(`playback: play_albums_search mode=${mode} shuffleSongs=${shuffleSongs} shuffleAlbums=${shuffleAlbums}`);
 
     const result = await searchAlbums(client, searchArgs);
     if (result.albums.length === 0) {
       throw new Error('No albums matched the search filters');
     }
 
-    const enqueued = await enqueueAlbumsByIds(client, result.albums.map((album) => album.id), mode, shuffle);
+    const enqueued = await enqueueAlbumsByIds(client, result.albums.map((album) => album.id), mode, { shuffleSongs, shuffleAlbums });
     const out: PlayAlbumsSearchResult = {
       success: true,
       matchCount: result.albums.length,
@@ -481,7 +497,8 @@ export async function playSongsSearch(
  * pattern, which round-trips every `songId` through the LLM.
  *
  * Tracks load in the playlist's saved order. `shuffle: true` shuffles the
- * flat ID list before enqueue. Empty playlists raise `'Playlist has no tracks'`.
+ * flat ID list before enqueue. A playlist with no tracks in the active libraries
+ * raises `'Playlist has no tracks in the active libraries...'`.
  */
 export async function playPlaylist(client: NavidromeClient, args: unknown): Promise<PlayPlaylistResult> {
   let parsed: z.infer<typeof PlayPlaylistSchema>;
@@ -496,7 +513,7 @@ export async function playPlaylist(client: NavidromeClient, args: unknown): Prom
 
     const rows = await fetchPlaylistSongs(client, parsed.playlistId);
     if (rows.length === 0) {
-      throw new Error('Playlist has no tracks');
+      throw new Error('Playlist has no tracks in the active libraries. Call get_user_details to see the active libraries, or set_active_libraries to change them.');
     }
     const ids = rows.map((row) => row.songId);
 
@@ -588,8 +605,8 @@ export async function playLibrarySource(
 export async function next(_args: unknown): Promise<NextResult> {
   try {
     logger.debug('playback: next');
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.position < 0) {
       return { success: false, message: 'The play queue is empty. Nothing to skip to. Start something with a play tool.' };
     }
     await playbackEngine.next();
@@ -606,8 +623,8 @@ export async function next(_args: unknown): Promise<NextResult> {
 export async function previous(_args: unknown): Promise<PreviousResult> {
   try {
     logger.debug('playback: previous');
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.position < 0) {
       return { success: false, message: 'The play queue is empty. Nothing to skip to. Start something with a play tool.' };
     }
     await playbackEngine.previous();
@@ -632,8 +649,8 @@ export async function seek(args: unknown): Promise<SeekResult> {
 
   try {
     logger.debug(`playback: seek seconds=${parsed.seconds} mode=${parsed.mode}`);
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.position < 0) {
       return { success: false, message: 'Nothing to seek. No active playback.' };
     }
     await playbackEngine.seek(parsed.seconds, parsed.mode);
@@ -644,10 +661,11 @@ export async function seek(args: unknown): Promise<SeekResult> {
 }
 
 /**
- * mpv reports the raw Subsonic stream URL, auth token and salt included, as
- * `media-title` until it reads file metadata, so a URL-shaped value is suppressed.
+ * mpv reports the stream URL, or its basename as the filename fallback, as media-title until it reads a title tag.
+ * Both forms carry the Subsonic auth params.
  */
-function looksLikeHttpUrl(value: string): boolean {
+function carriesStreamUrl(value: string): boolean {
+  if (hasSubsonicAuthParams(value)) return true;
   try {
     const u = new URL(value);
     return u.protocol === 'http:' || u.protocol === 'https:';
@@ -668,31 +686,114 @@ function preferAuthoritativeDuration(mpvDuration: number | undefined, authoritat
   return mpvDuration;
 }
 
-// The authoritative duration for one loaded file, kept so later polls reapply it
-// without IPC while mpv's VBR duration is still under-reported.
-let durationRepair: { key: string; duration: number } | null = null;
-// The key a getQueue() reconciliation confirmed is NOT radio. Without it,
-// `needsRadioFallback` forces a getQueue() IPC on every poll of ordinary playback.
-let notRadioConfirmedForKey: string | null = null;
-// The radio station resolved for one loaded file, so later polls skip the IPC and the station lookup.
-let radioForKey: { key: string; stationName: string } | null = null;
+interface RepairCache {
+  key: string;
+  stationName?: string;
+  notRadio?: true;
+  duration?: number;
+}
+
+// Facts resolved for one loaded file, so later polls of that file skip the getQueue IPC and the Navidrome reads.
+let repairCache: RepairCache | null = null;
+
+export function resetNowPlayingCache(): void {
+  repairCache = null;
+}
+
+// A new key replaces the whole entry, so facts about the previous file never carry over.
+function recordRepairFacts(key: string, facts: Omit<RepairCache, 'key'>): void {
+  const kept: RepairCache = repairCache?.key === key ? repairCache : { key };
+  repairCache = { ...kept, ...facts };
+}
 
 const UNKNOWN_STATION_NAME = 'Unknown station';
 
 /**
- * Every process sharing mpv can name the station this way, including one that
- * did not start it. A .pls or .m3u station plays an expanded URL, so mpv's
- * playlist-path is tried too.
+ * Every process sharing mpv can name the station this way. A .pls or .m3u station plays an expanded URL, so mpv's
+ * playlist-path is tried too. Returns null for no match or no client, and undefined when the station read fails.
  */
-async function findSavedStationName(client: NavidromeClient | undefined, streamUrls: unknown[]): Promise<string | null> {
+async function findSavedStationName(
+  client: NavidromeClient | undefined,
+  streamUrls: readonly unknown[],
+): Promise<string | null | undefined> {
   if (client === undefined) return null;
   try {
-    const { stations } = await listRadioStations(client, {});
+    const stations = await fetchRadioStations(client);
     return stations.find((station) => streamUrls.includes(station.streamUrl))?.name ?? null;
   } catch (error) {
     logger.debug('now_playing: saved radio station lookup failed:', error);
-    return null;
+    return undefined;
   }
+}
+
+type RepairFields = Pick<NowPlayingResult, 'title' | 'artist' | 'album' | 'duration' | 'isRadio' | 'radioStation'>;
+
+interface QueueRepair {
+  fields: RepairFields;
+  facts: Omit<RepairCache, 'key'>;
+}
+
+/**
+ * Reconciles a poll with mpv's playlist, and with Navidrome when the engine cache is cold after an MCP restart.
+ * Returns null when mpv already moved off the polled index, so another entry's facts never reach the old key.
+ */
+async function reconcileWithQueue(
+  client: NavidromeClient | undefined,
+  polled: Readonly<NowPlayingResult>,
+  needs: { radio: boolean; duration: boolean },
+  stationUrls: readonly unknown[] | null,
+): Promise<QueueRepair | null> {
+  const fields: RepairFields = {};
+  const facts: Omit<RepairCache, 'key'> = {};
+  let fetchedDuration: number | undefined;
+
+  const playlist = await playbackEngine.getQueue();
+  const current = playlist.find((e) => e.isCurrent);
+  if (current === undefined) return null;
+  if (polled.queueIndex !== undefined && current.index !== polled.queueIndex) return null;
+
+  if (current.songId !== null) facts.notRadio = true;
+  if (current.songId === null && needs.radio) {
+    fields.isRadio = true;
+    // Mid-load mpv has no path yet, so the name waits for a later poll.
+    if (stationUrls !== null) {
+      const savedName = await findSavedStationName(client, stationUrls);
+      fields.radioStation = { name: savedName ?? UNKNOWN_STATION_NAME };
+      // A failed station read caches nothing, so the next poll retries it.
+      if (savedName !== undefined) facts.stationName = savedName ?? UNKNOWN_STATION_NAME;
+    }
+  }
+
+  if (polled.title === undefined && current.title !== undefined && !carriesStreamUrl(current.title)) {
+    fields.title = current.title;
+  }
+  if (polled.artist === undefined && current.artist !== undefined) fields.artist = current.artist;
+  if (polled.album === undefined && current.album !== undefined) fields.album = current.album;
+
+  // Album is not a trigger, since a song without one would re-fetch on every poll.
+  const titleMissing = (polled.title ?? fields.title) === undefined;
+  const artistMissing = (polled.artist ?? fields.artist) === undefined;
+  const durationMissing = needs.duration && current.duration === undefined;
+  if (client !== undefined && current.songId !== null && (titleMissing || artistMissing || durationMissing)) {
+    const [md] = await fetchSongMetadata(client, [current.songId]);
+    if (md !== undefined) {
+      playbackEngine.ingestQueueMetadata([md]);
+      if (titleMissing && md.title !== undefined && md.title !== '') fields.title = md.title;
+      if (artistMissing && md.artist !== undefined && md.artist !== '') fields.artist = md.artist;
+      if ((polled.album ?? fields.album) === undefined && md.album !== undefined && md.album !== '') {
+        fields.album = md.album;
+      }
+      fetchedDuration = md.duration;
+    }
+  }
+
+  // Navidrome's duration outlasts mpv's early VBR estimate.
+  const authoritativeDuration = current.duration ?? fetchedDuration;
+  if (authoritativeDuration !== undefined && authoritativeDuration > 0) {
+    fields.duration = preferAuthoritativeDuration(polled.duration, authoritativeDuration);
+    facts.duration = authoritativeDuration;
+  }
+  return { fields, facts };
 }
 
 /**
@@ -700,11 +801,8 @@ async function findSavedStationName(client: NavidromeClient | undefined, streamU
  * Read tools never start mpv. Attaching to an already-running mpv (e.g. one
  * that survived an MCP restart) keeps the report true to the actual playback.
  *
- * `client` is optional and used only as a last-resort enrichment path: after
- * an MCP restart the in-memory metadata cache is empty, so title/artist/album
- * for the current track are resolved by a single Navidrome lookup. When the
- * client is absent (e.g. the live-mpv integration helper), the in-session
- * engine cache still supplies them.
+ * `client` feeds the cold-cache metadata lookup after an MCP restart and the saved radio station name lookup.
+ * Without a client the engine cache supplies metadata and a radio stream reports "Unknown station".
  */
 export async function nowPlaying(_args: unknown, client?: NavidromeClient): Promise<NowPlayingResult> {
   try {
@@ -731,118 +829,66 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
     const duration = playbackEngine.getCachedProperty('duration');
     if (typeof duration === 'number') result.duration = duration;
 
-    // Never surface a URL-shaped media-title: during the track-load window mpv
-    // reports the raw stream URL (with auth token + salt) here. Suppress it and
-    // let the songId-based reconciliation below fill in the real title, the
-    // same way get_play_queue stays correct.
     const title = playbackEngine.getCachedProperty('media-title');
-    if (typeof title === 'string' && !looksLikeHttpUrl(title)) result.title = title;
+    if (typeof title === 'string' && !carriesStreamUrl(title)) result.title = title;
 
     const metadata = playbackEngine.getCachedProperty('metadata');
     if (typeof metadata === 'object' && metadata !== null) {
       const meta = metadata as Record<string, unknown>;
       const artist = pickFirstString(meta, ['artist', 'Artist', 'ARTIST', 'icy-name']);
       const album = pickFirstString(meta, ['album', 'Album', 'ALBUM']);
-      if (artist !== null && !looksLikeHttpUrl(artist)) result.artist = artist;
-      if (album !== null && !looksLikeHttpUrl(album)) result.album = album;
+      if (artist !== null && !carriesStreamUrl(artist)) result.artist = artist;
+      if (album !== null && !carriesStreamUrl(album)) result.album = album;
     }
 
-    // getQueue() runs for three triggers: radio fallback, VBR duration repair and metadata repair.
-    // `now_playing` runs on every poll, so the per-key caches skip that IPC once a key is resolved.
-    // mpv's `path` is in the key because the generation is per process: another process
-    // sharing this mpv, or removal of the playing entry, loads a new file at the same index.
+    // mpv's path is in the key because another process or a removed entry can load a new file
+    // at the same index in one generation.
     const loadedPath = playbackEngine.getCachedProperty('path');
     const repairKey =
       typeof queueIndex === 'number' && typeof loadedPath === 'string' && loadedPath !== ''
         ? `${String(playbackEngine.getQueueGeneration())}:idx:${String(queueIndex)}:${loadedPath}`
         : null;
-    const knownRadio = repairKey !== null && radioForKey?.key === repairKey ? radioForKey : null;
-    if (knownRadio !== null) {
+    const cached = repairKey !== null && repairCache?.key === repairKey ? repairCache : null;
+    const knownStation = cached?.stationName;
+    const cachedDuration = cached?.duration;
+    if (knownStation !== undefined) {
       result.isRadio = true;
-      result.radioStation = { name: knownRadio.stationName };
+      result.radioStation = { name: knownStation };
     }
-    // A key confirmed not radio stops the radio fallback, which would otherwise fire getQueue() on every poll.
-    const notRadioConfirmed =
-      repairKey !== null && notRadioConfirmedForKey === repairKey;
-    const needsRadioFallback = knownRadio === null && !notRadioConfirmed;
-    const cachedRepair = repairKey !== null && durationRepair?.key === repairKey ? durationRepair : null;
-    const alreadyRepaired = cachedRepair !== null;
-    if (cachedRepair !== null) {
-      result.duration = preferAuthoritativeDuration(result.duration, cachedRepair.duration);
+    if (cachedDuration !== undefined) {
+      result.duration = preferAuthoritativeDuration(result.duration, cachedDuration);
     }
-    const needsDurationRepair =
-      knownRadio === null &&
-      !alreadyRepaired &&
-      (result.duration === undefined || result.duration < DURATION_REPAIR_MAX_SECONDS);
+    const isKnownRadio = knownStation !== undefined;
+    const needs = {
+      radio: !isKnownRadio && cached?.notRadio === undefined,
+      duration:
+        !isKnownRadio &&
+        cachedDuration === undefined &&
+        (result.duration === undefined || result.duration < DURATION_REPAIR_MAX_SECONDS),
+    };
     // Radio is excluded because it has no album and takes its title from ICY, so it would fire getQueue() every poll.
-    const needsMetadataRepair =
-      knownRadio === null &&
-      (result.title === undefined || result.artist === undefined);
+    const needsMetadataRepair = !isKnownRadio && (result.title === undefined || result.artist === undefined);
     if (
       typeof queueLength === 'number' &&
       queueLength > 0 &&
-      (needsRadioFallback || needsDurationRepair || needsMetadataRepair)
+      (needs.radio || needs.duration || needsMetadataRepair)
     ) {
       try {
-        const playlist = await playbackEngine.getQueue();
-        const current = playlist.find(e => e.isCurrent);
-        if (current !== undefined) {
-          if (needsRadioFallback && current.songId === null) {
-            result.isRadio = true;
-            // Mid-load mpv has no path yet, so the name waits for a later poll.
-            if (repairKey !== null) {
-              const playlistPath = playbackEngine.getCachedProperty('playlist-path');
-              const stationName = (await findSavedStationName(client, [loadedPath, playlistPath])) ?? UNKNOWN_STATION_NAME;
-              radioForKey = { key: repairKey, stationName };
-              result.radioStation = { name: stationName };
-            }
-          }
-          if (current.songId !== null && repairKey !== null) {
-            notRadioConfirmedForKey = repairKey;
-          }
-          if (result.title === undefined && current.title !== undefined && !looksLikeHttpUrl(current.title)) {
-            result.title = current.title;
-          }
-          if (result.artist === undefined && current.artist !== undefined) {
-            result.artist = current.artist;
-          }
-          if (result.album === undefined && current.album !== undefined) {
-            result.album = current.album;
-          }
-          // After an MCP restart the engine cache is empty. Album is not a trigger,
-          // since a song without one would re-fetch on every poll.
-          if (
-            client !== undefined &&
-            current.songId !== null &&
-            (result.title === undefined || result.artist === undefined)
-          ) {
-            const [md] = await fetchSongMetadata(client, [current.songId]);
-            if (md !== undefined) {
-              playbackEngine.ingestQueueMetadata([md]);
-              if (result.title === undefined && md.title !== undefined && md.title !== '') result.title = md.title;
-              if (result.artist === undefined && md.artist !== undefined && md.artist !== '') result.artist = md.artist;
-              if (result.album === undefined && md.album !== undefined && md.album !== '') result.album = md.album;
-            }
-          }
-          // The cached duration comes from Navidrome and outlasts mpv's early VBR estimate.
-          if (current.duration !== undefined && current.duration > 0) {
-            result.duration = preferAuthoritativeDuration(result.duration, current.duration);
-            // Later polls for this key reapply the stored value without IPC. A cold cache
-            // (no duration) stores nothing, so the next poll retries.
-            if (repairKey !== null) {
-              durationRepair = { key: repairKey, duration: current.duration };
-            }
-          }
+        const stationUrls = repairKey === null ? null : [loadedPath, playbackEngine.getCachedProperty('playlist-path')];
+        const repair = await reconcileWithQueue(client, result, needs, stationUrls);
+        if (repair !== null) {
+          Object.assign(result, repair.fields);
+          if (repairKey !== null) recordRepairFacts(repairKey, repair.facts);
         }
       } catch {
         // Best-effort. A failed getQueue leaves mpv's cached properties in place.
       }
     }
 
-    // Backstop for every assignment above, since a URL-shaped value can carry stream credentials.
-    if (result.title !== undefined && looksLikeHttpUrl(result.title)) delete result.title;
-    if (result.artist !== undefined && looksLikeHttpUrl(result.artist)) delete result.artist;
-    if (result.album !== undefined && looksLikeHttpUrl(result.album)) delete result.album;
+    // Backstop for every assignment above, since any of them can hold a stream URL.
+    if (result.title !== undefined && carriesStreamUrl(result.title)) delete result.title;
+    if (result.artist !== undefined && carriesStreamUrl(result.artist)) delete result.artist;
+    if (result.album !== undefined && carriesStreamUrl(result.album)) delete result.album;
 
     return result;
   } catch (error) {
@@ -910,6 +956,31 @@ export async function getPlayQueue(client: NavidromeClient, _args: unknown): Pro
 }
 
 /**
+ * One page of the live queue for the agent, since play tools build queues of thousands of tracks.
+ * `length` and `currentIndex` stay absolute. The web remote reads the whole queue through getPlayQueue.
+ */
+export async function getPlayQueuePage(client: NavidromeClient, args: unknown): Promise<PlayQueuePageResult> {
+  let parsed: z.infer<typeof PlayQueuePaginationSchema>;
+  try {
+    parsed = PlayQueuePaginationSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('get_play_queue', error));
+  }
+
+  const full = await getPlayQueue(client, {});
+  const page: PlayQueuePageResult = {
+    items: full.items.slice(parsed.offset, parsed.offset + parsed.limit),
+    length: full.length,
+    offset: parsed.offset,
+    limit: parsed.limit,
+  };
+  if (full.currentIndex !== undefined) {
+    page.currentIndex = full.currentIndex;
+  }
+  return page;
+}
+
+/**
  * Copy only the LLM-facing fields. A stream URL would disclose the LAN host and port the server
  * reaches Navidrome on, and a field later added to `QueueEntry` must not reach the model unreviewed.
  */
@@ -953,8 +1024,8 @@ export async function clearPlayQueue(_args: unknown): Promise<ClearPlayQueueResu
 export async function shufflePlayQueue(_args: unknown): Promise<ShufflePlayQueueResult> {
   try {
     logger.debug('playback: shuffle_play_queue');
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.count === 0) {
       return { success: false, message: 'The play queue is empty. Nothing to shuffle. Start something with a play tool.' };
     }
     await playbackEngine.shuffleQueue();
@@ -985,7 +1056,7 @@ export async function shuffleQueueFromTop(_args: unknown): Promise<ShuffleQueueF
 /**
  * Move a play-queue entry so it ends at index `to`. Short-circuits with
  * `{ noop: true }` when `from === to`. A `to` past the last index is rejected,
- * and an out-of-range `from` surfaces mpv's error via ErrorFormatter.
+ * and an out-of-range `from` is rejected with an error that names it and points to get_play_queue.
  */
 export async function moveInPlayQueue(args: unknown): Promise<MoveInPlayQueueResult> {
   let parsed: z.infer<typeof MoveInPlayQueueSchema>;
@@ -1002,20 +1073,23 @@ export async function moveInPlayQueue(args: unknown): Promise<MoveInPlayQueueRes
 
   try {
     logger.debug(`playback: move_in_play_queue from=${parsed.from} to=${parsed.to}`);
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.count === 0) {
       return { success: false, message: 'The play queue is empty. Nothing to move. Start something with a play tool.' };
     }
     // mpv moves a past-the-end target to the end without an error, so the bound is checked here.
-    const queueLength = (await playbackEngine.getQueue()).length;
-    if (parsed.to >= queueLength) {
+    if (parsed.to >= queue.count) {
       throw new Error(
-        `to ${parsed.to} is past the last queue index. The queue holds ${queueLength} entries, so to must be below ${queueLength}. Call get_play_queue to read the queue.`,
+        `to ${parsed.to} is past the last queue index. The queue holds ${queue.count} entries, so to must be below ${queue.count}. Call get_play_queue to read the queue.`,
       );
     }
     // mpv inserts the entry before the one at its target, so a forward move targets the slot after `to`.
     const mpvTarget = parsed.from < parsed.to ? parsed.to + 1 : parsed.to;
-    await playbackEngine.moveQueueEntry(parsed.from, mpvTarget);
+    try {
+      await playbackEngine.moveQueueEntry(parsed.from, mpvTarget);
+    } catch (error) {
+      throw queueIndexError(error, `from ${parsed.from}`);
+    }
     return { success: true };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('move_in_play_queue', error));
@@ -1027,8 +1101,8 @@ export async function moveInPlayQueue(args: unknown): Promise<MoveInPlayQueueRes
  * clicking a row in a media-player queue. Queue contents are unchanged.
  * mpv unpauses, since a jump means "play this row now".
  *
- * Out-of-range indices surface as mpv errors via `ErrorFormatter`. No
- * pre-validation avoids a race with concurrent queue mutations.
+ * An out-of-range index is rejected with an error that names it and points to
+ * get_play_queue. No pre-validation avoids a race with concurrent queue mutations.
  */
 export async function playQueueIndex(args: unknown): Promise<PlayQueueIndexResult> {
   let parsed: z.infer<typeof PlayQueueIndexSchema>;
@@ -1040,12 +1114,16 @@ export async function playQueueIndex(args: unknown): Promise<PlayQueueIndexResul
 
   try {
     logger.debug(`playback: play_queue_index index=${parsed.index}`);
-    // Attach-only like next/previous, since the queue lives in mpv.
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    // A finished queue still holds rows, so jumping to one is a valid restart.
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.count === 0) {
       return { success: false, message: 'The play queue is empty. Nothing to jump to. Start something with a play tool.' };
     }
-    await playbackEngine.jumpToQueueEntry(parsed.index);
+    try {
+      await playbackEngine.jumpToQueueEntry(parsed.index);
+    } catch (error) {
+      throw queueIndexError(error, `index ${parsed.index}`);
+    }
     return { success: true };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_queue_index', error));
@@ -1054,8 +1132,8 @@ export async function playQueueIndex(args: unknown): Promise<PlayQueueIndexResul
 
 /**
  * Remove the play-queue entry at the given index. mpv auto-advances when the
- * removed entry is the playing track. Out-of-range indices surface as mpv
- * errors via ErrorFormatter.
+ * removed entry is the playing track. An out-of-range index is rejected with an
+ * error that names it and points to get_play_queue.
  */
 export async function removeFromPlayQueue(args: unknown): Promise<RemoveFromPlayQueueResult> {
   let parsed: z.infer<typeof PlayQueueIndexSchema>;
@@ -1067,11 +1145,15 @@ export async function removeFromPlayQueue(args: unknown): Promise<RemoveFromPlay
 
   try {
     logger.debug(`playback: remove_from_play_queue index=${parsed.index}`);
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
+    const queue = await readLiveQueueState();
+    if (queue === null || queue.count === 0) {
       return { success: false, message: 'The play queue is empty. Nothing to remove. Start something with a play tool.' };
     }
-    await playbackEngine.removeQueueEntry(parsed.index);
+    try {
+      await playbackEngine.removeQueueEntry(parsed.index);
+    } catch (error) {
+      throw queueIndexError(error, `index ${parsed.index}`);
+    }
     return { success: true };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('remove_from_play_queue', error));
@@ -1079,6 +1161,14 @@ export async function removeFromPlayQueue(args: unknown): Promise<RemoveFromPlay
 }
 
 // ---------- helpers ----------
+
+/** mpv rejects an unknown queue index with a generic error that names neither the index nor a recovery. */
+function queueIndexError(error: unknown, label: string): unknown {
+  if (error instanceof Error && error.message.startsWith('mpv command error')) {
+    return new Error(`${label} is not in the play queue. Call get_play_queue for the current indices.`);
+  }
+  return error;
+}
 
 /**
  * Read the first key from `obj` whose value is a non-empty string.

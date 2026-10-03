@@ -53,7 +53,7 @@ export interface RawSong {
   createdAt?: string;
   path?: string;
   lyrics?: string;
-  [key: string]: unknown; // Allow other fields we don't use
+  [key: string]: unknown;
 }
 
 
@@ -61,7 +61,7 @@ export interface RawSong {
  * Transform a raw song from Navidrome API to a clean DTO
  * @param rawSong Raw song data from API
  * @param options Verbosity controls (see {@link TransformOptions}). Default
- *   compact: only the identity block below is emitted; verbose/keep restore
+ *   compact: only the identity block below is emitted. Verbose/keep restore
  *   the secondary fields.
  * @returns Clean song DTO for LLM consumption
  */
@@ -79,16 +79,10 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     album: rawSong.album || '',
     albumId: rawSong.albumId,
     durationFormatted: formatDuration(rawSong.duration),
-    ...(localLyrics !== null ? { lyrics: localLyrics.hasSynced ? 'synced' as const : 'plain' as const } : {}),
+    ...(localLyrics !== null ? { lyrics: localLyrics.hasSynced ? 'synced' as const : 'unsynced' as const } : {}),
   };
 
-  // Secondary fields, emitted only in verbose mode (or when force-kept). Each
-  // is still added only if the source actually provides a value.
-
-  // Only emit addedDate when the source actually provides it. Navidrome's REST
-  // API always supplies `createdAt`; omitting (rather than fabricating `now`)
-  // keeps the value honest for any row that doesn't, matching every other
-  // optional field below.
+  // A fabricated timestamp would mislead, so addedDate is omitted when the row lacks createdAt.
   if (shouldEmit('addedDate', options) && rawSong.createdAt !== undefined && rawSong.createdAt !== '') {
     dto.addedDate = rawSong.createdAt;
   }
@@ -115,7 +109,7 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     dto.year = rawSong.year;
   }
 
-  if (shouldEmit('path', options) && rawSong.path !== undefined) {
+  if (shouldEmit('path', options) && rawSong.path !== undefined && rawSong.path !== '') {
     dto.path = rawSong.path;
   }
 
@@ -123,7 +117,7 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     dto.trackNumber = rawSong.trackNumber;
   }
 
-  // Navidrome omits playCount for never-played rows (see the artist transformer).
+  // Navidrome omits playCount for never-played rows, so an explicit 0 separates never played from unavailable.
   if (shouldEmit('playCount', options)) {
     dto.playCount = rawSong.playCount ?? 0;
   }

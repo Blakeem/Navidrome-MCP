@@ -128,6 +128,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             playlistId: playlistWithTracks.id,
             limit: 1
           });
+          if (result.format !== 'json') throw new Error('expected the default json format');
 
           expect(result).toHaveProperty('tracks');
           expect(result).toHaveProperty('total');
@@ -162,6 +163,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             limit: 1,
             verbose: true
           });
+          if (result.format !== 'json') throw new Error('expected the default json format');
 
           expect(result).toHaveProperty('tracks');
           expect(Array.isArray(result.tracks)).toBe(true);
@@ -204,7 +206,9 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           changed: '2023-01-01T12:00:00Z'
         };
         
-        mockClient.request.mockResolvedValue(mockResponse);
+        mockClient.request
+          .mockResolvedValueOnce({ id: 'new-playlist-123' })
+          .mockResolvedValueOnce(mockResponse);
         
         const result = await createPlaylist(mockClient, { 
           name: 'Test Playlist',
@@ -224,10 +228,17 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        // Verify response structure
-        expect(result).toHaveProperty('id');
-        expect(result).toHaveProperty('name');
+        // POST /playlist echoes only the id, so the DTO comes from the follow-up read.
+        expect(mockClient.request).toHaveBeenNthCalledWith(2, '/playlist/new-playlist-123');
+        expect(result.id).toBe('new-playlist-123');
         expect(result.name).toBe('Test Playlist');
+      });
+
+      it('should reject without a read-back when the POST returns no playlist id', async () => {
+        mockClient.request.mockResolvedValueOnce({});
+
+        await expect(createPlaylist(mockClient, { name: 'X' })).rejects.toThrow(/did not return a playlist id/);
+        expect(mockClient.request).toHaveBeenCalledTimes(1);
       });
 
       it('should handle minimal playlist creation', async () => {
@@ -256,6 +267,19 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             body: expect.stringContaining('Minimal Playlist')
           })
         );
+      });
+
+      it('resolves with the new id and a no-retry note when the read-back fails', async () => {
+        mockClient.request
+          .mockResolvedValueOnce({ id: 'created-789' })
+          .mockRejectedValueOnce(new Error('HTTP 503'));
+
+        const result = await createPlaylist(mockClient, { name: 'Read-back Fails', comment: 'kept' });
+
+        expect(result.id).toBe('created-789');
+        expect(result.name).toBe('Read-back Fails');
+        expect(result.comment).toBe('kept');
+        expect(result.note).toMatch(/Do not call create_playlist again\. Call get_playlist with playlistId created-789/);
       });
     });
 
@@ -289,6 +313,12 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
 
         expect(result.name).toBe('Updated Playlist Name');
+      });
+
+      it('should reject a call with no update field before any request', async () => {
+        await expect(updatePlaylist(mockClient, { playlistId: 'playlist-123' }))
+          .rejects.toThrow(/At least one of name, comment, or public must be provided/);
+        expect(mockClient.request).not.toHaveBeenCalled();
       });
     });
 
@@ -335,6 +365,10 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             body: expect.stringContaining('song-1')
           })
         );
+        // Navidrome reads song IDs from `ids`, so the input name `songIds` must not reach the body.
+        expect(JSON.parse((mockClient.request.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+          ids: ['song-1', 'song-2'],
+        });
 
         expect(result.added).toBe(2);
         // Acknowledged HTTP call → success true regardless of count; count > 0
@@ -508,6 +542,11 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             body: expect.stringContaining('album-1')
           })
         );
+        expect(JSON.parse((mockClient.request.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+          ids: ['song-1', 'song-2', 'song-3'],
+          albumIds: ['album-1', 'album-2'],
+          artistIds: ['artist-1'],
+        });
 
         // Verify return structure matches enhanced capability
         expect(result).toHaveProperty('added');
@@ -519,60 +558,61 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
     });
 
     describe('removeTracksFromPlaylist', () => {
-      it('should remove tracks by position', async () => {
-        const mockResponse = { 
-          ids: ['1', '3'],
-          message: '2 tracks removed successfully',
-          success: true
-        };
-        
-        mockClient.request.mockResolvedValue(mockResponse);
-        
-        const result = await removeTracksFromPlaylist(mockClient, { 
+      beforeEach(() => {
+        mockClient.requestWithMeta.mockResolvedValue({ data: [], total: 10 });
+        mockClient.request.mockResolvedValue({ ids: ['1', '3'] });
+      });
+
+      it('should read the playlist size, then remove tracks by position', async () => {
+        const result = await removeTracksFromPlaylist(mockClient, {
           playlistId: 'playlist-123',
-          positions: ['1', '3']
+          positions: ['1', '3'],
         });
 
+        expect(mockClient.requestWithMeta).toHaveBeenCalledWith('/playlist/playlist-123/tracks?_start=0&_end=1');
         expect(mockClient.request).toHaveBeenCalledWith(
-          expect.stringContaining('/playlist/playlist-123/tracks'),
-          expect.objectContaining({
-            method: 'DELETE'
-          })
+          '/playlist/playlist-123/tracks?id=1&id=3',
+          expect.objectContaining({ method: 'DELETE' }),
         );
-
         expect(result.positions).toEqual(['1', '3']);
         expect(result.success).toBe(true);
         expect(result.message).toBe('Removed 2 tracks from playlist');
       });
 
-      it('should read the single-id `{ id }` echo Navidrome sends for one removal', async () => {
-        mockClient.request.mockResolvedValue({ id: '9' });
-
-        const result = await removeTracksFromPlaylist(mockClient, {
-          playlistId: 'playlist-123',
-          positions: ['9'],
-        });
-
-        expect(result.positions).toEqual(['9']);
-        expect(result.success).toBe(true);
-        expect(result.message).toBe('Removed 1 track from playlist');
+      it('should reject an out-of-range position without deleting anything', async () => {
+        await expect(
+          removeTracksFromPlaylist(mockClient, {
+            playlistId: 'playlist-123',
+            positions: ['2', '11'],
+          }),
+        ).rejects.toThrow('Position 11 is out of range for a playlist of 10 tracks. Re-read get_playlist_tracks for the current positions.');
+        expect(mockClient.request).not.toHaveBeenCalled();
       });
 
-      it('should fall back to the requested positions when the 2xx body echoes neither field', async () => {
-        // A miss answers 404/500, so a 2xx means the requested positions were removed.
-        mockClient.request.mockResolvedValue({ ids: null });
-
+      it('should send and count a duplicated position once', async () => {
         const result = await removeTracksFromPlaylist(mockClient, {
           playlistId: 'playlist-123',
-          positions: ['4', '7'],
+          positions: ['4', '4', '7'],
         });
 
+        expect(mockClient.request).toHaveBeenCalledWith(
+          '/playlist/playlist-123/tracks?id=4&id=7',
+          expect.objectContaining({ method: 'DELETE' }),
+        );
         expect(result.positions).toEqual(['4', '7']);
         expect(result.message).toBe('Removed 2 tracks from playlist');
       });
 
+      it('should refuse to delete when Navidrome reports no playlist size', async () => {
+        mockClient.requestWithMeta.mockResolvedValue({ data: [], total: null });
+
+        await expect(
+          removeTracksFromPlaylist(mockClient, { playlistId: 'playlist-123', positions: ['1'] }),
+        ).rejects.toThrow(/did not report the playlist size/);
+        expect(mockClient.request).not.toHaveBeenCalled();
+      });
+
       it('should use singular "track" for a single removal', async () => {
-        mockClient.request.mockResolvedValue({ id: '2' });
 
         const result = await removeTracksFromPlaylist(mockClient, {
           playlistId: 'playlist-123',
@@ -657,8 +697,8 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
         expect(sentInsertBefore()).toBe('1');
         expect(result).toEqual({
-          previousPosition: 5,
-          newPosition: 1,
+          previousPosition: '5',
+          newPosition: '1',
           message: 'Moved track from position 5 to position 1',
           success: true,
         });
@@ -668,7 +708,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         const result = await reorderPlaylistTrack(mockClient, { playlistId: 'playlist-123', position: '1', insertBefore: 4 });
 
         expect(sentInsertBefore()).toBe('3');
-        expect(result.newPosition).toBe(3);
+        expect(result.newPosition).toBe('3');
       });
 
       it('should send the last position for an append (N+1)', async () => {
@@ -702,7 +742,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         const result = await reorderPlaylistTrack(mockClient, { playlistId: 'playlist-123', position: '3', insertBefore: 4 });
 
         expect(mockClient.request).not.toHaveBeenCalled();
-        expect(result).toMatchObject({ previousPosition: 3, newPosition: 3, success: true });
+        expect(result).toMatchObject({ previousPosition: '3', newPosition: '3', success: true });
       });
     });
   });

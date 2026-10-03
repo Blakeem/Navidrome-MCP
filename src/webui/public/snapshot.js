@@ -18,10 +18,6 @@ export function currentNowPlaying() {
   return current.nowPlaying;
 }
 
-export function currentQueue() {
-  return current.queue;
-}
-
 // An idle or stopped engine has no current row, whatever queueIndex it last reported.
 // mpv idles at queueIndex -1 after a clear or the end of the queue.
 export function playingIndex(np) {

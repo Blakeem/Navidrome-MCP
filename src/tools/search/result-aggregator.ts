@@ -33,11 +33,14 @@ export interface ParallelSearchResponses {
   artistsResponse: unknown[];
 }
 
-/** X-Total-Count per type. `null` means the header was absent and the page length stands in. */
+/**
+ * X-Total-Count per type. `null` means the header was absent and the page length stands in.
+ * `undefined` means the slice was not fetched, so it reports no total.
+ */
 export interface ParallelSearchTotals {
-  songsTotal: number | null;
-  albumsTotal: number | null;
-  artistsTotal: number | null;
+  songsTotal: number | null | undefined;
+  albumsTotal: number | null | undefined;
+  artistsTotal: number | null | undefined;
 }
 
 /** Filters each slice honored. A slice with no honored filters has no entry. */
@@ -52,11 +55,18 @@ interface AggregatedSearchResult {
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
-  totalArtists: number;
-  totalAlbums: number;
-  totalSongs: number;
+  totalArtists?: number;
+  totalAlbums?: number;
+  totalSongs?: number;
   totalResults: number;
   appliedFilters?: AppliedFiltersByType;
+}
+
+function sliceTotal(total: number | null | undefined, pageLength: number): number | undefined {
+  if (total === undefined) {
+    return undefined;
+  }
+  return total ?? pageLength;
 }
 
 function splitAppliedFilters(appliedFilters: Record<string, string>): AppliedFiltersByType {
@@ -83,21 +93,21 @@ export function aggregateSearchResults(
   const songs = transformSongsToDTO(songsResponse, transformOptions);
   const albums = transformAlbumsToDTO(albumsResponse, transformOptions);
   const artists = transformArtistsToDTO(artistsResponse, transformOptions);
-  const totalSongs = totals.songsTotal ?? songs.length;
-  const totalAlbums = totals.albumsTotal ?? albums.length;
-  const totalArtists = totals.artistsTotal ?? artists.length;
-  const totalResults = totalSongs + totalAlbums + totalArtists;
+  const totalSongs = sliceTotal(totals.songsTotal, songs.length);
+  const totalAlbums = sliceTotal(totals.albumsTotal, albums.length);
+  const totalArtists = sliceTotal(totals.artistsTotal, artists.length);
+  const totalResults = (totalSongs ?? 0) + (totalAlbums ?? 0) + (totalArtists ?? 0);
   const appliedByType = splitAppliedFilters(appliedFilters);
 
-  logger.debug(`Enhanced search completed: ${totalResults} total (${totalSongs} songs / ${totalAlbums} albums / ${totalArtists} artists), returned ${songs.length}/${albums.length}/${artists.length}`);
+  logger.debug(`Enhanced search completed: ${totalResults} total (${String(totalSongs)} songs / ${String(totalAlbums)} albums / ${String(totalArtists)} artists), returned ${songs.length}/${albums.length}/${artists.length}`);
 
   return {
     artists,
     albums,
     songs,
-    totalArtists,
-    totalAlbums,
-    totalSongs,
+    ...(totalArtists !== undefined ? { totalArtists } : {}),
+    ...(totalAlbums !== undefined ? { totalAlbums } : {}),
+    ...(totalSongs !== undefined ? { totalSongs } : {}),
     totalResults,
     ...(Object.keys(appliedByType).length > 0 ? { appliedFilters: appliedByType } : {}),
   };
@@ -123,8 +133,8 @@ interface ContentTypeParams {
   artistParams: string;
 }
 
-// /api/artist has none of these columns and returns its default order for them.
-const ARTIST_NAME_FALLBACK_SORTS: ReadonlySet<string> = new Set(['title', 'album', 'artist', 'year', 'duration', 'recently_added']);
+// /api/artist ignores these sorts and returns its default order, so they fall back to name.
+const ARTIST_NAME_FALLBACK_SORTS: ReadonlySet<string> = new Set(['title', 'album', 'artist', 'year', 'duration', 'recently_added', 'random']);
 
 // Only the search_all sort enum spans all three types, so its keys need per-endpoint aliases.
 function getSortField(requestedSort: string, endpoint: SearchEndpoint): string {

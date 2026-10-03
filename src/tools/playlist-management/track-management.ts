@@ -69,9 +69,14 @@ async function resolveDiscReleaseDates(
   return resolved;
 }
 
-/**
- * Add tracks to a playlist
- */
+async function readPlaylistTrackTotal(client: NavidromeClient, tracksPath: string): Promise<number> {
+  const { total } = await client.requestWithMeta<unknown>(`${tracksPath}?_start=0&_end=1`);
+  if (total === null) {
+    throw new Error('Navidrome did not report the playlist size (no X-Total-Count header), so the positions cannot be checked');
+  }
+  return total;
+}
+
 export async function addTracksToPlaylist(client: NavidromeClient, args: unknown): Promise<AddTracksToPlaylistResponse> {
   try {
     const params = AddTracksToPlaylistSchema.parse(args);
@@ -110,27 +115,30 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
   }
 }
 
-
-/**
- * Remove tracks from a playlist
- */
 export async function removeTracksFromPlaylist(client: NavidromeClient, args: unknown): Promise<RemoveTracksFromPlaylistResponse> {
   try {
     const params = RemoveTracksFromPlaylistSchema.parse(args);
     logger.debug('Tool removeTracksFromPlaylist called with args:', params);
 
-    const queryParams = new URLSearchParams();
-    params.positions.forEach(position => queryParams.append('id', position));
+    // Navidrome answers a stale or repeated position with HTTP 200 and echoes it, so range and duplicates are checked here.
+    const positions = [...new Set(params.positions)];
+    const tracksPath = `/playlist/${encodeURIComponent(params.playlistId)}/tracks`;
 
-    const response = await client.request<{ id?: string; ids?: string[] | null }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
+    const total = await readPlaylistTrackTotal(client, tracksPath);
+    const outOfRange = positions.find((position) => Number.parseInt(position, 10) > total);
+    if (outOfRange !== undefined) {
+      throw new Error(`Position ${outOfRange} is out of range for a playlist of ${total} tracks. Re-read get_playlist_tracks for the current positions.`);
+    }
+
+    const queryParams = new URLSearchParams();
+    positions.forEach(position => queryParams.append('id', position));
+    await client.request<unknown>(`${tracksPath}?${queryParams.toString()}`, {
       method: 'DELETE',
     });
 
-    // Navidrome echoes `{id}` for one id and `{ids}` for several, and answers a miss with 404/500.
-    const removedPositions = response.ids ?? (response.id !== undefined ? [response.id] : params.positions);
     return {
-      positions: removedPositions,
-      message: `Removed ${removedPositions.length} track${removedPositions.length !== 1 ? 's' : ''} from playlist`,
+      positions,
+      message: `Removed ${positions.length} track${positions.length !== 1 ? 's' : ''} from playlist`,
       success: true,
     };
   } catch (error) {
@@ -150,10 +158,7 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
     const trackPosition = Number.parseInt(params.position, 10);
 
     const tracksPath = `/playlist/${encodeURIComponent(params.playlistId)}/tracks`;
-    const { total } = await client.requestWithMeta<unknown>(`${tracksPath}?_start=0&_end=1`);
-    if (total === null) {
-      throw new Error('Navidrome did not report the playlist size (no X-Total-Count header), so the move cannot be checked');
-    }
+    const total = await readPlaylistTrackTotal(client, tracksPath);
     if (trackPosition > total || params.insertBefore > total + 1) {
       throw new Error(
         `Position out of range for a playlist of ${total} tracks. position must be 1 to ${total} and insertBefore must be 1 to ${total + 1}. Re-read get_playlist_tracks for the current positions.`,
@@ -163,8 +168,8 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
     const finalPosition = params.insertBefore > trackPosition ? params.insertBefore - 1 : params.insertBefore;
     if (finalPosition === trackPosition) {
       return {
-        previousPosition: trackPosition,
-        newPosition: trackPosition,
+        previousPosition: params.position,
+        newPosition: String(trackPosition),
         message: `Track is already at position ${trackPosition}. Nothing moved.`,
         success: true,
       };
@@ -182,8 +187,8 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
     });
 
     return {
-      previousPosition: trackPosition,
-      newPosition: finalPosition,
+      previousPosition: params.position,
+      newPosition: String(finalPosition),
       message: `Moved track from position ${trackPosition} to position ${finalPosition}`,
       success: true,
     };

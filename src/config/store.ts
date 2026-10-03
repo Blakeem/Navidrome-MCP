@@ -83,7 +83,6 @@ export const SettingsFileSchema = z.object({
   }).optional(),
   advanced: z.object({
     debug: z.boolean().optional(),
-    cacheTtl: z.number().optional(),
     tokenExpiry: z.number().optional(),
   }).optional(),
 }).passthrough();
@@ -100,13 +99,19 @@ export function readSettings(): SettingsFile | null {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
-  } catch {
-    return null; // absent / unreadable
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      logger.warn(`settings.json at ${path} is unreadable (${code ?? String(err)}), treating as unconfigured`);
+    }
+    return null;
   }
+  // Windows editors may prepend a UTF-8 BOM, which JSON.parse rejects.
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(text);
   } catch {
     logger.warn(`settings.json is not valid JSON (${path}); treating as unconfigured`);
     return null;

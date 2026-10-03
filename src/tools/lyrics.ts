@@ -33,9 +33,8 @@ import {
 } from '../utils/fetch-with-timeout.js';
 import { DEFAULT_LRCLIB_BASE, DEFAULT_USER_AGENT } from '../constants/defaults.js';
 import {
-  GetLyricsIdentitySchema,
+  LyricsIdentitySchema,
   LyricsMetadataSchema,
-  SearchLyricsSchema,
 } from '../schemas/index.js';
 import {
   buildTimedLines,
@@ -60,6 +59,10 @@ const LIBRARY_MATCH_LIMIT = 20;
 
 /** Stands in for a track field that neither the song row nor LRCLIB supplied. */
 const UNKNOWN_TRACK_FIELD = 'Unknown';
+
+// Navidrome fills untagged fields with these, and LRCLIB holds junk records under the same names.
+const NAVIDROME_UNKNOWN_ARTIST = '[Unknown Artist]';
+const NAVIDROME_UNKNOWN_ALBUM = '[Unknown Album]';
 
 const GET_PATH = '/api/get';
 const SEARCH_PATH = '/api/search';
@@ -90,10 +93,14 @@ interface TrackFallback {
   readonly durationMs?: number | undefined;
 }
 
+/** File lyrics the resolver reads by songId, or the parsed result a caller already holds. */
+type LocalLyricsSource =
+  | { readonly client: NavidromeClient; readonly songId: string }
+  | { readonly lyrics: LocalLyricsResult | null };
+
 /** Source selection for the resolver. Omitting it keeps the LRCLIB-only behavior. */
 interface ResolveLyricsOptions {
-  readonly client?: NavidromeClient;
-  readonly songId?: string;
+  readonly local?: LocalLyricsSource;
   readonly allowLrclib?: boolean;
 }
 
@@ -175,6 +182,22 @@ async function fetchLocalLyrics(
   if (row === null) return null;
 
   return parseLocalLyrics(row['lyrics'], durationMs);
+}
+
+async function readLocalLyrics(source: LocalLyricsSource, durationMs?: number): Promise<LocalLyricsResult | null> {
+  if ('lyrics' in source) return source.lyrics;
+
+  try {
+    return await fetchLocalLyrics(source.client, source.songId, durationMs);
+  } catch (error) {
+    // The file tag is one source among several, so an unreadable song row
+    // must not strand a lookup that LRCLIB can still answer.
+    logger.warn(
+      'resolveLyricsByMetadata: local file lyrics unavailable, continuing with LRCLIB:',
+      error instanceof Error ? error.message : String(error),
+    );
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -488,8 +511,7 @@ export async function resolveLyricsByMetadata(
 ): Promise<LyricsDTO> {
   // INPUT
   const params = LyricsMetadataSchema.parse(args);
-  const client = opts?.client;
-  const songId = opts?.songId;
+  const localSource = opts?.local;
   const allowLrclib = opts?.allowLrclib ?? true;
   const lrclibAttribution = buildLrclibAttribution(config);
   const localAttribution: LyricsDTO['attribution'] = {
@@ -501,23 +523,7 @@ export async function resolveLyricsByMetadata(
 
   try {
     // PROCESS
-    let local: LocalLyricsResult | null = null;
-    if (songId !== undefined && songId !== '') {
-      if (client === undefined) {
-        logger.warn('resolveLyricsByMetadata: songId supplied without a client, skipping local file lyrics');
-      } else {
-        try {
-          local = await fetchLocalLyrics(client, songId, params.durationMs);
-        } catch (error) {
-          // The file tag is one source among several, so an unreadable song row
-          // must not strand a lookup that LRCLIB can still answer.
-          logger.warn(
-            'resolveLyricsByMetadata: local file lyrics unavailable, continuing with LRCLIB:',
-            error instanceof Error ? error.message : String(error),
-          );
-        }
-      }
-    }
+    const local = localSource !== undefined ? await readLocalLyrics(localSource, params.durationMs) : null;
 
     if (local?.hasSynced === true) {
       return buildLocalDto(params, local, localAttribution);
@@ -591,14 +597,19 @@ interface LyricsLookup {
   readonly searchable: boolean;
 }
 
+function withoutPlaceholder(value: string | undefined, placeholder: string): string {
+  const trimmed = value?.trim() ?? '';
+  return trimmed.toLowerCase() === placeholder.toLowerCase() ? '' : trimmed;
+}
+
 /**
- * LyricsMetadataSchema rejects an empty title or artist, so placeholders fill the gaps. An untagged
- * title or artist matches nothing in LRCLIB, so `searchable` keeps a placeholder out of every query.
+ * LyricsMetadataSchema rejects an empty title or artist, so placeholders fill the gaps. Callers must AND
+ * `searchable` into allowLrclib, since a placeholder matches unrelated LRCLIB records.
  */
 export function buildLyricsLookup(fields: LyricsTrackFields): LyricsLookup {
   const title = fields.title?.trim() ?? '';
-  const artist = fields.artist?.trim() ?? '';
-  const album = fields.album?.trim() ?? '';
+  const artist = withoutPlaceholder(fields.artist, NAVIDROME_UNKNOWN_ARTIST);
+  const album = withoutPlaceholder(fields.album, NAVIDROME_UNKNOWN_ALBUM);
   const durationMs = secondsToMs(fields.duration);
 
   const metadata: LyricsMetadataParams = {
@@ -628,9 +639,9 @@ async function resolveBySongId(
     duration: row['duration'],
   });
 
+  // The row is already in hand, so the resolver parses its tag instead of fetching the row again.
   return await resolveLyricsByMetadata(config, lookup.metadata, {
-    client,
-    songId,
+    local: { lyrics: parseLocalLyrics(row['lyrics'], lookup.metadata.durationMs) },
     allowLrclib: allowLrclib && lookup.searchable,
   });
 }
@@ -651,7 +662,7 @@ export async function getLyricsByIdentity(
   args: unknown,
 ): Promise<LyricsDTO> {
   // INPUT
-  const params = GetLyricsIdentitySchema.parse(args);
+  const params = LyricsIdentitySchema.parse(args);
   const allowLrclib = config.features.lyrics;
 
   logger.debug('Tool getLyricsByIdentity called with args:', params);
@@ -695,6 +706,7 @@ function toCandidate(result: LRCLIBResponse): LyricsCandidateDTO | null {
     ...(hasText(result.albumName) ? { albumName: result.albumName } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     hasSynced: hasText(result.syncedLyrics),
+    isInstrumental: result.instrumental === true,
   };
 }
 
@@ -733,16 +745,16 @@ async function findLibrarySong(
       limit: LIBRARY_MATCH_LIMIT,
     });
 
-    for (const song of songs) {
-      if (!matchesLibrarySong(song, wanted)) continue;
+    const wantedTitle = wanted.title.trim().toLowerCase();
+    const matches = songs.filter((song) => matchesLibrarySong(song, wanted));
+    // normTitle drops (Instrumental), (Remix) and version groups, so an exact title beats a variant.
+    const song = matches.find((match) => match.title.trim().toLowerCase() === wantedTitle) ?? matches[0];
+    if (song === undefined) return null;
 
-      return {
-        songId: song.id,
-        ...(song.lyrics !== undefined ? { lyrics: song.lyrics } : {}),
-      };
-    }
-
-    return null;
+    return {
+      songId: song.id,
+      ...(song.lyrics !== undefined ? { lyrics: song.lyrics } : {}),
+    };
   } catch (error) {
     // The library match rides along with the LRCLIB answer, so a failed search
     // must not sink the whole lookup.
@@ -764,7 +776,7 @@ export async function searchLyricsCandidates(
   args: unknown,
 ): Promise<LyricsSearchDTO> {
   // INPUT
-  const params = SearchLyricsSchema.parse(args);
+  const params = LyricsMetadataSchema.parse(args);
   const query = new URLSearchParams();
   query.set('track_name', params.title);
   query.set('artist_name', params.artist);

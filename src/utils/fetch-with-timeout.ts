@@ -15,7 +15,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
-import { EnvHttpProxyAgent, fetch as undiciFetch } from 'undici';
+import { EnvHttpProxyAgent } from 'undici';
 import {
   DEFAULT_EXTERNAL_API_TIMEOUT_MS,
   DEFAULT_NAVIDROME_AUTH_TIMEOUT_MS,
@@ -23,45 +23,53 @@ import {
   MAX_FETCH_TIMEOUT_MS,
   MIN_FETCH_TIMEOUT_MS,
 } from '../constants/timeouts.js';
-import { logger } from './logger.js';
-import { describeFetchError } from './network-safety.js';
+import { logger, redact } from './logger.js';
+import { describeFetchError, fetchWithDispatcher } from './network-safety.js';
+
+/**
+ * Per protocol, the proxy is the first non-empty of the lowercase then the uppercase var.
+ * The gate and the agent share this rule, so the gate never routes to an agent that resolves no proxy.
+ */
+function resolveProxyEnv(protocol: 'http' | 'https'): string | undefined {
+  const lowercase = process.env[`${protocol}_proxy`] ?? '';
+  if (lowercase !== '') return lowercase;
+  const uppercase = process.env[`${protocol.toUpperCase()}_PROXY`] ?? '';
+  return uppercase !== '' ? uppercase : undefined;
+}
 
 /**
  * Dispatcher honoring HTTP_PROXY/HTTPS_PROXY/NO_PROXY. Node's native `fetch`
  * silently ignores those vars, so external APIs (Last.fm, MusicBrainz, LRCLIB,
  * Radio Browser) go out direct and are unreachable on a host where only a
  * proxied path leaves the network. Built on the first proxied request so a
- * process that never sets a proxy var pays nothing, then cached — the agent
+ * process that never sets a proxy var pays nothing, then cached. The agent
  * snapshots the env at construction, so changing the vars needs a restart.
  */
 let envProxyAgent: EnvHttpProxyAgent | undefined;
 function getEnvProxyAgent(): EnvHttpProxyAgent {
-  envProxyAgent ??= new EnvHttpProxyAgent();
+  // An empty string makes undici fall back to the other protocol's proxy or go direct.
+  envProxyAgent ??= new EnvHttpProxyAgent({
+    httpProxy: resolveProxyEnv('http') ?? '',
+    httpsProxy: resolveProxyEnv('https') ?? '',
+  });
   return envProxyAgent;
 }
 
-const PROXY_ENV_VARS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy'] as const;
-
 /**
- * Whether any proxy env var holds a non-empty value. Gates the undici-dispatcher
- * path so a process with no proxy configured (the common case, and every existing
- * test) keeps using plain global `fetch` byte-for-byte — including staying
- * mockable via `global.fetch = ...` in tests, which an unconditional switch
- * to undici's own `fetch` would silently bypass.
- *
- * Empty counts as unset so the gate matches EnvHttpProxyAgent, which skips an
- * empty var and falls through to the next. A short-circuit on `HTTP_PROXY=""`
- * (how compose files and CI emit an unset var) would strand a real HTTPS_PROXY.
+ * Gates the undici-dispatcher path so a process with no proxy configured (the
+ * common case, and every existing test) keeps using plain global `fetch`. That
+ * keeps it mockable via `global.fetch = ...` in tests, which an unconditional
+ * switch to undici's own `fetch` would silently bypass.
  */
 function hasProxyEnvConfigured(): boolean {
-  return PROXY_ENV_VARS.some((name) => (process.env[name] ?? '') !== '');
+  return resolveProxyEnv('http') !== undefined || resolveProxyEnv('https') !== undefined;
 }
 
 /**
  * Methods that are safe to retry on timeout.
  *
  * GET is always idempotent. We also include the Subsonic mutations
- * (`/star`, `/unstar`, `/setRating`) which ARE idempotent semantically — but
+ * (`/star`, `/unstar`, `/setRating`) which ARE idempotent semantically. But
  * those go through `subsonicRequest` as POST, so we must classify by URL
  * intent, not method. The retry-policy decision is therefore made by the
  * caller (which knows whether the operation it's wrapping is idempotent),
@@ -78,7 +86,7 @@ export interface FetchWithTimeoutOptions {
   readonly operationLabel: string;
   /**
    * Route this request through HTTP_PROXY/HTTPS_PROXY/NO_PROXY if set.
-   * Defaults to `false` — Navidrome/local calls stay direct. Set `true` for
+   * Defaults to `false`, so Navidrome/local calls stay direct. Set `true` for
    * third-party internet APIs, which may be unreachable without a proxy.
    */
   readonly respectProxy?: boolean;
@@ -130,7 +138,7 @@ function warnOnce(key: string, message: string): void {
  * Read a positive-integer env var, or return `fallback` if unset/invalid.
  * Clamps to `[MIN_FETCH_TIMEOUT_MS, MAX_FETCH_TIMEOUT_MS]` and warns once
  * per distinct misconfigured value. The fallback/clamp RETURN values are
- * still computed on every call — only the log emission is deduplicated.
+ * still computed on every call. Only the log emission is deduplicated.
  */
 function readTimeoutEnv(envName: string, fallback: number): number {
   const raw = process.env[envName];
@@ -183,7 +191,7 @@ export function getNavidromeAuthTimeoutMs(): number {
   );
 }
 
-/** Resolve the configured external-API (Last.fm / LRCLIB / Radio Browser) timeout. */
+/** Resolve the configured third-party API timeout (Last.fm, MusicBrainz, LRCLIB, Radio Browser). */
 export function getExternalApiTimeoutMs(): number {
   return readTimeoutEnv(
     'EXTERNAL_API_TIMEOUT_MS',
@@ -213,7 +221,7 @@ function isTimeoutAbort(err: unknown): boolean {
  * naming the operation and the root cause. 4xx/5xx responses resolve normally.
  *
  * A caller `init.signal` is combined with the timeout through AbortSignal.any,
- * which needs Node 20.3, the engines floor in package.json.
+ * which needs Node 20.3.
  */
 export async function fetchWithTimeout(
   url: string,
@@ -232,19 +240,9 @@ export async function fetchWithTimeout(
         : timeoutSignal;
 
     try {
-      // Node's native fetch rejects an externally-installed undici dispatcher
-      // (version-skewed internals), so the proxy path must go through
-      // undici's own fetch rather than the global one (see network-safety.ts).
-      // Only taken when a proxy is actually configured, so the common
-      // no-proxy case (and every test mocking global.fetch) is unaffected.
+      // Only a configured proxy takes the dispatcher path, so the no-proxy case and every test mocking global.fetch are unaffected.
       if (respectProxy && hasProxyEnvConfigured()) {
-        type UndiciInit = NonNullable<Parameters<typeof undiciFetch>[1]>;
-        const response = await undiciFetch(url, {
-          ...(init as unknown as UndiciInit),
-          signal,
-          dispatcher: getEnvProxyAgent(),
-        });
-        return response as unknown as Response;
+        return await fetchWithDispatcher(url, { ...init, signal }, getEnvProxyAgent());
       }
       return await fetch(url, { ...init, signal });
     } catch (err) {
@@ -255,7 +253,8 @@ export async function fetchWithTimeout(
 
       if (!isTimeoutAbort(err)) {
         // undici reports every connection failure as "fetch failed", with the reason in `cause`.
-        throw new Error(`${operationLabel} failed: ${describeFetchError(err)}`, { cause: err });
+        // This message reaches the LLM, and Node's credentials TypeError embeds the full URL, so redact() strips userinfo.
+        throw new Error(`${operationLabel} failed: ${redact(describeFetchError(err)) as string}`, { cause: err });
       }
 
       if (attempt < maxAttempts) {

@@ -10,18 +10,16 @@ import { describe, expect, it } from 'vitest';
 import {
   getPersist,
   getTheme,
-  initPersist,
   setPersist,
   setTheme,
 } from '../../../src/web/player-runtime.js';
 
 describe('persist flag', () => {
-  it('init / get / set round-trip', () => {
-    initPersist(true);
+  it('set / get round-trip', () => {
+    setPersist(true);
     expect(getPersist()).toBe(true);
     setPersist(false);
     expect(getPersist()).toBe(false);
-    initPersist(false); // restore for other tests in the file
   });
 });
 

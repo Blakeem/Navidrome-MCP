@@ -79,10 +79,11 @@ function fakeRes(): CapturedRes {
   };
 }
 
-/** IncomingMessage stand-in with a fixed peer address. */
+/** IncomingMessage stand-in with a fixed peer address and a loopback Host header. */
 function fakeReq(remoteAddress: string): IncomingMessage {
   const emitter = new EventEmitter() as IncomingMessage & { socket: { remoteAddress: string } };
   emitter.socket = { remoteAddress } as never;
+  emitter.headers = { host: '127.0.0.1:8808' };
   queueMicrotask(() => {
     emitter.emit('end');
   });
@@ -280,7 +281,7 @@ describe('handleLyrics missing queue metadata', () => {
     const call = vi.mocked(resolveLyricsByMetadata).mock.calls[0];
     // The placeholder keeps LyricsMetadataSchema satisfied but must never be searched.
     expect(call?.[1]).toMatchObject({ artist: 'Unknown', title: 'Hollaback Girl' });
-    expect(call?.[2]).toMatchObject({ songId: 'songNoArtist1', allowLrclib: false });
+    expect(call?.[2]).toMatchObject({ local: { songId: 'songNoArtist1' }, allowLrclib: false });
   });
 
   it('answers 200 local-only for an entry with no title', async () => {

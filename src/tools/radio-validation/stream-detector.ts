@@ -49,9 +49,6 @@ const STREAMING_HEADER_PREFIXES = ['icy-', 'x-audiocast-'];
 // Shoutcast sends its notice banners on error responses too, so they prove no stream.
 const NOTICE_HEADER_PREFIX = 'icy-notice';
 
-/**
- * Check if content type indicates audio
- */
 export function isAudioContentType(contentType: string | null): boolean {
   if (contentType === null || contentType === '') return false;
 
@@ -59,14 +56,13 @@ export function isAudioContentType(contentType: string | null): boolean {
   return VALID_AUDIO_MIMES.some(mime => normalized.includes(mime));
 }
 
-/**
- * Extract streaming headers from response.
- *
- * Header values pass through `stripHtml` because some SHOUTcast/Icecast
- * servers ship ICY fields with embedded markup. Raw HTML in LLM-facing output
- * breaks markdown rendering in clients. The strip is a tag-only pass, so text
- * inside the tags survives.
- */
+// undici decodes header bytes as latin1, while Icecast and Shoutcast pass ICY fields through as the source's UTF-8.
+function decodeIcyValue(value: string): string {
+  const utf8 = Buffer.from(value, 'latin1').toString('utf8');
+  return utf8.includes('\uFFFD') ? value : utf8;
+}
+
+/** Some SHOUTcast/Icecast servers put markup in ICY fields, and raw HTML breaks client markdown. */
 export function extractStreamingHeaders(headers: Headers): Record<string, string> {
   const streamHeaders: Record<string, string> = {};
 
@@ -74,16 +70,13 @@ export function extractStreamingHeaders(headers: Headers): Record<string, string
     const lowerKey = key.toLowerCase();
     const isStreamingHeader = STREAMING_HEADER_PREFIXES.some((prefix) => lowerKey.startsWith(prefix));
     if (isStreamingHeader && !lowerKey.startsWith(NOTICE_HEADER_PREFIX)) {
-      streamHeaders[lowerKey] = stripHtml(value);
+      streamHeaders[lowerKey] = stripHtml(decodeIcyValue(value));
     }
   });
 
   return streamHeaders;
 }
 
-/**
- * Detect audio format from buffer
- */
 export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetectionResult> {
   try {
     const fileType = await fileTypeFromBuffer(buffer);
@@ -96,7 +89,6 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
       };
     }
 
-    // Check for common audio signatures manually if file-type doesn't detect
     const signatures = [
       { bytes: [0xFF, 0xFB], format: 'mp3', mime: 'audio/mpeg' }, // MP3
       { bytes: [0xFF, 0xF1], format: 'aac', mime: 'audio/aac' },  // AAC

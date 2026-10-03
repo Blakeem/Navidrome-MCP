@@ -18,13 +18,25 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
+import type { WebuiTheme } from '../../constants/defaults.js';
 import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../../config/store.js';
 import { PlayerSettingsPatchSchema } from '../../schemas/index.js';
 import { logger } from '../../utils/logger.js';
 import { getPersist, getTheme, setPersist, setTheme } from '../../web/player-runtime.js';
 import type { SseBroadcaster } from '../broadcaster.js';
 import { readValidBody, writeError, writeJson } from '../http-helpers.js';
-import { isLoopbackPeer } from '../loopback.js';
+import { isLocalRequest } from '../loopback.js';
+
+interface PlayerSettingsBody {
+  persistAfterMcpExit: boolean;
+  autoOpenBrowser: boolean;
+  theme: WebuiTheme | null;
+}
+
+/** Live flags report live state. `autoOpenBrowser` has no live state, so each caller supplies it. */
+function playerSettingsBody(autoOpenBrowser: boolean): PlayerSettingsBody {
+  return { persistAfterMcpExit: getPersist(), autoOpenBrowser, theme: getTheme() };
+}
 
 /**
  * GET /api/player-state returns per-peer flags the frontend needs at load. `isLocal` reflects
@@ -38,7 +50,7 @@ import { isLoopbackPeer } from '../loopback.js';
  */
 export function handlePlayerState(req: IncomingMessage, res: ServerResponse, config: Config): void {
   writeJson(res, 200, {
-    isLocal: isLoopbackPeer(req),
+    isLocal: isLocalRequest(req),
     theme: getTheme(),
     lyrics: { lrclibEnabled: config.features.lyrics },
   });
@@ -47,19 +59,16 @@ export function handlePlayerState(req: IncomingMessage, res: ServerResponse, con
 /**
  * GET /api/player/settings returns the player-scoped settings (loopback-only).
  * `persistAfterMcpExit` reflects the LIVE flag (toggled this session).
- * `autoOpenBrowser` is the stored value, since it only affects the next launch.
+ * `autoOpenBrowser` only affects the next launch, so it is the stored value, or the resolved
+ * launch config when no store exists.
  */
-export function handleGetPlayerSettings(req: IncomingMessage, res: ServerResponse): void {
-  if (!isLoopbackPeer(req)) {
+export function handleGetPlayerSettings(req: IncomingMessage, res: ServerResponse, config: Config): void {
+  if (!isLocalRequest(req)) {
     writeError(res, 404, 'Not found');
     return;
   }
-  const stored = readSettings()?.webui ?? {};
-  writeJson(res, 200, {
-    persistAfterMcpExit: getPersist(),
-    autoOpenBrowser: stored.autoOpenBrowser ?? false,
-    theme: getTheme(),
-  });
+  const storedAutoOpen = readSettings()?.webui?.autoOpenBrowser;
+  writeJson(res, 200, playerSettingsBody(storedAutoOpen ?? config.webui.autoOpenBrowser));
 }
 
 /**
@@ -68,15 +77,17 @@ export function handleGetPlayerSettings(req: IncomingMessage, res: ServerRespons
  * `persistAfterMcpExit` and `theme` take effect immediately AND are persisted,
  * and the snapshot broadcast carries them to every open remote.
  * `autoOpenBrowser` is persisted for next launch.
+ * `persisted` is false when settings.json was not written, so the change holds for this session only.
  * Only the webui keys are touched (read-merge-write), so other settings and
  * credentials are never clobbered.
  */
 export async function handleSetPlayerSettings(
   req: IncomingMessage,
   res: ServerResponse,
+  config: Config,
   broadcaster: Pick<SseBroadcaster, 'broadcastNow'>,
 ): Promise<void> {
-  if (!isLoopbackPeer(req)) {
+  if (!isLocalRequest(req)) {
     writeError(res, 404, 'Not found');
     return;
   }
@@ -118,12 +129,10 @@ export async function handleSetPlayerSettings(
     }
   }
 
-  // Live flags report live state. `autoOpenBrowser` has no live state, so it reports the stored value.
   const storedWebui = persistedWebui ?? current?.webui;
   writeJson(res, 200, {
-    persistAfterMcpExit: getPersist(),
-    autoOpenBrowser: storedWebui?.autoOpenBrowser ?? false,
-    theme: getTheme(),
+    ...playerSettingsBody(storedWebui?.autoOpenBrowser ?? config.webui.autoOpenBrowser),
+    persisted: persistedWebui !== null,
   });
   broadcaster.broadcastNow();
 }
@@ -138,7 +147,7 @@ export function handleShutdown(
   res: ServerResponse,
   shutdown: () => void,
 ): void {
-  if (!isLoopbackPeer(req)) {
+  if (!isLocalRequest(req)) {
     writeError(res, 404, 'Not found');
     return;
   }

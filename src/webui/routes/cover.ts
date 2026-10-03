@@ -19,7 +19,7 @@
 import type { ServerResponse } from 'node:http';
 import { pipeline, Readable } from 'node:stream';
 import type { Config } from '../../config.js';
-import { IdSchema } from '../../schemas/common.js';
+import { IdSchema } from '../../schemas/index.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
 import { fetchWithTimeout, getNavidromeRequestTimeoutMs } from '../../utils/fetch-with-timeout.js';
 import { logger } from '../../utils/logger.js';

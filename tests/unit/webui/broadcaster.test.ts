@@ -7,9 +7,18 @@
  * sendHeartbeat / writeToClient logic directly against fake responses.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { ServerResponse } from 'node:http';
+import type { StateChangeEvent } from '../../../src/services/playback/playback-engine.js';
 import { SseBroadcaster } from '../../../src/webui/broadcaster.js';
+
+const playbackReads = vi.hoisted(() => ({
+  nowPlaying: vi.fn(),
+  getPlayQueue: vi.fn(),
+  playbackStatus: vi.fn(),
+}));
+
+vi.mock('../../../src/tools/playback.js', () => playbackReads);
 
 interface FakeResOptions {
   destroyed?: boolean;
@@ -57,6 +66,8 @@ interface BroadcasterInternals {
   sendHeartbeat: () => void;
   writeToClient: (res: ServerResponse, json: string) => boolean;
   handleDrain: (res: ServerResponse) => void;
+  handleEvent: (evt: StateChangeEvent) => void;
+  broadcast: () => Promise<void>;
 }
 
 function internals(b: SseBroadcaster): BroadcasterInternals {
@@ -183,5 +194,100 @@ describe('SseBroadcaster backlogged peers', () => {
 
     expect(inner.clients.has(slow)).toBe(true);
     expect(slow.destroyCalls).toBe(0);
+  });
+});
+
+describe('SseBroadcaster event throttle', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function spyBroadcast(b: SseBroadcaster): MockInstance<() => Promise<void>> {
+    return vi.spyOn(b as unknown as { broadcast: () => Promise<void> }, 'broadcast').mockResolvedValue(undefined);
+  }
+
+  it('sends a property event inside the window as one trailing broadcast', () => {
+    vi.useFakeTimers();
+    const b = newBroadcaster();
+    const broadcast = spyBroadcast(b);
+
+    internals(b).handleEvent({ kind: 'property', name: 'time-pos', data: 1 });
+    expect(broadcast).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(300);
+    internals(b).handleEvent({ kind: 'property', name: 'pause', data: true });
+    expect(broadcast).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(700);
+    expect(broadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it('broadcasts a queue event at once and cancels the pending trailing broadcast', () => {
+    vi.useFakeTimers();
+    const b = newBroadcaster();
+    const broadcast = spyBroadcast(b);
+
+    internals(b).handleEvent({ kind: 'property', name: 'time-pos', data: 1 });
+    internals(b).handleEvent({ kind: 'property', name: 'time-pos', data: 2 });
+    internals(b).handleEvent({ kind: 'queue' });
+    expect(broadcast).toHaveBeenCalledTimes(2);
+
+    vi.advanceTimersByTime(1000);
+    expect(broadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it('broadcasts nothing for an attach event', () => {
+    const b = newBroadcaster();
+    const broadcast = spyBroadcast(b);
+
+    internals(b).handleEvent({ kind: 'attach' });
+
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+});
+
+describe('SseBroadcaster snapshot reads', () => {
+  it('skips the write when every read fails and ships nulls when only some fail', async () => {
+    const b = newBroadcaster();
+    const inner = internals(b);
+    const res = fakeRes();
+    inner.clients.add(res);
+    playbackReads.nowPlaying.mockRejectedValue(new Error('mpv unreachable'));
+    playbackReads.getPlayQueue.mockRejectedValue(new Error('mpv unreachable'));
+    playbackReads.playbackStatus.mockRejectedValue(new Error('mpv unreachable'));
+
+    await inner.broadcast();
+    expect(res.writes).toEqual([]);
+
+    playbackReads.nowPlaying.mockResolvedValue({ title: 't' });
+    await inner.broadcast();
+    expect(res.writes).toHaveLength(1);
+    expect(res.writes[0]).toContain('"queue":null');
+    expect(res.writes[0]).toContain('"status":null');
+  });
+});
+
+describe('SseBroadcaster build ordering', () => {
+  it('runs one build at a time and coalesces requests during it into one newer rebuild', async () => {
+    const b = newBroadcaster();
+    const res = fakeRes();
+    internals(b).clients.add(res);
+    let releaseFirstBuild: (value: unknown) => void = () => undefined;
+    playbackReads.nowPlaying.mockReset();
+    playbackReads.nowPlaying
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirstBuild = resolve; }))
+      .mockResolvedValueOnce({ title: 'after clear' });
+    playbackReads.getPlayQueue.mockResolvedValue({ items: [] });
+    playbackReads.playbackStatus.mockResolvedValue({ engineRunning: true });
+
+    b.broadcastNow();
+    b.broadcastNow();
+    b.broadcastNow();
+    releaseFirstBuild({ title: 'before clear' });
+
+    await vi.waitFor(() => { expect(res.writes).toHaveLength(2); });
+    expect(playbackReads.nowPlaying).toHaveBeenCalledTimes(2);
+    expect(res.writes[0]).toContain('before clear');
+    expect(res.writes[1]).toContain('after clear');
   });
 });

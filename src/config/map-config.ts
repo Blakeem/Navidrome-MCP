@@ -16,9 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { resolveMpvBinary } from '../services/playback/mpv-process.js';
 import {
-  DEFAULT_CACHE_TTL_SECONDS,
   DEFAULT_LRCLIB_BASE,
   DEFAULT_MCP_HTTP_PORT,
   DEFAULT_TOKEN_EXPIRY_SECONDS,
@@ -32,18 +30,12 @@ import { logger } from '../utils/logger.js';
 import type { RawConfigInput } from './schema.js';
 import type { SettingsFile } from './store.js';
 
-// Kept in its own module (separate from store.ts's file I/O) so that the
-// read/write path does NOT transitively import the playback subsystem. Only the
-// config-resolution path (which legitimately needs mpv detection) pulls it in.
-
-/** Coerce null/undefined/blank strings to `undefined`; trim otherwise. */
 function nonEmpty(value: string | null | undefined): string | undefined {
   if (value === null || value === undefined) return undefined;
   const trimmed = value.trim();
   return trimmed === '' ? undefined : trimmed;
 }
 
-/** Trim a string list, drop blanks, and collapse an empty result to `undefined`. */
 function cleanList(value: readonly (string | null | undefined)[] | null | undefined): string[] | undefined {
   if (value === null || value === undefined) return undefined;
   const cleaned = value.map((v) => v?.trim()).filter((v): v is string => v !== undefined && v !== '');
@@ -60,14 +52,10 @@ function resolveWebuiHost(host: string | undefined): string | undefined {
 }
 
 /**
- * Project the nested store into the flat `RawConfigInput` that `ConfigSchema`
- * validates. The single place the nested→flat translation lives, shared by
- * `loadConfig()` and the settings server's "test connection" route.
- *
- * Performs mpv detection (so `features.playback` and `mpvPath` are correct),
- * which means it is not side-effect-free (it may shell out via `command -v`).
+ * Project the nested store into the flat `RawConfigInput` that `ConfigSchema` validates.
+ * `mpvPath` is the caller's resolved mpv binary, and null turns playback off.
  */
-export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
+export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null): RawConfigInput {
   const nav = settings.navidrome ?? {};
   const transport = settings.transport ?? {};
   const features = settings.features ?? {};
@@ -80,10 +68,6 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
   const radioBrowserUserAgent = nonEmpty(features.radioBrowserUserAgent);
   const lyricsProvider = nonEmpty(features.lyricsProvider);
   const lrclibUserAgent = nonEmpty(features.lrclibUserAgent);
-
-  // mpv: an explicit store path wins, and null or empty auto-detects. An
-  // unresolved binary turns the playback feature off and omits `mpvPath`.
-  const resolvedMpvPath = resolveMpvBinary(playback.mpvPath);
 
   // defaultLibraryIds: an empty array means "all libraries", the same as unset.
   const libIds = library.defaultLibraryIds;
@@ -102,10 +86,9 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
 
   return {
     navidromeUrl: nonEmpty(nav.url)?.replace(/\/+$/, '') ?? '',
-    navidromeUsername: nav.username ?? '',
+    navidromeUsername: nav.username?.trim() ?? '',
     navidromePassword: nav.password ?? '',
     debug: advanced.debug ?? false,
-    cacheTtl: advanced.cacheTtl ?? DEFAULT_CACHE_TTL_SECONDS,
     tokenExpiry: advanced.tokenExpiry ?? DEFAULT_TOKEN_EXPIRY_SECONDS,
 
     transport: {
@@ -124,15 +107,15 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
       lastfm: lastFmApiKey !== undefined,
       radioBrowser: radioBrowserUserAgent !== undefined,
       lyrics: lyricsProvider !== undefined && lrclibUserAgent !== undefined,
-      playback: resolvedMpvPath !== null,
+      playback: mpvPath !== null,
     },
 
     lastFmApiKey,
-    // No features.* flag: MusicBrainz needs no API key; absent value falls back
+    // No features.* flag, since MusicBrainz needs no API key. An absent value falls back
     // to DEFAULT_MUSICBRAINZ_USER_AGENT at the call site.
     musicBrainzUserAgent: nonEmpty(features.musicBrainzUserAgent),
     radioBrowserUserAgent,
-    // Only an explicit, real URL pins the mirror; null/blank keeps SRV resolution.
+    // Only an explicit, real URL pins the mirror. Null or blank keeps SRV resolution.
     radioBrowserBaseOverride: nonEmpty(features.radioBrowserBase),
 
     lyricsProvider,
@@ -140,7 +123,7 @@ export function mapStoreToConfig(settings: SettingsFile): RawConfigInput {
     // null/blank falls through to the canonical LRCLIB endpoint.
     lrclibBase: nonEmpty(features.lrclibBase) ?? DEFAULT_LRCLIB_BASE,
 
-    ...(resolvedMpvPath !== null ? { mpvPath: resolvedMpvPath } : {}),
+    ...(mpvPath !== null ? { mpvPath } : {}),
     playbackTranscodeFormat: nonEmpty(playback.transcodeFormat) ?? DEFAULT_TRANSCODE_FORMAT,
     playbackTranscodeBitrate: nonEmpty(playback.transcodeBitrate) ?? DEFAULT_TRANSCODE_BITRATE,
 

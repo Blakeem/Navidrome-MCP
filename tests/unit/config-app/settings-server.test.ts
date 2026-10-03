@@ -2,13 +2,12 @@
  * Unit tests for the settings server's seed/save behavior — password masking,
  * the first-run sentinel un-mask (regression guard), and save validation.
  *
- * No network: only /api/settings/seed and /api/settings (save) are exercised;
- * /api/settings/test would authenticate against a live server and is covered by
- * the live test-connection suite.
+ * No network: /api/settings/test only receives inputs that fail before a request
+ * leaves the process (a validation failure, a URL that carries credentials).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -62,6 +61,30 @@ describe('settings server seed/save', () => {
     const seed = await getJson(await fetch(`${base}/api/settings/seed`));
     expect(seed.navidrome.password).toBe(MASK);
     expect(seed.navidrome.url).toBe('http://h:4533');
+  });
+
+  it('masks the MCP auth token in the seed response', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      transport: { authToken: 'tok-secret' },
+    }));
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.transport.authToken).toBe(MASK);
+  });
+
+  it('keeps the stored MCP auth token when the form re-submits the mask sentinel', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      transport: { authToken: 'tok-secret' },
+    }));
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: MASK },
+      transport: { authToken: MASK },
+    });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.transport?.authToken).toBe('tok-secret');
   });
 
   it('serves recommended values for the optional radio/lyrics fields', async () => {
@@ -137,6 +160,25 @@ describe('settings server seed/save', () => {
     expect(readSettings()?.navidrome?.password).toBe('firstrunpass');
   });
 
+  it('backs up an unreadable store before a save replaces it', async () => {
+    const original = '{"navidrome": {},}';
+    writeFileSync(file, original);
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: 'p' } });
+    expect(res.status).toBe(200);
+    expect(readFileSync(`${file}.bak`, 'utf8')).toBe(original);
+    expect((await getJson(res)).message).toContain(`kept as ${file}.bak`);
+    expect(readSettings()?.navidrome?.url).toBe('http://h:4533');
+  });
+
+  it('keeps no backup when the store was usable', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } }));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK } });
+    expect(res.status).toBe(200);
+    expect(existsSync(`${file}.bak`)).toBe(false);
+  });
+
   it('rejects a save that would not satisfy the runtime config', async () => {
     const base = await start();
     const res = await post(base, { navidrome: { url: '', username: 'u', password: 'p' } });
@@ -155,6 +197,20 @@ describe('settings server seed/save', () => {
     expect(body.error).toContain('Configuration validation failed');
     expect(body.error).toContain('navidromeUrl: Navidrome URL must be a valid URL');
     expect(body.error).toContain('navidromeUsername: Navidrome username is required');
+  });
+
+  // fetch rejects a URL with credentials before any network I/O and echoes it in the error.
+  it('redacts URL credentials from a failed Test connection', async () => {
+    const base = await start();
+    const res = await fetch(`${base}/api/settings/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navidrome: { url: 'http://u:hunter2@127.0.0.1:1', username: 'u', password: 'p' } }),
+    });
+    const body = await getJson(res);
+    expect(body.ok).toBe(false);
+    expect(body.error).not.toContain('hunter2');
+    expect(body.error).toContain('<REDACTED>');
   });
 
   it('rejects a text/plain POST with 415 and leaves the store unchanged', async () => {

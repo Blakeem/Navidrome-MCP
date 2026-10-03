@@ -22,7 +22,6 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-// Import tool functions
 import {
   listPlaylists,
   getPlaylist,
@@ -35,7 +34,12 @@ import {
   reorderPlaylistTrack,
 } from '../playlist-management.js';
 
-// Tool definitions for playlist management category
+const PLAYLIST_ID_PROPERTY = {
+  type: 'string',
+  minLength: 1,
+  description: 'The playlist ID, as returned by the `list_playlists` tool.',
+} as const;
+
 const tools: Tool[] = [
   {
     name: 'list_playlists',
@@ -44,14 +48,14 @@ const tools: Tool[] = [
       type: 'object',
       properties: {
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of playlists to return (1-500)',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Number of playlists to skip for pagination',
           minimum: 0,
           default: 0,
@@ -71,7 +75,7 @@ const tools: Tool[] = [
         onlyWithPlayableTracks: {
           type: 'boolean',
           description:
-            'When true, return only playlists containing at least one track in the currently active libraries (useful when the user asks what they can play). Default false returns all playlists.',
+            'When true, return only playlists containing at least one track in the currently active libraries (useful when the user asks what they can play). Default false returns all playlists. Only the first 500 playlists in the requested sort order are checked. The response carries truncated: true when more exist.',
           default: false,
         },
       },
@@ -83,17 +87,14 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The playlist ID, as returned by the `list_playlists` tool.',
-        },
+        playlistId: PLAYLIST_ID_PROPERTY,
       },
       required: ['playlistId'],
     },
   },
   {
     name: 'create_playlist',
-    description: 'Create a new playlist with a name, optional description, and visibility setting',
+    description: 'Create a new playlist with a name, optional comment, and visibility setting',
     inputSchema: {
       type: 'object',
       properties: {
@@ -116,14 +117,11 @@ const tools: Tool[] = [
   },
   {
     name: 'update_playlist',
-    description: 'Update a playlist\'s metadata (name, description, visibility)',
+    description: 'Update a playlist\'s metadata (name, comment, public). Pass at least one of name, comment or public.',
     inputSchema: {
       type: 'object',
       properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The playlist ID, as returned by the `list_playlists` tool.',
-        },
+        playlistId: PLAYLIST_ID_PROPERTY,
         name: {
           type: 'string',
           description: 'New name for the playlist',
@@ -146,34 +144,28 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The playlist ID, as returned by the `list_playlists` tool.',
-        },
+        playlistId: PLAYLIST_ID_PROPERTY,
       },
       required: ['playlistId'],
     },
   },
   {
     name: 'get_playlist_tracks',
-    description: 'Get all tracks in a playlist (supports JSON or M3U export). Response shape is discriminated by `format`: JSON mode returns `{ format: "json", tracks, total }` with each track exposing a `position` (its 1-based position in the playlist, a string) and a `songId` (the stable song ID for playback/metadata). remove_tracks_from_playlist and reorder_playlist_track take the `position`. Duplicate songs each occupy their own position. IMPORTANT: positions SHIFT after any add/remove/reorder, so you MUST call get_playlist_tracks again for fresh positions before each mutation and must never reuse positions across mutations. M3U mode returns `{ format: "m3u", m3uContent }`, the raw .m3u text payload (no tracks/total arrays, since they would be redundant with the playlist body). M3U mode ignores limit and offset and always returns the whole playlist.\n\nBy default each track is compact (position, songId, title, artist, album, durationFormatted) to keep large playlists under the response size cap. Set `verbose: true` for full per-track metadata (path, bitRate, raw duration, playlistId, trackNumber, year, genre, albumArtist).',
+    description: 'Get all tracks in a playlist (supports JSON or M3U export). Response shape is discriminated by `format`: JSON mode returns `{ format: "json", tracks, total }` with each track exposing a `position` (its 1-based position in the playlist, a string) and a `songId` (the stable song ID for playback/metadata). remove_tracks_from_playlist and reorder_playlist_track take the `position`. Duplicate songs each occupy their own position. IMPORTANT: positions SHIFT after any add/remove/reorder, so you MUST call get_playlist_tracks again for fresh positions before each mutation and must never reuse positions across mutations. M3U mode returns `{ format: "m3u", m3uContent }`, the raw .m3u text payload (no tracks/total arrays, since they would be redundant with the playlist body). M3U mode ignores limit and offset and always returns the whole playlist.\n\nBy default each track is compact to keep large playlists under the response size cap. Set `verbose: true` for full per-track metadata.',
     inputSchema: {
       type: 'object',
       properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The unique ID of the playlist',
-        },
+        playlistId: PLAYLIST_ID_PROPERTY,
         limit: {
-          type: 'number',
-          description: 'Maximum number of tracks to return (1-500). M3U mode ignores limit and offset and always returns the whole playlist.',
+          type: 'integer',
+          description: 'Maximum number of tracks to return (1-500)',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
-          type: 'number',
-          description: 'Number of tracks to skip for pagination. M3U mode ignores limit and offset and always returns the whole playlist.',
+          type: 'integer',
+          description: 'Number of tracks to skip for pagination',
           minimum: 0,
           default: 0,
         },
@@ -194,14 +186,11 @@ const tools: Tool[] = [
   },
   {
     name: 'add_tracks_to_playlist',
-    description: 'Add multiple types of content to a playlist in a single efficient operation. Supports any combination of individual songs, complete albums, artist discographies, or specific disc tracks.',
+    description: 'Add multiple types of content to a playlist in a single efficient operation. Supports any combination of individual songs, complete albums, every track whose album artist is a given artist, or specific disc tracks. At least one of songIds, albumIds, artistIds or discs must be non-empty.',
     inputSchema: {
       type: 'object',
       properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The unique ID of the playlist',
-        },
+        playlistId: PLAYLIST_ID_PROPERTY,
         songIds: {
           type: 'array',
           items: { type: 'string' },
@@ -215,7 +204,7 @@ const tools: Tool[] = [
         artistIds: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of artist IDs to add (complete discographies)',
+          description: 'Artist IDs. Adds every track whose album artist is that artist. Featured and track-artist appearances are not included. Add those by songIds, for example from search_songs.',
         },
         discs: {
           type: 'array',
@@ -223,7 +212,7 @@ const tools: Tool[] = [
             type: 'object',
             properties: {
               albumId: { type: 'string' },
-              discNumber: { type: 'number' },
+              discNumber: { type: 'integer', minimum: 1 },
             },
             required: ['albumId', 'discNumber'],
           },
@@ -239,10 +228,7 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The unique ID of the playlist',
-        },
+        playlistId: PLAYLIST_ID_PROPERTY,
         positions: {
           type: 'array',
           items: { type: 'string' },
@@ -260,16 +246,13 @@ const tools: Tool[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        playlistId: {
-          type: 'string',
-          description: 'The unique ID of the playlist',
-        },
+        playlistId: PLAYLIST_ID_PROPERTY,
         position: {
           type: 'string',
           description: 'The current 1-based position of the track to move (the `position` value from get_playlist_tracks)',
         },
         insertBefore: {
-          type: 'number',
+          type: 'integer',
           description: 'Target 1-based position to insert the track before. 1 = first slot, N+1 = append to an N-track playlist.',
           minimum: 1,
         },
@@ -279,7 +262,6 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating playlist tool category with dependencies  
 export function createPlaylistToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
   return {
     tools,
@@ -304,7 +286,7 @@ export function createPlaylistToolCategory(client: NavidromeClient, _config: Con
         case 'reorder_playlist_track':
           return await reorderPlaylistTrack(client, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`playlist ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

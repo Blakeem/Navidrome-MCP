@@ -122,9 +122,13 @@ export function transformPlaylistsToDTO(rawPlaylists: unknown, options?: Transfo
  * `songId` for playback), so large playlists stay under the token cap.
  */
 export function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, options?: TransformOptions): PlaylistTrackDTO {
+  const mediaFileId = rawTrack.mediaFileId ?? '';
+  const hasMediaFileId = mediaFileId !== '';
+  const songId = hasMediaFileId ? mediaFileId : rawTrack.id;
+
   // The fallback is a playlist position, not a song id, so a later lookup by it resolves
   // the wrong song. Warn so the substitution never corrupts downstream lookups silently.
-  if (rawTrack.mediaFileId === undefined || rawTrack.mediaFileId === '') {
+  if (!hasMediaFileId) {
     logger.warn(
       `Playlist track missing mediaFileId (playlistId=${rawTrack.playlistId}, position=${rawTrack.id}); ` +
         `using playlist-position id as a fallback. Possible Navidrome API contract violation.`
@@ -133,7 +137,7 @@ export function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, options?
 
   const dto: PlaylistTrackDTO = {
     position: rawTrack.id,
-    songId: rawTrack.mediaFileId ?? rawTrack.id,
+    songId,
     title: rawTrack.title ?? '',
     album: rawTrack.album ?? '',
     artist: rawTrack.artist ?? '',
@@ -144,8 +148,8 @@ export function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, options?
     dto.playlistId = rawTrack.playlistId;
   }
 
-  if (shouldEmit('duration', options)) {
-    dto.duration = rawTrack.duration ?? 0;
+  if (shouldEmit('duration', options) && rawTrack.duration !== undefined) {
+    dto.duration = rawTrack.duration;
   }
 
   if (shouldEmit('albumArtist', options) && rawTrack.albumArtist !== undefined && rawTrack.albumArtist !== '') {

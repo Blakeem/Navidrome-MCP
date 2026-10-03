@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import type { Config } from '../config.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
@@ -44,18 +43,9 @@ import {
   type MbTracklist,
 } from '../utils/musicbrainz.js';
 import {
-  GetArtistAlbumsSchema,
-  GetAlbumInfoSchema,
+  ArtistAlbumsSchema,
+  AlbumInfoSchema,
 } from '../schemas/index.js';
-
-/**
- * Collapse a ZodError into a single concise, LLM-actionable sentence. The tool JSON
- * Schemas cannot express the conditional identifier rules, so a raw issue array would reach the LLM.
- */
-function formatZodIssues(error: z.ZodError, fallback: string): string {
-  const messages = error.issues.map((issue) => issue.message).filter((m) => m !== '');
-  return messages.length > 0 ? messages.join('; ') : fallback;
-}
 
 // === get_artist_albums =======================================================
 //
@@ -155,6 +145,9 @@ async function cachedOr<T>(cache: Cache<T>, key: string, fetcher: () => Promise<
 
 // --- Last.fm branch ---------------------------------------------------------
 
+// Last.fm error 6 texts, specific enough to skip an HTTP "404 Not Found" status line.
+const LASTFM_NOT_FOUND = /album not found|could not be found/i;
+
 async function fetchTopAlbums(artist: string, apiKey: string): Promise<LastFmTopAlbumRow[]> {
   // ONE page only: rank beyond the top 100 carries no popularity signal.
   // Spine albums that miss the join get popularityRank null.
@@ -168,7 +161,7 @@ async function fetchTopAlbums(artist: string, apiKey: string): Promise<LastFmTop
   if (typeof container !== 'object' || container === null) {
     throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing topalbums'));
   }
-  const albums = ((container as Record<string, unknown>)['album'] as Record<string, unknown>[] | undefined) ?? [];
+  const albums = asLastFmArray((container as Record<string, unknown>)['album']);
 
   return albums.map((a): LastFmTopAlbumRow => ({
     name: typeof a['name'] === 'string' ? a['name'] : '',
@@ -202,8 +195,6 @@ interface LibraryLookup {
   artistId: string | null;
   /** normTitle(album name) → Navidrome album id, across ALL accepted artist ids. */
   albumsByNormTitle: Map<string, string>;
-  /** True when at least one artist id was resolved (fallback matching not needed). */
-  resolvedArtist: boolean;
 }
 
 /**
@@ -292,11 +283,10 @@ async function fetchLibraryLookup(client: NavidromeClient, artistName: string): 
   return {
     artistId: artistIds[0] ?? null,
     albumsByNormTitle,
-    resolvedArtist: artistIds.length > 0,
   };
 }
 
-/** One failed probe (a '..' title trips the client's endpoint guard) must not fail the whole tool. */
+/** One failed probe must not fail the whole tool, since library membership degrades per title. */
 async function probeAlbumsByName(client: NavidromeClient, title: string): Promise<unknown> {
   try {
     const { data } = await client.requestWithLibraryFilterAndMeta<unknown>(
@@ -362,13 +352,12 @@ async function resolveLibraryLookup(
   }
 
   const lookup = navResult.value;
-  if (lookup.resolvedArtist || probeTitles.length === 0) {
+  if (lookup.artistId !== null || probeTitles.length === 0) {
     return { lookup, note: null };
   }
 
   const fallbackMatches = await fallbackAlbumMatch(client, artistName, probeTitles);
-  const albumsByNormTitle = new Map([...fallbackMatches, ...lookup.albumsByNormTitle]);
-  return { lookup: { ...lookup, albumsByNormTitle }, note: null };
+  return { lookup: { ...lookup, albumsByNormTitle: fallbackMatches }, note: null };
 }
 
 // --- Orchestration ------------------------------------------------------------
@@ -378,6 +367,7 @@ interface MergeInput {
   lastFmRows: LastFmTopAlbumRow[];
   mbUsable: boolean;
   includeUnverified: boolean;
+  includeTypes: string[];
   excludeSecondary: string[];
 }
 
@@ -401,15 +391,17 @@ function mergeSources(input: MergeInput): MergedAlbum[] {
   const joinedNormKeys = new Set<string>();
 
   if (input.mbUsable) {
+    const included = new Set(input.includeTypes);
     const excluded = new Set(input.excludeSecondary);
     for (const rg of input.spine) {
       // [D] joins by normalized title, since Last.fm exposes only release MBIDs. It runs before
-      // the [F] exclusion so an excluded match stays joined and never resurfaces as unverified.
+      // both [F] filters so a filtered match stays joined and never resurfaces as unverified.
       const key = normTitle(rg.title);
       const lastFm = byNorm.get(key) ?? null;
       if (lastFm !== null) joinedNormKeys.add(normTitle(lastFm.name));
 
-      // [F] secondary-type exclusion (types already lowercased at parse).
+      // [F] primary-type filter, then secondary-type exclusion (secondary types lowercased at parse).
+      if (!included.has((rg.primaryType ?? '').toLowerCase())) continue;
       if (rg.secondaryTypes.some(t => excluded.has(t))) continue;
 
       merged.push({
@@ -452,13 +444,70 @@ function mergeSources(input: MergeInput): MergedAlbum[] {
   return merged;
 }
 
+interface ShapedAlbums {
+  albums: ArtistAlbumDTO[];
+  returned: ArtistAlbumDTO[];
+  inLibraryCount: number | null;
+  missingCount: number | null;
+  onlyMissingSkipped: boolean;
+}
+
+/** Ranks span the full filtered discography before onlyMissing, so they stay stable whatever the membership filter does. */
+function shapeAlbums(
+  merged: MergedAlbum[],
+  navLookup: LibraryLookup | null,
+  onlyMissing: boolean,
+  verbose: boolean,
+): ShapedAlbums {
+  const membershipKnown = navLookup !== null;
+  const rankByAlbum = new Map<MergedAlbum, number>();
+
+  [...merged]
+    .filter(m => m.lastFm !== null)
+    .sort((a, b) => (b.lastFm?.playcount ?? 0) - (a.lastFm?.playcount ?? 0))
+    .forEach((m, i) => rankByAlbum.set(m, i + 1));
+
+  const albums: ArtistAlbumDTO[] = merged.map(m => {
+    const libraryAlbumId = navLookup?.albumsByNormTitle.get(normTitle(m.title)) ?? null;
+    return {
+      title: m.title,
+      year: m.year,
+      primaryType: m.primaryType,
+      secondaryTypes: m.secondaryTypes,
+      inLibrary: membershipKnown ? libraryAlbumId !== null : null,
+      libraryAlbumId,
+      genres: m.genres,
+      popularityRank: rankByAlbum.get(m) ?? null,
+      mbid: m.mbid,
+      source: m.source,
+      typeUnverified: m.typeUnverified,
+      ...(verbose && m.lastFm !== null ? { playcount: m.lastFm.playcount, url: m.lastFm.url } : {}),
+      ...(verbose && m.disambiguation !== null ? { disambiguation: m.disambiguation } : {}),
+    };
+  });
+
+  // Most-listened first reads naturally. Unranked rows keep spine order at the end.
+  albums.sort((a, b) => (a.popularityRank ?? Number.MAX_SAFE_INTEGER) - (b.popularityRank ?? Number.MAX_SAFE_INTEGER));
+
+  return {
+    albums,
+    returned: onlyMissing && membershipKnown ? albums.filter(a => a.inLibrary === false) : albums,
+    inLibraryCount: membershipKnown ? albums.filter(a => a.inLibrary === true).length : null,
+    missingCount: membershipKnown ? albums.filter(a => a.inLibrary === false).length : null,
+    onlyMissingSkipped: onlyMissing && !membershipKnown,
+  };
+}
+
+const DEGRADED_SPINE_NOTE =
+  'the list is Last.fm top albums with unknown release types and years, and includeTypes/excludeSecondary were not applied, so it can include singles and EPs.';
+
 export async function getArtistAlbums(
   client: NavidromeClient,
   config: Config,
   args: unknown,
 ): Promise<ArtistAlbumsResult> {
   try {
-    const params = GetArtistAlbumsSchema.parse(args);
+    const params = ArtistAlbumsSchema.parse(args);
 
     logger.debug('Tool getArtistAlbums called with args:', {
       artist: params.artist,
@@ -489,18 +538,21 @@ export async function getArtistAlbums(
 
     const artistName = params.artist ?? mbArtist?.name;
     if (artistName === undefined) {
-      throw new Error(
-        'Could not resolve a usable artist name: MusicBrainz lookup for the given mbid failed and no artist name was provided',
-      );
+      const mbid = String(params.mbid);
+      throw new Error(mbRequestFailed
+        ? `MusicBrainz was unreachable while resolving mbid ${mbid}, and no artist name was provided. Retry later or pass the artist name.`
+        : `No MusicBrainz artist exists for mbid ${mbid}. Pass the artist name instead.`);
     }
 
     // -- Fan out the three branches. MB is internally serialized at 1 req/s.
     //    Last.fm and Navidrome run alongside.
+    // includeUnverified browses every primary type so a Last.fm row MB types as a single or EP joins instead of leaking.
+    const browseTypes = params.includeUnverified ? ['album', 'ep', 'single'] : params.includeTypes;
     const spinePromise: Promise<MbReleaseGroup[]> = mbArtist !== null
       ? cachedOr(
           mbSpineCache,
-          `${mbArtist.mbid}|${[...params.includeTypes].sort().join(',')}`,
-          () => browseMbReleaseGroups(mbArtist.mbid, params.includeTypes, config),
+          `${mbArtist.mbid}|${[...browseTypes].sort().join(',')}`,
+          () => browseMbReleaseGroups(mbArtist.mbid, browseTypes, config),
         )
       : Promise.resolve([]);
     const lastFmPromise = cachedOr(
@@ -524,83 +576,50 @@ export async function getArtistAlbums(
     }
     const mbUsable = mbArtist !== null && spineResult.status === 'fulfilled';
     if (mbRequestFailed) {
-      notes.push('MusicBrainz was unreachable; release types/years are unverified Last.fm data.');
+      notes.push(`MusicBrainz was unreachable; ${DEGRADED_SPINE_NOTE}`);
     } else if (mbArtist === null) {
-      notes.push('Artist not found in MusicBrainz; release types/years are unverified Last.fm data.');
+      notes.push(`Artist not found in MusicBrainz; ${DEGRADED_SPINE_NOTE}`);
     }
 
     const lastFmRows = lastFmResult.status === 'fulfilled' ? lastFmResult.value : [];
     const lastFmOk = lastFmResult.status === 'fulfilled';
-    if (!lastFmOk) {
+    const lastFmNotFound = lastFmResult.status === 'rejected' && LASTFM_NOT_FOUND.test(String(lastFmResult.reason));
+    if (lastFmResult.status === 'rejected') {
       logger.warn(`Last.fm getTopAlbums failed: ${String(lastFmResult.reason)}`);
-      notes.push('Last.fm was unreachable; popularity ranking is unavailable.');
+      notes.push(lastFmNotFound
+        ? 'Last.fm has no entry for this artist; popularity ranking is unavailable.'
+        : 'Last.fm was unreachable; popularity ranking is unavailable.');
     }
 
     if (!mbUsable && !lastFmOk) {
-      throw new Error('Both MusicBrainz and Last.fm failed: no discography source available');
+      throw new Error(!mbRequestFailed && lastFmNotFound
+        ? `No artist matching "${artistName}" was found in MusicBrainz or Last.fm. Check the spelling, or pass a MusicBrainz artist mbid.`
+        : `No discography source is available: ${notes.join(' ')}`);
     }
 
-    // -- [D]/[E]/[F] merge, enrich, type-filter.
+    // -- [D]/[E]/[F] merge, enrich, type-filter, then [G] library compare.
     const merged = mergeSources({
       spine,
       lastFmRows,
       mbUsable,
       includeUnverified: params.includeUnverified,
+      includeTypes: params.includeTypes,
       excludeSecondary: params.excludeSecondary,
     });
-
-    // -- Popularity rank across the full filtered discography (assigned before
-    //    onlyMissing so ranks stay stable whatever the membership filter does).
-    const ranked = [...merged]
-      .filter(m => m.lastFm !== null)
-      .sort((a, b) => (b.lastFm?.playcount ?? 0) - (a.lastFm?.playcount ?? 0));
-    const rankByAlbum = new Map<MergedAlbum, number>();
-    ranked.forEach((m, i) => rankByAlbum.set(m, i + 1));
-
-    // -- [G] library compare.
     const library = await resolveLibraryLookup(client, navResult, artistName, merged.map(m => m.title));
     const navLookup = library.lookup;
     if (library.note !== null) {
       notes.push(library.note);
     }
 
-    const albums: ArtistAlbumDTO[] = merged.map(m => {
-      const libraryAlbumId = navLookup?.albumsByNormTitle.get(normTitle(m.title)) ?? null;
-      return {
-        title: m.title,
-        year: m.year,
-        primaryType: m.primaryType,
-        secondaryTypes: m.secondaryTypes,
-        inLibrary: navLookup !== null ? libraryAlbumId !== null : null,
-        libraryAlbumId,
-        genres: m.genres,
-        popularityRank: rankByAlbum.get(m) ?? null,
-        mbid: m.mbid,
-        source: m.source,
-        typeUnverified: m.typeUnverified,
-        ...(params.verbose && m.lastFm !== null ? { playcount: m.lastFm.playcount, url: m.lastFm.url } : {}),
-        ...(params.verbose && m.disambiguation !== null && m.disambiguation !== '' ? { disambiguation: m.disambiguation } : {}),
-      };
-    });
-
-    // Most-listened first reads naturally. Unranked rows keep spine order at the end.
-    albums.sort((a, b) => (a.popularityRank ?? Number.MAX_SAFE_INTEGER) - (b.popularityRank ?? Number.MAX_SAFE_INTEGER));
-
-    const inLibraryCount = navLookup !== null ? albums.filter(a => a.inLibrary === true).length : null;
-    const missingCount = navLookup !== null ? albums.filter(a => a.inLibrary === false).length : null;
-
-    let returned = albums;
-    if (params.onlyMissing) {
-      if (navLookup !== null) {
-        returned = albums.filter(a => a.inLibrary === false);
-      } else {
-        notes.push('onlyMissing was not applied because library membership is unknown.');
-      }
+    const shaped = shapeAlbums(merged, navLookup, params.onlyMissing, params.verbose);
+    if (shaped.onlyMissingSkipped) {
+      notes.push('onlyMissing was not applied because library membership is unknown.');
     }
 
     logger.info(
       `get_artist_albums: ${artistName}: spine ${spine.length}, lastfm ${lastFmRows.length}, ` +
-      `merged ${merged.length}, returned ${returned.length}`,
+      `merged ${merged.length}, returned ${shaped.returned.length}`,
     );
 
     return {
@@ -610,28 +629,19 @@ export async function getArtistAlbums(
         navidromeArtistId: navLookup?.artistId ?? null,
       },
       counts: {
-        discography: albums.length,
-        inLibrary: inLibraryCount,
-        missing: missingCount,
-        returned: returned.length,
+        discography: shaped.albums.length,
+        inLibrary: shaped.inLibraryCount,
+        missing: shaped.missingCount,
+        returned: shaped.returned.length,
       },
       sources: {
         musicbrainz: mbUsable,
         lastfm: lastFmOk,
       },
-      albums: returned,
+      albums: shaped.returned,
       ...(notes.length > 0 ? { note: notes.join(' ') } : {}),
     };
   } catch (error) {
-    // Surface a clean, LLM-actionable message for input-contract violations
-    // (the JSON Schema advertises required:[] but the conditional rule needs
-    // artist OR mbid) instead of letting a raw Zod issue-array blob through.
-    if (error instanceof z.ZodError) {
-      throw new Error(ErrorFormatter.toolExecution(
-        'get_artist_albums',
-        new Error(formatZodIssues(error, 'get_artist_albums requires at least one of: artist (name) or mbid (MusicBrainz id).')),
-      ));
-    }
     throw new Error(ErrorFormatter.toolExecution('get_artist_albums', error));
   }
 }
@@ -781,7 +791,7 @@ export async function getAlbumInfo(
   args: unknown,
 ): Promise<AlbumInfoResult> {
   try {
-    const params = GetAlbumInfoSchema.parse(args);
+    const params = AlbumInfoSchema.parse(args);
 
     logger.debug('Tool getAlbumInfo called with args:', {
       artist: params.artist,
@@ -814,9 +824,14 @@ export async function getAlbumInfo(
     const artistName = params.artist ?? rg?.artistName ?? undefined;
     const albumTitle = params.album ?? rg?.title;
     if (artistName === undefined || albumTitle === undefined) {
-      throw new Error(
-        'Could not resolve usable artist/album names: MusicBrainz lookup for the given mbid failed and no names were provided',
-      );
+      const mbid = String(params.mbid);
+      if (mbResolveFailed) {
+        throw new Error(`MusicBrainz was unreachable while resolving mbid ${mbid}, and no artist and album names were provided. Retry later or pass the artist and album names.`);
+      }
+      if (rg === null) {
+        throw new Error(`No MusicBrainz release group exists for mbid ${mbid}. Pass artist and album names instead.`);
+      }
+      throw new Error(`MusicBrainz release group ${mbid} has no artist credit. Pass artist and album names instead.`);
     }
 
     // -- Fan out the three branches (the MB tracklist browse is serialized
@@ -853,16 +868,18 @@ export async function getAlbumInfo(
     }
 
     const lastFm = lastFmResult.status === 'fulfilled' ? lastFmResult.value : null;
-    if (lastFm === null) {
-      const reason = String((lastFmResult as PromiseRejectedResult).reason);
-      logger.warn(`Last.fm album.getInfo failed: ${reason}`);
-      notes.push(/album not found/i.test(reason)
+    const lastFmNotFound = lastFmResult.status === 'rejected' && LASTFM_NOT_FOUND.test(String(lastFmResult.reason));
+    if (lastFmResult.status === 'rejected') {
+      logger.warn(`Last.fm album.getInfo failed: ${String(lastFmResult.reason)}`);
+      notes.push(lastFmNotFound
         ? 'Last.fm has no entry for this album; popularity, wiki, and tags are unavailable.'
         : 'Last.fm was unreachable; popularity, wiki, and tags are unavailable.');
     }
 
     if (!mbUsable && lastFm === null) {
-      throw new Error('Both MusicBrainz and Last.fm failed: no album info source available');
+      throw new Error(!mbResolveFailed && lastFmNotFound
+        ? `Album "${albumTitle}" by "${artistName}" was not found in MusicBrainz or Last.fm. Check the title, or call get_artist_albums for exact titles and mbids.`
+        : `No album info source is available: ${notes.join(' ')}`);
     }
 
     // -- Library compare.
@@ -933,15 +950,6 @@ export async function getAlbumInfo(
       ...(notes.length > 0 ? { note: notes.join(' ') } : {}),
     };
   } catch (error) {
-    // Surface a clean, LLM-actionable message for input-contract violations
-    // (the JSON Schema advertises required:[] but the conditional rule needs
-    // mbid OR both artist and album) instead of a raw Zod issue-array blob.
-    if (error instanceof z.ZodError) {
-      throw new Error(ErrorFormatter.toolExecution(
-        'get_album_info',
-        new Error(formatZodIssues(error, 'get_album_info requires either mbid, or both artist and album.')),
-      ));
-    }
     throw new Error(ErrorFormatter.toolExecution('get_album_info', error));
   }
 }

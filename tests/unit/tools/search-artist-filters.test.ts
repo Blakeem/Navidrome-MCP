@@ -14,7 +14,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the filter cache manager so resolveTextFilters resolves text filters to
 // deterministic IDs without touching Navidrome.
-const { resolveMock } = vi.hoisted(() => ({
+const { resolveMock, ensureFreshMock } = vi.hoisted(() => ({
+  ensureFreshMock: vi.fn().mockResolvedValue(undefined),
   resolveMock: vi.fn((type: string): string | null => {
     // Return a stable fake UUID per filter type.
     const map: Record<string, string> = {
@@ -31,7 +32,7 @@ const { resolveMock } = vi.hoisted(() => ({
 
 vi.mock('../../../src/services/filter-cache-manager.js', () => ({
   filterCacheManager: {
-    ensureFresh: vi.fn().mockResolvedValue(undefined),
+    ensureFresh: ensureFreshMock,
     resolve: resolveMock,
     findSimilar: vi.fn(() => ['IT', 'AT', 'ES']),
   },
@@ -51,6 +52,7 @@ import {
 } from '../../../src/tools/search/filter-resolver.js';
 import { searchAll } from '../../../src/tools/search/search-orchestrator.js';
 import { searchArtists } from '../../../src/tools/search/single-type-search.js';
+import { SearchArtistsSchema } from '../../../src/schemas/index.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
 describe('stripUnsupportedUrlParams / stripUnsupportedAppliedFilters', () => {
@@ -141,7 +143,7 @@ describe('buildContentTypeParams (searchAll) - cross-type sort field mapping', (
     expect(albumParams).toContain('_sort=maxYear');
   });
 
-  it.each(['year', 'duration', 'artist', 'recently_added'])(
+  it.each(['year', 'duration', 'artist', 'recently_added', 'random'])(
     "falls back to _sort=name on the artist endpoint for sort:'%s'",
     (sort) => {
       const { artistParams } = sortParams(sort);
@@ -225,12 +227,12 @@ describe('searchAll - artist slice under tag/year filters', () => {
   it.each([
     ['genre', { genre: 'Rock' }],
     ['year', { year: 2000 }],
-  ])('skips the artist fetch and counts no artists when a %s filter is set', async (_label, filter) => {
+  ])('skips the artist fetch and reports no artist total when a %s filter is set', async (_label, filter) => {
     const result = await searchAll(client, { query: '', ...filter });
 
     expect(requestedPaths().some(path => path.startsWith('/artist'))).toBe(false);
     expect(result.artists).toEqual([]);
-    expect(result.totalArtists).toBe(0);
+    expect(result.totalArtists).toBeUndefined();
     expect(result.totalResults).toBe(14);
   });
 
@@ -239,6 +241,15 @@ describe('searchAll - artist slice under tag/year filters', () => {
 
     expect(requestedPaths().some(path => path.startsWith('/artist'))).toBe(true);
     expect(result.totalArtists).toBe(7);
+  });
+
+  it('reports no total for a slice skipped by a zero count', async () => {
+    const result = await searchAll(client, { query: '', songCount: 0 });
+
+    expect(requestedPaths().some(path => path.startsWith('/song'))).toBe(false);
+    expect(result.totalSongs).toBeUndefined();
+    expect(result.totalAlbums).toBe(7);
+    expect(result.totalResults).toBe(14);
   });
 
   it('names search_all in a wrapped failure', async () => {
@@ -267,6 +278,10 @@ describe('search_artists - tag and year filters are rejected', () => {
 
   it('still accepts starred', async () => {
     await expect(searchArtists(client, { starred: true })).resolves.toHaveProperty('artists');
+  });
+
+  it('rejects sort random, which /api/artist ignores', () => {
+    expect(SearchArtistsSchema.safeParse({ sort: 'random' }).success).toBe(false);
   });
 });
 
@@ -331,6 +346,22 @@ describe('buildEnhancedSearchParams - endpoint-specific filters', () => {
   });
 });
 
+describe('resolveTextFilters - filter cache refresh', () => {
+  beforeEach(() => {
+    ensureFreshMock.mockClear();
+  });
+
+  it('skips the refresh when no tag filter is set', async () => {
+    await resolveTextFilters({ year: 2000, starred: true });
+    expect(ensureFreshMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes before resolving a tag filter', async () => {
+    await resolveTextFilters({ genre: 'Rock' });
+    expect(ensureFreshMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('resolveTextFilters - not-found messages', () => {
   it('asks for an ISO code instead of suggesting substring matches for an unknown country', async () => {
     resolveMock.mockReturnValueOnce(null);
@@ -346,5 +377,13 @@ describe('resolveTextFilters - not-found messages', () => {
     resolveMock.mockReturnValueOnce(null);
 
     await expect(resolveTextFilters({ genre: 'Rok' })).rejects.toThrow("Genre 'Rok' not found. Did you mean: IT, AT, ES?");
+  });
+
+  it('names get_filter_options as the recovery step for a non-country filter', async () => {
+    resolveMock.mockReturnValueOnce(null);
+
+    await expect(resolveTextFilters({ mood: 'Gloomy' })).rejects.toThrow(
+      'Call get_filter_options with filterType "moods" to list the values in this library.',
+    );
   });
 });

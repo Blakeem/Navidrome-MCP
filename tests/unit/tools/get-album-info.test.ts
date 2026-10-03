@@ -426,7 +426,20 @@ describe('getAlbumInfo — degradation', () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
 
     await expect(getAlbumInfo(asClient(client), config, { artist: 'GUNSHIP', album: 'Unicorn' }))
-      .rejects.toThrow(/no album info source available/);
+      .rejects.toThrow(/No album info source is available: MusicBrainz was unreachable/);
+  });
+
+  it('album unknown to both sources ⇒ a title hint, not an outage', async () => {
+    installFetch({
+      mbRgSearch: () => ({ 'release-groups': [] }),
+      lastFm: () => ({ error: 6, message: 'Album not found' }),
+      lastFmStatus: 404,
+    });
+    wireEmptyNavidrome(client);
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    await expect(getAlbumInfo(asClient(client), config, { artist: 'GUNSHIP', album: 'Unicron' }))
+      .rejects.toThrow(/Album "Unicron" by "GUNSHIP" was not found in MusicBrainz or Last\.fm\. Check the title/);
   });
 
   it('mbid-only input with MB down ⇒ hard error (no names to pivot on)', async () => {
@@ -438,7 +451,7 @@ describe('getAlbumInfo — degradation', () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
 
     await expect(getAlbumInfo(asClient(client), config, { mbid: '56a2d3b3-cb32-4ba0-bf6b-e94ca1d45307' }))
-      .rejects.toThrow(/no names were provided/);
+      .rejects.toThrow(/MusicBrainz was unreachable while resolving mbid .*no artist and album names were provided/);
   });
 
   it('Navidrome down ⇒ inLibrary null with a note', async () => {

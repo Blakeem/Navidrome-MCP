@@ -16,9 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { NavidromeClient } from '../client/navidrome-client.js';
+import { NavidromeNotFoundError, type NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import type { Config } from '../config.js';
 import {
   transformSongsToDTO,
   transformAlbumsToDTO,
@@ -58,15 +57,26 @@ interface SetRatingResult {
   message: string;
 }
 
+// Subsonic /star and /unstar never read `type` and resolve the kind from the ID, so the ID is checked against `type` first.
+async function assertItemExists(client: NavidromeClient, type: 'song' | 'album' | 'artist', itemId: string): Promise<void> {
+  try {
+    await client.request<unknown>(`/${type}/${encodeURIComponent(itemId)}`);
+  } catch (error) {
+    if (error instanceof NavidromeNotFoundError) {
+      throw new Error(`${type} ${itemId} not found`);
+    }
+    throw error;
+  }
+}
 
-export async function starItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
+export async function starItem(client: NavidromeClient, args: unknown): Promise<StarItemResult> {
   try {
     const { itemId, type } = StarItemSchema.parse(args);
 
     logger.debug('Tool starItem called with args:', { itemId, type });
     logger.info(`Starring ${type}: ${itemId}`);
 
-    // Use Subsonic REST API for starring (wire param key stays `id`)
+    await assertItemExists(client, type, itemId);
     const response = await client.subsonicRequest('/star', { id: itemId });
 
     logger.debug('Star response:', response);
@@ -80,14 +90,14 @@ export async function starItem(client: NavidromeClient, _config: Config, args: u
   }
 }
 
-export async function unstarItem(client: NavidromeClient, _config: Config, args: unknown): Promise<StarItemResult> {
+export async function unstarItem(client: NavidromeClient, args: unknown): Promise<StarItemResult> {
   try {
     const { itemId, type } = StarItemSchema.parse(args);
 
     logger.debug('Tool unstarItem called with args:', { itemId, type });
     logger.info(`Unstarring ${type}: ${itemId}`);
 
-    // Use Subsonic REST API for unstarring (wire param key stays `id`)
+    await assertItemExists(client, type, itemId);
     const response = await client.subsonicRequest('/unstar', { id: itemId });
 
     logger.debug('Unstar response:', response);
@@ -101,14 +111,13 @@ export async function unstarItem(client: NavidromeClient, _config: Config, args:
   }
 }
 
-export async function setRating(client: NavidromeClient, _config: Config, args: unknown): Promise<SetRatingResult> {
+export async function setRating(client: NavidromeClient, args: unknown): Promise<SetRatingResult> {
   try {
     const { itemId, type, rating } = SetRatingSchema.parse(args);
 
     logger.debug('Tool setRating called with args:', { itemId, type, rating });
     logger.info(`Setting rating ${rating} for ${type}: ${itemId}`);
 
-    // Use Subsonic REST API for setting rating (wire param key stays `id`)
     const response = await client.subsonicRequest('/setRating', {
       id: itemId,
       rating: rating.toString()

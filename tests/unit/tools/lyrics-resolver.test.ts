@@ -292,7 +292,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1', allowLrclib: false }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' }, allowLrclib: false }
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -303,13 +303,13 @@ describe('local file lyrics source', () => {
     expect(result.synced?.[0]).toMatchObject({ timeMs: 1000, endMs: 4000 });
   });
 
-  it('does not look up local lyrics when no songId is supplied', async () => {
+  it('does not look up local lyrics when no local source is supplied', async () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
       .mockResolvedValueOnce(makeResponse(200, []));
     const client = createMockClient();
 
-    await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' }, { client: client as unknown as NavidromeClient });
+    await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' }, {});
 
     expect(client.requestWithLibraryFilter).not.toHaveBeenCalled();
   });
@@ -323,7 +323,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -344,7 +344,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('lrclib');
@@ -365,7 +365,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('local');
@@ -385,7 +385,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('local');
@@ -401,7 +401,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1', allowLrclib: false }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' }, allowLrclib: false }
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -421,7 +421,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('lrclib');
@@ -438,7 +438,7 @@ describe('local file lyrics source', () => {
     const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('lrclib');
@@ -569,5 +569,19 @@ describe('buildLyricsLookup', () => {
 
     expect(lookup.metadata).toEqual({ title: 'Unknown', artist: 'Unknown' });
     expect(lookup.searchable).toBe(false);
+  });
+
+  it.each(['[Unknown Artist]', '[unknown artist]'])('treats Navidrome\'s %s placeholder as no artist', (artist) => {
+    const lookup = buildLyricsLookup({ title: 'Hello', artist, album: undefined, duration: undefined });
+
+    expect(lookup.metadata.artist).toBe('Unknown');
+    expect(lookup.searchable).toBe(false);
+  });
+
+  it('drops Navidrome\'s [Unknown Album] placeholder', () => {
+    const lookup = buildLyricsLookup({ title: 'Hello', artist: 'Band', album: '[Unknown Album]', duration: undefined });
+
+    expect(lookup.metadata).not.toHaveProperty('album');
+    expect(lookup.searchable).toBe(true);
   });
 });

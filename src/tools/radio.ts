@@ -1,5 +1,22 @@
+/**
+ * Navidrome MCP Server - Radio Station Tools
+ * Copyright (C) 2025
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import type { z } from 'zod';
-import type { Config } from '../config.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type {
   RadioStationDTO,
@@ -7,23 +24,19 @@ import type {
   DeleteRadioStationResponse,
   ListRadioStationsResponse,
 } from '../types/index.js';
-import { CreateRadioStationArgsSchema, RadioStationIdSchema } from '../schemas/index.js';
+import { CreateRadioStationSchema, RadioStationIdSchema } from '../schemas/index.js';
 import { logger } from '../utils/logger.js';
 import { getMessageManager } from '../utils/message-manager.js';
-import { BATCH_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
+import { BATCH_VALIDATION_TIMEOUT_MS } from '../constants/timeouts.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
-import { Cache } from '../utils/cache.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
 import { hasControlChars, isHttpUrlScheme } from '../utils/network-safety.js';
 import { validateRadioStream } from './radio-validation.js';
 
 /**
- * Why a URL is unusable as a station URL, phrased to complete the sentence
- * "Stream URL for station X ...", or null when it is fine. The control-char
- * case is called out separately because the scheme message is actively
- * misleading for it: a URL pasted with a trailing newline DOES start with
- * http:// and the user has no way to see the character that failed.
+ * Completes "Stream URL for station X ...", or null when the URL is fine. A control character gets its own message,
+ * since the URL still starts with http:// and the user cannot see the failing character.
  */
 function describeUrlProblem(url: string): string | null {
   if (hasControlChars(url)) return 'must not contain line breaks or control characters';
@@ -31,62 +44,22 @@ function describeUrlProblem(url: string): string | null {
   return null;
 }
 
-type StationInput = z.infer<typeof CreateRadioStationArgsSchema>['stations'][number];
+// create_radio_station refuses these schemes, but the Navidrome web UI can add a station that uses one.
+const WEB_UI_ONLY_STREAM_SCHEMES = ['mms:', 'mmsh:', 'rtsp:', 'rtmp:'];
 
-// Snapshot of REST `/api/radio` fetched with `_start=0&_end=10000`, kept for `config.cacheTtl`.
-// Single-station lookups and play_radio_station read it, and create and delete invalidate it.
-let stationCache: Cache<RadioStationDTO[]> | null = null;
-const CACHE_KEY = 'all';
-
-// Concurrent cold-cache callers share one fetch. Invalidation clears it and bumps the
-// generation, so a fetch that started before a create or delete never writes the cache.
-let inflightFetch: Promise<RadioStationDTO[]> | null = null;
-let stationCacheGeneration = 0;
-
-function getStationCache(config: Config): Cache<RadioStationDTO[]> {
-  // Auto-cleanup is off. Reads already check the TTL, and its timer would keep the process alive.
-  stationCache ??= new Cache<RadioStationDTO[]>(config.cacheTtl, false);
-  return stationCache;
-}
-
-/**
- * Drop the cached station snapshot. Call after any successful mutation
- * (create/delete) so the next read goes back to Navidrome.
- */
-export function invalidateRadioStationCache(): void {
-  if (stationCache !== null) {
-    stationCache.delete(CACHE_KEY);
+function isWebUiOnlyStreamUrl(url: string): boolean {
+  try {
+    return WEB_UI_ONLY_STREAM_SCHEMES.includes(new URL(url).protocol);
+  } catch {
+    return false;
   }
-  inflightFetch = null;
-  stationCacheGeneration += 1;
 }
 
-/**
- * Test-only: fully discard the cache instance (releases setInterval if
- * auto-cleanup were ever enabled, and resets singleton state). Production
- * code calls invalidateRadioStationCache() instead.
- */
-export function resetRadioStationCacheForTesting(): void {
-  if (stationCache !== null) {
-    stationCache.destroy();
-  }
-  stationCache = null;
-  inflightFetch = null;
-}
+type StationInput = z.infer<typeof CreateRadioStationSchema>['stations'][number];
 
 /**
- * Raw row shape from Navidrome's REST `/api/radio` endpoint.
- *
- * Why REST instead of Subsonic /getInternetRadioStations:
- *  - Subsonic drops `homePageUrl` and ships no per-station timestamps.
- *    Every station shared one bulk-import timestamp, which made the list
- *    response look like a bug to LLM consumers.
- *  - REST `/radio` returns `homePageUrl`, real per-station `createdAt`
- *    and `updatedAt`. It's the same auth (X-ND-Authorization) the rest
- *    of the codebase already uses for non-Subsonic endpoints.
- *
- * `homePageUrl` is often emitted as an empty string for stations created
- * without one, which is treated as "unset" downstream.
+ * REST /api/radio is used over Subsonic getInternetRadioStations, because Subsonic drops homePageUrl and
+ * per-station timestamps. Navidrome emits an empty homePageUrl for an unset one.
  */
 interface RestRadioStationRow {
   id: string;
@@ -97,85 +70,45 @@ interface RestRadioStationRow {
   updatedAt?: string;
 }
 
-/**
- * List all internet radio stations, cached for `config.cacheTtl` seconds.
- * Omitting `config` bypasses the cache on purpose. The post-create id lookup in createRadioStation relies on that.
- */
+function toRadioStationDTO(row: RestRadioStationRow): RadioStationDTO {
+  const stationDto: RadioStationDTO = {
+    id: row.id,
+    name: row.name,
+    streamUrl: row.streamUrl,
+    // A Go zero-time timestamp becomes null so the DTO does not show a fake date.
+    createdAt: nullIfGoZeroTime(row.createdAt),
+    updatedAt: nullIfGoZeroTime(row.updatedAt),
+  };
+
+  if (row.homePageUrl !== undefined && row.homePageUrl !== '') {
+    stationDto.homePageUrl = row.homePageUrl;
+  }
+
+  return stationDto;
+}
+
+/** Read fresh on every call, since a station added, edited or deleted in the Navidrome web UI must show at once. */
+export async function fetchRadioStations(client: NavidromeClient): Promise<RadioStationDTO[]> {
+  // `_end=10000` fetches every station in one round trip. Instances hold hundreds at most.
+  const rows = await client.request<RestRadioStationRow[]>('/radio?_start=0&_end=10000');
+  return rows.map(toRadioStationDTO);
+}
+
 export async function listRadioStations(
   client: NavidromeClient,
   args: unknown,
-  config?: Config
 ): Promise<ListRadioStationsResponse> {
   try {
     logger.debug('Tool listRadioStations called with args:', args);
 
-    let cachedStations: RadioStationDTO[] | undefined;
-    if (config !== undefined) {
-      cachedStations = getStationCache(config).get(CACHE_KEY);
-    }
-
-    let stations: RadioStationDTO[];
-    if (cachedStations !== undefined) {
-      stations = cachedStations;
-    } else if (inflightFetch !== null) {
-      const generation = stationCacheGeneration;
-      stations = await inflightFetch;
-      // A config-less owner fetches without writing, so a piggybacking caller with
-      // config warms the cache itself unless an invalidation landed meanwhile.
-      if (config !== undefined && generation === stationCacheGeneration && getStationCache(config).get(CACHE_KEY) === undefined) {
-        getStationCache(config).set(CACHE_KEY, stations);
-      }
-    } else {
-      const generation = stationCacheGeneration;
-      const fetchPromise = (async (): Promise<RadioStationDTO[]> => {
-        // `_end=10000` fetches every station in one round trip. Instances hold hundreds at most.
-        const rows = await client.request<RestRadioStationRow[]>('/radio?_start=0&_end=10000');
-
-        const result = rows.map(row => {
-          const stationDto: RadioStationDTO = {
-            id: row.id,
-            name: row.name,
-            streamUrl: row.streamUrl,
-            // nullIfGoZeroTime guards against Navidrome rows that somehow
-            // came through without a real timestamp (would be the Go zero
-            // value), returning null so the DTO honestly signals an absent
-            // timestamp instead of a misleading sentinel date.
-            createdAt: nullIfGoZeroTime(row.createdAt),
-            updatedAt: nullIfGoZeroTime(row.updatedAt),
-          };
-
-          if (row.homePageUrl !== undefined && row.homePageUrl !== '') {
-            stationDto.homePageUrl = row.homePageUrl;
-          }
-
-          return stationDto;
-        });
-
-        if (config !== undefined && generation === stationCacheGeneration) {
-          getStationCache(config).set(CACHE_KEY, result);
-        }
-        return result;
-      })();
-      inflightFetch = fetchPromise;
-      try {
-        stations = await fetchPromise;
-      } finally {
-        // Clear regardless of success/failure so a failed fetch doesn't poison
-        // subsequent retries. The cache itself is only written on success.
-        if (inflightFetch === fetchPromise) inflightFetch = null;
-      }
-    }
-
-    // Get one-time message for radio list tip
-    const messageManager = getMessageManager();
-    const tip = messageManager.getMessage('radio.list_tip');
+    const stations = await fetchRadioStations(client);
+    const tip = getMessageManager().getMessage('radio.list_tip');
 
     const apiResponse: ListRadioStationsResponse = {
       stations,
       total: stations.length,
     };
 
-    // Add tip if this is the first time showing the list
     if (tip !== null && tip !== '') {
       apiResponse.tip = tip;
     }
@@ -203,7 +136,10 @@ function describeStationInputProblem(station: StationInput): string | null {
   // mpv-only schemes would otherwise reach mpv loadfile through play_radio_station.
   const streamProblem = describeUrlProblem(station.streamUrl);
   if (streamProblem !== null) {
-    return `Stream URL for station "${station.name}" ${streamProblem}`;
+    const webUiRoute = isWebUiOnlyStreamUrl(station.streamUrl)
+      ? '. Add mms://, rtsp:// or rtmp:// stations in the Navidrome web UI instead.'
+      : '';
+    return `Stream URL for station "${station.name}" ${streamProblem}${webUiRoute}`;
   }
 
   // homePageUrl reaches Navidrome and comes back out in the station DTO,
@@ -221,26 +157,28 @@ function describeStationInputProblem(station: StationInput): string | null {
 
 type CreatedStationResult = CreateRadioStationResponse & { station: RadioStationDTO };
 
+// Navidrome radio ids are random, so createdAt orders duplicates. An unknown createdAt counts as the epoch and sorts last.
+function createdAtMs(station: RadioStationDTO): number {
+  const ms = station.createdAt === null ? Number.NaN : Date.parse(station.createdAt);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
 /**
- * Fill in the real ids of just-created stations. Subsonic's create does not echo
- * the id, and an empty id would make a follow-up delete or get fail.
- *
- * One list call serves the whole batch. Matches use (name, streamUrl), newest id
- * first since Navidrome ids are monotonic, and each id is assigned once because
- * Navidrome allows duplicate stations.
+ * Subsonic's create does not echo the id, so one list call resolves the batch by (name, streamUrl), newest
+ * createdAt first, assigning each id once since Navidrome allows duplicates.
  */
 async function resolveCreatedStationIds(
   client: NavidromeClient,
   pendingLookups: CreatedStationResult[],
 ): Promise<void> {
   try {
-    const allStations = await listRadioStations(client, {});
+    const allStations = await fetchRadioStations(client);
     const assignedIds = new Set<string>();
     for (const result of pendingLookups) {
-      const matches = allStations.stations
+      const matches = allStations
         .filter(s => s.name === result.station.name && s.streamUrl === result.station.streamUrl)
         .filter(s => !assignedIds.has(s.id))
-        .sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+        .sort((a, b) => createdAtMs(b) - createdAtMs(a));
       const newest = matches[0];
       if (newest !== undefined) {
         result.station.id = newest.id;
@@ -264,15 +202,12 @@ async function resolveCreatedStationIds(
   }
 }
 
-/**
- * Create radio stations - always processes as batch (single station = batch of 1)
- */
 export async function createRadioStation(
   client: NavidromeClient,
   args: unknown
 ): Promise<{ results: CreateRadioStationResponse[]; summary: string }> {
   try {
-    const params = CreateRadioStationArgsSchema.parse(args);
+    const params = CreateRadioStationSchema.parse(args);
 
     logger.debug('Tool createRadioStation called with args:', { stationCount: params.stations.length, validateBeforeAdd: params.validateBeforeAdd });
 
@@ -293,7 +228,7 @@ export async function createRadioStation(
         if (params.validateBeforeAdd) {
           const validationResult = await validateRadioStream({
             url: station.streamUrl,
-            timeout: BATCH_VALIDATION_TIMEOUT
+            timeout: BATCH_VALIDATION_TIMEOUT_MS
           });
 
           if (!validationResult.success) {
@@ -316,13 +251,13 @@ export async function createRadioStation(
         }
         await client.subsonicRequest('/createInternetRadioStation', subsonicParams, { retryPolicy: 'never' });
 
-        // The empty id is a sentinel that resolveCreatedStationIds fills in after the batch.
+        // The empty id and null timestamps are sentinels that resolveCreatedStationIds fills in after the batch.
         const createdStation: RadioStationDTO = {
           id: '',
           name: station.name,
           streamUrl: station.streamUrl,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          createdAt: null,
+          updatedAt: null,
         };
 
         if (station.homePageUrl !== undefined && station.homePageUrl.trim() !== '') {
@@ -336,9 +271,7 @@ export async function createRadioStation(
 
       } catch (error) {
         logger.error(`Error creating radio station "${station.name}":`, error);
-        // Per-station error inside batch loop: the outer prefix already names
-        // the operation, so we keep the raw extracted message rather than
-        // double-wrapping with ErrorFormatter.toolExecution.
+        // The batch summary already names the operation, so the raw message is not wrapped by ErrorFormatter.
         results.push({
           success: false,
           error: `Failed to add "${station.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -348,10 +281,6 @@ export async function createRadioStation(
 
     const successCount = results.filter(r => r.success).length;
     const failedCount = results.length - successCount;
-
-    if (successCount > 0) {
-      invalidateRadioStationCache();
-    }
 
     const pendingLookups = results.filter((r): r is CreatedStationResult =>
       r.success && r.station !== undefined && r.station.id === ''
@@ -379,11 +308,7 @@ export async function createRadioStation(
   }
 }
 
-/**
- * Delete a radio station by ID. The deleted id is not echoed back, since
- * the LLM just sent it. success: true is sufficient confirmation.
- * The id surfaces in the DEBUG log line for diagnostics.
- */
+/** The deleted id is not echoed back, since the LLM just sent it. */
 export async function deleteRadioStation(
   client: NavidromeClient,
   args: unknown
@@ -393,10 +318,13 @@ export async function deleteRadioStation(
 
     logger.debug('Tool deleteRadioStation called with args:', params);
 
-    await client.subsonicRequest('/deleteInternetRadioStation', { id: params.stationId }, { retryPolicy: 'never' });
+    // Navidrome's Subsonic delete answers ok for an id that matches no station.
+    const stations = await fetchRadioStations(client);
+    if (!stations.some((station) => station.id === params.stationId)) {
+      throw new Error(`${ErrorFormatter.notFound('Radio station', params.stationId)}. Call list_radio_stations for current station ids.`);
+    }
 
-    // A subsequent get_radio_station(deleted-id) would otherwise return the stale row.
-    invalidateRadioStationCache();
+    await client.subsonicRequest('/deleteInternetRadioStation', { id: params.stationId }, { retryPolicy: 'never' });
 
     return {
       success: true,
@@ -408,24 +336,20 @@ export async function deleteRadioStation(
   }
 }
 
-/**
- * Get a specific radio station by ID from the station list, which is cached when `config` is given.
- */
 export async function getRadioStation(
   client: NavidromeClient,
   args: unknown,
-  config?: Config
 ): Promise<RadioStationDTO> {
   try {
     const params = RadioStationIdSchema.parse(args);
 
     logger.debug('Tool getRadioStation called with args:', params);
 
-    const allStations = await listRadioStations(client, {}, config);
-    const station = allStations.stations.find(s => s.id === params.stationId);
+    const stations = await fetchRadioStations(client);
+    const station = stations.find(s => s.id === params.stationId);
 
-    if (!station) {
-      throw new Error(`Radio station with ID ${params.stationId} not found`);
+    if (station === undefined) {
+      throw new Error(ErrorFormatter.notFound('Radio station', params.stationId));
     }
 
     return station;
@@ -446,29 +370,19 @@ interface PlayRadioStationResult {
 }
 
 /**
- * Play a radio station through the local mpv player.
- *
- * Behavior: replaces the entire live play queue with this single radio
- * stream and starts playback. Radio is mutually exclusive with songs and
- * albums in the play queue (mpv playlists mixing infinite streams with
- * finite tracks behave unintuitively, and Navidrome's web UI follows the
- * same convention). Conversely, calling `play_songs` / `play_albums` /
- * `play_*_search` while a radio is playing replaces the radio with songs.
- *
- * Requires `mpv` on the host (see `playback_status` to verify). Throws if
- * the station ID doesn't exist or mpv isn't available.
+ * Radio replaces the whole play queue, because mpv playlists that mix infinite streams with finite tracks
+ * behave unpredictably.
  */
 export async function playRadioStation(
   client: NavidromeClient,
   args: unknown,
-  config?: Config
 ): Promise<PlayRadioStationResult> {
   try {
     const { stationId } = RadioStationIdSchema.parse(args);
 
     logger.debug('Tool playRadioStation called with args:', { stationId });
 
-    const station = await getRadioStation(client, { stationId }, config);
+    const station = await getRadioStation(client, { stationId });
 
     if (typeof station.streamUrl !== 'string' || station.streamUrl.trim() === '') {
       throw new Error(`Radio station "${station.name}" has no stream URL`);

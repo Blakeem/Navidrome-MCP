@@ -2,7 +2,7 @@
 
 import { getJson, postJson } from './api.js';
 import { byId } from './dom.js';
-import { applyTheme, systemTheme } from './theme.js';
+import { applyTheme } from './theme.js';
 
 const openBtn = byId('open-settings');
 const dialog = byId('settings-dialog');
@@ -10,6 +10,8 @@ const persist = byId('set-persist');
 const autoOpen = byId('set-autoopen');
 const status = byId('settings-status');
 const themeRadios = Array.from(dialog.querySelectorAll('input[name="theme"]'));
+// The System radio stands for a stored null, which lets each device follow its own setting.
+const SYSTEM_THEME = 'system';
 
 // The server's last answer, so a failed save puts the controls back to what is stored.
 let saved = null;
@@ -18,10 +20,10 @@ let saveChain = Promise.resolve();
 
 export function bindSettings() {
   openBtn.addEventListener('click', () => void openSettings());
-  // A click, not a change, so picking the theme the device already shows still stores it.
   for (const radio of themeRadios) {
-    radio.addEventListener('click', () => {
-      if (radio.value !== saved?.theme) queueSave({ theme: radio.value });
+    radio.addEventListener('change', () => {
+      const theme = radio.value === SYSTEM_THEME ? null : radio.value;
+      if (theme !== (saved?.theme ?? null)) queueSave({ theme });
     });
   }
   persist.addEventListener('change', () => queueSave({ persistAfterMcpExit: persist.checked }));
@@ -52,12 +54,12 @@ async function saveSettings(patch) {
   }
   showSettings(data);
   applyTheme(data.theme);
-  status.textContent = 'Saved.';
+  status.textContent =
+    data.persisted === false ? 'Applied for this session only. settings.json was not saved.' : 'Saved.';
 }
 
-// With no theme stored, the toggle shows the one this device follows.
 function showSettings(settings) {
-  const theme = settings.theme ?? systemTheme();
+  const theme = settings.theme ?? SYSTEM_THEME;
   saved = settings;
   persist.checked = settings.persistAfterMcpExit === true;
   autoOpen.checked = settings.autoOpenBrowser === true;

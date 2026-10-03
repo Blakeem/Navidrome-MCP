@@ -1,8 +1,8 @@
 // The live queue list with its count, shuffle and clear controls.
 
-import { postJson } from './api.js';
+import { postControl } from './controls.js';
 import { buildIcon, byId, ICON_PLAY } from './dom.js';
-import { currentQueue, playingIndex } from './snapshot.js';
+import { playingIndex } from './snapshot.js';
 import { formatTime } from './time-format.js';
 
 const queueList = byId('queue-list');
@@ -17,20 +17,20 @@ let renderedSignature = null;
 let revealedIndex = null;
 
 export function bindQueue() {
-  shuffleQueue.addEventListener('click', () => void postJson('/api/controls/shuffle'));
+  shuffleQueue.addEventListener('click', () => void postControl('/api/controls/shuffle'));
   clearQueue.addEventListener('click', () => {
-    const queue = currentQueue();
-    const count = queue.length ?? (queue.items?.length ?? 0);
-    if (count > 0 && !window.confirm('Clear the queue and stop playback?')) return;
-    void postJson('/api/controls/clear');
+    if (!window.confirm('Clear the queue and stop playback?')) return;
+    void postControl('/api/controls/clear');
   });
 }
 
-export function renderQueue(queue) {
+// currentIndex comes from playingIndex, the rule the card, the clock and the lyrics read.
+export function renderQueue(queue, currentIndex) {
   const items = queue.items ?? [];
   const queueLength = queue.length ?? items.length;
   queueCount.textContent = String(queueLength);
   shuffleQueue.disabled = queueLength === 0;
+  clearQueue.disabled = queueLength === 0;
   if (items.length === 0) {
     if (renderedSignature !== '') {
       const empty = document.createElement('li');
@@ -44,10 +44,10 @@ export function renderQueue(queue) {
 
   const signature = items.map((it) => `${it.index}:${it.songId ?? ''}`).join('|');
   if (signature === renderedSignature) {
-    refreshRows(items);
+    refreshRows(items, currentIndex);
     return;
   }
-  queueList.replaceChildren(...items.map(buildQueueRow));
+  queueList.replaceChildren(...items.map((item) => buildQueueRow(item, currentIndex)));
   renderedSignature = signature;
 }
 
@@ -69,18 +69,19 @@ export function revealCurrentRow(np) {
 
 // Server enrichment can fill a row's metadata after first paint while its signature
 // stays the same, so the text refreshes on every snapshot to match the aria-label.
-function refreshRows(items) {
+function refreshRows(items, currentIndex) {
   const rows = queueList.children;
   for (let i = 0; i < rows.length && i < items.length; i++) {
     const li = rows[i];
     const item = items[i];
-    li.classList.toggle('current', item.isCurrent === true);
-    li.querySelector('.qrow').setAttribute('aria-label', queueAriaLabel(item));
+    const isCurrent = item.index === currentIndex;
+    li.classList.toggle('current', isCurrent);
+    li.querySelector('.qrow').setAttribute('aria-label', queueAriaLabel(item, isCurrent));
     fillQueueRowText(li, item);
   }
 }
 
-function buildQueueRow(item) {
+function buildQueueRow(item, currentIndex) {
   const li = document.createElement('li');
   const row = document.createElement('button');
   const icon = document.createElement('span');
@@ -90,10 +91,11 @@ function buildQueueRow(item) {
   const artist = document.createElement('span');
   const dur = document.createElement('span');
 
-  if (item.isCurrent) li.classList.add('current');
+  const isCurrent = item.index === currentIndex;
+  if (isCurrent) li.classList.add('current');
   row.type = 'button';
   row.className = 'qrow';
-  row.setAttribute('aria-label', queueAriaLabel(item));
+  row.setAttribute('aria-label', queueAriaLabel(item, isCurrent));
   icon.className = 'qicon';
   icon.appendChild(buildIcon('qicon-glyph', ICON_PLAY));
   num.className = 'qnum';
@@ -109,18 +111,18 @@ function buildQueueRow(item) {
   // The live class is read at click time, since a kept row only flips it and `item` can be stale.
   row.addEventListener('click', () => {
     if (li.classList.contains('current')) return;
-    void postJson('/api/controls/play-index', { index: item.index });
+    void postControl('/api/controls/play-index', { index: item.index });
   });
   return li;
 }
 
 function queueTitle(item) {
-  return item.title ?? (item.songId ?? 'Track');
+  return item.title ?? 'Unknown title';
 }
 
-function queueAriaLabel(item) {
+function queueAriaLabel(item, isCurrent) {
   const titleLabel = queueTitle(item);
-  return item.isCurrent ? `Currently playing: ${titleLabel}` : `Play track ${item.index + 1}: ${titleLabel}`;
+  return isCurrent ? `Currently playing: ${titleLabel}` : `Play track ${item.index + 1}: ${titleLabel}`;
 }
 
 function fillQueueRowText(li, item) {

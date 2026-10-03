@@ -21,11 +21,11 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { LibraryPlayRequestSchema } from '../schemas/index.js';
 import type { QueueTrackMetadata } from '../services/playback/playback-engine.js';
 import { logger } from '../utils/logger.js';
-import { ALBUM_TRACKS_PAGE_SIZE, MAX_ALBUM_PAGES } from '../constants/defaults.js';
+import { QUEUE_READ_PAGE_SIZE, MAX_QUEUE_READ_PAGES } from '../constants/defaults.js';
 
 export type LibraryPlayRequest = z.infer<typeof LibraryPlayRequestSchema>;
 
-// Album position lets the web play path group and sort albums after the read.
+// Album position lets album-set reads restore input order and lets orderQueueSongs group and sort albums.
 interface QueueSongRow extends QueueTrackMetadata {
   albumId?: string;
   discNumber?: number;
@@ -65,7 +65,7 @@ export async function fetchLibrarySourceRows(
     case 'song':
       return fetchSongPages(client, { id: request.id }, `Song ${request.id}`);
     case 'album':
-      return fetchAlbumSongs(client, request.id);
+      return fetchAlbumSetSongs(client, [request.id], `Album ${request.id}`);
     case 'artist':
       // Songs, not albums: `/album?artist_id=` also returns albums holding none of this artist's tracks.
       // `artists_id` matches featured and album-artist credits. `artist_id` holds only the first artist.
@@ -84,6 +84,7 @@ async function fetchStarredAlbumSongs(client: NavidromeClient): Promise<QueueSon
 }
 
 // Navidrome ORs repeated `album_id` keys, so one paged read per chunk replaces one read per album.
+// `_sort=album` yields disc and track order. The default sort is unstable on multi-disc releases.
 export async function fetchAlbumSetSongs(
   client: NavidromeClient,
   albumIds: readonly string[],
@@ -114,7 +115,7 @@ function sortRowsByAlbumOrder(rows: readonly QueueSongRow[], albumIds: readonly 
 
 /**
  * Shared paging loop for every Navidrome list read that feeds the queue. `extract` returns null to skip a row.
- * MAX_ALBUM_PAGES bounds the walk in case Navidrome reports an inflated X-Total-Count.
+ * MAX_QUEUE_READ_PAGES bounds the walk in case Navidrome reports an inflated X-Total-Count.
  */
 async function fetchPages<T>(
   client: NavidromeClient,
@@ -130,11 +131,11 @@ async function fetchPages<T>(
   for (const [key, value] of Object.entries(filter)) {
     for (const item of typeof value === 'string' ? [value] : value) filterParams.append(key, item);
   }
-  for (let page = 0; page < MAX_ALBUM_PAGES; page++) {
-    const start = page * ALBUM_TRACKS_PAGE_SIZE;
+  for (let page = 0; page < MAX_QUEUE_READ_PAGES; page++) {
+    const start = page * QUEUE_READ_PAGE_SIZE;
     const params = new URLSearchParams(filterParams);
     params.set('_start', String(start));
-    params.set('_end', String(start + ALBUM_TRACKS_PAGE_SIZE));
+    params.set('_end', String(start + QUEUE_READ_PAGE_SIZE));
     const endpoint = `${path}?${params.toString()}`;
     const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(endpoint);
     if (page === 0) totalReported = total;
@@ -153,13 +154,13 @@ async function fetchPages<T>(
     // Without X-Total-Count, a short page is the only end-of-set signal.
     if (total !== null) {
       if (rowsRead >= total) break;
-    } else if (data.length < ALBUM_TRACKS_PAGE_SIZE) {
+    } else if (data.length < QUEUE_READ_PAGE_SIZE) {
       break;
     }
   }
-  if (totalReported !== null && totalReported > MAX_ALBUM_PAGES * ALBUM_TRACKS_PAGE_SIZE) {
+  if (totalReported !== null && totalReported > MAX_QUEUE_READ_PAGES * QUEUE_READ_PAGE_SIZE) {
     logger.warn(
-      `${label} has ${totalReported} rows but only the first ${items.length} were loaded (MAX_ALBUM_PAGES=${MAX_ALBUM_PAGES} cap).`
+      `${label} has ${totalReported} rows but only the first ${items.length} were loaded (MAX_QUEUE_READ_PAGES=${MAX_QUEUE_READ_PAGES} cap).`
     );
   }
   return items;
@@ -181,11 +182,6 @@ function fetchSongPages(
   label: string,
 ): Promise<QueueSongRow[]> {
   return fetchPages(client, '/song', filter, songRowFromRecord, label);
-}
-
-// `_sort=album` yields disc and track order. The default sort is unstable on multi-disc releases.
-function fetchAlbumSongs(client: NavidromeClient, albumId: string): Promise<QueueSongRow[]> {
-  return fetchSongPages(client, { album_id: albumId, _sort: 'album', _order: 'ASC' }, `Album ${albumId}`);
 }
 
 // The library filter also narrows X-Total-Count, so a deactivated library's tracks never enqueue.
@@ -256,10 +252,8 @@ export async function fetchSongMetadata(
       }
       for (const track of data) {
         if (typeof track !== 'object' || track === null) continue;
-        const record = track as Record<string, unknown>;
-        const id = record['id'];
-        if (typeof id !== 'string' || id === '') continue;
-        out.push(toQueueMetadata(toQueueSongRow(id, record)));
+        const row = songRowFromRecord(track as Record<string, unknown>);
+        if (row !== null) out.push(toQueueMetadata(row));
       }
     } catch (err) {
       if (scoped) throw err;

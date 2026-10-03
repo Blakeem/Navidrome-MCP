@@ -15,6 +15,9 @@ export function bindPowerButton() {
     await postJson('/api/shutdown');
     setConnState('disconnected');
     document.body.classList.add('player-stopped');
+    // inert also blocks keyboard focus. .topbar-actions itself stays live, since it holds the .conn status region.
+    document.querySelector('main').inert = true;
+    for (const button of document.querySelectorAll('.topbar-actions .ghost-btn')) button.inert = true;
   });
 }
 

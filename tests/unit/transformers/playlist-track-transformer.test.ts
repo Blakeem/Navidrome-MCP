@@ -51,6 +51,15 @@ describe('transformToPlaylistTrackDTO', () => {
   it('emits a known year in verbose mode', () => {
     expect(transformToPlaylistTrackDTO({ ...rawTrack, year: 1999 }, { verbose: true }).year).toBe(1999);
   });
+
+  it('omits duration in verbose mode when the row lacks one', () => {
+    const [dto] = transformPlaylistTracksToDTO([{ ...rawTrack, duration: undefined }], { verbose: true });
+    expect(dto).not.toHaveProperty('duration');
+  });
+
+  it('falls back to the playlist position id when mediaFileId is empty', () => {
+    expect(transformToPlaylistTrackDTO({ ...rawTrack, mediaFileId: '' }).songId).toBe('3');
+  });
 });
 
 describe('transformPlaylistTracksToDTO', () => {

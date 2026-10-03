@@ -52,7 +52,7 @@ describe('transformToSongDTO - local lyrics flag', () => {
   });
 
   it('reports plain for an untimed local entry', () => {
-    expect(transformToSongDTO(rawSong(PLAIN_TAG)).lyrics).toBe('plain');
+    expect(transformToSongDTO(rawSong(PLAIN_TAG)).lyrics).toBe('unsynced');
   });
 
   it('omits the flag for an empty lyrics array', () => {
@@ -104,6 +104,6 @@ describe('transformSongsToDTO - local lyrics flag', () => {
 
     expect(dtos).toHaveLength(100);
     expect(dtos[50]?.lyrics).toBeUndefined();
-    expect(dtos.filter((dto) => dto.lyrics === 'plain')).toHaveLength(99);
+    expect(dtos.filter((dto) => dto.lyrics === 'unsynced')).toHaveLength(99);
   });
 });

@@ -21,8 +21,9 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
     "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
     "check:dead-code": "ts-unused-exports tsconfig.analysis.json --excludePathsFromReport=dist/",
-    "check:all": "pnpm lint && pnpm typecheck && pnpm check:dead-code",
+    "check:all": "pnpm lint && pnpm typecheck && pnpm typecheck:tests && pnpm check:dead-code",
     "prepare": "pnpm build",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
     "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts",
@@ -67,7 +68,7 @@
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {
-    "node": ">=20.3.0"
+    "node": ">=20.18.1"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.4",
@@ -86,7 +87,6 @@
     "eslint": "^9.34.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-unicorn": "^64.0.0",
-    "nodemon": "^3.1.10",
     "prettier": "^3.6.2",
     "ts-unused-exports": "^11.0.1",
     "tsx": "^4.20.5",

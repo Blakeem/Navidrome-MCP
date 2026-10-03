@@ -17,18 +17,18 @@
  */
 
 /**
- * Strip HTML tags and decode the common HTML entities from a free-form text
- * fragment. Intended for short, low-trust strings — ICY metadata headers,
- * station "notice" fields, etc. — that some Icecast/SHOUTcast servers ship
- * with embedded markup like `<BR>` or `<a href="...">...</a>`.
- *
- * Not a general-purpose HTML parser: this is a single-pass tag stripper with
- * minimal entity decoding. It's safe to feed into JSON destined for an LLM
- * (no nested-tag DOS, no script-execution concerns — we're not rendering),
- * but do not rely on it as XSS protection in a browser context.
- *
- * Returns the input unchanged if it contains no tags / entities, so it's
- * cheap to call on every header value.
+ * Out-of-range and surrogate code points would make String.fromCodePoint throw or
+ * emit a lone surrogate, so those entities pass through as written.
+ */
+function decodeCodePoint(codePoint: number, original: string): string {
+  const isValid =
+    Number.isFinite(codePoint) && codePoint > 0 && codePoint < 0x110000 && !(codePoint >= 0xd800 && codePoint <= 0xdfff);
+  return isValid ? String.fromCodePoint(codePoint) : original;
+}
+
+/**
+ * Removes tags (a br tag becomes a space), decodes the common named and numeric
+ * entities, collapses whitespace and trims. Not XSS protection for a browser context.
  */
 export function stripHtml(input: string): string {
   if (input === '') return input;
@@ -43,7 +43,7 @@ export function stripHtml(input: string): string {
   });
 
   // Decode the entities that actually appear in ICY notice fields in the wild.
-  // Numeric entities are decoded best-effort; malformed sequences pass through.
+  // Numeric entities are decoded best-effort. Malformed sequences pass through.
   stripped = stripped
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/g, '&')
@@ -52,15 +52,8 @@ export function stripHtml(input: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
-    .replace(/&#[xX]([0-9a-fA-F]+);/g, (_match, hex: string) => {
-      const n = Number.parseInt(hex, 16);
-      return Number.isFinite(n) && n > 0 && n < 0x110000 && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : _match;
-    })
-    .replace(/&#(\d+);/g, (_match, code: string) => {
-      const n = Number.parseInt(code, 10);
-      return Number.isFinite(n) && n > 0 && n < 0x110000 && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : _match;
-    });
+    .replace(/&#[xX]([0-9a-fA-F]+);/g, (match, hex: string) => decodeCodePoint(Number.parseInt(hex, 16), match))
+    .replace(/&#(\d+);/g, (match, code: string) => decodeCodePoint(Number.parseInt(code, 10), match));
 
-  // Collapse runs of whitespace produced by tag/entity removal.
   return stripped.replace(/\s+/g, ' ').trim();
 }

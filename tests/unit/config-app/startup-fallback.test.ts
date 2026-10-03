@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   createRuntime: vi.fn(),
   startConfigServer: vi.fn(),
   registerDegradedTools: vi.fn(),
+  openBrowser: vi.fn(),
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), setDebug: vi.fn(), setSink: vi.fn() },
 }));
 
@@ -23,8 +24,11 @@ vi.mock('../../../src/config.js', async (importOriginal) => ({
 }));
 vi.mock('../../../src/bootstrap.js', () => ({ createRuntime: mocks.createRuntime }));
 vi.mock('../../../src/config-app/server.js', () => ({ startConfigServer: mocks.startConfigServer }));
-vi.mock('../../../src/config-app/degraded-tools.js', () => ({ registerDegradedTools: mocks.registerDegradedTools }));
-vi.mock('../../../src/utils/open-browser.js', () => ({ openBrowser: vi.fn() }));
+vi.mock('../../../src/config-app/degraded-tools.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/config-app/degraded-tools.js')>()),
+  registerDegradedTools: mocks.registerDegradedTools,
+}));
+vi.mock('../../../src/utils/open-browser.js', () => ({ openBrowser: mocks.openBrowser }));
 vi.mock('../../../src/utils/logger.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/utils/logger.js')>()),
   logger: mocks.logger,
@@ -46,9 +50,11 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 
 const SETTINGS_URL = 'http://127.0.0.1:5000/';
 const FAILURE = 'Authentication failed: 401 Unauthorized';
-const PROCESS_EVENTS = ['SIGINT', 'SIGTERM', 'unhandledRejection'];
+const PROCESS_EVENTS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'unhandledRejection'];
+const STDIN_EVENTS = ['end', 'close'];
 const processEvents = process as unknown as NodeJS.EventEmitter;
 let listenersBefore = new Map<string, unknown[]>();
+let stdinListenersBefore = new Map<string, unknown[]>();
 
 /** src/index.ts runs main() on import, so each scenario imports a fresh copy. */
 async function startServer(transportType: 'stdio' | 'http'): Promise<void> {
@@ -62,6 +68,7 @@ beforeEach(() => {
   mocks.createRuntime.mockRejectedValue(new Error(FAILURE));
   mocks.startConfigServer.mockResolvedValue({ url: SETTINGS_URL, close: vi.fn() });
   listenersBefore = new Map(PROCESS_EVENTS.map((event) => [event, processEvents.listeners(event)]));
+  stdinListenersBefore = new Map(STDIN_EVENTS.map((event) => [event, process.stdin.listeners(event)]));
 });
 
 afterEach(() => {
@@ -70,6 +77,12 @@ afterEach(() => {
     for (const listener of processEvents.listeners(event)) {
       if (listenersBefore.get(event)?.includes(listener) === true) continue;
       processEvents.removeListener(event, listener as (...args: unknown[]) => void);
+    }
+  }
+  for (const event of STDIN_EVENTS) {
+    for (const listener of process.stdin.listeners(event)) {
+      if (stdinListenersBefore.get(event)?.includes(listener) === true) continue;
+      process.stdin.removeListener(event, listener as (...args: unknown[]) => void);
     }
   }
   vi.restoreAllMocks();
@@ -83,8 +96,34 @@ describe('startup failure fallback', () => {
     await startServer('stdio');
 
     await vi.waitFor(() => {
-      expect(mocks.registerDegradedTools).toHaveBeenCalledWith(expect.anything(), SETTINGS_URL, FAILURE);
+      expect(mocks.registerDegradedTools).toHaveBeenCalledWith(
+        expect.anything(),
+        SETTINGS_URL,
+        { reason: FAILURE, unreachable: false },
+      );
     });
+    expect(mocks.openBrowser).toHaveBeenCalledWith(SETTINGS_URL);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('enters degraded mode without opening the settings page when Navidrome is unreachable', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const refused = Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:4533'), { code: 'ECONNREFUSED' });
+    const fetchFailed = new TypeError('fetch failed', { cause: refused });
+    mocks.createRuntime.mockRejectedValue(
+      new Error('Navidrome /auth/login failed: connect ECONNREFUSED 10.0.0.5:4533', { cause: fetchFailed }),
+    );
+
+    await startServer('stdio');
+
+    await vi.waitFor(() => {
+      expect(mocks.registerDegradedTools).toHaveBeenCalledWith(
+        expect.anything(),
+        SETTINGS_URL,
+        { reason: 'Navidrome /auth/login failed: connect ECONNREFUSED 10.0.0.5:4533', unreachable: true },
+      );
+    });
+    expect(mocks.openBrowser).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
   });
 

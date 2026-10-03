@@ -54,7 +54,7 @@ import {
   previous,
   seek,
   nowPlaying,
-  getPlayQueue,
+  getPlayQueuePage,
   clearPlayQueue,
   shufflePlayQueue,
   moveInPlayQueue,
@@ -62,7 +62,20 @@ import {
   playQueueIndex,
 } from '../playback.js';
 
-const QUEUE_MODE_DESCRIPTION = "'replace' clears the queue and starts playback. 'append' adds to the end without clearing or unpausing. When the queue holds a radio stream, 'append' acts as 'replace': the station is removed, playback starts, and the result carries `demoted: true`. Defaults to 'replace'.";
+const QUEUE_MODE_DESCRIPTION = "'replace' clears the queue and starts playback. 'append' adds to the end without clearing or unpausing. When the queue holds a radio stream, 'append' acts as 'replace': the station is removed, playback starts, and the result carries `demoted: true`. When no track is current (the queue is empty, finished, or mpv just started), 'append' loads the first new track paused, so use 'replace' or call resume to start playback. Defaults to 'replace'.";
+
+const ALBUM_SHUFFLE_PROPERTIES = {
+  shuffleAlbums: {
+    type: 'boolean',
+    description: 'Shuffle the album order. Each album keeps its disc and track order unless shuffleSongs is also true. Defaults to false.',
+    default: false,
+  },
+  shuffleSongs: {
+    type: 'boolean',
+    description: 'Shuffle the tracks. Alone, it shuffles every track across all albums. With shuffleAlbums, it shuffles the album order and the tracks within each album. Defaults to false.',
+    default: false,
+  },
+};
 
 const tools: Tool[] = [
   {
@@ -137,7 +150,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_albums',
-    description: "Play one or many albums through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end without clearing or unpausing. `shuffle` controls track ordering. 'none' keeps input album order with natural track order. 'albums' randomizes album order with natural track order within each. 'songs' fully randomizes all tracks across all albums.",
+    description: "Play one or many albums through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end without clearing or unpausing. With neither shuffle flag, albums play in input order with natural track order. `shuffleAlbums` randomizes album order. `shuffleSongs` randomizes tracks.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -153,12 +166,7 @@ const tools: Tool[] = [
           description: QUEUE_MODE_DESCRIPTION,
           default: 'replace',
         },
-        shuffle: {
-          type: 'string',
-          enum: ['none', 'albums', 'songs'],
-          description: "'none' keeps input order. 'albums' shuffles the album order only. 'songs' flattens all tracks then shuffles. Defaults to 'none'.",
-          default: 'none',
-        },
+        ...ALBUM_SHUFFLE_PROPERTIES,
       },
       required: ['albumIds'],
       additionalProperties: false,
@@ -166,7 +174,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_albums_search',
-    description: "ONE-SHOT search + enqueue for albums. Runs the album search AND pipes every matched album's tracks into mpv in a single call. PREFER THIS over the two-step pattern (`search_albums` or `list_starred_items` → `play_albums`), since passing matched IDs back through the LLM wastes context tokens. Accepts every `search_albums` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace') and `shuffle` ('none' | 'albums' | 'songs', default 'none'). Example invocations: `{starred: true, sort: 'random', limit: 5}`, `{genre: 'Jazz', limit: 10}`, `{year: 2024, shuffle: 'songs'}`, `{query: '<artist>', mode: 'append'}`. Use the two-step pattern only when you need to show the album list first before playing.",
+    description: "ONE-SHOT search + enqueue for albums. Runs the album search AND pipes every matched album's tracks into mpv in a single call. PREFER THIS over the two-step pattern (`search_albums` or `list_starred_items` → `play_albums`), since passing matched IDs back through the LLM wastes context tokens. Accepts every `search_albums` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace'), `shuffleAlbums` (boolean, default false) and `shuffleSongs` (boolean, default false). Example invocations: `{starred: true, sort: 'random', limit: 5}`, `{genre: 'Jazz', limit: 10}`, `{year: 2024, shuffleSongs: true}`, `{query: '<artist>', mode: 'append'}`. Use the two-step pattern only when you need to show the album list first before playing.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -177,12 +185,7 @@ const tools: Tool[] = [
           description: QUEUE_MODE_DESCRIPTION,
           default: 'replace',
         },
-        shuffle: {
-          type: 'string',
-          enum: ['none', 'albums', 'songs'],
-          description: "'none' keeps search-result album order. 'albums' shuffles the album order only. 'songs' flattens all tracks then shuffles. Defaults to 'none'.",
-          default: 'none',
-        },
+        ...ALBUM_SHUFFLE_PROPERTIES,
       },
       required: [],
       additionalProperties: false,
@@ -288,10 +291,24 @@ const tools: Tool[] = [
   },
   {
     name: 'get_play_queue',
-    description: "Return the current live mpv play queue with track metadata and the index of the currently-playing track. Read-only. Does not start mpv if it isn't running.",
+    description: "Return one page of the current live mpv play queue with track metadata and the index of the currently-playing track. Read-only. Does not start mpv if it isn't running. `length` is the full queue count and `currentIndex` is the absolute index, whatever the page. Pass now_playing's `queueIndex` as `offset` to read the upcoming tracks.",
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 500,
+          default: 100,
+          description: 'Maximum number of queue entries to return.',
+        },
+        offset: {
+          type: 'integer',
+          minimum: 0,
+          default: 0,
+          description: 'Zero-based queue index of the first entry to return.',
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -408,7 +425,7 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
         case 'now_playing':
           return nowPlaying(args, client);
         case 'get_play_queue':
-          return getPlayQueue(client, args);
+          return getPlayQueuePage(client, args);
         case 'clear_play_queue':
           return clearPlayQueue(args);
         case 'shuffle_play_queue':

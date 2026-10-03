@@ -16,30 +16,42 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Per-process dedup for Radio Browser vote and click. Radio Browser rejects repeats per IP per day,
-// and an LLM looping over stations would pile up rejected requests that risk a ban on the shared User-Agent.
+// Per-process dedup for Radio Browser vote and click. Upstream accepts one vote per IP per station every 10 minutes
+// and counts one click per day, and an LLM looping over stations would pile up repeats that risk a ban on the shared User-Agent.
 
-const votedUuids = new Set<string>();
-const clickedUuids = new Set<string>();
+const VOTE_WINDOW_MS = 10 * 60 * 1000;
+const CLICK_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const voteMarkedAt = new Map<string, number>();
+// The stream URL is kept so a deduped click still hands the caller a playable URL.
+const clicks = new Map<string, { streamUrl: string; markedAt: number }>();
 
 export function hasRecentlyVoted(uuid: string): boolean {
-  return votedUuids.has(uuid);
+  const markedAt = voteMarkedAt.get(uuid);
+  if (markedAt === undefined) return false;
+  if (Date.now() - markedAt < VOTE_WINDOW_MS) return true;
+  voteMarkedAt.delete(uuid);
+  return false;
 }
 
 export function markVoted(uuid: string): void {
-  votedUuids.add(uuid);
+  voteMarkedAt.set(uuid, Date.now());
 }
 
-export function hasRecentlyClicked(uuid: string): boolean {
-  return clickedUuids.has(uuid);
+export function getClickedStreamUrl(uuid: string): string | undefined {
+  const click = clicks.get(uuid);
+  if (click === undefined) return undefined;
+  if (Date.now() - click.markedAt < CLICK_WINDOW_MS) return click.streamUrl;
+  clicks.delete(uuid);
+  return undefined;
 }
 
-export function markClicked(uuid: string): void {
-  clickedUuids.add(uuid);
+export function markClicked(uuid: string, streamUrl: string): void {
+  clicks.set(uuid, { streamUrl, markedAt: Date.now() });
 }
 
-/** Test-only reset. Production sets persist for the process lifetime. */
-export function resetRadioBrowserRateLimit(): void {
-  votedUuids.clear();
-  clickedUuids.clear();
+/** Production entries expire after their upstream window, 10 minutes for a vote and a day for a click. */
+export function resetRadioBrowserRateLimitForTests(): void {
+  voteMarkedAt.clear();
+  clicks.clear();
 }

@@ -38,7 +38,7 @@ import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { libraryManager } from '../../services/library-manager.js';
 
-// The playable-only view filters the whole candidate set before paging it, so it reads up to the schema's max limit.
+// Caps the playable-only candidate read and its probe fan-out. Playlists past it are never considered.
 const PLAYLIST_FETCH_MAX = 500;
 // Bounds the per-playlist probe fan-out, so the view never opens one connection per playlist at once.
 const PROBE_CONCURRENCY = 6;
@@ -54,12 +54,7 @@ function activeLibrariesCoverEverything(): boolean {
   return available.every((lib) => active.has(lib.id));
 }
 
-/**
- * Probe a single playlist for >=1 track in the active libraries. Uses the
- * library-filtered `/playlist/{id}/tracks` endpoint (X-Total-Count reflects
- * the filtered count) with the smallest possible page since we only need the
- * total, not the rows.
- */
+/** The one-row page exists only to read the library-filtered X-Total-Count. */
 async function playlistHasPlayableTracks(
   client: NavidromeClient,
   playlistId: string,
@@ -69,20 +64,43 @@ async function playlistHasPlayableTracks(
   return total !== null && total > 0;
 }
 
-/**
- * Filter the candidate playlists down to those with >=1 track in the active
- * libraries, probing each in bounded-concurrency batches. An empty playlist
- * (`songCount === 0`) can never have playable tracks, so it's dropped without
- * a probe.
- */
+// A smart playlist's songCount is cached and stays 0 until a track read refreshes it, so the count cannot rule it out.
+function collectSmartPlaylistIds(rows: unknown): Set<string> {
+  const smartIds = new Set<string>();
+  if (!Array.isArray(rows)) {
+    return smartIds;
+  }
+  for (const row of rows) {
+    if (typeof row !== 'object' || row === null) continue;
+    const record = row as Record<string, unknown>;
+    const rules = record['rules'];
+    if (rules !== null && rules !== undefined && typeof record['id'] === 'string') {
+      smartIds.add(record['id']);
+    }
+  }
+  return smartIds;
+}
+
+/** A smart playlist is always probed. Another playlist needs songCount > 0, plus a probe while any library is inactive. */
 async function filterToPlayablePlaylists(
   client: NavidromeClient,
   candidates: PlaylistDTO[],
+  smartIds: ReadonlySet<string>,
 ): Promise<PlaylistDTO[]> {
-  const nonEmpty = candidates.filter((p) => p.songCount > 0);
-  const kept: PlaylistDTO[] = [];
-  for (let i = 0; i < nonEmpty.length; i += PROBE_CONCURRENCY) {
-    const batch = nonEmpty.slice(i, i + PROBE_CONCURRENCY);
+  // When a probe would match the same rows as `songCount`, a non-empty playlist is kept without a probe.
+  const probeNonEmpty = !activeLibrariesCoverEverything();
+  const keptIds = new Set<string>();
+  const toProbe: PlaylistDTO[] = [];
+
+  for (const p of candidates) {
+    if (smartIds.has(p.id) || (probeNonEmpty && p.songCount > 0)) {
+      toProbe.push(p);
+    } else if (p.songCount > 0) {
+      keptIds.add(p.id);
+    }
+  }
+  for (let i = 0; i < toProbe.length; i += PROBE_CONCURRENCY) {
+    const batch = toProbe.slice(i, i + PROBE_CONCURRENCY);
     // One failed probe must not blank the web-UI play picker. A rejected probe keeps
     // the playlist, since hiding a playable one is worse than showing a maybe-unplayable one.
     const results = await Promise.allSettled(
@@ -92,24 +110,26 @@ async function filterToPlayablePlaylists(
       const r = results[idx];
       if (r === undefined) return;
       if (r.status === 'fulfilled') {
-        if (r.value) kept.push(p);
+        if (r.value) keptIds.add(p.id);
       } else {
         logger.warn(`playable-probe failed for playlist ${p.id}; keeping it (fail-open):`, r.reason);
-        kept.push(p);
+        keptIds.add(p.id);
       }
     });
   }
-  return kept;
+  return candidates.filter((p) => keptIds.has(p.id));
 }
 
 /**
  * List all playlists accessible to the user. `offset`/`limit` are not echoed, since the LLM
- * just sent them. `total` comes from X-Total-Count so the LLM can plan further pages.
+ * just sent them. `total` is the server X-Total-Count in the default view and the filtered
+ * candidate count in the playable-only view.
  * `transformOptions` lets a non-MCP caller such as the web remote force-keep a field like the numeric duration.
  */
 export async function listPlaylists(client: NavidromeClient, args: unknown, transformOptions: TransformOptions = {}): Promise<{
   playlists: PlaylistDTO[];
   total: number;
+  truncated?: boolean;
 }> {
   try {
     const params = PlaylistPaginationSchema.parse(args);
@@ -134,9 +154,7 @@ export async function listPlaylists(client: NavidromeClient, args: unknown, tran
       };
     }
 
-    // Playable-only view. Because `/api/playlist` can't be library-filtered,
-    // we must pull the full candidate set, filter it, then paginate over the
-    // FILTERED result so `offset`/`limit`/`total` stay correct.
+    // Paging runs over the filtered rows so offset, limit and total describe the same set.
     const queryParams = new URLSearchParams({
       _start: '0',
       _end: PLAYLIST_FETCH_MAX.toString(),
@@ -145,53 +163,47 @@ export async function listPlaylists(client: NavidromeClient, args: unknown, tran
     });
     const { data, total } = await client.requestWithMeta<unknown>(`/playlist?${queryParams.toString()}`);
     const allPlaylists = transformPlaylistsToDTO(data, transformOptions);
+    const smartIds = collectSmartPlaylistIds(data);
 
-    // Rows past PLAYLIST_FETCH_MAX are never fetched or counted, so the returned total would understate silently.
-    if (
-      (total !== null && total > PLAYLIST_FETCH_MAX) ||
-      allPlaylists.length >= PLAYLIST_FETCH_MAX
-    ) {
+    // Rows past PLAYLIST_FETCH_MAX are never fetched or counted, so the response flags the understated total.
+    const truncated = (total !== null && total > PLAYLIST_FETCH_MAX) || allPlaylists.length >= PLAYLIST_FETCH_MAX;
+    if (truncated) {
       logger.warn(
-        `list_playlists playable-only candidate set was truncated at PLAYLIST_FETCH_MAX (${PLAYLIST_FETCH_MAX}); ` +
-          `server reports ${total ?? 'unknown'} total playlists — results and total may be incomplete.`
+        `list_playlists playable-only candidate set was truncated at PLAYLIST_FETCH_MAX (${PLAYLIST_FETCH_MAX}). ` +
+          `Server reports ${total ?? 'unknown'} total playlists. Results and total may be incomplete.`
       );
     }
 
-    // When a probe would match the same rows as `songCount`, dropping empty playlists skips every probe.
-    const filtered = activeLibrariesCoverEverything()
-      ? allPlaylists.filter((p) => p.songCount > 0)
-      : await filterToPlayablePlaylists(client, allPlaylists);
-
+    const filtered = await filterToPlayablePlaylists(client, allPlaylists, smartIds);
     const page = filtered.slice(params.offset, params.offset + params.limit);
 
     return {
       playlists: page,
       total: filtered.length,
+      ...(truncated ? { truncated: true } : {}),
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('list_playlists', error));
   }
 }
 
-/**
- * Get a specific playlist by ID
- */
 export async function getPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   try {
     const params = PlaylistIdSchema.parse(args);
     logger.debug('Tool getPlaylist called with args:', params);
 
     const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(params.playlistId)}`);
-    return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
+    // Single-item detail lookup, always verbose (see getSong in media-library.ts).
+    return transformToPlaylistDTO(rawPlaylist as RawPlaylist, { verbose: true });
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_playlist', error));
   }
 }
 
-/**
- * Create a new playlist
- */
-export async function createPlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
+type CreatedPlaylistDTO = PlaylistDTO & { note?: string };
+
+/** A failed read-back still resolves with the new id, since a retry would create a duplicate. */
+export async function createPlaylist(client: NavidromeClient, args: unknown): Promise<CreatedPlaylistDTO> {
   try {
     const params = CreatePlaylistSchema.parse(args);
     logger.debug('Tool createPlaylist called with args:', params);
@@ -219,8 +231,21 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       throw new Error('Navidrome POST /playlist did not return a playlist id');
     }
 
-    const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(newId)}`);
-    const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
+    let playlist: CreatedPlaylistDTO;
+    try {
+      const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(newId)}`);
+      playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist, { verbose: true });
+    } catch (error) {
+      logger.warn(`create_playlist: created ${newId}, but reading it back failed: ${error instanceof Error ? error.message : String(error)}`);
+      const sentPlaylist: RawPlaylist = { id: newId, name: params.name, public: params.public, songCount: 0 };
+      if (params.comment !== undefined) {
+        sentPlaylist.comment = params.comment;
+      }
+      return {
+        ...transformToPlaylistDTO(sentPlaylist),
+        note: `Created playlist ${newId}, but reading it back failed. Do not call create_playlist again. Call get_playlist with playlistId ${newId} for its details.`,
+      };
+    }
 
     // Defence-in-depth fallbacks if the follow-up GET also omits fields.
     if (playlist.name === '') {
@@ -236,9 +261,6 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
   }
 }
 
-/**
- * Update a playlist's metadata
- */
 export async function updatePlaylist(client: NavidromeClient, args: unknown): Promise<PlaylistDTO> {
   try {
     const params = UpdatePlaylistSchema.parse(args);
@@ -267,7 +289,7 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
     });
 
     // Navidrome's PUT answers with the full stored playlist.
-    return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
+    return transformToPlaylistDTO(rawPlaylist as RawPlaylist, { verbose: true });
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('update_playlist', error));
   }

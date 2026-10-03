@@ -178,8 +178,8 @@ async function handleRequest(
 
   // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
   if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res, deps.config); return; }
-  if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res); return; }
-  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res, deps.broadcaster);
+  if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res, deps.config); return; }
+  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res, deps.config, deps.broadcaster);
   if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
 
   // --- API: cover art proxy ---

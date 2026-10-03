@@ -31,10 +31,20 @@ import {
 } from '../lastfm-discovery.js';
 import { getArtistAlbums, getAlbumInfo } from '../artist-discography.js';
 
+const LASTFM_CATALOG_NOTE =
+  "Results come from Last.fm's global catalog, not the Navidrome library, and carry no Navidrome IDs. " +
+  'Resolve names with search_artists or search_songs before playing them or adding them to a playlist.';
+
+const LASTFM_URL_VERBOSE_PROPERTY = {
+  type: 'boolean',
+  description: 'Add the Last.fm URL to each row. No extra requests.',
+  default: false,
+};
+
 const tools: Tool[] = [
   {
     name: 'get_similar_artists',
-    description: 'Get similar artists using Last.fm API',
+    description: `Get similar artists using Last.fm API. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -43,19 +53,20 @@ const tools: Tool[] = [
           description: 'Name of the artist to find similar artists for',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of similar artists to return (1-100)',
           minimum: 1,
           maximum: 100,
           default: 100,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['artist'],
     },
   },
   {
     name: 'get_similar_tracks',
-    description: 'Get similar tracks using Last.fm API',
+    description: `Get similar tracks using Last.fm API. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -68,12 +79,13 @@ const tools: Tool[] = [
           description: 'Name of the track',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of similar tracks to return (1-100)',
           minimum: 1,
           maximum: 100,
           default: 100,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['artist', 'track'],
     },
@@ -90,7 +102,7 @@ const tools: Tool[] = [
         },
         lang: {
           type: 'string',
-          description: 'Language for the biography (ISO 639 code)',
+          description: 'Language for the biography (ISO 639-1 code). Falls back to English when Last.fm has no biography in that language.',
           default: 'en',
         },
       },
@@ -99,7 +111,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_top_tracks_by_artist',
-    description: 'Get top tracks for an artist from Last.fm',
+    description: `Get top tracks for an artist from Last.fm. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -108,19 +120,20 @@ const tools: Tool[] = [
           description: 'Name of the artist',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of top tracks to return (1-50)',
           minimum: 1,
           maximum: 50,
           default: 10,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['artist'],
     },
   },
   {
     name: 'get_trending_music',
-    description: 'Get trending music charts from Last.fm',
+    description: `Get trending music charts from Last.fm. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -130,18 +143,19 @@ const tools: Tool[] = [
           enum: ['artists', 'tracks', 'tags'],
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of items to return (1-100)',
           minimum: 1,
           maximum: 100,
           default: 100,
         },
         page: {
-          type: 'number',
+          type: 'integer',
           description: 'Page number for pagination',
           minimum: 1,
           default: 1,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['type'],
     },
@@ -258,7 +272,7 @@ export function createLastFmToolCategory(client: NavidromeClient, config: Config
         case 'get_album_info':
           return await getAlbumInfo(client, config, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`Last.fm ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

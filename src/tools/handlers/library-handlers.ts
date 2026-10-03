@@ -29,7 +29,28 @@ import {
 import { getUserDetails, setActiveLibraries } from '../library.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-const tools: Tool[] = [
+// The Last.fm tools register only when Last.fm is configured, so get_artist names them only then.
+function buildGetArtistTool(hasLastFm: boolean): Tool {
+  const lastFmSentence = hasLastFm
+    ? ' For a Last.fm biography, similar artists, and top tracks, use the Last.fm tools (get_artist_info, get_similar_artists, get_top_tracks_by_artist).'
+    : '';
+  return {
+    name: 'get_artist',
+    description: `Returns the full record for a single artist by ID. Same fields as search_artists with verbose=true.${lastFmSentence}`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        artistId: {
+          type: 'string',
+          description: 'The artist ID, as returned by search_artists or list_* tools.',
+        },
+      },
+      required: ['artistId'],
+    },
+  };
+}
+
+const staticTools: Tool[] = [
   {
     name: 'get_song',
     description: 'Returns the full record for a single song by ID. Same fields as search_songs with verbose=true. Use this when you already have the song ID and want the canonical SongDTO without searching. To list a song\'s containing playlists, use get_song_playlists.',
@@ -46,7 +67,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_album',
-    description: 'Returns the full record for a single album by ID. Same fields as search_albums with verbose=true. Use this when you already have the album ID. Does NOT include the album\'s tracks. To list them, call search_songs with the album name as query and keep the songs whose albumId equals this album\'s id (compact song results carry albumId).',
+    description: 'Returns the full record for a single album by ID. Same fields as search_albums with verbose=true. Use this when you already have the album ID. Does NOT include the album\'s tracks. To list them, call search_songs with the album name as query and sort=\'album\', then keep the songs whose albumId equals this album\'s id (compact song results carry albumId, and sort=album returns them in disc and track order).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -56,20 +77,6 @@ const tools: Tool[] = [
         },
       },
       required: ['albumId'],
-    },
-  },
-  {
-    name: 'get_artist',
-    description: 'Returns the full record for a single artist by ID. Same fields as search_artists with verbose=true. For a Last.fm biography, similar artists, and top tracks, use the Last.fm tools (get_artist_info, get_similar_artists, get_top_tracks_by_artist).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        artistId: {
-          type: 'string',
-          description: 'The artist ID, as returned by search_artists or list_* tools.',
-        },
-      },
-      required: ['artistId'],
     },
   },
   {
@@ -88,7 +95,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_user_details',
-    description: 'Get user information including available libraries with active status flags. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so the active-library selection is process-global. Under the HTTP transport it is shared across ALL connected sessions.',
+    description: 'Get user information including available libraries with active status flags. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so the active-library selection is process-global. Under the HTTP transport it is shared across ALL connected sessions. summary.totalSongs, totalAlbums and totalArtists count the active libraries only. Per-library counts are in libraries.available[].stats.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -96,25 +103,29 @@ const tools: Tool[] = [
   },
   {
     name: 'set_active_libraries',
-    description: 'Set which libraries are active for filtering music content. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so this selection is process-global. Under the HTTP transport a set_active_libraries call changes the active-library filter for ALL connected sessions, not just the caller.',
+    description: 'Set which libraries are active for filtering music content. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so this selection is process-global. Under the HTTP transport a set_active_libraries call changes the active-library filter for ALL connected sessions, not just the caller. The selection lasts until the server restarts. The startup default is the Default libraries setting on the config page (library.defaultLibraryIds in settings.json).',
     inputSchema: {
       type: 'object',
       properties: {
         libraryIds: {
           type: 'array',
           items: {
-            type: 'number',
+            type: 'integer',
+            minimum: 1,
           },
-          description: 'Array of library IDs to set as active',
+          description: 'Library IDs to set as active, from get_user_details libraries.available[].id. The call fails if any ID is unknown.',
           minItems: 1,
         },
       },
       required: ['libraryIds'],
+      additionalProperties: false,
     },
   },
 ];
 
-export function createLibraryToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
+export function createLibraryToolCategory(client: NavidromeClient, config: Config): ToolCategory {
+  const tools: Tool[] = [...staticTools, buildGetArtistTool(config.features.lastfm)];
+
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
@@ -128,9 +139,9 @@ export function createLibraryToolCategory(client: NavidromeClient, _config: Conf
         case 'get_song_playlists':
           return await getSongPlaylists(client, args);
         case 'get_user_details':
-          return getUserDetails();
+          return await getUserDetails(client);
         case 'set_active_libraries':
-          return await setActiveLibraries(args);
+          return await setActiveLibraries(client, args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }

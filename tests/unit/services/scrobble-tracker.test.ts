@@ -142,6 +142,8 @@ describe('ScrobbleTracker', () => {
   });
 
   it('submits at 50% of duration (one call only)', async () => {
+    // A Date.now spy, not fake timers, because flush() relies on a real setImmediate.
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
     engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
@@ -153,15 +155,56 @@ describe('ScrobbleTracker', () => {
     expect(client.subsonicRequest).not.toHaveBeenCalled();
 
     // Crosses 50% of 200 = 100s.
+    nowSpy.mockReturnValue(1_100_000);
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
     expect(client.subsonicRequest).toHaveBeenCalledTimes(1);
     const call = client.subsonicRequest.mock.calls[0];
     expect(call?.[0]).toBe('/scrobble');
     expect(call?.[1]).toMatchObject({ id: 'song-A', submission: 'true' });
-    expect(typeof call?.[1]?.time).toBe('string');
-    expect(Number(call?.[1]?.time)).toBeGreaterThan(0);
+    // The timestamp is the track start, not the threshold crossing.
+    expect(call?.[1]?.time).toBe('1000000');
     expect(call?.[2]).toEqual({ retryPolicy: 'never' });
+    nowSpy.mockRestore();
+  });
+
+  it('keeps the current play when the playlist read after a queue event fails', async () => {
+    const playlist = [{ index: 0, songId: 'song-A', duration: 200 }];
+    engine.setPlaylist(playlist);
+    engine.setCached('playlist-pos', 0);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+
+    engine.getQueue = vi.fn<() => Promise<FakeEntry[]>>()
+      .mockRejectedValueOnce(new Error('ipc'))
+      .mockResolvedValue(playlist);
+    engine.fire({ kind: 'queue' });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+    expect(params.filter((p) => p.submission === 'true').map((p) => p.id)).toEqual(['song-A']);
+  });
+
+  it('resets on a failed playlist read at a track change, then tracks the next one', async () => {
+    const playlist = [
+      { index: 0, songId: 'song-A', duration: 200 },
+      { index: 1, songId: 'song-B', duration: 200 },
+    ];
+    engine.setPlaylist(playlist);
+    engine.getQueue = vi.fn<() => Promise<FakeEntry[]>>()
+      .mockRejectedValueOnce(new Error('ipc'))
+      .mockResolvedValue(playlist);
+
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    expect(client.subsonicRequest).not.toHaveBeenCalled();
+
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+    await flush();
+    expect(client.subsonicRequest).toHaveBeenCalledTimes(1);
+    expect(client.subsonicRequest).toHaveBeenCalledWith('/scrobble', { id: 'song-B', submission: 'false' });
   });
 
   it('submits at 4 minutes for long tracks (cap)', async () => {
@@ -518,6 +561,184 @@ describe('ScrobbleTracker', () => {
     expect(client.subsonicRequest).not.toHaveBeenCalled();
   });
 
+  describe('in-flight play adopted at attach', () => {
+    const inFlight = { index: 0, songId: 'T', entryId: 7, isCurrent: true, duration: 300 };
+
+    beforeEach(async () => {
+      engine.setPlaylist([inFlight]);
+      engine.setCached('playlist-pos', 0);
+      engine.setCached('path', 'http://nd/rest/stream?id=T');
+      engine.fire({ kind: 'attach' });
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+      await flush();
+    });
+
+    it('a queue event does not count the adopted play again', async () => {
+      engine.fire({ kind: 'queue' });
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 250 });
+      await flush();
+
+      expect(client.subsonicRequest).not.toHaveBeenCalled();
+    });
+
+    it('an index shift does not count the adopted play again', async () => {
+      engine.setPlaylist([
+        { index: 0, songId: 'X', entryId: 9 },
+        { ...inFlight, index: 1 },
+      ]);
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 250 });
+      await flush();
+
+      expect(client.subsonicRequest).not.toHaveBeenCalled();
+    });
+
+    it('a natural advance to a new entry still starts and submits the new play', async () => {
+      engine.setPlaylist([
+        { ...inFlight, isCurrent: false },
+        { index: 1, songId: 'U', entryId: 8, isCurrent: true, duration: 200 },
+      ]);
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+      await flush();
+
+      const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+      expect(params.map((p) => [p.id, p.submission])).toEqual([['U', 'false'], ['U', 'true']]);
+    });
+  });
+
+  describe('in-flight adoption when the attach is lazy', () => {
+    const urlT = 'http://nd/rest/stream?id=T&s=1';
+    const urlU = 'http://nd/rest/stream?id=U&s=2';
+
+    // The engine writes its cache before it emits the event.
+    function firePath(path: string): void {
+      engine.setCached('path', path);
+      engine.fire({ kind: 'property', name: 'path', data: path });
+    }
+
+    beforeEach(() => {
+      engine.setCached('path', urlT);
+    });
+
+    it('a move that shifts the playing entry does not count the adopted play again', async () => {
+      // Every read answers after the move that triggered the attach, so T already sits at index 1.
+      engine.setPlaylist([
+        { index: 0, songId: 'B', entryId: 2 },
+        { index: 1, songId: 'T', entryId: 7, isCurrent: true, duration: 300 },
+        { index: 2, songId: 'A', entryId: 1 },
+      ]);
+      engine.setCached('playlist-pos', 1);
+      engine.fire({ kind: 'attach' });
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 2 });
+      firePath(urlT);
+      engine.fire({ kind: 'queue' });
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 250 });
+      await flush();
+
+      expect(client.subsonicRequest).not.toHaveBeenCalled();
+    });
+
+    it('a next starts and submits the new play once the inherited file stops', async () => {
+      // The adoption read answers after the next, so the new entry U is already current.
+      engine.setPlaylist([
+        { index: 0, songId: 'T', entryId: 7, duration: 300 },
+        { index: 1, songId: 'U', entryId: 8, isCurrent: true, duration: 300 },
+      ]);
+      engine.setCached('playlist-pos', 1);
+      engine.fire({ kind: 'attach' });
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+      firePath(urlT);
+      await flush();
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+      await flush();
+      firePath(urlU);
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 200 });
+      await flush();
+
+      const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+      expect(params.map((p) => [p.id, p.submission])).toEqual([['U', 'false'], ['U', 'true']]);
+    });
+
+    it('starts the new file when its path change lands before the adoption read resolves', async () => {
+      const songU = { index: 0, songId: 'U', entryId: 8, isCurrent: true, duration: 300 };
+      const pendingReads: Array<(entries: FakeEntry[]) => void> = [];
+      engine.getQueue = (): Promise<FakeEntry[]> => new Promise((res) => { pendingReads.push(res); });
+      engine.setCached('playlist-pos', 0);
+      engine.fire({ kind: 'attach' });
+      firePath(urlT);
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+      firePath(urlU);
+      // Both reads answer after the same-index replace, so each shows U current.
+      pendingReads[0]?.([songU]);
+      await flush();
+      pendingReads[1]?.([songU]);
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 200 });
+      await flush();
+
+      expect(pendingReads).toHaveLength(2);
+      const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+      expect(params.map((p) => [p.id, p.submission])).toEqual([['U', 'false'], ['U', 'true']]);
+    });
+  });
+
+  describe('path change with no playlist-pos change', () => {
+    const songA = { index: 0, songId: 'A', entryId: 1, isCurrent: true, duration: 600 };
+    const songB = { index: 0, songId: 'B', entryId: 2, isCurrent: true, duration: 200 };
+
+    beforeEach(async () => {
+      engine.fire({ kind: 'property', name: 'path', data: 'http://nd/rest/stream?id=A' });
+      engine.setPlaylist([songA]);
+      engine.setCached('playlist-pos', 0);
+      engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 180 });
+      await flush();
+    });
+
+    it('does not submit the displaced play when the new file reports its duration first', async () => {
+      let resolveRead!: (entries: FakeEntry[]) => void;
+      engine.getQueue = (): Promise<FakeEntry[]> => new Promise((res) => { resolveRead = res; });
+
+      engine.fire({ kind: 'property', name: 'path', data: 'http://nd/rest/stream?id=B' });
+      engine.fire({ kind: 'property', name: 'duration', data: 200 });
+      await flush();
+      resolveRead([songB]);
+      await flush();
+
+      const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+      expect(params.filter((p) => p.submission === 'true')).toEqual([]);
+    });
+
+    it('tracks the new file and submits it, never the displaced one', async () => {
+      engine.setPlaylist([songB]);
+      engine.fire({ kind: 'property', name: 'path', data: 'http://nd/rest/stream?id=B' });
+      await flush();
+      engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+      await flush();
+
+      const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+      expect(params.map((p) => [p.id, p.submission])).toEqual([['A', 'false'], ['B', 'false'], ['B', 'true']]);
+    });
+
+    it('treats the first path event after an attach as the snapshot', async () => {
+      engine.fire({ kind: 'attach' });
+      client.subsonicRequest.mockClear();
+      engine.setPlaylist([songB]);
+      engine.fire({ kind: 'property', name: 'path', data: 'http://nd/rest/stream?id=B' });
+      await flush();
+
+      expect(client.subsonicRequest).not.toHaveBeenCalled();
+    });
+  });
+
   it('does not corrupt state when playlist reads resolve out of order', async () => {
     // Two rapid playlist-pos transitions. The first getQueue resolves
     // AFTER the second has already completed. The stale resolution must
@@ -663,7 +884,7 @@ describe('ScrobbleTracker ownership election', () => {
     // First track resolves 'mine' (no web yet); a web appears, so the second
     // track's probe resolves 'notMine'.
     const shouldSubmit = vi
-      .fn<[], Promise<boolean>>()
+      .fn<() => Promise<boolean>>()
       .mockResolvedValueOnce(true)
       .mockResolvedValue(false);
     startTracker(shouldSubmit);
@@ -748,13 +969,73 @@ describe('ScrobbleTracker ownership election', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 }); // skip to B — verdict 'mine'
     await flush();
 
-    // Resolve A's stale verdict. The generation guard must drop it: it must not
-    // submit A nor disturb B's tracking.
-    resolveA(true);
+    // A's stale verdict disagrees with B's. Without the generation guard it would
+    // set 'notMine' and silently drop B's scrobble.
+    resolveA(false);
     await flush();
 
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
     expect(submittedIds()).toEqual(['song-B']);
+  });
+
+  it('(e2) a stale mine verdict does not override the new track notMine', async () => {
+    let resolveA!: (v: boolean) => void;
+    const pA = new Promise<boolean>((r) => {
+      resolveA = r;
+    });
+    let call = 0;
+    startTracker(() => {
+      call += 1;
+      return call === 1 ? pA : Promise.resolve(false);
+    });
+    engine.setPlaylist([
+      { index: 0, songId: 'song-A', duration: 200 },
+      { index: 1, songId: 'song-B', duration: 200 },
+    ]);
+
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+    await flush();
+
+    // Without the generation guard, A's stale 'mine' would double-count B against the web owner.
+    resolveA(true);
+    await flush();
+
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual([]);
+  });
+
+  it('(f) a queue event that orphans an undecided verdict starts a new ownership check', async () => {
+    let call = 0;
+    startTracker(() => {
+      call += 1;
+      return call === 1 ? new Promise<boolean>(() => undefined) : Promise.resolve(true);
+    });
+    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
+
+    // The flush lets hydrateAndStart track A, so the queue event orphans the probe, not the hydrate.
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    engine.setCached('playlist-pos', 0);
+    engine.fire({ kind: 'queue' });
+    await flush();
+
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('(g) a rejected ownership probe defaults to submitting', async () => {
+    startTracker(() => Promise.reject(new Error('probe')));
+    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual(['song-A']);
   });
 });

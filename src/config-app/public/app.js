@@ -27,7 +27,7 @@ const FIELDS = [
   ['features.lyricsProvider', 'lyricsProvider', 'string'],
   ['features.lrclibUserAgent', 'lrclibUserAgent', 'stringOrNull'],
   ['features.lrclibBase', 'lrclibBase', 'stringOrNull'],
-  ['playback.mpvPath', 'mpvPath', 'stringOrNull'],
+  ['playback.mpvPath', 'mpvPath', 'pathOrNull'],
   ['playback.transcodeFormat', 'transcodeFormat', 'string'],
   ['playback.transcodeBitrate', 'transcodeBitrate', 'string'],
   ['webui.enabled', 'webuiEnabled', 'bool', true],
@@ -37,7 +37,6 @@ const FIELDS = [
   ['webui.autoOpenBrowser', 'webuiAutoOpen', 'bool', false],
   ['webui.persistAfterMcpExit', 'webuiPersist', 'bool', false],
   ['advanced.debug', 'debug', 'bool', false],
-  ['advanced.cacheTtl', 'cacheTtl', 'int', 300],
   ['advanced.tokenExpiry', 'tokenExpiry', 'int', 86400],
 ];
 
@@ -73,7 +72,7 @@ function populate(seed) {
       case 'int':
         el.value = raw == null ? '' : String(raw);
         break;
-      default: // string | stringOrNull
+      default: // string | stringOrNull | pathOrNull
         // Fall back to the declared default when the seed has no value, so a
         // <select> (e.g. transport.type) lands on a valid option instead of an
         // empty/-1 selection. Text inputs without a default just stay blank.
@@ -103,6 +102,12 @@ function collect() {
         break;
       case 'stringOrNull': {
         const v = el.value.trim();
+        value = v === '' ? null : v;
+        break;
+      }
+      case 'pathOrNull': {
+        // Windows "Copy as path" adds quotes that the mpv existence check rejects.
+        const v = el.value.trim().replace(/^(["'])(.*)\1$/, '$2').trim();
         value = v === '' ? null : v;
         break;
       }
@@ -138,9 +143,21 @@ const WEBUI_BIND_HOSTS = ['127.0.0.1', '0.0.0.0', '::'];
 function collectChecked() {
   const payload = collect();
   const host = payload.webui ? payload.webui.host : null;
-  if (host == null || WEBUI_BIND_HOSTS.includes(host)) return payload;
-  showStatus(`Web UI bind host "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`, 'err');
-  return null;
+  if (host != null && !WEBUI_BIND_HOSTS.includes(host)) {
+    showStatus(`Web UI bind host "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`, 'err');
+    return null;
+  }
+  // collect() drops non-numeric tokens, and an empty list means all libraries, so a typo would silently lift the restriction.
+  const bad = document.getElementById('defaultLibraries').value
+    .split(',')
+    .map((t) => t.trim())
+    .filter((t) => t !== '')
+    .find((t) => !/^\d+$/.test(t));
+  if (bad !== undefined) {
+    showStatus(`Default libraries "${bad}" is not a library ID. Use comma-separated numbers such as 1,2, or leave blank for all.`, 'err');
+    return null;
+  }
+  return payload;
 }
 
 function isEmptyField(el) {

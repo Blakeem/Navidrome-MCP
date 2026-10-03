@@ -35,3 +35,11 @@ export function stripSubsonicAuthParams(rawUrl: string): string {
     return rawUrl;
   }
 }
+
+// mpv's filename fallback is the URL basename, which has no scheme for URL to parse.
+export function hasSubsonicAuthParams(value: string): boolean {
+  const queryStart = value.indexOf('?');
+  if (queryStart === -1) return false;
+  const params = new URLSearchParams(value.slice(queryStart + 1));
+  return SUBSONIC_AUTH_PARAMS.some((key) => params.has(key));
+}

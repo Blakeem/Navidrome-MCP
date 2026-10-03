@@ -32,12 +32,7 @@ import type { WebuiTheme } from '../constants/defaults.js';
 let persist = false;
 let theme: WebuiTheme | null = null;
 
-/** Seed the flag from config at process startup. */
-export function initPersist(value: boolean): void {
-  persist = value;
-}
-
-/** Toggle the flag at runtime (the player's settings modal). */
+/** Seeds the flag from config at startup and toggles it at runtime. */
 export function setPersist(value: boolean): void {
   persist = value;
 }

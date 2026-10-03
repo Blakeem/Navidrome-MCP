@@ -300,6 +300,29 @@ describe('getArtistAlbums — unverified bucket (Waveshaper fixture)', () => {
     expect(result.albums.map(a => a.title)).toEqual(['66 MHz', 'Maniac', 'Velocity']);
     expect(result.albums.map(a => a.popularityRank)).toEqual([1, 2, 3]);
   });
+
+  it('includeUnverified joins a Last.fm row that MusicBrainz types as a single, emitting no lastfm-only row', async () => {
+    const fetchMock = installFetch({
+      mbArtistSearch: () => mbArtist('mb-waveshaper', 'Waveshaper'),
+      mbBrowse: () => mbBrowseBody([
+        mbRg('rg-velocity', 'Velocity', '2016-05-20'),
+        { ...(mbRg('rg-66mhz', '66 MHz', '2014-01-01') as Record<string, unknown>), 'primary-type': 'Single' },
+      ]),
+      lastFm: () => lastFmBody([
+        lastFmAlbum('66 MHz', 500000),
+        lastFmAlbum('Velocity', 100000),
+      ]),
+    });
+    wireEmptyNavidrome();
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    const result = await getArtistAlbums(asClient(client), config, { artist: 'Waveshaper', includeUnverified: true });
+
+    expect(result.albums.map(a => a.title)).toEqual(['Velocity']);
+    expect(result.albums.every(a => a.source === 'musicbrainz')).toBe(true);
+    const browseUrl = fetchMock.mock.calls.map(c => String(c[0])).find(u => u.includes('/ws/2/release-group'));
+    expect(new URL(String(browseUrl)).searchParams.get('type')).toBe('album|ep|single');
+  });
 });
 
 describe('getArtistAlbums — excludeSecondary vs includeUnverified', () => {
@@ -428,7 +451,35 @@ describe('getArtistAlbums — degradation', () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
 
     await expect(getArtistAlbums(asClient(client), config, { artist: 'GUNSHIP' }))
-      .rejects.toThrow(/no discography source available/);
+      .rejects.toThrow(/No discography source is available: MusicBrainz was unreachable/);
+  });
+
+  it('Last.fm "could not be found" ⇒ a "no entry" note instead of an outage', async () => {
+    installFetch({
+      mbArtistSearch: () => mbArtist('mb-gunship', 'GUNSHIP'),
+      mbBrowse: () => GUNSHIP_BROWSE,
+      lastFm: () => ({ error: 6, message: 'The artist you supplied could not be found' }),
+    });
+    wireGunshipNavidrome(client);
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    const result = await getArtistAlbums(asClient(client), config, { artist: 'GUNSHIP' });
+
+    expect(result.sources).toEqual({ musicbrainz: true, lastfm: false });
+    expect(result.note).toMatch(/Last\.fm has no entry for this artist/);
+    expect(result.note).not.toMatch(/unreachable/);
+  });
+
+  it('artist unknown to both sources ⇒ a spelling hint, not an outage', async () => {
+    installFetch({
+      mbArtistSearch: () => ({ artists: [] }),
+      lastFm: () => ({ error: 6, message: 'The artist you supplied could not be found' }),
+    });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    await expect(getArtistAlbums(asClient(client), config, { artist: 'Gunshp' }))
+      .rejects.toThrow(/No artist matching "Gunshp" was found in MusicBrainz or Last\.fm\. Check the spelling/);
   });
 
   it('input validation: artist or mbid is required', async () => {

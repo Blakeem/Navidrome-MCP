@@ -48,7 +48,6 @@ describePlayback('play_albums + queue manipulation (live)', () => {
     await playAlbums({
       albumIds: [albumIdA, albumIdB],
       mode: 'replace',
-      shuffle: 'none',
     });
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -60,13 +59,12 @@ describePlayback('play_albums + queue manipulation (live)', () => {
   // Single-album cases
   // -------------------------------------------------------------------------
 
-  itPlayback('single album shuffle:none queues all tracks in API natural order', async () => {
+  itPlayback('single album no shuffle queues all tracks in API natural order', async () => {
     // Start fresh with a single-album replace
     await clearPlayQueue();
     const result = await playAlbums({
       albumIds: [albumIdA],
       mode: 'replace',
-      shuffle: 'none',
     });
     expect(result.albumCount).toBe(1);
     expect(result.trackCount).toBe(albumATrackIds.length);
@@ -83,13 +81,13 @@ describePlayback('play_albums + queue manipulation (live)', () => {
     expect(queue.items.map((e) => e.songId)).toEqual(albumATrackIds);
   });
 
-  itPlayback('single album shuffle:songs preserves multiset, may differ in order', async () => {
+  itPlayback('single album shuffleSongs preserves multiset, may differ in order', async () => {
     if (albumATrackIds.length < 2) {
       // Can't meaningfully test shuffling a single track
       return;
     }
     await clearPlayQueue();
-    await playAlbums({ albumIds: [albumIdA], mode: 'replace', shuffle: 'songs' });
+    await playAlbums({ albumIds: [albumIdA], mode: 'replace', shuffleSongs: true });
     await waitFor(async () => {
       const np = await nowPlaying();
       return np.queueLength === albumATrackIds.length;
@@ -108,8 +106,8 @@ describePlayback('play_albums + queue manipulation (live)', () => {
   // Two-album cases
   // -------------------------------------------------------------------------
 
-  itPlayback('two albums shuffle:none preserves contiguous album blocks', async () => {
-    // beforeEach loaded shuffle:'none' — assert directly.
+  itPlayback('two albums no shuffle preserves contiguous album blocks', async () => {
+    // beforeEach loaded no shuffle — assert directly.
     const queue = await getPlayQueue();
     expect(queue.length).toBe(albumATrackIds.length + albumBTrackIds.length);
 
@@ -124,12 +122,12 @@ describePlayback('play_albums + queue manipulation (live)', () => {
     expect(secondBlock).toEqual(albumBTrackIds);
   });
 
-  itPlayback('two albums shuffle:albums keeps contiguous blocks but order may swap', async () => {
+  itPlayback('two albums shuffleAlbums keeps contiguous blocks but order may swap', async () => {
     await clearPlayQueue();
     await playAlbums({
       albumIds: [albumIdA, albumIdB],
       mode: 'replace',
-      shuffle: 'albums',
+      shuffleAlbums: true,
     });
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -151,7 +149,7 @@ describePlayback('play_albums + queue manipulation (live)', () => {
     expect(aFirst || bFirst).toBe(true);
   });
 
-  itPlayback('two albums shuffle:songs interleaves across album boundaries', async () => {
+  itPlayback('two albums shuffleSongs interleaves across album boundaries', async () => {
     // Both albums need >= 3 tracks for the no-contiguous-block check to be
     // meaningful (per SPEC).
     if (albumATrackIds.length < 3 || albumBTrackIds.length < 3) {
@@ -188,7 +186,6 @@ describePlayback('play_albums + queue manipulation (live)', () => {
     await playAlbums({
       albumIds: [albumIdA],
       mode: 'append',
-      shuffle: 'none',
     });
 
     await waitFor(async () => {
@@ -215,7 +212,7 @@ describePlayback('play_albums + queue manipulation (live)', () => {
 
   itPlayback('empty albumIds is rejected by schema', async () => {
     await expect(
-      playAlbums({ albumIds: [], mode: 'replace', shuffle: 'none' })
+      playAlbums({ albumIds: [], mode: 'replace' })
     ).rejects.toThrow();
   });
 
@@ -224,7 +221,7 @@ describePlayback('play_albums + queue manipulation (live)', () => {
   // -------------------------------------------------------------------------
 
   /**
-   * Replace queue with shuffle:'songs' across both test albums and wait for
+   * Replace queue with shuffleSongs across both test albums and wait for
    * mpv to settle. Returns the queue snapshot. Used by the song-shuffle
    * test which allows one retry on probabilistic same-block coincidence.
    */
@@ -233,7 +230,7 @@ describePlayback('play_albums + queue manipulation (live)', () => {
     await playAlbums({
       albumIds: [albumIdA, albumIdB],
       mode: 'replace',
-      shuffle: 'songs',
+      shuffleSongs: true,
     });
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -244,7 +241,7 @@ describePlayback('play_albums + queue manipulation (live)', () => {
 
   /**
    * Detect whether the first `aLen` items in the queue are all from album A
-   * — that's the "contiguous block" failure case for shuffle:'songs'.
+   * — that's the "contiguous block" failure case for shuffleSongs.
    * The full inverse (last `aLen` items are A, or any single contiguous A
    * block) is more conservative; we follow SPEC which calls out the
    * "first aLen items" case specifically.

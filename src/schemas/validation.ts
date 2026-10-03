@@ -19,41 +19,42 @@
 import { z } from 'zod';
 import { DEFAULT_VALUES, WEBUI_THEMES } from '../constants/defaults.js';
 import {
-  MAX_VALIDATION_TIMEOUT,
-  MIN_VALIDATION_TIMEOUT,
-  SINGLE_VALIDATION_TIMEOUT,
+  MAX_VALIDATION_TIMEOUT_MS,
+  MIN_VALIDATION_TIMEOUT_MS,
+  SINGLE_VALIDATION_TIMEOUT_MS,
 } from '../constants/timeouts.js';
 import { isHttpUrlScheme } from '../utils/network-safety.js';
 import {
+  AlbumIdSchema,
   EnhancedSearchSchema,
+  IdStringSchema,
   ItemTypeSchema,
   RatingSchema,
-  StringArraySchema,
   OptionalBooleanSchema,
   VerboseSchema,
   createLimitSchema,
   ID_PATTERN,
   NonEmptyIdArraySchema,
   OffsetSchema,
+  OrderSchema,
   PlaylistIdSchema,
   SEARCH_QUERY_MAX_LENGTH,
   SearchAlbumsSchema,
   SearchSongsSchema,
+  SongIdSchema,
 } from './common.js';
 
-// User preferences validation
 export const StarItemSchema = z.object({
-  itemId: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
+  itemId: IdStringSchema,
   type: ItemTypeSchema,
 });
 
 export const SetRatingSchema = z.object({
-  itemId: z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters'),
+  itemId: IdStringSchema,
   type: ItemTypeSchema,
   rating: RatingSchema,
 });
 
-// Playlist management validation
 export const CreatePlaylistSchema = z.object({
   name: z.string().min(1, 'Playlist name is required'),
   comment: z.string().optional(),
@@ -64,14 +65,22 @@ export const UpdatePlaylistSchema = PlaylistIdSchema.extend({
   name: z.string().min(1).optional(),
   comment: z.string().optional(),
   public: OptionalBooleanSchema,
+}).superRefine((val, ctx) => {
+  // Navidrome stores an empty PUT body as a blank name and comment.
+  if (val.name === undefined && val.comment === undefined && val.public === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'At least one of name, comment, or public must be provided',
+    });
+  }
 });
 
 export const AddTracksToPlaylistSchema = PlaylistIdSchema.extend({
-  songIds: z.array(z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters')).optional(),
-  albumIds: z.array(z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters')).optional(),
-  artistIds: z.array(z.string().min(1).regex(ID_PATTERN, 'ID contains invalid characters')).optional(),
+  songIds: z.array(IdStringSchema).optional(),
+  albumIds: z.array(IdStringSchema).optional(),
+  artistIds: z.array(IdStringSchema).optional(),
   discs: z.array(z.object({
-    albumId: z.string().min(1).regex(ID_PATTERN, 'Album ID contains invalid characters'),
+    albumId: AlbumIdSchema.shape.albumId,
     discNumber: z.number().int().min(1),
   })).optional(),
 }).superRefine((val, ctx) => {
@@ -102,30 +111,23 @@ export const ReorderPlaylistTrackSchema = PlaylistIdSchema.extend({
   insertBefore: z.number().int().min(1, 'insertBefore must be a 1-based position (use 1 for the first slot)'),
 });
 
-// Saved queue (Navidrome cross-device sync) validation
 export const SaveQueueSchema = z.object({
-  songIds: StringArraySchema,
-  current: z.number().int().min(0).optional().default(0),
-  position: z.number().int().min(0).optional().default(0),
+  songIds: z.array(IdStringSchema),
+  currentIndex: z.number().int().min(0).optional().default(0),
+  // Seconds, the unit now_playing reports. saveQueue converts to Navidrome's milliseconds.
+  position: z.number().min(0).optional().default(0),
 }).superRefine((val, ctx) => {
-  // `current` is a 0-based index into `songIds`. Allow 0 even when songIds is
-  // empty (covers the empty-queue / clear case), but otherwise it must point at
-  // a real track. current >= songIds.length would desync the saved queue.
-  if (val.current > 0 && val.current >= val.songIds.length) {
+  // A nonzero current must point at a real track, or the saved queue desyncs.
+  if (val.currentIndex > 0 && val.currentIndex >= val.songIds.length) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      path: ['current'],
-      message: `current must be less than songIds.length (${val.songIds.length})`,
+      path: ['currentIndex'],
+      message: `currentIndex must be less than songIds.length (${val.songIds.length})`,
     });
   }
 });
 
-// Search validation schemas - import enhanced schemas from common.js
-// Single `offset` is applied to all three sub-fetches, so paginating searchAll
-// means "the same page across each type". Per-type offsets aren't worth the
-// complexity for the LLM use case (and the per-type counts already let the
-// LLM drop down to single-type search_* tools when it needs to deep-paginate
-// just one type).
+// One offset applies to all three sub-fetches. The search_* tools page a single type.
 export const SearchAllSchema = EnhancedSearchSchema.extend({
   artistCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
   albumCount: z.number().int().min(0).max(100).optional().default(DEFAULT_VALUES.SEARCH_ALL_LIMIT),
@@ -134,30 +136,30 @@ export const SearchAllSchema = EnhancedSearchSchema.extend({
   verbose: VerboseSchema,
 });
 
-// Tag validation schemas
 export const ListTagValuesSchema = z.object({
-  tagName: z.string().min(1).optional().default('genre'),
+  tagName: z.string().min(1).optional().default('genre').transform((name) => name.toLowerCase()),
   tagValue: z.string().optional(),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.TAG_SEARCH_LIMIT),
   offset: OffsetSchema,
 });
 
 export const TagDistributionSchema = z.object({
-  tagNames: z.array(z.string().min(1)).optional(),
+  tagNames: z.array(z.string().min(1).transform((name) => name.toLowerCase())).optional(),
   limit: createLimitSchema(1, 50, DEFAULT_VALUES.TAG_DISTRIBUTION_LIMIT),
   distributionLimit: createLimitSchema(1, 100, DEFAULT_VALUES.TAG_DISTRIBUTION_VALUES_LIMIT),
 });
 
-// Last.fm validation schemas
 export const SimilarArtistsSchema = z.object({
   artist: z.string().min(1),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.SIMILAR_ARTISTS_LIMIT),
+  verbose: VerboseSchema,
 });
 
 export const SimilarTracksSchema = z.object({
   artist: z.string().min(1),
   track: z.string().min(1),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.SIMILAR_TRACKS_LIMIT),
+  verbose: VerboseSchema,
 });
 
 export const ArtistInfoSchema = z.object({
@@ -168,17 +170,18 @@ export const ArtistInfoSchema = z.object({
 export const TopTracksByArtistSchema = z.object({
   artist: z.string().min(1),
   limit: createLimitSchema(1, 50, 10),
+  verbose: VerboseSchema,
 });
 
 export const TrendingMusicSchema = z.object({
   type: z.enum(['artists', 'tracks', 'tags']),
   limit: createLimitSchema(1, 100, DEFAULT_VALUES.TRENDING_MUSIC_LIMIT),
   page: z.number().int().min(1).optional().default(1),
+  verbose: VerboseSchema,
 });
 
-// MusicBrainz release-group vocabulary (subset relevant to discographies);
-// see docs/musicbrainz-api.md §8. Values are lowercase, since MB's `type=` browse
-// filter accepts them lowercase, and secondary types are lowercased on parse.
+// MusicBrainz release-group vocabulary, the subset relevant to discographies (docs/musicbrainz-api.md §8).
+// Values are lowercase, since MB's `type=` browse filter accepts them lowercase, and secondary types are lowercased on parse.
 const MbPrimaryTypeSchema = z.enum(['album', 'ep', 'single']);
 const MbSecondaryTypeSchema = z.enum([
   'live',
@@ -195,7 +198,7 @@ const MbSecondaryTypeSchema = z.enum([
   'field recording',
 ]);
 
-export const GetArtistAlbumsSchema = z.object({
+export const ArtistAlbumsSchema = z.object({
   artist: z.string().min(1).optional(),
   mbid: z.string().uuid().optional(),
   includeTypes: z.array(MbPrimaryTypeSchema).min(1).optional().default(['album']),
@@ -214,10 +217,9 @@ export const GetArtistAlbumsSchema = z.object({
   }
 });
 
-// Single-album deep dive (get_album_info): tracklist, year/type, genres, wiki,
-// popularity, library membership. `mbid` is a MusicBrainz RELEASE-GROUP MBID,
-// the mbid of a get_artist_albums row with source 'musicbrainz'. See docs/ARTIST-ALBUMS-SPEC.md §9.
-export const GetAlbumInfoSchema = z.object({
+// `mbid` is a MusicBrainz RELEASE-GROUP MBID, the mbid of a get_artist_albums row with source 'musicbrainz'.
+// See docs/ARTIST-ALBUMS-SPEC.md §9.
+export const AlbumInfoSchema = z.object({
   artist: z.string().min(1).optional(),
   album: z.string().min(1).optional(),
   mbid: z.string().uuid().optional(),
@@ -232,7 +234,6 @@ export const GetAlbumInfoSchema = z.object({
   }
 });
 
-// Lyrics validation schema
 export const LyricsMetadataSchema = z.object({
   title: z.string().min(1),
   artist: z.string().min(1),
@@ -240,10 +241,9 @@ export const LyricsMetadataSchema = z.object({
   durationMs: z.number().min(0).optional(),
 });
 
-// The get_lyrics tool takes an identity, never metadata. Metadata search moved
-// to search_lyrics, whose candidates carry the lrclibId this schema accepts.
-export const GetLyricsIdentitySchema = z.object({
-  songId: z.string().min(1).regex(ID_PATTERN, 'Song ID contains invalid characters').optional(),
+// get_lyrics takes an identity. search_lyrics candidates carry the lrclibId it accepts.
+export const LyricsIdentitySchema = z.object({
+  songId: SongIdSchema.shape.songId.optional(),
   lrclibId: z.string().min(1).regex(/^\d+$/, 'LRCLIB record ID must be numeric').optional(),
 }).superRefine((value, ctx) => {
   if (value.songId === undefined && value.lrclibId === undefined) {
@@ -262,14 +262,6 @@ export const GetLyricsIdentitySchema = z.object({
   }
 });
 
-export const SearchLyricsSchema = z.object({
-  title: z.string().min(1),
-  artist: z.string().min(1),
-  album: z.string().optional(),
-  durationMs: z.number().min(0).optional(),
-});
-
-// Filter options discovery schema (get_filter_options tool).
 // A `limit` of 0 would return an empty list that reads as "no values", so it is rejected.
 export const FilterOptionsSchema = z.object({
   filterType: z.enum(['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods']),
@@ -277,23 +269,24 @@ export const FilterOptionsSchema = z.object({
   offset: OffsetSchema,
 });
 
-// Test connection schema
 export const TestConnectionSchema = z.object({
   includeServerInfo: OptionalBooleanSchema.default(false),
 });
 
-// Library management validation
 export const SetActiveLibrariesSchema = z.object({
   libraryIds: z.array(z.number().int().positive().finite())
     .min(1, 'At least one library ID must be provided')
     .transform((ids) => Array.from(new Set(ids))),
 }).strict();
 
-// Web remote library play request
-const LibraryPlayOptionsShape = {
-  mode: z.enum(['replace', 'append']),
+const QueueShuffleShape = {
   shuffleSongs: z.boolean().default(false),
   shuffleAlbums: z.boolean().default(false),
+};
+
+const LibraryPlayOptionsShape = {
+  mode: z.enum(['replace', 'append']),
+  ...QueueShuffleShape,
 };
 
 export const LibraryPlayRequestSchema = z.discriminatedUnion('type', [
@@ -312,52 +305,51 @@ export const LibraryPlayRequestSchema = z.discriminatedUnion('type', [
 ], { error: 'type must be one of artist, album, song, playlist, starred-songs, starred-albums' });
 
 // Playback controls shared by the MCP tools and the web remote routes
-export const SetVolumeSchema = z.object({
+export const SetVolumeSchema = z.strictObject({
   // The tool contract promises clamping to [0, 100] in playback-engine.setVolume,
   // so the schema rejects only non-finite values, never out-of-range ones.
   level: z.number().finite(),
 });
 
-export const SeekSchema = z.object({
+export const SeekSchema = z.strictObject({
   seconds: z.number(),
   mode: z.enum(['absolute', 'relative']).default('relative'),
 });
 
-export const PlayQueueIndexSchema = z.object({
+export const PlayQueueIndexSchema = z.strictObject({
   index: z.number().int().min(0),
 });
 
 const QueueModeSchema = z.enum(['replace', 'append']).default('replace');
-const AlbumShuffleSchema = z.enum(['none', 'albums', 'songs']).default('none');
 
-export const PlaySongsSchema = z.object({
+export const PlaySongsSchema = z.strictObject({
   songIds: NonEmptyIdArraySchema,
   mode: QueueModeSchema,
   shuffle: z.boolean().default(false),
 });
 
-export const PlayAlbumsSchema = z.object({
+export const PlayAlbumsSchema = z.strictObject({
   albumIds: NonEmptyIdArraySchema,
   mode: QueueModeSchema,
-  shuffle: AlbumShuffleSchema,
+  ...QueueShuffleShape,
 });
 
 export const PlayAlbumsSearchSchema = SearchAlbumsSchema.extend({
   mode: QueueModeSchema,
-  shuffle: AlbumShuffleSchema,
-});
+  ...QueueShuffleShape,
+}).strict();
 
 export const PlaySongsSearchSchema = SearchSongsSchema.extend({
   mode: QueueModeSchema,
   shuffle: z.boolean().default(false),
-});
+}).strict();
 
 export const PlayPlaylistSchema = PlaylistIdSchema.extend({
   mode: QueueModeSchema,
   shuffle: z.boolean().default(false),
-});
+}).strict();
 
-export const MoveInPlayQueueSchema = z.object({
+export const MoveInPlayQueueSchema = z.strictObject({
   from: z.number().int().min(0),
   to: z.number().int().min(0),
 });
@@ -365,36 +357,36 @@ export const MoveInPlayQueueSchema = z.object({
 export const PlayerSettingsPatchSchema = z.strictObject({
   persistAfterMcpExit: z.boolean().optional(),
   autoOpenBrowser: z.boolean().optional(),
-  theme: z.enum(WEBUI_THEMES).optional(),
+  // Null clears a forced theme, so each device follows its own setting again.
+  theme: z.enum(WEBUI_THEMES).nullable().optional(),
 });
 
 export const LibrarySearchQuerySchema = z.string().trim().min(1).max(SEARCH_QUERY_MAX_LENGTH);
 
-// Radio validation schemas
 // Node fetch probes only http and https, so other radio schemes fail here with guidance instead of an opaque fetch error.
 export const ValidateStreamSchema = z.object({
   url: z.string()
+    .trim()
     .url('URL must be a valid URL')
     .refine(isHttpUrlScheme, {
-      message: 'URL must use http:// or https://. This validator probes only HTTP/HTTPS. An mms://, rtsp:// or rtmp:// station must first be added in the Navidrome web UI. play_radio_station then plays it by stationId.',
+      message: 'URL must use http:// or https://. This validator probes only HTTP/HTTPS. Add an mms://, rtsp:// or rtmp:// station in the Navidrome web UI instead.',
     }),
-  timeout: z.number().min(MIN_VALIDATION_TIMEOUT).max(MAX_VALIDATION_TIMEOUT).optional().default(SINGLE_VALIDATION_TIMEOUT),
+  timeout: z.number().min(MIN_VALIDATION_TIMEOUT_MS).max(MAX_VALIDATION_TIMEOUT_MS).optional().default(SINGLE_VALIDATION_TIMEOUT_MS),
   followRedirects: z.boolean().optional().default(true),
 });
 
-// Per-station name/url validation is intentionally kept in the create loop so
-// that a batch with one bad entry still processes the rest and returns per-item
-// success/failure results rather than throwing for the entire batch.
-export const CreateRadioStationArgsSchema = z.object({
-  stations: z.array(z.object({
+// Per-station name and url checks stay in the create loop, so one bad entry in a batch
+// still lets the rest process and report per-item results.
+export const CreateRadioStationSchema = z.strictObject({
+  stations: z.array(z.strictObject({
     name: z.string(),
-    streamUrl: z.string(),
-    homePageUrl: z.string().optional(),
+    streamUrl: z.string().trim(),
+    homePageUrl: z.string().trim().optional(),
   })).min(1, 'At least one station must be provided'),
   validateBeforeAdd: z.boolean().optional().default(false),
 });
 
-export const DiscoverRadioStationsArgsSchema = z.object({
+export const DiscoverRadioStationsSchema = z.object({
   query: z.string().optional(),
   tag: z.string().optional(),
   countryCode: z.string().optional(),
@@ -402,13 +394,14 @@ export const DiscoverRadioStationsArgsSchema = z.object({
   codec: z.string().optional(),
   bitrateMin: z.number().min(0).optional(),
   isHttps: z.boolean().optional(),
-  order: z.enum(['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random']).default('votes'),
-  reverse: z.boolean().optional(),
+  sort: z.enum(['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random']).default('votes'),
+  // The direction default depends on the sort field, so OrderSchema's fixed ASC default does not apply.
+  order: OrderSchema.removeDefault(),
   offset: OffsetSchema,
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT),
   hideBroken: z.boolean().default(true)
 });
 
-export const GetRadioFiltersArgsSchema = z.object({
+export const RadioFiltersSchema = z.object({
   kinds: z.array(z.enum(['tags', 'countries', 'languages', 'codecs'])).default(['tags', 'countries', 'languages', 'codecs'])
 });

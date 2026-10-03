@@ -36,7 +36,7 @@ describe('transformToSongDTO — starred state', () => {
     expect(dto.starredAt).toBe(ISO_TIMESTAMP);
   });
 
-  it('omits starredAt and marks starred=false when starred is null with leftover timestamp', () => {
+  it('marks starred=false and omits starredAt when starred is null with leftover timestamp', () => {
     const raw: RawSong = {
       id: 'song-1',
       title: 'Test',
@@ -48,7 +48,7 @@ describe('transformToSongDTO — starred state', () => {
       starredAt: ISO_TIMESTAMP,
     };
     const dto = transformToSongDTO(raw, { verbose: true });
-    expect(dto.starred).toBeUndefined();
+    expect(dto.starred).toBe(false);
     expect(dto.starredAt).toBeUndefined();
   });
 
@@ -67,7 +67,7 @@ describe('transformToSongDTO — starred state', () => {
     expect(dto.starredAt).toBeUndefined();
   });
 
-  it('omits both fields when the raw song has neither', () => {
+  it('marks starred=false and omits starredAt when the raw song has neither', () => {
     const raw: RawSong = {
       id: 'song-1',
       title: 'Test',
@@ -77,7 +77,7 @@ describe('transformToSongDTO — starred state', () => {
       albumId: 'b-1',
     };
     const dto = transformToSongDTO(raw, { verbose: true });
-    expect(dto.starred).toBeUndefined();
+    expect(dto.starred).toBe(false);
     expect(dto.starredAt).toBeUndefined();
   });
 });
@@ -141,7 +141,7 @@ describe('transformToAlbumDTO — starred state', () => {
     expect(dto.starredAt).toBe(ISO_TIMESTAMP);
   });
 
-  it('omits starredAt and starred when starred is null with leftover timestamp', () => {
+  it('marks starred=false and omits starredAt when starred is null with leftover timestamp', () => {
     const raw: RawAlbum = {
       id: 'album-1',
       name: 'Test Album',
@@ -152,11 +152,11 @@ describe('transformToAlbumDTO — starred state', () => {
       starredAt: ISO_TIMESTAMP,
     };
     const dto = transformToAlbumDTO(raw, { verbose: true });
-    expect(dto.starred).toBeUndefined();
+    expect(dto.starred).toBe(false);
     expect(dto.starredAt).toBeUndefined();
   });
 
-  it('omits both fields when neither is set', () => {
+  it('marks starred=false and omits starredAt when neither is set', () => {
     const raw: RawAlbum = {
       id: 'album-1',
       name: 'Test Album',
@@ -165,7 +165,7 @@ describe('transformToAlbumDTO — starred state', () => {
       songCount: 10,
     };
     const dto = transformToAlbumDTO(raw, { verbose: true });
-    expect(dto.starred).toBeUndefined();
+    expect(dto.starred).toBe(false);
     expect(dto.starredAt).toBeUndefined();
   });
 });
@@ -185,7 +185,7 @@ describe('transformToArtistDTO — starred state', () => {
     expect(dto.starredAt).toBe(ISO_TIMESTAMP);
   });
 
-  it('omits starredAt and starred when starred is null with leftover timestamp', () => {
+  it('marks starred=false and omits starredAt when starred is null with leftover timestamp', () => {
     const raw: RawArtist = {
       id: 'artist-1',
       name: 'Test Artist',
@@ -195,11 +195,11 @@ describe('transformToArtistDTO — starred state', () => {
       starredAt: ISO_TIMESTAMP,
     };
     const dto = transformToArtistDTO(raw, { verbose: true });
-    expect(dto.starred).toBeUndefined();
+    expect(dto.starred).toBe(false);
     expect(dto.starredAt).toBeUndefined();
   });
 
-  it('omits both fields when neither is set', () => {
+  it('marks starred=false and omits starredAt when neither is set', () => {
     const raw: RawArtist = {
       id: 'artist-1',
       name: 'Test Artist',
@@ -207,7 +207,7 @@ describe('transformToArtistDTO — starred state', () => {
       songCount: 50,
     };
     const dto = transformToArtistDTO(raw, { verbose: true });
-    expect(dto.starred).toBeUndefined();
+    expect(dto.starred).toBe(false);
     expect(dto.starredAt).toBeUndefined();
   });
 });

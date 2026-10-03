@@ -1,7 +1,8 @@
 /**
  * Covers the shared album-set path behind play_albums and play_albums_search:
  * one chunked `/song` read for many albums, input album order, and the shuffle modes.
- * The playback engine and the album search are mocked, so no mpv or Navidrome is touched.
+ * Also covers the queue metadata play_songs_search builds from its search rows.
+ * The playback engine and the searches are mocked, so no mpv or Navidrome is touched.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +10,7 @@ import { createMockClient, type MockNavidromeClient } from '../../factories/mock
 
 const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
 const searchAlbumsMock = vi.fn();
+const searchSongsMock = vi.fn();
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -20,10 +22,10 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
 
 vi.mock('../../../src/tools/search/index.js', () => ({
   searchAlbums: searchAlbumsMock,
-  searchSongs: vi.fn(),
+  searchSongs: searchSongsMock,
 }));
 
-const { playAlbums, playAlbumsSearch } = await import('../../../src/tools/playback.js');
+const { playAlbums, playAlbumsSearch, playSongsSearch } = await import('../../../src/tools/playback.js');
 
 interface SongRecord {
   id: string;
@@ -69,7 +71,6 @@ describe('album-set playback', () => {
     const result = await playAlbums(client as never, {
       albumIds: ['alpha', 'beta'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
@@ -84,7 +85,7 @@ describe('album-set playback', () => {
       .mockResolvedValueOnce({ data: albumSongs('album-0', 1), total: 1 })
       .mockResolvedValueOnce({ data: albumSongs('album-149', 1), total: 1 });
 
-    await playAlbums(client as never, { albumIds, mode: 'append', shuffle: 'none' });
+    await playAlbums(client as never, { albumIds, mode: 'append' });
 
     expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(2);
     expect(requestedAlbumIds(0)).toHaveLength(100);
@@ -97,7 +98,7 @@ describe('album-set playback', () => {
       total: 8,
     });
 
-    await playAlbums(client as never, { albumIds: ['alpha', 'beta'], mode: 'replace', shuffle: 'albums' });
+    await playAlbums(client as never, { albumIds: ['alpha', 'beta'], mode: 'replace', shuffleAlbums: true });
 
     const ids = enqueuedIds();
     const alphaFirst = ids[0]?.startsWith('alpha') === true;
@@ -107,12 +108,41 @@ describe('album-set playback', () => {
     expect(ids).toEqual(expected.map((song) => song.id));
   });
 
+  it('keeps each album contiguous when the albums and the songs are both shuffled', async () => {
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
+      data: [...albumSongs('alpha', 4), ...albumSongs('beta', 4)],
+      total: 8,
+    });
+
+    await playAlbums(client as never, {
+      albumIds: ['alpha', 'beta'],
+      mode: 'replace',
+      shuffleAlbums: true,
+      shuffleSongs: true,
+    });
+
+    const ids = enqueuedIds();
+    const firstAlbum = ids[0]?.split('-')[0];
+    const firstHalf = ids.slice(0, 4);
+    const secondHalf = ids.slice(4);
+    expect(firstHalf.every((id) => id.startsWith(`${firstAlbum}-`))).toBe(true);
+    expect(secondHalf.every((id) => !id.startsWith(`${firstAlbum}-`))).toBe(true);
+    expect([...ids].sort()).toEqual([...albumSongs('alpha', 4), ...albumSongs('beta', 4)].map((song) => song.id).sort());
+  });
+
+  it('rejects the old shuffle enum parameter', async () => {
+    await expect(
+      playAlbums(client as never, { albumIds: ['alpha'], mode: 'replace', shuffle: 'albums' }),
+    ).rejects.toThrow();
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
   it('throws when the albums hold no tracks', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
 
     await expect(
-      playAlbums(client as never, { albumIds: ['empty'], mode: 'replace', shuffle: 'none' }),
-    ).rejects.toThrow(/No tracks found across all albums/);
+      playAlbums(client as never, { albumIds: ['empty'], mode: 'replace' }),
+    ).rejects.toThrow(/No tracks found in the active libraries for these album IDs/);
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 
@@ -137,5 +167,34 @@ describe('album-set playback', () => {
       trackCount: 3,
       appliedFilters: { genre: 'Rock' },
     });
+  });
+});
+
+describe('play_songs_search', () => {
+  beforeEach(() => {
+    client = createMockClient();
+    enqueueMock.mockClear();
+    searchSongsMock.mockReset();
+  });
+
+  // Empty fields stay absent so the get_play_queue and now_playing enrichment fallbacks still fire.
+  it('omits empty search fields from the queue metadata and passes the filters and demotion through', async () => {
+    searchSongsMock.mockResolvedValueOnce({
+      songs: [{ id: 's1', title: 'T', artist: '', album: 'Al', durationFormatted: '3:05' }],
+      appliedFilters: { starred: 'true' },
+    });
+    enqueueMock.mockResolvedValueOnce({ demoted: true });
+
+    const result = await playSongsSearch(client as never, { starred: true });
+
+    expect(enqueueMock).toHaveBeenCalledWith(['s1'], 'replace', [{ songId: 's1', title: 'T', album: 'Al', duration: 185 }]);
+    expect(result).toEqual({ success: true, count: 1, appliedFilters: { starred: 'true' }, demoted: true });
+  });
+
+  it('rejects when no song matches and enqueues nothing', async () => {
+    searchSongsMock.mockResolvedValueOnce({ songs: [] });
+
+    await expect(playSongsSearch(client as never, { starred: true })).rejects.toThrow(/No songs matched/);
+    expect(enqueueMock).not.toHaveBeenCalled();
   });
 });

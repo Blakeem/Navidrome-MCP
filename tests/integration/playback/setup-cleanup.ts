@@ -2,12 +2,11 @@
 
 import { afterAll } from 'vitest';
 import { clearPlayQueue } from './helpers.js';
-import { shouldSkipLiveTests } from '../../helpers/env-detection.js';
-import { detectMpvBinary } from '../../../src/services/playback/mpv-process.js';
+import { isMpvAvailable, shouldSkipLiveTests } from '../../helpers/env-detection.js';
 import { playbackEngine } from '../../../src/services/playback/playback-engine.js';
 
 afterAll(async () => {
-  if (shouldSkipLiveTests() || detectMpvBinary() === null) {
+  if (shouldSkipLiveTests() || !isMpvAvailable()) {
     return;
   }
   try {

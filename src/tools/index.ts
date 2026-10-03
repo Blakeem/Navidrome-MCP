@@ -16,5 +16,4 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Re-export the coordinated registry system
 export { registerTools } from './handlers/registry.js';

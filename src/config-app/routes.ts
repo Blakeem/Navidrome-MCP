@@ -16,10 +16,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateMappedSettings } from '../config.js';
-import { buildFormSeed, FORM_SUGGESTIONS } from '../config/seed.js';
+import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
 import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import { getSettingsStorePath } from '../config/store-path.js';
 import { parseWebuiTheme, WEBUI_BIND_HOSTS } from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
 import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
@@ -28,11 +30,10 @@ import { logger, redact } from '../utils/logger.js';
 import { describeFetchError } from '../utils/network-safety.js';
 
 /**
- * Sentinel sent to / accepted from the browser in place of the real password,
- * so secrets never leave the process in plaintext for display. On save/test, a
- * field still equal to the sentinel means "keep the stored value."
+ * Stands in for stored secrets (Navidrome password, MCP auth token) in the browser, so they
+ * never leave the process in plaintext. A field still equal to it on save/test keeps the stored value.
  */
-const PASSWORD_SENTINEL = '********';
+const SECRET_SENTINEL = '********';
 
 /**
  * The caller (server.ts) owns the loopback guard, so these handlers assume a local peer.
@@ -65,7 +66,7 @@ export async function handleSettingsRoute(
   return false;
 }
 
-/** GET /api/settings/seed. Returns pre-fill values with the password masked. */
+/** GET /api/settings/seed. Returns pre-fill values with secrets masked. */
 function handleSeed(res: ServerResponse): void {
   try {
     writeJson(res, 200, maskSecrets(buildFormSeed()));
@@ -75,10 +76,7 @@ function handleSeed(res: ServerResponse): void {
   }
 }
 
-/** POST /api/settings. Validate + persist. The primary settings writer. The
- * player's loopback-only `/api/player/settings` also writes (the player-scoped
- * webui subset). Both use the atomic `writeSettings`, and concurrent saves are
- * last-writer-wins on the whole file, acceptable for these rare local actions. */
+// The player's /api/player/settings also writes this file. Both use atomic writeSettings, so concurrent saves are last-writer-wins on the whole file.
 async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const parsed = await parseSettingsBody(req, res);
   if (parsed === null) return;
@@ -91,29 +89,46 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
     return;
   }
 
+  const stored = readSettings();
+  let backupPath: string | null = null;
   try {
-    writeSettings(withStoredPlayerTheme(parsed));
+    backupPath = backupUnusableStore(stored);
+    writeSettings(withStoredPlayerTheme(parsed, stored));
   } catch (err) {
     logger.error('settings save failed:', err);
-    writeError(res, 500, 'Failed to write settings');
+    const reason = err instanceof Error ? err.message : String(err);
+    writeError(res, 500, `Failed to write settings to ${getSettingsStorePath()}: ${reason}`);
     return;
   }
+  const backupNotice = backupPath === null
+    ? ''
+    : `The previous settings.json could not be read, so it was kept as ${backupPath}. `;
   writeJson(res, 200, {
     ok: true,
     // Host-agnostic: this server is launched by the MCP client, the standalone
     // web player, or `navidrome-config`, and the reader doesn't know which. All
     // load settings once at startup (no hot-reload), so cover both restart paths.
     message:
-      'Settings saved. They load at startup and the server does not hot-reload, so restart ' +
+      `${backupNotice}Settings saved. They load at startup and the server does not hot-reload, so restart ` +
       "whatever you launched to apply them: your MCP client (e.g. quit and reopen Claude " +
       'Desktop, the full toolset appears after a restart) and/or the web player (re-run ' +
-      '`navidrome-web`). You can keep changing settings and saving again from this page.',
+      '`navidrome-web`). A web player port or host change needs both restarted. ' +
+      'You can keep changing settings and saving again from this page.',
   });
 }
 
+// The form never loaded a store that readSettings rejected, so overwriting it would lose every value not retyped.
+function backupUnusableStore(stored: SettingsFile | null): string | null {
+  const storePath = getSettingsStorePath();
+  if (stored !== null || !existsSync(storePath)) return null;
+  const backupPath = `${storePath}.bak`;
+  copyFileSync(storePath, backupPath);
+  return backupPath;
+}
+
 // The player's gear modal owns webui.theme and this form does not carry it, so a save keeps the stored theme.
-function withStoredPlayerTheme(settings: SettingsFile): SettingsFile {
-  const theme = parseWebuiTheme(readSettings()?.webui?.theme);
+function withStoredPlayerTheme(settings: SettingsFile, stored: SettingsFile | null): SettingsFile {
+  const theme = parseWebuiTheme(stored?.webui?.theme);
   return theme === null ? settings : { ...settings, webui: { ...settings.webui, theme } };
 }
 
@@ -126,7 +141,8 @@ function validateForm(settings: SettingsFile): ReturnType<typeof validateMappedS
       messages: [`webui.host: "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`],
     };
   }
-  return validateMappedSettings(settings);
+  // Save and Test never read the playback fields, so they skip the mpv detection shell-out.
+  return validateMappedSettings(settings, null);
 }
 
 /** POST /api/settings/test. Connect with the entered values without saving. */
@@ -152,11 +168,6 @@ async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
-/**
- * Read + schema-validate the posted settings body and un-mask the password
- * (sentinel → stored value). Writes an error response and returns `null` on
- * malformed input.
- */
 async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Promise<SettingsFile | null> {
   let body: unknown;
   try {
@@ -174,17 +185,15 @@ async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Pro
   return unmaskSecrets(result.data);
 }
 
-/** Replace stored secrets (Navidrome password, MCP auth token) with the sentinel
- * for safe display. */
 function maskSecrets(settings: SettingsFile): SettingsFile {
   let masked = settings;
   const password = settings.navidrome?.password;
   if (password !== undefined && password !== '') {
-    masked = { ...masked, navidrome: { ...masked.navidrome, password: PASSWORD_SENTINEL } };
+    masked = { ...masked, navidrome: { ...masked.navidrome, password: SECRET_SENTINEL } };
   }
   const authToken = settings.transport?.authToken;
   if (authToken !== undefined && authToken !== null && authToken !== '') {
-    masked = { ...masked, transport: { ...masked.transport, authToken: PASSWORD_SENTINEL } };
+    masked = { ...masked, transport: { ...masked.transport, authToken: SECRET_SENTINEL } };
   }
   return masked;
 }
@@ -197,11 +206,11 @@ function unmaskSecrets(settings: SettingsFile): SettingsFile {
   let result = settings;
   let seed: SettingsFile | undefined;
   const seeded = (): SettingsFile => (seed ??= buildFormSeed());
-  if (result.navidrome?.password === PASSWORD_SENTINEL) {
+  if (result.navidrome?.password === SECRET_SENTINEL) {
     const stored = seeded().navidrome?.password ?? '';
     result = { ...result, navidrome: { ...result.navidrome, password: stored } };
   }
-  if (result.transport?.authToken === PASSWORD_SENTINEL) {
+  if (result.transport?.authToken === SECRET_SENTINEL) {
     const stored = seeded().transport?.authToken ?? null;
     result = { ...result, transport: { ...result.transport, authToken: stored } };
   }

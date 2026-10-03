@@ -9,6 +9,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../../../src/config.js';
+import { makeTestConfig } from '../../helpers/test-config.js';
 
 // Station validation now flows through network-safety's safeFetch (a peer-IP
 // gated dispatcher). Route it to whatever global.fetch mock each test installs
@@ -28,15 +29,14 @@ vi.mock('../../../src/utils/network-safety.js', async (importOriginal) => {
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
+    ...makeTestConfig(),
     navidromeUrl: 'http://mock:4533',
     navidromeUsername: 'u',
     navidromePassword: 'p',
     debug: false,
-    cacheTtl: 300,
     tokenExpiry: 86400,
     features: { lastfm: false, radioBrowser: true, lyrics: false, playback: false },
     lastFmApiKey: undefined,
-    radioBrowserBase: 'https://de1.api.radio-browser.info',
     // Setting the override pins the resolver and avoids real DNS lookups
     // (the SRV-resolution path is exercised separately in
     // radio-browser-resolver.test.ts with a mocked dns module).
@@ -136,27 +136,52 @@ describe('discoverRadioStations', () => {
     ['name', 'false'],
     ['votes', 'true'],
     ['clickcount', 'true'],
-  ])('defaults reverse for order=%s to %s', async (order, expectedReverse) => {
+  ])('maps sort=%s with no order to reverse=%s', async (sort, expectedReverse) => {
     const fetchMock = makeFetch(200, []);
     global.fetch = fetchMock;
 
     const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
-    await discoverRadioStations(makeConfig(), { order });
+    await discoverRadioStations(makeConfig(), { sort });
 
     const url = new URL(firstFetchUrl(fetchMock));
+    expect(url.searchParams.get('order')).toBe(sort);
     expect(url.searchParams.get('reverse')).toBe(expectedReverse);
     expect(url.searchParams.get('offset')).toBe('0');
   });
 
-  it('keeps an explicit reverse for order=name', async () => {
+  it.each([
+    ['name', 'DESC', 'true'],
+    ['votes', 'ASC', 'false'],
+  ])('keeps an explicit order for sort=%s (order=%s maps to reverse=%s)', async (sort, order, expectedReverse) => {
     const fetchMock = makeFetch(200, []);
     global.fetch = fetchMock;
 
     const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
-    await discoverRadioStations(makeConfig(), { order: 'name', reverse: true });
+    await discoverRadioStations(makeConfig(), { sort, order });
 
     const url = new URL(firstFetchUrl(fetchMock));
-    expect(url.searchParams.get('reverse')).toBe('true');
+    expect(url.searchParams.get('order')).toBe(sort);
+    expect(url.searchParams.get('reverse')).toBe(expectedReverse);
+  });
+
+  it('lowercases tag and language and sends is_https only for true', async () => {
+    const fetchMock = makeFetch(200, []);
+    global.fetch = fetchMock;
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    await discoverRadioStations(makeConfig(), { tag: 'Jazz', language: 'Spanish', isHttps: false });
+
+    const url = new URL(firstFetchUrl(fetchMock));
+    expect(url.searchParams.get('tag')).toBe('jazz');
+    expect(url.searchParams.get('language')).toBe('spanish');
+    expect(url.searchParams.has('is_https')).toBe(false);
+  });
+
+  it('rejects a sort field passed as order', async () => {
+    global.fetch = makeFetch(200, []);
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    await expect(discoverRadioStations(makeConfig(), { order: 'name' })).rejects.toThrow();
   });
 
   it('rejects a non-integer limit inside the discover_radio_stations error envelope', async () => {
@@ -484,8 +509,8 @@ describe('getStationByUuid', () => {
 describe('clickStation', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
-    const { resetRadioBrowserRateLimit } = await import('../../../src/utils/radio-browser-rate-limit.js');
-    resetRadioBrowserRateLimit();
+    const { resetRadioBrowserRateLimitForTests } = await import('../../../src/utils/radio-browser-rate-limit.js');
+    resetRadioBrowserRateLimitForTests();
   });
 
   it('returns success:true and streamUrl on success', async () => {
@@ -542,8 +567,21 @@ describe('clickStation', () => {
     // Only one outbound HTTP call — second was served from the dedup set.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(first.success).toBe(true);
-    expect(second.success).toBe(false);
-    expect(second.message).toMatch(/already clicked/i);
+    expect(second.success).toBe(true);
+    expect(second.streamUrl).toBe('http://stream.test/audio');
+    expect(second.message).toMatch(/already registered/i);
+  });
+
+  it('returns the first click\'s stream URL on a deduped second click', async () => {
+    global.fetch = makeFetch(200, { ok: true, message: 'Click registered', url: 'http://stream.test/first' });
+
+    const { clickStation } = await import('../../../src/tools/radio-discovery.js');
+
+    const first = await clickStation(makeConfig(), { stationUuid: 'uuid-replay' });
+    const second = await clickStation(makeConfig(), { stationUuid: 'uuid-replay' });
+
+    expect(first.streamUrl).toBe('http://stream.test/first');
+    expect(second.streamUrl).toBe('http://stream.test/first');
   });
 
   it('does NOT mark as deduped when Radio Browser responded ok:false', async () => {
@@ -572,8 +610,8 @@ describe('clickStation', () => {
 describe('voteStation', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
-    const { resetRadioBrowserRateLimit } = await import('../../../src/utils/radio-browser-rate-limit.js');
-    resetRadioBrowserRateLimit();
+    const { resetRadioBrowserRateLimitForTests } = await import('../../../src/utils/radio-browser-rate-limit.js');
+    resetRadioBrowserRateLimitForTests();
   });
 
   it('returns success:true and message on success', async () => {
@@ -721,6 +759,30 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
     expect(result.stations.every(s => s.name !== '')).toBe(true);
   });
 
+  it('trims station names and drops a whitespace-only name', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([
+          makeStation({ stationuuid: 'uuid-blank', name: ' \t ', url: 'http://blank.test/stream', url_resolved: 'http://blank.test/stream' }),
+          makeStation({ stationuuid: 'uuid-tab', name: '\t\tArrow Classic Rock ', url: 'http://arrow.test/stream', url_resolved: 'http://arrow.test/stream' }),
+        ]),
+        headers: new Headers(),
+      } as unknown as Response)
+      .mockResolvedValue({
+        ok: true, status: 200,
+        headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
+        body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: true, value: undefined }), cancel: vi.fn() }) },
+        text: () => Promise.resolve(''),
+      } as unknown as Response);
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    const result = await discoverRadioStations(makeConfig(), { limit: 5 });
+
+    expect(result.stations.map(s => s.name)).toEqual(['Arrow Classic Rock']);
+  });
+
   it('dedupes stations with the same streamUrl before validation (case/spelling-tolerant)', async () => {
     // Three rows from Radio Browser. mapStationToDTO prefers url_resolved
     // when set, so we override BOTH url and url_resolved to make the test
@@ -753,6 +815,34 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
     const names = result.stations.map(s => s.name);
     expect(names).toContain('Jazz FM');
     expect(names).toContain('Rock FM');
+    expect(result.hasMore).toBe(false);
+  });
+
+  it('reports hasMore and nextOffset from the raw page size, so a page shortened by dedupe still signals more', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([
+          makeStation({ stationuuid: 'uuid-a', name: 'Jazz FM', url: 'http://jazz.test/stream', url_resolved: 'http://jazz.test/stream' }),
+          makeStation({ stationuuid: 'uuid-b', name: 'jazz fm', url: 'http://jazz.test/stream', url_resolved: 'http://jazz.test/stream' }),
+          makeStation({ stationuuid: 'uuid-c', name: 'Rock FM', url: 'http://rock.test/stream', url_resolved: 'http://rock.test/stream' }),
+        ]),
+        headers: new Headers(),
+      } as unknown as Response)
+      .mockResolvedValue({
+        ok: true, status: 200,
+        headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
+        body: { getReader: () => ({ read: vi.fn().mockResolvedValue({ done: true, value: undefined }), cancel: vi.fn() }) },
+        text: () => Promise.resolve(''),
+      } as unknown as Response);
+
+    const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
+    const result = await discoverRadioStations(makeConfig(), { limit: 3, offset: 6 });
+
+    expect(result.stations.length).toBe(2);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextOffset).toBe(9);
   });
 
   it('validates stations in parallel (Promise.all) — all complete in roughly one timeout window', async () => {

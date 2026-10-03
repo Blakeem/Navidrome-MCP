@@ -31,13 +31,15 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import { nowPlaying, resetNowPlayingCache } from '../../../src/tools/playback.js';
 
-const ensureAttachedMock = vi.fn().mockResolvedValue(undefined);
-const getStatusMock = vi.fn();
-const getCachedPropertyMock = vi.fn();
-const getQueueGenerationMock = vi.fn();
-const getQueueMock = vi.fn();
-const ingestQueueMetadataMock = vi.fn();
+const ensureAttachedMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const getStatusMock = vi.hoisted(() => vi.fn());
+const getCachedPropertyMock = vi.hoisted(() => vi.fn());
+const getQueueGenerationMock = vi.hoisted(() => vi.fn());
+const getQueueMock = vi.hoisted(() => vi.fn());
+const ingestQueueMetadataMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -50,8 +52,6 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   },
 }));
 
-const { nowPlaying } = await import('../../../src/tools/playback.js');
-
 /** Cached-property map for a clean, non-radio track under VBR duration report. */
 function cachedProps(props: Record<string, unknown>): (name: string) => unknown {
   return (name: string) => props[name];
@@ -60,6 +60,7 @@ function cachedProps(props: Record<string, unknown>): (name: string) => unknown 
 describe('now_playing per-position cache keying', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetNowPlayingCache();
     getStatusMock.mockReturnValue({ engineRunning: true });
   });
 
@@ -175,5 +176,55 @@ describe('now_playing per-position cache keying', () => {
     expect(poll3.duration).toBeUndefined();
     expect(poll3.isRadio).toBe(true);
     expect(getQueueMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('merges and caches nothing when mpv already moved to another entry before the queue read', async () => {
+    getQueueGenerationMock.mockReturnValue(30);
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 4,
+        'playlist-count': 8,
+        duration: 100,
+        'media-title': 'Track Four',
+        path: 'http://nd.local/rest/stream?id=4',
+      }),
+    );
+    getQueueMock.mockResolvedValue([
+      { index: 4, songId: '4', isCurrent: false, isPlaying: false },
+      { index: 5, songId: '5', isCurrent: true, isPlaying: true, title: 'Track Five', artist: 'Artist Five', duration: 400 },
+    ]);
+
+    const poll1 = await nowPlaying({});
+    expect(poll1.title).toBe('Track Four');
+    expect(poll1.artist).toBeUndefined();
+    expect(poll1.duration).toBe(100);
+
+    await nowPlaying({});
+    expect(getQueueMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies the Navidrome duration on a cold engine cache when mpv supplies title and artist', async () => {
+    getQueueGenerationMock.mockReturnValue(40);
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 0,
+        'playlist-count': 1,
+        duration: 200,
+        'media-title': 'Track E',
+        metadata: { artist: 'Artist E' },
+        path: 'http://nd.local/rest/stream?id=E',
+      }),
+    );
+    getQueueMock.mockResolvedValue([{ index: 0, songId: 'E', isCurrent: true, isPlaying: true, title: 'Track E' }]);
+    const client = {
+      request: vi.fn().mockResolvedValue([{ id: 'E', title: 'Track E', artist: 'Artist E', duration: 230 }]),
+    } as unknown as NavidromeClient;
+
+    const poll1 = await nowPlaying({}, client);
+    const poll2 = await nowPlaying({}, client);
+
+    expect(poll1.duration).toBe(230);
+    expect(poll2.duration).toBe(230);
+    expect(getQueueMock).toHaveBeenCalledTimes(1);
   });
 });

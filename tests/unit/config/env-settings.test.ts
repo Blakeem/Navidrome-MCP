@@ -7,11 +7,12 @@
  * a project .env is present).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildFormSeed } from '../../../src/config/seed.js';
+import { buildFormSeed } from '../../../src/config/env-settings.js';
+import { logger } from '../../../src/utils/logger.js';
 
 const ENV_KEYS = [
   'NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD',
@@ -19,7 +20,7 @@ const ENV_KEYS = [
   'RADIO_BROWSER_USER_AGENT', 'RADIO_BROWSER_BASE',
   'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE',
   'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT', 'MCP_HTTP_EXPOSE',
-  'MCP_HTTP_AUTH_TOKEN',
+  'MCP_HTTP_AUTH_TOKEN', 'WEBUI_ENABLED', 'NAVIDROME_DEFAULT_LIBRARIES',
 ];
 
 describe('buildFormSeed', () => {
@@ -107,10 +108,56 @@ describe('buildFormSeed', () => {
     expect(seed.transport?.authToken).toBe('tok-123');
   });
 
-  it('ignores an unrecognized MCP_TRANSPORT value (falls back to stdio)', () => {
+  it('ignores an unrecognized MCP_TRANSPORT value (falls back to stdio) and warns', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     process.env['NAVIDROME_URL'] = 'http://env:4533';
-    process.env['MCP_TRANSPORT'] = 'bogus';
-    expect(buildFormSeed().transport?.type).toBe('stdio');
+    process.env['MCP_TRANSPORT'] = 'HTTP';
+    try {
+      expect(buildFormSeed().transport?.type).toBe('stdio');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('MCP_TRANSPORT="HTTP" is not supported'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('warns and keeps the default for a non-numeric integer env var', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    process.env['WEBUI_PORT'] = 'eighty';
+    try {
+      expect(buildFormSeed().webui?.port).toBe(8808);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('WEBUI_PORT="eighty" is not an integer'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('warns and keeps the default for a boolean env var that is not true or false', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    process.env['WEBUI_ENABLED'] = 'FALSE';
+    process.env['MCP_HTTP_EXPOSE'] = '1';
+    try {
+      const seed = buildFormSeed();
+      expect(seed.webui?.enabled).toBe(true);
+      expect(seed.transport?.expose).toBe(false);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('WEBUI_ENABLED="FALSE" is not true or false'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('MCP_HTTP_EXPOSE="1" is not true or false'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('keeps numeric library IDs and warns naming each rejected token', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    process.env['NAVIDROME_DEFAULT_LIBRARIES'] = '1, Music,2 3,';
+    try {
+      expect(buildFormSeed().library?.defaultLibraryIds).toEqual([1]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('NAVIDROME_DEFAULT_LIBRARIES ignores "Music", "2 3"'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('coerces typed env vars (port int, expose/debug bool)', () => {

@@ -72,7 +72,7 @@ export async function callLastFmApi(method: string, params: Record<string, strin
 
   if (!response.ok) {
     const errorMessage = parseLastFmErrorMessage(await response.text().catch(() => ''));
-    throw new Error(errorMessage !== null ? ErrorFormatter.lastfmResponse(errorMessage) : ErrorFormatter.lastfmApi(response));
+    throw new Error(errorMessage !== null ? ErrorFormatter.lastfmResponse(errorMessage) : ErrorFormatter.httpRequest(`Last.fm ${method}`, response));
   }
 
   const data = await response.json() as Record<string, unknown>;

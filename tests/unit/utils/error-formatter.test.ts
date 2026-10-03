@@ -110,16 +110,6 @@ describe('ErrorFormatter.subsonicResponse', () => {
   });
 });
 
-// ---- lastfmApi --------------------------------------------------------------
-
-describe('ErrorFormatter.lastfmApi', () => {
-  it('includes Last.fm and status info', () => {
-    const msg = ErrorFormatter.lastfmApi(makeResponse(429, 'Too Many Requests'));
-    expect(msg).toContain('Last.fm');
-    expect(msg).toContain('429');
-  });
-});
-
 // ---- lastfmResponse ---------------------------------------------------------
 
 describe('ErrorFormatter.lastfmResponse', () => {
@@ -132,16 +122,6 @@ describe('ErrorFormatter.lastfmResponse', () => {
     const msg = ErrorFormatter.lastfmResponse(undefined);
     expect(msg).toContain('Unknown error');
     expect(msg).not.toContain('undefined');
-  });
-});
-
-// ---- radioBrowserApi --------------------------------------------------------
-
-describe('ErrorFormatter.radioBrowserApi', () => {
-  it('includes Radio Browser and status info', () => {
-    const msg = ErrorFormatter.radioBrowserApi(makeResponse(503, 'Service Unavailable'));
-    expect(msg).toContain('Radio Browser');
-    expect(msg).toContain('503');
   });
 });
 

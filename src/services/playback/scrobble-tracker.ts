@@ -110,6 +110,8 @@ export class ScrobbleTracker {
   // at the new index is the same play. A queue edit can shift the playing entry's
   // index, so submissions wait rather than count that play twice.
   private transitionPending = false;
+  // The file playing at attach, while the play adopted for it lasts.
+  private inheritedPath: string | null = null;
 
   // Sentinel 'unknown' until the first playlist-pos event after attach.
   // That first event is mpv's observe-emitted snapshot of current state —
@@ -117,11 +119,13 @@ export class ScrobbleTracker {
   // attached to an mpv already mid-track from a previous MCP session.
   // Subsequent events that change this value are real transitions.
   private lastPlaylistPos: number | null | 'unknown' = 'unknown';
+  // Undefined until the first path event after attach, which is mpv's observe snapshot.
+  private lastPath: string | null | undefined = undefined;
+  // Bumped per attach and detach, so an in-flight adoption never lands on a later instance.
+  private attachEpoch = 0;
 
-  // Bumped on every real transition (onPlaylistPos / onQueueMutation).
-  // hydrateAndStart captures gen at call time and bails after each await
-  // if it has advanced — guards against out-of-order playlist reads
-  // under fast skips. Persists across reset() (attach-lifetime state).
+  // Bumped on every real transition, so a playlist read that resolves after a newer one is dropped.
+  // Persists across reset(), since it is attach-lifetime state.
   private generation = 0;
 
   /**
@@ -164,6 +168,8 @@ export class ScrobbleTracker {
     this.reset();
     // Reset attach-lifetime state too so detach-then-reattach starts clean.
     this.lastPlaylistPos = 'unknown';
+    this.lastPath = undefined;
+    this.attachEpoch++;
     this.generation = 0;
   }
 
@@ -179,6 +185,9 @@ export class ScrobbleTracker {
     switch (event.name) {
       case 'playlist-pos':
         this.onPlaylistPos(event.data);
+        return;
+      case 'path':
+        this.onPath(event.data);
         return;
       case 'duration':
         this.onDuration(event.data);
@@ -198,6 +207,8 @@ export class ScrobbleTracker {
   private onEngineAttach(): void {
     this.reset();
     this.lastPlaylistPos = 'unknown';
+    this.lastPath = undefined;
+    this.attachEpoch++;
     // Orphans playlist reads and ownership checks begun against the previous instance.
     this.generation++;
   }
@@ -206,9 +217,14 @@ export class ScrobbleTracker {
     const next = typeof data === 'number' ? data : null;
     const prev = this.lastPlaylistPos;
     this.lastPlaylistPos = next;
-    // First event since attach is mpv's observe-emitted current state —
-    // hydrate the sentinel but do nothing else.
-    if (prev === 'unknown') return;
+    // The first event since attach is mpv's observe snapshot. The play it names
+    // may already be scrobbled by the previous owner, so it is adopted, not started.
+    if (prev === 'unknown') {
+      // The engine primes path before this snapshot, so the cache names the file playing at attach.
+      const snapshotPath = this.engine.getCachedProperty('path');
+      if (next !== null && next >= 0 && typeof snapshotPath === 'string') void this.adoptInFlightPlay(snapshotPath);
+      return;
+    }
     // mpv re-emit at the same value (or jumpToQueueEntry to current
     // index): not a real track change. Last.fm wouldn't accept a
     // re-scrobble within minutes anyway, so silently ignore.
@@ -219,6 +235,48 @@ export class ScrobbleTracker {
     }
     this.transitionPending = true;
     void this.hydrateAndStart(next, ++this.generation);
+  }
+
+  /**
+   * Records the in-flight play as already submitted, so a later queue edit or index shift confirms
+   * it instead of counting it again. The attach-time file is its identity, since this read can land
+   * after the command that triggered the attach moved the entry or replaced the file.
+   */
+  private async adoptInFlightPlay(snapshotPath: string): Promise<void> {
+    const epoch = this.attachEpoch;
+    let playlist: ScrobbleQueueEntry[];
+    try {
+      playlist = await this.engine.getQueue();
+    } catch (err) {
+      logger.warn(`scrobble: failed to read playlist to adopt the in-flight play: ${String(err)}`);
+      return;
+    }
+    if (epoch !== this.attachEpoch || this.currentSongId !== null) return;
+    // A replaced file makes the current entry a new play, which the transition path starts.
+    if (this.engine.getCachedProperty('path') !== snapshotPath) return;
+    const entry = playlist.find((e) => e.isCurrent === true);
+    if (typeof entry?.songId !== 'string') return; // nothing current, or radio
+    this.currentSongId = entry.songId;
+    this.currentEntryId = entry.entryId ?? null;
+    this.inheritedPath = snapshotPath;
+    this.submitted = true;
+    this.submitVerdict = 'notMine';
+  }
+
+  /**
+   * A path change is the one signal for a file change that keeps the index or comes from another
+   * process. mpv reports path before duration, so the pending flag keeps the new file's events off the displaced play.
+   */
+  private onPath(data: unknown): void {
+    const next = typeof data === 'string' ? data : null;
+    const prev = this.lastPath;
+    this.lastPath = next;
+    const leftInheritedFile = this.inheritedPath !== null && next !== this.inheritedPath;
+    if (!leftInheritedFile && (prev === undefined || prev === next)) return;
+    // The adoption read can show the entry that replaced the inherited file, so that play ends here.
+    if (leftInheritedFile) this.reset();
+    this.transitionPending = true;
+    void this.maybeRehydrateAfterQueue();
   }
 
   private onQueueMutation(): void {
@@ -251,9 +309,14 @@ export class ScrobbleTracker {
       entry = playlist.find((e) => e.isCurrent === true) ?? playlist.find((e) => e.index === cachedPos);
     } catch (err) {
       logger.warn(`scrobble: failed to read playlist after queue mutation: ${String(err)}`);
+      // A pending file change leaves the playing file unknown, so the play ends. A plain queue edit keeps it.
+      if (gen === this.generation && this.transitionPending) this.reset();
       return;
     }
-    if (entry === undefined) return;
+    if (entry === undefined) {
+      this.reset();
+      return;
+    }
     // The same entry means the current play was not displaced, so tracking continues.
     // Without an mpv entry id, a back-to-back replay of the same song is not counted again.
     if (this.isSamePlay(entry)) {
@@ -408,6 +471,7 @@ export class ScrobbleTracker {
     this.currentSongId = null;
     this.currentEntryId = null;
     this.transitionPending = false;
+    this.inheritedPath = null;
     this.currentDuration = null;
     this.startedAtMs = null;
     this.submitted = false;

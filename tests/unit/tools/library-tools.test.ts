@@ -19,6 +19,7 @@ import { filterCacheManager } from '../../../src/services/filter-cache-manager.j
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
+import type { UserDetailsDTO } from '../../../src/types/index.js';
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -67,11 +68,9 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     navidromeUsername: 'tester',
     navidromePassword: 'pw',
     debug: false,
-    cacheTtl: 300,
     tokenExpiry: 86400,
     features: { lastfm: false, radioBrowser: false, lyrics: false, playback: false },
     lastFmApiKey: undefined,
-    radioBrowserBase: 'https://de1.api.radio-browser.info',
     lyricsProvider: undefined,
     lrclibUserAgent: undefined,
     lrclibBase: 'https://lrclib.net',
@@ -83,10 +82,44 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   } as Config;
 }
 
+type LibraryRow = Record<string, unknown>;
+
+function userLibraries(): LibraryRow[] {
+  return makeUserInfo()['libraries'] as LibraryRow[];
+}
+
+/** Routes /user/{uid} and /library the way Navidrome answers them. */
+function routeLibraryEndpoints(
+  client: MockNavidromeClient,
+  options: { libraries?: LibraryRow[]; libraryStats?: () => Promise<unknown>; user?: () => Promise<unknown> } = {},
+): void {
+  const libraries = options.libraries ?? userLibraries();
+  client.request.mockImplementation(async (endpoint: string) => {
+    if (endpoint === '/library') {
+      return options.libraryStats !== undefined ? options.libraryStats() : libraries;
+    }
+    if (endpoint.startsWith('/user/')) {
+      return options.user !== undefined ? options.user() : makeUserInfo({ libraries });
+    }
+    throw new Error(`unexpected endpoint ${endpoint}`);
+  });
+}
+
+/** Answers the summary count reads with X-Total-Count values. */
+function routeSummaryTotals(
+  client: MockNavidromeClient,
+  totals: { song: number | null; album: number | null; artist: number | null },
+): void {
+  client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
+    const resource = endpoint.slice(1, endpoint.indexOf('?')) as keyof typeof totals;
+    return Promise.resolve({ data: [], total: totals[resource] });
+  });
+}
+
 async function seedLibraryManager(mockClient: MockNavidromeClient): Promise<void> {
   const token = makeJwt({ uid: 'user-uuid-1', sub: 'tester' });
   mockClient.getCurrentToken.mockResolvedValue(token);
-  mockClient.request.mockResolvedValue(makeUserInfo());
+  routeLibraryEndpoints(mockClient);
 
   await libraryManager.initialize(
     mockClient as unknown as NavidromeClient,
@@ -105,8 +138,9 @@ beforeEach(async () => {
   await seedLibraryManager(mockClient);
   mockClient.requestWithLibraryFilter.mockResolvedValue([]);
   await filterCacheManager.initialize(mockClient as unknown as NavidromeClient, makeConfig());
-  // Reset the mocks after seeding so subsequent assertions are fresh
-  mockClient.request.mockReset();
+  routeSummaryTotals(mockClient, { song: 350, album: 35, artist: 22 });
+  // Clear the call history after seeding so subsequent assertions are fresh
+  mockClient.request.mockClear();
   mockClient.requestWithLibraryFilter.mockClear();
 });
 
@@ -160,11 +194,90 @@ describe('getUserDetails', () => {
     expect(podcasts?.scanInfo.lastScanAt).toBeNull();
   });
 
-  it('throws when libraryManager is not initialized', async () => {
+  it('throws a cause-and-effect message when libraryManager is not initialized', async () => {
     libraryManager.reset();
     const freshClient = createMockClient();
     const category = createLibraryToolCategory(freshClient as unknown as NavidromeClient, makeConfig());
-    await expect(category.handleToolCall('get_user_details', {})).rejects.toThrow();
+    await expect(category.handleToolCall('get_user_details', {}))
+      .rejects.toThrow(/get_user_details.*Library selection is unavailable for this server run.*every library the account can access/);
+  });
+
+  it('reads the summary totals from X-Total-Count, so a shared artist counts once', async () => {
+    routeSummaryTotals(mockClient, { song: 340, album: 33, artist: 21 });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('get_user_details', {}) as UserDetailsDTO;
+
+    expect(result.summary).toMatchObject({ totalSongs: 340, totalAlbums: 33, totalArtists: 21 });
+    expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledWith('/artist?_start=0&_end=1');
+  });
+
+  it('falls back to the per-library sum for a total that has no X-Total-Count', async () => {
+    routeSummaryTotals(mockClient, { song: 340, album: null, artist: 21 });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('get_user_details', {}) as UserDetailsDTO;
+
+    expect(result.summary.totalAlbums).toBe(35);
+  });
+
+  it('sums the fallback totals over the active libraries only', async () => {
+    routeSummaryTotals(mockClient, { song: null, album: null, artist: null });
+    libraryManager.setActiveLibraries([1]);
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('get_user_details', {}) as UserDetailsDTO;
+
+    expect(result.summary).toEqual({
+      totalSongs: 300, totalAlbums: 30, totalArtists: 20, activeLibraryNames: ['Music'],
+    });
+    expect(result.libraries.activeCount).toBe(1);
+    expect(result.libraries.totalCount).toBe(2);
+  });
+
+  it('names the per-library counts with the total prefix the summary uses', async () => {
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('get_user_details', {}) as UserDetailsDTO;
+
+    expect(result.libraries.available.find(lib => lib.id === 1)?.stats).toEqual({
+      totalSongs: 300, totalAlbums: 30, totalArtists: 20, totalSize: 1024, totalDuration: 7200,
+    });
+  });
+
+  it('reports stats and scanInfo as null when the /library stats read fails', async () => {
+    routeLibraryEndpoints(mockClient, { libraryStats: () => Promise.reject(new Error('HTTP 403 Forbidden')) });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('get_user_details', {}) as UserDetailsDTO;
+
+    for (const library of result.libraries.available) {
+      expect(library.stats).toBeNull();
+      expect(library.scanInfo).toBeNull();
+    }
+  });
+
+  it('reloads the library list, so a library added after startup is listed and inactive', async () => {
+    const added = { ...userLibraries()[0], id: 3, name: 'Audiobooks', path: '/audiobooks' };
+    routeLibraryEndpoints(mockClient, { libraries: [...userLibraries(), added] });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('get_user_details', {}) as UserDetailsDTO;
+
+    expect(result.libraries.totalCount).toBe(3);
+    expect(result.libraries.available.find(lib => lib.id === 3)?.isActive).toBe(false);
+    expect(libraryManager.getActiveLibraryIds()).toEqual([1, 2]);
+  });
+
+  it('keeps the previous snapshot when the reload fails', async () => {
+    routeLibraryEndpoints(mockClient, { user: () => Promise.reject(new Error('HTTP 503')) });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('get_user_details', {}) as UserDetailsDTO;
+
+    expect(result.libraries.available.map(lib => lib.id)).toEqual([1, 2]);
+    expect(result.libraries.available[0]?.stats).not.toBeNull();
+  });
+
+  it('drops an active library that the reload no longer lists', async () => {
+    routeLibraryEndpoints(mockClient, { libraries: [userLibraries()[0] as LibraryRow] });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    await category.handleToolCall('get_user_details', {});
+
+    expect(libraryManager.getActiveLibraryIds()).toEqual([1]);
   });
 });
 
@@ -196,7 +309,7 @@ describe('setActiveLibraries', () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
     await category.handleToolCall('set_active_libraries', { libraryIds: [2] });
 
-    expect(mockClient.requestWithLibraryFilter).toHaveBeenCalledWith('/genre');
+    expect(mockClient.requestWithLibraryFilter).toHaveBeenCalledWith(expect.stringContaining('/tag?tag_name=genre'));
     expect(mockClient.requestWithLibraryFilter).toHaveBeenCalledWith(expect.stringContaining('/tag?tag_name=mood'));
   });
 
@@ -210,10 +323,37 @@ describe('setActiveLibraries', () => {
 
   it('throws (not a {success:false} envelope) for an invalid library ID', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
-    // ID 999 doesn't exist — setActiveLibraries now re-throws so the failure
-    // surfaces as a real protocol error instead of a misleading HTTP-200 body.
+    // A thrown failure surfaces as a protocol error instead of a misleading HTTP-200 body.
     await expect(category.handleToolCall('set_active_libraries', { libraryIds: [999] }))
-      .rejects.toThrow(/set_active_libraries/);
+      .rejects.toThrow(/set_active_libraries.*Library IDs not available to this user: 999\. Available: 1, 2\. Call get_user_details/);
+  });
+
+  it('rejects mixed valid and unknown IDs and leaves the selection unchanged', async () => {
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    await category.handleToolCall('set_active_libraries', { libraryIds: [2] });
+
+    await expect(category.handleToolCall('set_active_libraries', { libraryIds: [1, 99] }))
+      .rejects.toThrow(/Library IDs not available to this user: 99\./);
+    expect(libraryManager.getActiveLibraryIds()).toEqual([2]);
+  });
+
+  it('reloads the library list once before rejecting an unknown ID', async () => {
+    const added = { ...userLibraries()[0], id: 3, name: 'Audiobooks', path: '/audiobooks' };
+    routeLibraryEndpoints(mockClient, { libraries: [...userLibraries(), added] });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    const result = await category.handleToolCall('set_active_libraries', { libraryIds: [3] }) as {
+      activeLibraries: Array<{ id: number; name: string }>;
+    };
+
+    expect(result.activeLibraries).toEqual([{ id: 3, name: 'Audiobooks' }]);
+    expect(libraryManager.getActiveLibraryIds()).toEqual([3]);
+  });
+
+  it('throws a cause-and-effect message when libraryManager is not initialized', async () => {
+    libraryManager.reset();
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    await expect(category.handleToolCall('set_active_libraries', { libraryIds: [1] }))
+      .rejects.toThrow(/set_active_libraries.*Library selection is unavailable for this server run/);
   });
 
   it('throws when non-integer library IDs fail Zod validation', async () => {
@@ -228,5 +368,23 @@ describe('setActiveLibraries', () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
     await expect(category.handleToolCall('set_active_libraries', { libraryIds: [] }))
       .rejects.toThrow(/set_active_libraries/);
+  });
+});
+
+// ---- get_artist description -------------------------------------------------
+
+describe('get_artist description', () => {
+  function getArtistDescription(lastfm: boolean): string {
+    const config = makeConfig({ features: { lastfm, radioBrowser: false, lyrics: false, playback: false } });
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, config);
+    return category.tools.find(tool => tool.name === 'get_artist')?.description ?? '';
+  }
+
+  it('names no Last.fm tool when Last.fm is not configured', () => {
+    expect(getArtistDescription(false)).not.toMatch(/get_artist_info/);
+  });
+
+  it('points to the Last.fm tools when Last.fm is configured', () => {
+    expect(getArtistDescription(true)).toMatch(/get_artist_info, get_similar_artists, get_top_tracks_by_artist/);
   });
 });

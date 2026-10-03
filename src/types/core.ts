@@ -46,8 +46,7 @@ export interface SongDTO {
   durationFormatted: string;
   /** Duration in seconds. Verbose or `keep` only, since `durationFormatted` carries the same information. */
   duration?: number;
-  /** ISO 8601 timestamp when added to library. Omitted when the source row
-   *  lacks `createdAt` (rather than fabricated as "now"). Treat absent as unknown. */
+  /** ISO 8601 time the song was added to the library. Absent means unknown. */
   addedDate?: string;
   /** Full file path relative to library root */
   path?: string;
@@ -63,9 +62,9 @@ export interface SongDTO {
   starredAt?: string;
   /** ISO 8601 timestamp when the user last played this song, if any */
   playDate?: string;
-  /** Lyrics carried by the audio file's own tag, timed or plain. Omitted when
+  /** Lyrics carried by the audio file's own tag, synced (timed) or unsynced. Omitted when
    *  the file has none. Says nothing about LRCLIB availability. */
-  lyrics?: 'synced' | 'plain';
+  lyrics?: 'synced' | 'unsynced';
 }
 
 

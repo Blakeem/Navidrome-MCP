@@ -29,7 +29,6 @@ const HOST = '127.0.0.1';
 
 const PUBLIC_DIR: string = resolve(dirname(fileURLToPath(import.meta.url)), 'public');
 
-/** A running settings server: where to point a browser, and how to stop it. */
 interface ConfigServer {
   url: string;
   close: () => Promise<void>;
@@ -68,7 +67,6 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
       server.close(() => resolvePromise());
     });
 
-  // Arm (or reset) the inactivity reaper. No-op for hosts that didn't opt in.
   // Unref'd so the timer never keeps the process alive on its own. The listening
   // server does that, and this only bounds how long an abandoned setup page lingers.
   const bumpIdle = (): void => {
@@ -81,8 +79,6 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
     idleTimer.unref();
   };
 
-  // A dedicated 'request' listener resets the clock on every request, alongside
-  // (not entangled with) the main handler above.
   server.on('request', bumpIdle);
 
   await new Promise<void>((resolvePromise, reject) => {
@@ -93,7 +89,7 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
     });
   });
 
-  bumpIdle(); // start the inactivity clock now that we're listening
+  bumpIdle();
 
   const address = server.address();
   const port = address !== null && typeof address === 'object' ? address.port : 0;

@@ -64,6 +64,8 @@ class LibraryManager {
   
   private userInfo: UserInfo | null = null;
   private activeLibraryIds: number[] = [];
+  // Libraries whose stats came from /api/library. The others carry the zeroed stats of /api/user.
+  private enrichedLibraryIds = new Set<number>();
   private initialized = false;
   // Single-flight init: concurrent callers await the same in-flight promise so
   // two callers can't both run loadUserLibraries() and clobber userInfo /
@@ -84,9 +86,10 @@ class LibraryManager {
    * Initialize the library manager with user data and default configuration.
    *
    * Failure modes are split deliberately:
-   *   - JWT decode / `uid` extraction failure: SOFT FAIL. The manager stays
-   *     `initialized = false`. The client falls back to "no library scoping"
-   *     and the rest of the server keeps running.
+   *   - A JWT without a decodable `uid`, or a `/user/{uid}` payload without a
+   *     libraries array: SOFT FAIL. The manager stays `initialized = false`.
+   *     The client falls back to "no library scoping" and the rest of the
+   *     server keeps running.
    *   - `/user/{uid}` HTTP failure: HARD FAIL (rethrown). If we can decode
    *     `uid` but Navidrome rejects the lookup, something is genuinely wrong
    *     and surfacing it is more useful than silently proceeding unscoped.
@@ -101,12 +104,9 @@ class LibraryManager {
       try {
         const loaded = await this.loadUserLibraries(client);
         if (!loaded) {
-          // JWT decode failed and was already logged with diagnostic detail. Stay
-          // uninitialized; library_id filtering is simply absent for this
-          // session. Tools that depend on it (e.g. `set_active_libraries`)
-          // will throw their own clear "not initialized" error if invoked.
+          // loadUserLibraries already logged the cause. Library scoping stays off for this run.
           logger.warn(
-            'LibraryManager: skipping initialization (could not extract user ID from JWT). ' +
+            'LibraryManager: skipping initialization (user libraries could not be loaded, see the previous warning). ' +
               'Library scoping will be disabled for this session.',
           );
           return;
@@ -130,8 +130,10 @@ class LibraryManager {
   }
 
   /**
-   * Load user libraries from Navidrome API. Returns true on success, false
-   * when the JWT couldn't be decoded into a usable `uid`.
+   * Load user libraries from Navidrome API. Returns true on success. Returns
+   * false when the JWT has no decodable `uid`, or when the `/user/{uid}`
+   * payload has no libraries array. A false or a throw leaves the previous
+   * snapshot in place.
    *
    * After the user payload arrives we make a second call to `/api/library`
    * and merge the per-library stats (`totalSongs`/`totalAlbums`/...) and
@@ -143,13 +145,13 @@ class LibraryManager {
     const token = await client.getCurrentToken();
     const claims = decodeJwtPayload(token);
     if (claims === null) {
-      // decodeJwtPayload already logged the specific failure mode. Caller
-      // (initialize) treats false as "skip, don't crash".
+      // decodeJwtPayload already logged the specific failure mode.
       return false;
     }
 
+    let userInfo: UserInfo;
     try {
-      this.userInfo = await client.request<UserInfo>(
+      userInfo = await client.request<UserInfo>(
         `/user/${encodeURIComponent(claims.uid)}`,
       );
     } catch (error) {
@@ -158,19 +160,19 @@ class LibraryManager {
       throw new Error(ErrorFormatter.toolExecution('loadUserLibraries', error));
     }
 
-    // The response is typed as UserInfo but unvalidated. Guard that `libraries`
-    // is actually an array before downstream code treats it as one (length,
-    // map, etc.). A non-conforming payload (unexpected/future API shape) should
-    // degrade to "not initialized" rather than throw a TypeError deeper in.
-    if (!Array.isArray(this.userInfo.libraries)) {
+    // The response is typed as UserInfo but unvalidated. A non-conforming
+    // payload (unexpected/future API shape) should degrade to "not loaded"
+    // rather than throw a TypeError deeper in.
+    if (!Array.isArray(userInfo.libraries)) {
       logger.warn(
         `User payload for ${claims.uid} has no libraries array; skipping library initialization`,
       );
-      this.userInfo = null;
       return false;
     }
 
-    await this.enrichLibraryStats(client);
+    const enrichment = await this.enrichLibraryStats(client, userInfo.libraries);
+    this.userInfo = { ...userInfo, libraries: enrichment.libraries };
+    this.enrichedLibraryIds = enrichment.enrichedIds;
 
     logger.debug(
       `Loaded ${this.userInfo.libraries.length} libraries for user ${this.userInfo.userName}`,
@@ -179,20 +181,20 @@ class LibraryManager {
   }
 
   /**
-   * Best-effort enrichment of library stats from `/api/library`. The user
-   * endpoint returns stat fields as zero / Go zero-time; this endpoint
-   * returns the real values. We log + swallow errors here, since the rest of the
-   * server can keep running with the unenriched user payload (stats just
-   * show as zero, the existing observed behaviour).
+   * Best-effort enrichment of library stats from `/api/library`, which the
+   * Navidrome docs mark admin-only. A library it does not cover keeps the
+   * zeroed stats of the user endpoint and is left out of `enrichedIds`, so
+   * its stats are reported as unavailable instead of as zero.
    */
-  private async enrichLibraryStats(client: NavidromeClient): Promise<void> {
-    if (!this.userInfo) {
-      return;
-    }
+  private async enrichLibraryStats(
+    client: NavidromeClient,
+    userLibraries: LibraryInfo[],
+  ): Promise<{ libraries: LibraryInfo[]; enrichedIds: Set<number> }> {
+    const enrichedIds = new Set<number>();
     try {
       const libraries = await client.request<LibraryInfo[]>('/library');
       if (!Array.isArray(libraries)) {
-        return;
+        return { libraries: userLibraries, enrichedIds };
       }
       const byId = new Map<number, LibraryInfo>();
       for (const lib of libraries) {
@@ -201,11 +203,12 @@ class LibraryManager {
         }
       }
 
-      this.userInfo.libraries = this.userInfo.libraries.map((userLib) => {
+      const enrichedLibraries = userLibraries.map((userLib) => {
         const stats = byId.get(userLib.id);
         if (stats === undefined) {
           return userLib;
         }
+        enrichedIds.add(userLib.id);
         return {
           ...userLib,
           totalSongs: stats.totalSongs,
@@ -223,11 +226,51 @@ class LibraryManager {
           updatedAt: stats.updatedAt,
         };
       });
+      return { libraries: enrichedLibraries, enrichedIds };
     } catch (error) {
       logger.warn(
-        `LibraryManager: failed to enrich library stats from /api/library; stats will show as zero: ${error instanceof Error ? error.message : String(error)}`,
+        `LibraryManager: failed to enrich library stats from /api/library. Stats will be reported as unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
+      return { libraries: userLibraries, enrichedIds };
     }
+  }
+
+  /**
+   * Reload the library list and stats, so a long-lived server reports current
+   * scans and libraries added after startup. A failed reload keeps the
+   * previous snapshot. A library found by the reload starts inactive.
+   */
+  async refresh(client: NavidromeClient): Promise<void> {
+    if (!this.initialized) {
+      return;
+    }
+
+    try {
+      const loaded = await this.loadUserLibraries(client);
+      if (!loaded) {
+        logger.warn('LibraryManager: library refresh loaded no library list. Keeping the previous snapshot.');
+        return;
+      }
+    } catch (error) {
+      logger.warn(
+        `LibraryManager: library refresh failed. Keeping the previous snapshot: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
+
+    this.pruneActiveLibraries();
+  }
+
+  /** An active ID of a removed library would scope requests to nothing, so it is dropped. */
+  private pruneActiveLibraries(): void {
+    const availableLibraryIds = this.getAvailableLibraries().map(lib => lib.id);
+    const keptIds = this.activeLibraryIds.filter(id => availableLibraryIds.includes(id));
+    if (keptIds.length === 0) {
+      logger.warn('LibraryManager: every active library was removed. Using all libraries.');
+      this.activeLibraryIds = availableLibraryIds;
+      return;
+    }
+    this.activeLibraryIds = keptIds;
   }
 
   /**
@@ -293,7 +336,8 @@ class LibraryManager {
   }
 
   /**
-   * Set active libraries (replaces current selection)
+   * Set active libraries (replaces current selection). One unknown ID rejects
+   * the whole request, so the selection never differs from what was asked.
    */
   setActiveLibraries(libraryIds: number[]): void {
     if (!this.userInfo) {
@@ -301,19 +345,15 @@ class LibraryManager {
     }
 
     const availableLibraryIds = this.userInfo.libraries.map(lib => lib.id);
-    const validLibraryIds = libraryIds.filter(id => availableLibraryIds.includes(id));
-    
-    if (validLibraryIds.length === 0) {
-      throw new Error(`No valid library IDs provided. Available: ${availableLibraryIds.join(', ')}`);
-    }
-
     const invalidIds = libraryIds.filter(id => !availableLibraryIds.includes(id));
     if (invalidIds.length > 0) {
-      logger.warn(`Invalid library IDs ignored: ${invalidIds.join(', ')}`);
+      throw new Error(
+        `Library IDs not available to this user: ${invalidIds.join(', ')}. Available: ${availableLibraryIds.join(', ')}. Call get_user_details for the library IDs.`,
+      );
     }
 
-    this.activeLibraryIds = validLibraryIds;
-    logger.info(`Active libraries set to: ${validLibraryIds.join(', ')}`);
+    this.activeLibraryIds = [...libraryIds];
+    logger.info(`Active libraries set to: ${libraryIds.join(', ')}`);
   }
 
   /**
@@ -345,12 +385,18 @@ class LibraryManager {
     return this.initialized;
   }
 
+  /** False when /api/library supplied no stats for the library, so its zeroed stats are not real counts. */
+  hasLibraryStats(id: number): boolean {
+    return this.enrichedLibraryIds.has(id);
+  }
+
   /**
    * Reset the library manager (for testing)
    */
   reset(): void {
     this.userInfo = null;
     this.activeLibraryIds = [];
+    this.enrichedLibraryIds = new Set<number>();
     this.initialized = false;
     // Clear any in-flight init promise so a fresh initialize() can run after
     // reset instead of awaiting the stale (pre-reset) one. Note: a reset that

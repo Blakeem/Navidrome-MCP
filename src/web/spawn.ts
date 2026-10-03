@@ -21,15 +21,15 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { Config } from '../config.js';
+import { readSavedWebuiEndpoint, type Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { probeHealthz, type ProbeOutcome } from './acquire.js';
+import { probeWebOwner, type WebEndpoint, type WebOwnerProbe } from './acquire.js';
 
 /**
  * Outcome of trying to bring the web player up:
  * - `running`: a navidrome-web already owns the port.
  * - `spawned`: we launched an IPC child that will become the owner.
- * - `unavailable`: the port is held by a FOREIGN process, or the spawn failed.
+ * - `unavailable`: the port is held by a FOREIGN process, the spawn failed, or features.playback or webui.enabled is off.
  */
 type WebServerStatus = 'running' | 'spawned' | 'unavailable';
 
@@ -39,13 +39,8 @@ interface LaunchTarget {
 }
 
 /**
- * Decide how to launch the web server. In a built install the compiled entry
- * sits next to this module (`dist/web/main.js`) and is run with the same Node.
- * In dev (MCP under `tsx`, no `dist/`) we run the TS source through tsx as a
- * Node loader — `node --import tsx src/web/main.ts`. Using `process.execPath`
- * (not a bare `tsx`) is deliberate: it is PATH-independent (Claude Desktop often
- * doesn't put `node_modules/.bin` on PATH) and avoids the Windows `tsx.cmd`
- * shim that a non-shell `spawn` can't resolve. Honors `NAVIDROME_DEV=1`.
+ * process.execPath is PATH-independent and avoids the Windows tsx.cmd shim that a non-shell spawn cannot
+ * resolve. NAVIDROME_DEV=1 forces the tsx launch of src/web/main.ts even when dist/web/main.js exists.
  */
 function resolveLaunchTarget(): LaunchTarget {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -54,29 +49,21 @@ function resolveLaunchTarget(): LaunchTarget {
   if (isProd) {
     return { command: process.execPath, args: [distMain] };
   }
-  const srcMain = join(here, 'main.ts');
-  return { command: process.execPath, args: ['--import', 'tsx', srcMain] };
+  // `here` is src/web or dist/web, both two levels below the package root.
+  const srcMain = join(here, '..', '..', 'src', 'web', 'main.ts');
+  // Resolved from this module, because the child inherits a cwd that may sit outside the repo.
+  return { command: process.execPath, args: ['--import', import.meta.resolve('tsx'), srcMain] };
 }
 
 /**
- * Spawn the `navidrome-web` IPC child. The child watches the IPC channel's
- * 'disconnect' to learn when this MCP exits, then stops with it or persists per
- * webui.persistAfterMcpExit. Both the child handle and its IPC channel are
- * unref'd so neither keeps the MCP event loop alive, and the child still receives
- * 'disconnect' when MCP exits. Detached, because Windows kills a non-detached
- * child the moment its parent exits, before 'disconnect' or the mpv quit can run.
- *
- * The child re-runs `acquireOrAttach`, so a redundant spawn stands down and exits
- * cleanly. It inherits `NAVIDROME_CONFIG_PATH`, so parent and child read the same
- * store. Non-throwing: returns `'unavailable'` if `spawn` itself throws.
+ * Detached, because Windows kills a non-detached child when its parent exits, before 'disconnect' or the mpv
+ * quit can run. The child and its IPC channel are unref'd so neither holds the MCP open.
  */
 function spawnWebChild(): WebServerStatus {
-  const target = resolveLaunchTarget();
-
   try {
+    const target = resolveLaunchTarget();
     const child = spawn(target.command, target.args, {
-      // stdin/out/err ignored (the child logs to its own file); the 4th fd is
-      // the IPC channel that lets the child detect this parent's exit.
+      // The child logs to its own file. The 4th fd is the IPC channel that lets it detect this parent's exit.
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       env: process.env,
       detached: true,
@@ -97,35 +84,28 @@ function spawnWebChild(): WebServerStatus {
 }
 
 /**
- * Injectable seam for {@link ensureWebForPlayback} — lets unit tests drive the
+ * Injectable seam for {@link ensureWebForPlayback}. Lets unit tests drive the
  * probe/spawn decision without real sockets or child processes.
  */
 export interface RespawnDeps {
-  probe: (port: number, bindHost: string) => Promise<ProbeOutcome>;
+  probe: (startup: WebEndpoint) => Promise<WebOwnerProbe>;
   spawn: () => WebServerStatus;
 }
 
-const DEFAULT_RESPAWN_DEPS: RespawnDeps = { probe: probeHealthz, spawn: spawnWebChild };
+const DEFAULT_RESPAWN_DEPS: RespawnDeps = {
+  probe: (startup) => probeWebOwner(startup, readSavedWebuiEndpoint),
+  spawn: spawnWebChild,
+};
 
 /**
- * In-flight coalescer: two rapid play calls must not both probe-and-spawn. The
- * first call's promise is shared until it settles, then cleared. Cross-process
- * double-spawn is already harmless via port-as-lock.
+ * Coalesces play calls that overlap one probe. A spawn during a child's boot yields a redundant child,
+ * which port-as-lock stands down.
  */
 let respawnInFlight: Promise<WebServerStatus> | null = null;
 
 /**
- * Ensure the web player is up, at MCP startup and again whenever playback
- * starts. The play tool handlers call it BEFORE they enqueue, so the web UI is
- * present to own and scrobble the play it's about to trigger. It always probes
- * `/healthz` fresh, since the user can power the player off mid-session.
- *
- * Gated on `features.playback && webui.enabled`: when the UI is disabled the MCP
- * process owns mpv itself (and tears it down on exit), so we must NOT spawn a
- * web player here. Outcomes:
- * - `ours`    → already running, nothing to do.
- * - `refused` → server is down (e.g. powered off) → spawn it.
- * - `foreign` → port taken by another app → warn-skip (don't fight for it).
+ * Probes fresh before every enqueue, since the user can power the player off mid-session. Gated on
+ * features.playback and webui.enabled, because the MCP owns mpv itself when the UI is off.
  */
 export async function ensureWebForPlayback(
   config: Config,
@@ -135,17 +115,16 @@ export async function ensureWebForPlayback(
   if (respawnInFlight) return respawnInFlight;
 
   respawnInFlight = (async (): Promise<WebServerStatus> => {
-    const probe = await deps.probe(config.webui.port, config.webui.host);
-    if (probe === 'ours') return 'running';
-    if (probe === 'foreign') {
+    const probe = await deps.probe(config.webui);
+    if (probe.outcome === 'ours') return 'running';
+    if (probe.outcome === 'foreign') {
       logger.warn(
-        `Web UI port ${config.webui.port} is in use by another application; not starting the player. ` +
+        `Web UI port ${probe.port} is in use by another application; not starting the player. ` +
           `Scrobbling will be handled by the MCP process until the conflict is resolved ` +
           `(change webui.port in settings or stop the conflicting process).`,
       );
       return 'unavailable';
     }
-    // refused → nobody listening (e.g. the player was powered off) → spawn.
     logger.debug('web player not running, spawning');
     return deps.spawn();
   })();

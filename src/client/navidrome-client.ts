@@ -28,6 +28,32 @@ import {
   type RetryPolicy,
 } from '../utils/fetch-with-timeout.js';
 
+/** A REST read of an item Navidrome does not hold, so the caller's ID is probably wrong. */
+export class NavidromeNotFoundError extends Error {
+  constructor(label: string) {
+    super(`${label} found no item. The ID is probably wrong.`);
+    this.name = 'NavidromeNotFoundError';
+  }
+}
+
+// Navidrome answers a by-id read of a missing item with HTTP 500 and this body, which reads as a server outage.
+const MISSING_ITEM_ERROR_BODY = 'data not found';
+
+function isMissingItemResponse(status: number, errorText: string): boolean {
+  if (status === 404) {
+    return true;
+  }
+  if (status !== 500) {
+    return false;
+  }
+  try {
+    const body: unknown = JSON.parse(errorText);
+    return typeof body === 'object' && body !== null && (body as { error?: unknown }).error === MISSING_ITEM_ERROR_BODY;
+  } catch {
+    return false;
+  }
+}
+
 export class NavidromeClient {
   private readonly authManager: AuthManager;
   private readonly baseUrl: string;
@@ -81,17 +107,19 @@ export class NavidromeClient {
     options: RequestInit = {},
   ): Promise<{ data: T; total: number | null }> {
     this.assertSafeEndpoint(endpoint);
-    let response = await this.doFetch(endpoint, options);
+    let token = await this.authManager.getToken();
+    let response = await this.doFetch(endpoint, options, token);
     if (response.status === 401) {
-      // Token rejected — invalidate the cache and retry exactly once with a
+      // Token rejected, so invalidate the cache and retry exactly once with a
       // fresh authenticate(). If the second attempt also returns 401, fall
       // through to parseResponse which throws the standard HTTP error.
       logger.debug('Got 401 from Navidrome; invalidating token and retrying once');
-      this.authManager.invalidate();
+      this.authManager.invalidate(token);
       // Drain the discarded 401 body so undici can return the socket to the
       // keep-alive pool immediately instead of holding it until GC.
-      await response.body?.cancel();
-      response = await this.doFetch(endpoint, options);
+      await response.body?.cancel().catch(() => undefined);
+      token = await this.authManager.getToken();
+      response = await this.doFetch(endpoint, options, token);
     }
     // Read X-Total-Count alongside the body. Header / body streams are
     // independent so order doesn't matter, but reading first matches the
@@ -101,7 +129,8 @@ export class NavidromeClient {
     const totalHeader = response.headers.get('x-total-count');
     const parsed = totalHeader !== null ? Number.parseInt(totalHeader, 10) : NaN;
     const total = Number.isFinite(parsed) ? parsed : null;
-    const data = await this.parseResponse<T>(response, `Navidrome ${options.method ?? 'GET'} ${endpoint}`);
+    const method = options.method ?? 'GET';
+    const data = await this.parseResponse<T>(response, `Navidrome ${method} ${endpoint}`, method === 'GET');
     return { data, total };
   }
 
@@ -245,9 +274,7 @@ export class NavidromeClient {
     }
   }
 
-  private async doFetch(endpoint: string, options: RequestInit): Promise<Response> {
-    const token = await this.authManager.getToken();
-
+  private async doFetch(endpoint: string, options: RequestInit, token: string): Promise<Response> {
     const defaultHeaders: Record<string, string> = {
       'X-ND-Authorization': `Bearer ${token}`,
     };
@@ -293,12 +320,15 @@ export class NavidromeClient {
     );
   }
 
-  private async parseResponse<T>(response: Response, label: string): Promise<T> {
+  private async parseResponse<T>(response: Response, label: string, isRead: boolean): Promise<T> {
     if (!response.ok) {
       // Cap the raw error body before it flows to the LLM via toolExecution: a
       // proxy's large HTML 5xx page (server version/OS/path info) or a 4xx body
       // referencing internal paths would otherwise reach the context unbounded.
       const errorText = (await response.text()).slice(0, 512);
+      if (isRead && isMissingItemResponse(response.status, errorText)) {
+        throw new NavidromeNotFoundError(label);
+      }
       throw new Error(ErrorFormatter.httpRequest(label, response, errorText));
     }
 

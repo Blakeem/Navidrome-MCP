@@ -19,7 +19,7 @@ describe('getSavedQueue', () => {
     mockClient = createMockClient();
   });
 
-  const EMPTY_QUEUE = { current: 0, position: 0, trackCount: 0, tracks: [], updatedAt: null };
+  const EMPTY_QUEUE = { currentIndex: 0, position: 0, trackCount: 0, tracks: [], updatedAt: null };
 
   it('returns the empty-queue shape when server returns null', async () => {
     mockClient.request.mockResolvedValue(null);
@@ -67,8 +67,10 @@ describe('getSavedQueue', () => {
     const result = await getSavedQueue(mockClient as unknown as NavidromeClient, {});
 
     expect(result.trackCount).toBe(2);
-    expect(result.current).toBe(1);
-    expect(result.position).toBe(42000);
+    expect(result.currentIndex).toBe(1);
+    // Navidrome stores milliseconds. The tool reports seconds, the unit now_playing uses.
+    expect(result.position).toBe(42);
+    expect(result).not.toHaveProperty('current');
     expect(result.updatedAt).toBe('2026-05-10T10:00:00Z');
     expect(result.tracks).toHaveLength(2);
     expect(result.tracks[0]).toHaveProperty('id');
@@ -140,13 +142,13 @@ describe('saveQueue', () => {
     mockClient = createMockClient();
   });
 
-  it('POSTs to /queue with ids, current, position', async () => {
+  it('POSTs to /queue with ids, current, and the position converted to milliseconds', async () => {
     mockClient.request.mockResolvedValue(undefined);
 
     await saveQueue(mockClient as unknown as NavidromeClient, {
       songIds: ['id-1', 'id-2', 'id-3'],
-      current: 1,
-      position: 5000,
+      currentIndex: 1,
+      position: 5,
     });
 
     expect(mockClient.request).toHaveBeenCalledTimes(1);
@@ -158,6 +160,32 @@ describe('saveQueue', () => {
     expect(body.ids).toEqual(['id-1', 'id-2', 'id-3']);
     expect(body.current).toBe(1);
     expect(body.position).toBe(5000);
+  });
+
+  it('accepts a fractional now_playing position and rounds it to whole milliseconds', async () => {
+    mockClient.request.mockResolvedValue(undefined);
+
+    await saveQueue(mockClient as unknown as NavidromeClient, {
+      songIds: ['id-1'],
+      position: 12.3456,
+    });
+
+    const body = JSON.parse((mockClient.request.mock.calls[0]![1] as RequestInit)?.body as string);
+    expect(body.position).toBe(12346);
+  });
+
+  it('rejects a currentIndex past the end of songIds', async () => {
+    await expect(
+      saveQueue(mockClient as unknown as NavidromeClient, { songIds: ['a', 'b'], currentIndex: 2 })
+    ).rejects.toThrow(/currentIndex: currentIndex must be less than songIds\.length \(2\)/);
+    expect(mockClient.request).not.toHaveBeenCalled();
+  });
+
+  it('rejects a negative position', async () => {
+    await expect(
+      saveQueue(mockClient as unknown as NavidromeClient, { songIds: ['a'], position: -1 })
+    ).rejects.toThrow(/position: /);
+    expect(mockClient.request).not.toHaveBeenCalled();
   });
 
   it('returns success with correct trackCount', async () => {
@@ -172,7 +200,7 @@ describe('saveQueue', () => {
     expect(typeof result.message).toBe('string');
   });
 
-  it('defaults current and position to 0 when omitted', async () => {
+  it('defaults currentIndex and position to 0 when omitted', async () => {
     mockClient.request.mockResolvedValue(undefined);
 
     await saveQueue(mockClient as unknown as NavidromeClient, {

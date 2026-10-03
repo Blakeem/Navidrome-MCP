@@ -43,13 +43,12 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     vi.clearAllMocks();
   });
 
-  it('makes a single request for an album with <= ALBUM_TRACKS_PAGE_SIZE tracks', async () => {
+  it('makes a single request for an album with <= QUEUE_READ_PAGE_SIZE tracks', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
 
     const result = await playAlbums(client as never, {
       albumIds: ['album-1'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -76,7 +75,6 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     const result = await playAlbums(client as never, {
       albumIds: ['boxset-1'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -107,7 +105,6 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     const result = await playAlbums(client as never, {
       albumIds: ['album-no-total'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -124,7 +121,6 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     const result = await playAlbums(client as never, {
       albumIds: ['album-small'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -139,7 +135,6 @@ describe('fetchAlbumSongs pagination (M4)', () => {
       playAlbums(client as never, {
         albumIds: ['empty-album'],
         mode: 'replace',
-        shuffle: 'none',
       }),
     ).rejects.toThrow(/No tracks found/);
 

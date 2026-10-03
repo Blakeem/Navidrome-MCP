@@ -80,7 +80,8 @@ function describeNotFound(filter: TagFilter, value: string): string {
     return ` ${filter.notFoundHint}`;
   }
   const similar = filterCacheManager.findSimilar(filter.cacheCategory, value);
-  return similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
+  const suggestion = similar.length > 0 ? ` Did you mean: ${similar.join(', ')}?` : '';
+  return `${suggestion} Call get_filter_options with filterType "${filter.cacheCategory}" to list the values in this library.`;
 }
 
 function resolveTagFilter(filter: TagFilter, value: string): string {
@@ -98,14 +99,16 @@ function resolveTagFilter(filter: TagFilter, value: string): string {
 export async function resolveTextFilters(params: FilterableSearchParams): Promise<FilterResolutionResult> {
   const resolvedFilters: Record<string, string> = {};
   const appliedFilters: Record<string, string> = {};
-
-  await filterCacheManager.ensureFresh();
-
-  for (const filter of TAG_FILTERS) {
+  const requestedTags = TAG_FILTERS.flatMap((filter) => {
     const value = params[filter.param];
-    if (value === undefined || value === '') {
-      continue;
-    }
+    return value === undefined || value === '' ? [] : [{ filter, value }];
+  });
+
+  // Only a tag filter reads the tag maps, so a search without one skips the refresh.
+  if (requestedTags.length > 0) {
+    await filterCacheManager.ensureFresh();
+  }
+  for (const { filter, value } of requestedTags) {
     resolvedFilters[filter.urlKey] = resolveTagFilter(filter, value);
     appliedFilters[filter.displayKey] = value;
   }

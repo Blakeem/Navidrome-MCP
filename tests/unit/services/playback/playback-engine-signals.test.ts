@@ -17,7 +17,6 @@ vi.mock('../../../../src/services/playback/mpv-ipc.js', () => ({
 
 vi.mock('../../../../src/services/playback/mpv-process.js', () => ({
   getDefaultIpcPath: () => '/tmp/test-fake-signals.sock',
-  detectMpvBinary: () => '/fake/mpv',
   spawnMpv: vi.fn(() => {
     const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn>; unref: () => void };
     child.kill = vi.fn();

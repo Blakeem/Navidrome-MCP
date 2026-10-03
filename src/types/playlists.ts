@@ -138,7 +138,7 @@ export interface AddTracksToPlaylistResponse {
  * Response DTO for removing tracks from a playlist
  */
 export interface RemoveTracksFromPlaylistResponse {
-  /** Positions of the removed tracks, as Navidrome echoes them */
+  /** Positions removed, deduplicated */
   positions: string[];
   /** Human-readable message */
   message: string;
@@ -159,9 +159,9 @@ export interface ReorderPlaylistTrackRequest {
  */
 export interface ReorderPlaylistTrackResponse {
   /** Original 1-based position the track was moved FROM (= input position) */
-  previousPosition: number;
+  previousPosition: string;
   /** Final 1-based position of the track after the move. A downward move lands at insertBefore - 1. */
-  newPosition: number;
+  newPosition: string;
   /** Human-readable confirmation message */
   message: string;
   /** Whether the operation succeeded */

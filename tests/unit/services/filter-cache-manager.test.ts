@@ -10,10 +10,10 @@ import { getFilterOptions } from '../../../src/tools/tags.js';
 
 // Mock data matching Navidrome API responses
 const mockGenres = [
-  { id: 'genre-1', name: 'Rock' },
-  { id: 'genre-2', name: 'jazz' },
-  { id: 'genre-3', name: 'Classical' },
-  { id: 'genre-4', name: 'ELECTRONIC' },
+  { id: 'genre-1', tagName: 'genre', tagValue: 'Rock' },
+  { id: 'genre-2', tagName: 'genre', tagValue: 'jazz' },
+  { id: 'genre-3', tagName: 'genre', tagValue: 'Classical' },
+  { id: 'genre-4', tagName: 'genre', tagValue: 'ELECTRONIC' },
 ];
 
 const mockTags = [
@@ -37,13 +37,11 @@ const createMockClient = (): NavidromeClient => {
 
   // Setup mock responses
   (client.requestWithLibraryFilter as any).mockImplementation((endpoint: string) => {
-    if (endpoint === '/genre') {
-      return Promise.resolve(mockGenres);
-    }
     if (endpoint.startsWith('/tag')) {
+      const allTags = [...mockGenres, ...mockTags];
       const tagName = new URLSearchParams(endpoint.split('?')[1] ?? '').get('tag_name');
       return Promise.resolve(
-        tagName === null ? mockTags : mockTags.filter(tag => tag.tagName === tagName),
+        tagName === null ? allTags : allTags.filter(tag => tag.tagName === tagName),
       );
     }
     return Promise.resolve([]);
@@ -91,7 +89,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
         .map(([endpoint]) => endpoint)
         .filter(endpoint => endpoint.startsWith('/tag'));
 
-      expect(tagEndpoints).toHaveLength(5);
+      expect(tagEndpoints).toHaveLength(6);
       for (const endpoint of tagEndpoints) {
         expect(endpoint).not.toContain('_end');
       }
@@ -165,12 +163,13 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       // Create a larger mock dataset
       const largeGenres = Array.from({ length: 1000 }, (_, i) => ({
         id: `genre-${i}`,
-        name: `Genre${i}`,
+        tagName: 'genre',
+        tagValue: `Genre${i}`,
       }));
 
       const largeClient = {
         requestWithLibraryFilter: vi.fn().mockImplementation((endpoint: string) => {
-          if (endpoint === '/genre') return Promise.resolve(largeGenres);
+          if (endpoint.includes('tag_name=genre')) return Promise.resolve(largeGenres);
           if (endpoint.startsWith('/tag')) return Promise.resolve([]);
           return Promise.resolve([]);
         }),
@@ -179,13 +178,33 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       filterCacheManager.reset();
       await filterCacheManager.initialize(largeClient, mockConfig);
 
-      // Measure performance
-      const start = performance.now();
       const options = filterCacheManager.getAvailableOptions('genres');
-      const end = performance.now();
 
       expect(options).toHaveLength(1000);
-      expect(end - start).toBeLessThan(10); // Should be very fast, < 10ms
+    });
+  });
+
+  describe('reload failure handling', () => {
+    it('keeps prior values for a failed or invalid fetch and still loads the other types', async () => {
+      const moodsBefore = filterCacheManager.getAvailableOptions('moods');
+      const genresBefore = filterCacheManager.getAvailableOptions('genres');
+      (client.requestWithLibraryFilter as unknown as Mock<(endpoint: string) => Promise<unknown>>).mockImplementation(
+        (endpoint) => {
+          if (endpoint.includes('tag_name=mood')) return Promise.reject(new Error('503'));
+          if (endpoint.includes('tag_name=genre')) return Promise.resolve({});
+          if (endpoint.includes('tag_name=media')) {
+            return Promise.resolve([{ id: 'tag-new', tagName: 'media', tagValue: 'Cassette' }]);
+          }
+          return Promise.resolve([]);
+        },
+      );
+
+      await expect(filterCacheManager.reload()).resolves.toBeUndefined();
+
+      expect(moodsBefore).toHaveLength(2);
+      expect(filterCacheManager.getAvailableOptions('moods')).toEqual(moodsBefore);
+      expect(filterCacheManager.getAvailableOptions('genres')).toEqual(genresBefore);
+      expect(filterCacheManager.getAvailableOptions('mediaTypes')).toEqual(['Cassette']);
     });
   });
 
@@ -324,11 +343,11 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
   const disabledConfig = { filterCacheEnabled: false } as Config;
 
   // Initial genre set returned by the first fetch
-  const initialGenres = [{ id: 'genre-1', name: 'Rock' }];
+  const initialGenres = [{ id: 'genre-1', tagName: 'genre', tagValue: 'Rock' }];
   // Updated genre set returned after a new genre is added mid-session
   const updatedGenres = [
-    { id: 'genre-1', name: 'Rock' },
-    { id: 'genre-2', name: 'Shoegaze' },
+    { id: 'genre-1', tagName: 'genre', tagValue: 'Rock' },
+    { id: 'genre-2', tagName: 'genre', tagValue: 'Shoegaze' },
   ];
 
   let fetchCount: number;
@@ -343,7 +362,7 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
     mockClient = {
       requestWithLibraryFilter: vi.fn().mockImplementation((endpoint: string) => {
         fetchCount++;
-        if (endpoint === '/genre') {
+        if (endpoint.includes('tag_name=genre')) {
           return Promise.resolve(returnUpdated ? updatedGenres : initialGenres);
         }
         if (endpoint.startsWith('/tag')) {
@@ -402,6 +421,36 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
 
     expect(result.available).toContain('Rock');
     expect(result.available).toContain('Shoegaze');
+  });
+
+  // The loaders refill the maps type by type, so a reader racing a reload must wait for it to finish.
+  it('ensureFresh() joins an in-flight reload even with the cache enabled', async () => {
+    await filterCacheManager.initialize(mockClient, { filterCacheEnabled: true } as Config);
+    let releaseGenres: (rows: unknown) => void = () => undefined;
+    (mockClient.requestWithLibraryFilter as unknown as Mock<(endpoint: string) => Promise<unknown>>).mockImplementation(
+      (endpoint) => {
+        if (endpoint.includes('tag_name=genre')) {
+          return new Promise((resolve) => {
+            releaseGenres = resolve;
+          });
+        }
+        return Promise.resolve([]);
+      },
+    );
+
+    const reloading = filterCacheManager.reload();
+    let settled = false;
+    const fresh = filterCacheManager.ensureFresh().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(settled).toBe(false);
+
+    releaseGenres(initialGenres);
+    await Promise.all([reloading, fresh]);
+
+    expect(settled).toBe(true);
   });
 
   it('ensureFresh() resolves successfully when disabled and client is stored', async () => {

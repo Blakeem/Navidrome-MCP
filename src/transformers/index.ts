@@ -39,3 +39,6 @@ export {
   transformPlaylistTracksToDTO,
 } from './playlist-transformer.js';
 export type { RawPlaylist } from './playlist-transformer.js';
+
+export { transformTagsToMeta } from './tag-transformer.js';
+export type { TagWithMeta } from './tag-transformer.js';

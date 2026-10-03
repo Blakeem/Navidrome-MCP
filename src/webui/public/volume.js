@@ -1,6 +1,6 @@
 // The volume slider and mute button.
 
-import { postJson } from './api.js';
+import { postControl } from './controls.js';
 import { byId, setHidden, setProgressVar } from './dom.js';
 
 const volume = byId('volume-slider');
@@ -18,17 +18,20 @@ let volumeDragging = false;
 let preMuteVolume = 80;
 let volumeTimer = null;
 
+// The engine caches an unrounded level, so one rounding keeps the slider, label and icon on the same integer.
 export function renderVolume(status) {
-  const level = status !== null && typeof status.volume === 'number' ? status.volume : null;
+  const level = status !== null && typeof status.volume === 'number' ? Math.round(status.volume) : null;
   if (level === null) {
     volumeLabel.textContent = '--';
+    // The fill otherwise paints the CSS default under a thumb left at its last value.
+    setProgressVar(volume, Number(volume.value));
     return;
   }
-  if (!volumeDragging) {
-    volume.value = String(Math.round(level));
-    setProgressVar(volume, level);
-  }
-  volumeLabel.textContent = String(Math.round(level));
+  // A snapshot mid-drag carries the last debounced level, so the slider, label and icon all wait, as the seek bar does.
+  if (volumeDragging) return;
+  volume.value = String(level);
+  setProgressVar(volume, level);
+  volumeLabel.textContent = String(level);
   showVolumeIcon(level);
 }
 
@@ -72,7 +75,7 @@ function showLocalLevel(level) {
 }
 
 function sendVolume(level) {
-  void postJson('/api/controls/volume', { level });
+  void postControl('/api/controls/volume', { level });
 }
 
 // Thirds of the 1 to 100 range pace the icon evenly, and mute holds only 0.
@@ -82,4 +85,5 @@ function showVolumeIcon(level) {
   setHidden(iconLow, !(v > 0 && v <= 33));
   setHidden(iconMid, !(v >= 34 && v <= 66));
   setHidden(iconHigh, !(v >= 67));
+  btnMute.setAttribute('aria-pressed', String(v === 0));
 }

@@ -83,6 +83,44 @@ describe('throttle', () => {
     await Promise.all([first, second]);
   });
 
+  it('sends a timeout retry through the throttle, spaced like any other request', async () => {
+    vi.useFakeTimers();
+    const dispatchedAt: number[] = [];
+    const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+    const fetchMock = vi.fn((): Promise<Response> => {
+      dispatchedAt.push(Date.now());
+      return dispatchedAt.length === 1
+        ? Promise.reject(timeout)
+        : Promise.resolve(jsonResponse(artistSearchBody([])));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const config = makeTestConfig();
+    const first = searchMbArtist('GUNSHIP', config);
+    const second = searchMbArtist('Waveshaper', config);
+    await vi.advanceTimersByTimeAsync(5000);
+    await Promise.all([first, second]);
+
+    expect(dispatchedAt).toHaveLength(3);
+    expect((dispatchedAt[1] ?? 0) - (dispatchedAt[0] ?? 0)).toBeGreaterThanOrEqual(1100);
+    expect((dispatchedAt[2] ?? 0) - (dispatchedAt[1] ?? 0)).toBeGreaterThanOrEqual(1100);
+  });
+
+  it('caps the wait at one interval after a backward wall-clock step', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(artistSearchBody([])));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const config = makeTestConfig();
+    await searchMbArtist('GUNSHIP', config);
+    vi.setSystemTime(Date.now() - 60_000);
+    const second = searchMbArtist('Waveshaper', config);
+
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await second;
+  });
+
   it('a failed request does not poison the queue for the next caller', async () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new Error('network down'))
@@ -309,6 +347,17 @@ describe('lookupMbReleaseGroup', () => {
     expect(detail?.disambiguation).toBe('the studio album');
   });
 
+  it('parses an empty-string disambiguation as null', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      id: 'rg-mbid',
+      title: 'Untitled',
+      disambiguation: '',
+    })) as unknown as typeof fetch;
+
+    const detail = await lookupMbReleaseGroup('rg-mbid', makeTestConfig());
+    expect(detail?.disambiguation).toBeNull();
+  });
+
   it('returns null artistName when MB supplies no artist-credit', async () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({
       id: 'rg-mbid',
@@ -350,16 +399,47 @@ describe('lookupMbReleaseGroup', () => {
 });
 
 describe('searchMbReleaseGroup', () => {
-  function rgHit(id: string, title: string, score: number): Record<string, unknown> {
+  function rgHit(
+    id: string,
+    title: string,
+    score: number,
+    primaryType = 'Album',
+    secondaryTypes: string[] = [],
+  ): Record<string, unknown> {
     return {
       id,
       title,
       score,
       'first-release-date': '2018-10-05',
-      'primary-type': 'Album',
+      'primary-type': primaryType,
+      'secondary-types': secondaryTypes,
       'artist-credit': [{ name: 'GUNSHIP' }],
     };
   }
+
+  it('prefers the Album over a same-titled Single that MB scores first', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      'release-groups': [
+        rgHit('single', 'Thriller', 100, 'Single'),
+        rgHit('album', 'Thriller', 100, 'Album'),
+      ],
+    })) as unknown as typeof fetch;
+
+    const detail = await searchMbReleaseGroup('Michael Jackson', 'Thriller', makeTestConfig());
+    expect(detail?.mbid).toBe('album');
+  });
+
+  it('prefers the plain Album over a same-titled Album + Live', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      'release-groups': [
+        rgHit('live', 'Thriller', 100, 'Album', ['Live']),
+        rgHit('studio', 'Thriller', 100, 'Album'),
+      ],
+    })) as unknown as typeof fetch;
+
+    const detail = await searchMbReleaseGroup('Michael Jackson', 'Thriller', makeTestConfig());
+    expect(detail?.mbid).toBe('studio');
+  });
 
   it('prefers the normalized-title exact match over a higher-scored decoy', async () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({
@@ -513,5 +593,52 @@ describe('browseMbReleaseTracklist', () => {
   it('returns null on an empty releases array', async () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({ releases: [] })) as unknown as typeof fetch;
     expect(await browseMbReleaseTracklist('rg', makeTestConfig())).toBeNull();
+  });
+
+  it('sends one request when the first page holds every release', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      'release-count': 1,
+      releases: [release('only')],
+    }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const list = await browseMbReleaseTracklist('rg', makeTestConfig());
+    expect(list?.releaseMbid).toBe('only');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('chooses across a light browse and fetches the chosen release when the first page is partial', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      // The capped recordings browse returns only a later remaster.
+      .mockResolvedValueOnce(jsonResponse({
+        'release-count': 3,
+        releases: [release('remaster', { date: '2011-09-26' })],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        'release-count': 3,
+        releases: [
+          { id: 'remaster', status: 'Official', date: '2011-09-26' },
+          { id: 'original', status: 'Official', date: '1973-03-01' },
+          { id: 'bootleg', status: 'Bootleg', date: '1972-01-01' },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse(release('original', {
+        date: '1973-03-01',
+        media: [medium(1, [track('Speak to Me', 1), track('Breathe', 2)])],
+      })));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const pending = browseMbReleaseTracklist('rg', makeTestConfig());
+    await vi.advanceTimersByTimeAsync(5000);
+    const list = await pending;
+
+    expect(list?.releaseMbid).toBe('original');
+    expect(list?.date).toBe('1973-03-01');
+    expect(list?.tracks.map(t => t.title)).toEqual(['Speak to Me', 'Breathe']);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const lightUrl = String(fetchMock.mock.calls[1]?.[0]);
+    expect(lightUrl).not.toContain('inc=');
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain('/release/original');
   });
 });

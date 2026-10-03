@@ -32,7 +32,7 @@ const tools: Tool[] = [
       properties: {
         includeServerInfo: {
           type: 'boolean',
-          description: 'Include detailed server information in the response',
+          description: 'Also return the Navidrome URL, this MCP server\'s version, and each optional feature\'s enabled state, tools and setup hint',
           default: false,
         },
       },

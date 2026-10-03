@@ -22,7 +22,8 @@ import { ConfigSchema, type Config } from './config/schema.js';
 import { readSettings, type SettingsFile } from './config/store.js';
 import { mapStoreToConfig } from './config/map-config.js';
 import { getSettingsStorePath } from './config/store-path.js';
-import { buildEnvRuntimeSettings } from './config/seed.js';
+import { buildEnvRuntimeSettings } from './config/env-settings.js';
+import { resolveMpvBinary } from './services/playback/mpv-process.js';
 
 export type { Config } from './config/schema.js';
 
@@ -32,8 +33,9 @@ export type { Config } from './config/schema.js';
  */
 export function validateMappedSettings(
   settings: SettingsFile,
+  mpvPath: string | null,
 ): { ok: true; config: Config } | { ok: false; messages: string[] } {
-  const result = ConfigSchema.safeParse(mapStoreToConfig(settings));
+  const result = ConfigSchema.safeParse(mapStoreToConfig(settings, mpvPath));
   if (result.success) return { ok: true, config: result.data };
   const messages = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
   return { ok: false, messages };
@@ -55,7 +57,8 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
     );
   }
 
-  const result = validateMappedSettings(settings);
+  const mpvPath = resolveMpvBinary(settings.playback?.mpvPath);
+  const result = validateMappedSettings(settings, mpvPath);
   if (!result.ok) {
     throw new Error(ErrorFormatter.configValidation(result.messages));
   }
@@ -63,12 +66,8 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
 }
 
 /**
- * Discriminated config state for the entry point to branch into normal vs.
- * first-run/degraded operation WITHOUT poisoning the `Config` type with a union
- * (every `config.navidromeUrl` site stays non-optional under ultra-strict TS).
- *
- * Env applies when the store is absent, unparseable, schema-invalid or has a blank URL.
- * A store with a URL but an invalid config resolves to `configured: false`.
+ * Lets the entry point branch into setup mode without turning `Config` into a union,
+ * so every `Config` field stays non-optional.
  */
 type ConfigState =
   | { configured: true; config: Config }
@@ -78,33 +77,23 @@ export async function resolveConfigState(): Promise<ConfigState> {
   const settings = readSettings();
   const url = settings?.navidrome?.url;
   if (settings === null || url === undefined || url.trim() === '') {
-    // No usable store → try the environment fallback before giving up. This is
-    // the headless/container path (Docker `-e`, compose `environment`, an MCP
-    // client's `env` block), where the settings GUI is unreachable and env vars
-    // are the only practical channel.
     return await resolveEnvFallbackState();
   }
 
   try {
-    // Reuse the single `settings` snapshot already read above for the URL guard
-    // instead of letting loadConfig re-read from disk. A second independent
-    // read could observe a concurrent settings save and disagree with the guard.
+    // Reuse the snapshot the URL guard read, since a second read could see a concurrent save.
     return { configured: true, config: await loadConfig(settings) };
   } catch (err) {
-    // Present but invalid → treat as unconfigured so the entry point opens the
-    // settings GUI instead of crashing. Log the specific reason so a malformed
-    // hand-edited store doesn't silently look like a fresh first run.
+    // An invalid store opens the settings GUI instead of crashing. The logged reason
+    // keeps a malformed hand-edited store from looking like a fresh first run.
     logger.warn('settings.json is present but invalid; entering setup mode:', err);
     return { configured: false };
   }
 }
 
 /**
- * Environment-variable fallback for a missing/unusable store. Configured IFF
- * `NAVIDROME_URL` is set and the env-derived config passes `ConfigSchema`.
- * A present-but-broken env config logs WHY it was rejected (the reported
- * container failure mode was env vars being silently ignored) and then falls
- * through to setup mode.
+ * Env fallback for a missing or unusable store, configured only when `NAVIDROME_URL` is set and validates.
+ * A broken env config logs its rejection reason before setup mode, so set env vars are never silently ignored.
  */
 async function resolveEnvFallbackState(): Promise<ConfigState> {
   const envSettings = buildEnvRuntimeSettings();
@@ -127,4 +116,15 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
     );
     return { configured: false };
   }
+}
+
+/**
+ * The webui endpoint settings.json holds now. A spawned or re-run web player binds this one, not the
+ * endpoint this process started with. Null when the store is absent or invalid.
+ */
+export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
+  const settings = readSettings();
+  if (settings === null) return null;
+  const result = validateMappedSettings(settings, null);
+  return result.ok ? { port: result.config.webui.port, host: result.config.webui.host } : null;
 }

@@ -18,7 +18,8 @@ vi.mock('node:dns/promises', () => ({
 import { resolveSrv } from 'node:dns/promises';
 import {
   getRadioBrowserBase,
-  resetRadioBrowserResolverCache,
+  invalidateRadioBrowserBase,
+  resetRadioBrowserResolverCacheForTests,
   RADIO_BROWSER_FALLBACK_BASE,
 } from '../../../src/utils/radio-browser-resolver.js';
 
@@ -26,12 +27,12 @@ const mockedResolveSrv = vi.mocked(resolveSrv);
 
 describe('getRadioBrowserBase', () => {
   beforeEach(() => {
-    resetRadioBrowserResolverCache();
+    resetRadioBrowserResolverCacheForTests();
     mockedResolveSrv.mockReset();
   });
 
   afterEach(() => {
-    resetRadioBrowserResolverCache();
+    resetRadioBrowserResolverCacheForTests();
   });
 
   it('returns the override verbatim and never hits DNS', async () => {
@@ -148,5 +149,20 @@ describe('getRadioBrowserBase', () => {
     const result = await getRadioBrowserBase();
 
     expect(result).toMatch(/^https:\/\/(de1|us1|fr1)\.api\.radio-browser\.info$/);
+  });
+
+  it('keeps the cached mirror when a late failure names an older mirror', async () => {
+    mockedResolveSrv.mockResolvedValue([
+      { name: 'us1.api.radio-browser.info', port: 443, priority: 1, weight: 1 },
+    ]);
+    await getRadioBrowserBase();
+
+    invalidateRadioBrowserBase('https://dead.api.radio-browser.info');
+    expect(await getRadioBrowserBase()).toBe('https://us1.api.radio-browser.info');
+    expect(mockedResolveSrv).toHaveBeenCalledTimes(1);
+
+    invalidateRadioBrowserBase('https://us1.api.radio-browser.info');
+    await getRadioBrowserBase();
+    expect(mockedResolveSrv).toHaveBeenCalledTimes(2);
   });
 });

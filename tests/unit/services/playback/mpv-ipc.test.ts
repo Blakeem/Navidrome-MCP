@@ -232,4 +232,96 @@ describe('MpvIpc', () => {
     expect(() => ipc.close()).not.toThrow();
     expect(onDisconnect).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects a command when mpv answers with an error', async () => {
+    const ipc = await connectedIpc();
+    const sock = latestSocket();
+
+    const promise = ipc.command('seek', 10, 'absolute');
+    sock.emit('data', `${JSON.stringify({ request_id: 1, error: 'error running command' })}\n`);
+
+    await expect(promise).rejects.toThrow(/mpv command error: error running command/);
+  });
+
+  it('rejects a command whose response carries no error field', async () => {
+    const ipc = await connectedIpc();
+    const sock = latestSocket();
+
+    const promise = ipc.command('seek', 10, 'absolute');
+    sock.emit('data', `${JSON.stringify({ request_id: 1, data: null })}\n`);
+
+    await expect(promise).rejects.toThrow(/mpv command error: unknown/);
+  });
+
+  it('reassembles a response split across chunks that end mid-frame', async () => {
+    const ipc = await connectedIpc();
+    const sock = latestSocket();
+    const first = JSON.stringify({ request_id: 1, error: 'success', data: [{ filename: 'x' }] });
+    const second = JSON.stringify({ request_id: 2, error: 'success', data: true });
+
+    const firstPromise = ipc.command('get_property', 'playlist');
+    const secondPromise = ipc.command('get_property', 'pause');
+    sock.emit('data', first.slice(0, 10));
+    sock.emit('data', first.slice(10, 20));
+    sock.emit('data', `${first.slice(20)}\n${second}\n`);
+
+    await expect(firstPromise).resolves.toEqual([{ filename: 'x' }]);
+    await expect(secondPromise).resolves.toBe(true);
+  });
+
+  it('routes property-change events and other events to their own handlers', async () => {
+    const ipc = await connectedIpc();
+    const sock = latestSocket();
+    const propSpy = vi.fn();
+    const eventSpy = vi.fn();
+    ipc.onPropertyChange(propSpy);
+    ipc.onEvent(eventSpy);
+
+    sock.emit('data', '{"event":"property-change","id":3,"name":"pause","data":true}\n');
+    sock.emit('data', '{"event":"start-file"}\n');
+
+    expect(propSpy).toHaveBeenCalledTimes(1);
+    expect(propSpy).toHaveBeenCalledWith({ id: 3, name: 'pause', data: true });
+    expect(eventSpy).toHaveBeenCalledTimes(1);
+    expect(eventSpy.mock.calls[0]?.[0]).toMatchObject({ event: 'start-file' });
+  });
+
+  it('skips a non-JSON line and still resolves the next response', async () => {
+    const ipc = await connectedIpc();
+    const sock = latestSocket();
+
+    const promise = ipc.command('get_property', 'pause');
+    expect(() => sock.emit('data', 'not json\n')).not.toThrow();
+    emitResponse(sock, 1, false);
+
+    await expect(promise).resolves.toBe(false);
+  });
+
+  it('connect retries failed attempts within its budget', async () => {
+    const ipc = new MpvIpc();
+
+    const promise = ipc.connect('/p', 3, 10);
+    await Promise.resolve();
+    state.sockets[0]?.emit('error', new Error('ENOENT'));
+    await vi.advanceTimersByTimeAsync(10);
+    state.sockets[1]?.emit('error', new Error('ENOENT'));
+    await vi.advanceTimersByTimeAsync(10);
+    state.sockets[2]?.emit('connect');
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(state.sockets).toHaveLength(3);
+  });
+
+  it('connect bounds each silent attempt and reports the timeout after the last one', async () => {
+    const ipc = new MpvIpc();
+
+    const promise = ipc.connect('/p', 2, 10);
+    const assertion = expect(promise).rejects.toThrow(/Could not connect to mpv IPC at \/p: .*timed out/);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(10);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await assertion;
+    expect(state.sockets).toHaveLength(2);
+  });
 });

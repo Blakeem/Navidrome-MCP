@@ -9,6 +9,7 @@ import { setOffsetControlVisible } from './lyrics-prefs.js';
 
 const lines = byId('lyrics-lines');
 const status = byId('lyrics-status');
+const scrollBox = byId('lyrics-scroll');
 
 // Only shapes the empty-state message. Assumed on until /api/player-state answers.
 let lrclibEnabled = true;
@@ -30,7 +31,9 @@ export function showLyricsFor(songId) {
     setLyricsStatus('Nothing is playing.');
     return;
   }
-  setLyricsStatus('Loading lyrics…');
+  // The offset applies to every song, so the loading state leaves the offset control and its open dialog alone.
+  clearLyricsBody();
+  status.textContent = 'Loading lyrics…';
   void loadLyrics(songId, generation);
 }
 
@@ -42,7 +45,6 @@ async function loadLyrics(songId, mine) {
     setLyricsStatus('The lyrics lookup failed. Reopen the lyrics view to try again.');
     return;
   }
-  failedSongId = null;
   renderLyricsLines(dto);
 }
 
@@ -51,15 +53,18 @@ export function retryFailedLyrics() {
 }
 
 function clearLyricsBody() {
+  // Removing a focused seek button or placard link would drop focus to document.body.
+  const focusInLyricsBody = lines.contains(document.activeElement) || status.contains(document.activeElement);
+  if (focusInLyricsBody) scrollBox.focus({ preventScroll: true });
   resetFollow();
   lines.classList.remove('is-synced');
   lines.replaceChildren();
   status.replaceChildren();
-  setOffsetControlVisible(false);
 }
 
 function setLyricsStatus(text) {
   clearLyricsBody();
+  setOffsetControlVisible(false);
   status.textContent = text;
 }
 
@@ -85,6 +90,7 @@ function renderPlacard(headline, note, link) {
 
   // OUTPUT
   clearLyricsBody();
+  setOffsetControlVisible(false);
   status.append(head, detail);
   if (anchor !== null) status.appendChild(anchor);
 }
@@ -99,20 +105,35 @@ function lrclibPublishUrl(dto) {
 // Without the second sentence, a disabled LRCLIB looks like a library that has no lyrics.
 function renderNoLyrics(dto) {
   // A provider other than lrclib means LRCLIB was never asked about this track.
-  const publishUrl = lrclibEnabled && dto.provider === 'lrclib' ? lrclibPublishUrl(dto) : null;
-  const note = lrclibEnabled
-    ? 'The file carries none, and LRCLIB has no match for this track.'
-    : 'The file carries none, and LRCLIB lookup is disabled.';
+  const lrclibAsked = lrclibEnabled && dto.provider === 'lrclib';
+  const publishUrl = lrclibAsked ? lrclibPublishUrl(dto) : null;
+  let note = 'The file carries none, and LRCLIB lookup is disabled.';
+  if (lrclibAsked) note = 'The file carries none, and LRCLIB has no match for this track.';
+  else if (lrclibEnabled) note = 'The file carries none, and LRCLIB was not searched because the track has no title or artist tag.';
   renderPlacard('No lyrics found', note, publishUrl === null ? null : { text: 'Add them on LRCLIB', href: publishUrl });
 }
 
 function lyricsLineEl(text, index) {
+  // INPUT
   const li = document.createElement('li');
+  // A native button gives a keyboard and screen-reader path to the seek. A blank row has no name to announce.
+  const seekBtn = index !== null && text.trim() !== '' ? document.createElement('button') : null;
+
+  // PROCESS
   li.className = 'lyric-line';
-  // Lyrics are untrusted third-party text, so they go through textContent only.
-  li.textContent = text;
   // Only a timed row can be tapped to seek, so only a timed row is indexed.
   if (index !== null) li.dataset.index = String(index);
+
+  // OUTPUT
+  // Lyrics are untrusted third-party text, so they go through textContent only.
+  if (seekBtn === null) {
+    li.textContent = text;
+    return li;
+  }
+  seekBtn.type = 'button';
+  seekBtn.className = 'lyric-seek';
+  seekBtn.textContent = text;
+  li.appendChild(seekBtn);
   return li;
 }
 

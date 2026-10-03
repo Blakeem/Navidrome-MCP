@@ -85,8 +85,8 @@ if (!existsSync(mainJs)) {
 
 const nodePath = process.execPath;
 
-/** Best-effort: warn (don't block) if Navidrome isn't configured yet, since a
- *  freshly launched-but-unconfigured player just logs and exits silently. */
+/** Best-effort: warn (don't block) if Navidrome isn't configured yet, since an
+ *  unconfigured player opens the settings page instead of the player. */
 async function warnIfUnconfigured() {
   try {
     const { getSettingsStorePath } = await import(
@@ -105,8 +105,8 @@ async function warnIfUnconfigured() {
     }
     if (!configured) {
       info('');
-      info('⚠  Navidrome is not configured yet. The shortcut starts the player, but it exits');
-      info('   at once until you set your server URL and credentials. Run:');
+      info('⚠  Navidrome is not configured yet. The first launch opens the settings page.');
+      info('   Save there, then launch the shortcut again. Or configure it now:');
       info('       navidrome-config');
       info(`   (or: node "${join(packageRoot, 'dist', 'config-app', 'main.js')}")`);
     }
@@ -236,7 +236,13 @@ function makeMac() {
   // The bundle's executable is the long-running player itself: the .app stays
   // "running" (dock icon) until the player exits, and Cmd-Q sends SIGTERM, which
   // main.ts handles as a clean shutdown. No Terminal window is ever shown.
-  const launcher = ['#!/bin/bash', `exec "${nodePath}" "${mainJs}"`, ''].join('\n');
+  // Finder launches a .app with launchd's PATH, which omits Homebrew, so mpv detection needs it added.
+  const launcher = [
+    '#!/bin/bash',
+    'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"',
+    `exec "${nodePath}" "${mainJs}"`,
+    '',
+  ].join('\n');
   const launcherPath = join(macosDir, 'launcher');
   writeFileSync(launcherPath, launcher, { mode: 0o755 });
   chmodSync(launcherPath, 0o755);

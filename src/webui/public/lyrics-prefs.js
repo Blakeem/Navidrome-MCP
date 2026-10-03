@@ -25,7 +25,7 @@ const offsetValue = byId('lyrics-offset-value');
 let sizeStep = 1;
 let offsetMs = 0;
 
-export function lyricOffsetMs() {
+export function lyricsOffsetMs() {
   return offsetMs;
 }
 
@@ -39,16 +39,16 @@ export function setOffsetControlVisible(visible) {
   if (!visible && settingsDialog.open) settingsDialog.close();
 }
 
-export function bindLyricPrefs(onSizeChange) {
+export function bindLyricsPrefs(onSizeChange) {
   sizeDown.addEventListener('click', () => stepSize(-1, onSizeChange));
   sizeUp.addEventListener('click', () => stepSize(1, onSizeChange));
   settingsBtn.addEventListener('click', () => settingsDialog.showModal());
   offsetDown.addEventListener('click', () => nudgeOffset(-OFFSET_STEP_MS));
   offsetUp.addEventListener('click', () => nudgeOffset(OFFSET_STEP_MS));
-  loadLyricPrefs();
+  loadLyricsPrefs();
 }
 
-function loadLyricPrefs() {
+function loadLyricsPrefs() {
   // INPUT
   const size = readStoredInt(SIZE_KEY, 0, SIZE_STEPS.length - 1);
   const offset = readStoredInt(OFFSET_KEY, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS);

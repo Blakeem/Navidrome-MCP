@@ -12,7 +12,7 @@ import { bindPlayDialog } from './play-dialog.js';
 import { rebaseClock } from './playback-clock.js';
 import { bindQueue, renderQueue, revealCurrentRow } from './queue.js';
 import { bindSettings } from './settings.js';
-import { storeSnapshot } from './snapshot.js';
+import { playingIndex, storeSnapshot } from './snapshot.js';
 import { applyTheme, applyThemeHint } from './theme.js';
 import { bindTransport, renderTransport } from './transport.js';
 import { bindVolume, renderVolume } from './volume.js';
@@ -24,7 +24,7 @@ function applySnapshot(raw) {
   renderNowPlaying(nowPlaying);
   renderTransport(nowPlaying);
   renderVolume(status);
-  renderQueue(queue);
+  renderQueue(queue, playingIndex(nowPlaying));
   syncLyricsToSnapshot(nowPlaying);
   if (player !== null) applyTheme(player.theme);
   // Last, so the rows reflect this snapshot before the reveal measures them.

@@ -1,7 +1,7 @@
 # Running in Docker
 
 The included [`Dockerfile`](../Dockerfile) packages the server for the
-[HTTP transport](../README.md#running-over-http): an always-on, library-only MCP
+[HTTP transport](../README.md#http-transport): an always-on, library-only MCP
 endpoint you can run next to Navidrome.
 
 ## What each deployment shape gives you
@@ -19,7 +19,7 @@ machine that runs the server is always the machine that makes the sound.
 
 Want remote MCP access *and* working audio? Skip the container: run the server with
 the HTTP transport on the machine wired to your speakers (see
-[Running over HTTP](../README.md#running-over-http)).
+[HTTP Transport](../README.md#http-transport)).
 
 ## Quick start
 

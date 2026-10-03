@@ -39,9 +39,9 @@ export async function searchAll(client: NavidromeClient, args: unknown, transfor
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
-  totalArtists: number;
-  totalAlbums: number;
-  totalSongs: number;
+  totalArtists?: number;
+  totalAlbums?: number;
+  totalSongs?: number;
   totalResults: number;
   appliedFilters?: AppliedFiltersByType;
 }> {
@@ -63,6 +63,9 @@ export async function searchAll(client: NavidromeClient, args: unknown, transfor
       year: params.year,
       starred: params.starred,
     });
+    // A zero count skips its fetch because `_start=N&_end=N` with N > 0 is a SQL error in Navidrome.
+    const fetchSongs = params.songCount > 0;
+    const fetchAlbums = params.albumCount > 0;
     // An unfiltered artist page would be reported as matches for a tag or year filter.
     const fetchArtists = params.artistCount > 0 && !hasArtistUnsupportedFilter(appliedFilters);
 
@@ -74,18 +77,18 @@ export async function searchAll(client: NavidromeClient, args: unknown, transfor
       appliedFilters,
     });
 
-    // A zero count skips its fetch because `_start=N&_end=N` with N > 0 is a SQL error in Navidrome.
-    const empty = (): { data: unknown[]; total: null } => ({ data: [], total: null });
+    // A skipped slice has no total, which keeps it apart from a header-absent null.
+    const skipped = (): { data: unknown[]; total: undefined } => ({ data: [], total: undefined });
     const [songs, albums, artists] = await Promise.all([
-      params.songCount > 0
+      fetchSongs
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/song?${contentTypeParams.songParams}`)
-        : Promise.resolve(empty()),
-      params.albumCount > 0
+        : Promise.resolve(skipped()),
+      fetchAlbums
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${contentTypeParams.albumParams}`)
-        : Promise.resolve(empty()),
+        : Promise.resolve(skipped()),
       fetchArtists
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${contentTypeParams.artistParams}&role=maincredit`)
-        : Promise.resolve(empty()),
+        : Promise.resolve(skipped()),
     ]);
 
     const responses: ParallelSearchResponses = {

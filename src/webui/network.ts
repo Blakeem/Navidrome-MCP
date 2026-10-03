@@ -19,11 +19,8 @@
 import { networkInterfaces } from 'node:os';
 
 interface NetworkInterfaceDescriptor {
-  /** OS-supplied interface name (e.g. "eth0", "wlan0", "en0"). */
   iface: string;
-  /** IPv4 address bound to that interface (non-internal only). */
   address: string;
-  /** Fully-formed URL the user can paste into a browser on that interface. */
   url: string;
 }
 
@@ -32,17 +29,7 @@ export function isLanReachable(host: string): boolean {
   return !(host === 'localhost' || host === '::1' || host.startsWith('127.'));
 }
 
-/**
- * Enumerate non-internal IPv4 addresses reachable on the host, paired with
- * a ready-to-paste URL for the running web UI. Skips loopback (the user
- * already knows about `localhost`/`127.0.0.1`) and IPv6 (most LAN setups
- * don't expose phones on IPv6, and the URL form `http://[::1]:8808` is more
- * confusing than useful in the network-info panel).
- *
- * Returns an empty array when the only interfaces present are internal. The
- * caller renders that as "no LAN interfaces detected" and points the user at
- * the localhost URL as the only option.
- */
+// IPv4 only, because phones on a home LAN reach the host over IPv4 and a bracketed IPv6 URL confuses users.
 export function listLanInterfaces(port: number): NetworkInterfaceDescriptor[] {
   const out: NetworkInterfaceDescriptor[] = [];
   const all = networkInterfaces();

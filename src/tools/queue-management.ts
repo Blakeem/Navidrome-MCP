@@ -27,14 +27,16 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 /** Raw shape returned by Navidrome's `/queue` GET endpoint. `items` are full media files. */
 interface RawSavedQueue {
   current?: number;
+  /** Milliseconds within the current track. */
   position?: number;
   items?: unknown;
   updatedAt?: string;
 }
 
 interface SavedQueueResult {
-  current: number;
-  /** Playback offset within the current track, in milliseconds. */
+  /** 0-based index into `tracks`. */
+  currentIndex: number;
+  /** Playback offset within the current track, in seconds, the unit now_playing reports. */
   position: number;
   trackCount: number;
   tracks: SongDTO[];
@@ -62,8 +64,8 @@ export async function getSavedQueue(client: NavidromeClient, _args: unknown): Pr
     const tracks = transformSongsToDTO(record.items);
 
     return {
-      current: record.current ?? 0,
-      position: record.position ?? 0,
+      currentIndex: record.current ?? 0,
+      position: (record.position ?? 0) / 1000,
       trackCount: tracks.length,
       tracks,
       // A cleared or never-saved queue carries Go's zero time or an empty string, not a real timestamp.
@@ -76,17 +78,18 @@ export async function getSavedQueue(client: NavidromeClient, _args: unknown): Pr
 
 export async function saveQueue(client: NavidromeClient, args: unknown): Promise<SaveQueueResult> {
   try {
-    const { songIds, current = 0, position = 0 } = SaveQueueSchema.parse(args);
+    const { songIds, currentIndex, position } = SaveQueueSchema.parse(args);
+    const positionMs = Math.round(position * 1000);
 
-    logger.debug('Tool saveQueue called with args:', { songIdCount: songIds.length, current, position });
+    logger.debug('Tool saveQueue called with args:', { songIdCount: songIds.length, currentIndex, position });
     logger.info(`Saving queue with ${songIds.length} tracks to Navidrome server`);
 
     await client.request('/queue', {
       method: 'POST',
       body: JSON.stringify({
         ids: songIds,
-        current,
-        position,
+        current: currentIndex,
+        position: positionMs,
       }),
     });
 

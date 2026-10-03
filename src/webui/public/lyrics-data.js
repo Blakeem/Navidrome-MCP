@@ -6,6 +6,7 @@ import { getJson } from './api.js';
 const cache = new Map();
 const inFlight = new Map();
 
+// Mirrors isAnswered in src/webui/routes/lyrics.ts, so a change to what counts as an answer edits both.
 // The server holds a miss for 60 s only, since the track may become searchable, so the browser must ask again.
 function isAnswered(dto) {
   return dto.hasSynced === true || typeof dto.unsynced === 'string' || dto.isInstrumental === true;

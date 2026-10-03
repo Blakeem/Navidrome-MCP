@@ -11,7 +11,7 @@
 ### ❌ **NEVER DO**
 - **Real writes**: Never create/modify/delete server data in tests
 - **Content testing**: Don't test specific song names, artists, album titles
-- **Individual auth**: Don't use `createLiveClient()` (deprecated)
+- **Individual auth**: Never construct a `NavidromeClient` in a live test. Use `getSharedLiveClient()`.
 - **External API calls**: Always mock Last.fm, Radio Browser, LRCLIB
 
 ---
@@ -54,10 +54,10 @@ Always mock external services:
 ### Directory Structure
 ```
 tests/
-├── unit/tools/                  # Tool-specific tests (135 tests total)
-├── unit/utils/                  # Utility function tests
+├── unit/                        # Unit tests, one subdirectory per src/ area
 ├── integration/playback/        # Live-mpv playback integration tests (run via `pnpm test:playback`)
 ├── integration/coordination/    # Multi-process tests against dist/ (run via `pnpm test:playback`)
+├── helpers/                     # Test setup and config helpers (setup-config-store, test-config, env-detection)
 ├── factories/                   # Mock client & data factories
 └── CLAUDE.md                    # This file
 ```
@@ -79,8 +79,10 @@ They require:
 - A current `dist/`, which the script builds first. The coordination tests spawn
   `dist/web/main.js`, so a direct vitest run against a stale `dist/` tests old code.
 
-Tests skip cleanly when either is missing. Use `describePlayback` /
-`itPlayback` from `tests/integration/playback/helpers.ts` instead of
+Tests skip when mpv is not found, when `SKIP_INTEGRATION_TESTS` or
+`MOCK_ONLY_TESTS` is `true`, or in CI without Navidrome credentials in the
+seeded store. An unreachable Navidrome fails the suite. It does not skip.
+Use `describePlayback` / `itPlayback` from `tests/integration/playback/helpers.ts` instead of
 raw `describe`/`it`. Use `waitFor` for async mpv state polling instead
 of fixed `setTimeout`.
 
@@ -111,13 +113,13 @@ Two reasons they are separated, both measured:
 files that also hold mocked tests. **A new file with a `describeLive` block must
 be added there**, or its live tests never run.
 
-### Current Test Coverage (160+ tests)
-1. **Playlist** - 22 tests (data modification safety)
-2. **Search** - 22 tests (high user impact)
-3. **User Preferences** - 31 tests (data integrity)
-4. **Radio Validation** - 22 tests (stream validation)
-5. **Tools Registry** - 6 tests (comprehensive tool validation)
-6. **Message Manager** - 32 tests (utility testing)
+### Current Test Coverage
+1. **Playlist** (data modification safety)
+2. **Search** (high user impact)
+3. **User Preferences** (data integrity)
+4. **Radio Validation** (stream validation)
+5. **Tools Registry** (comprehensive tool validation)
+6. **Message Manager** (utility testing)
 
 ---
 
@@ -168,10 +170,11 @@ import { mockPlaylist } from '../../factories/mock-data.js';
 pnpm test:run         # mocked suite, deterministic
 pnpm lint            # 0 errors/warnings
 pnpm typecheck       # 0 type errors
+pnpm typecheck:tests # 0 type errors in tests/ (relaxed strictness)
 pnpm check:dead-code # 0 unused exports
 
 # Or run all at once:
-pnpm check:all       # lint + typecheck + dead-code
+pnpm check:all       # lint + typecheck + typecheck:tests + dead-code
 pnpm test:all        # test:run + test:live + check:all
 ```
 
@@ -183,10 +186,12 @@ or a breaking Navidrome change will not surface.
 
 ## Environment Configuration
 
-Runtime config comes from a `settings.json` store, not env. A global setup file
-(`tests/helpers/setup-config-store.ts`, registered in both vitest configs) writes a
-**throwaway** store to a temp path and points `NAVIDROME_CONFIG_PATH` at it, so the
-suite never touches the real `~/.config/navidrome-mcp/settings.json`.
+Runtime config comes from a `settings.json` store, not env. A setup file
+(`tests/helpers/setup-config-store.ts`, a `setupFiles` entry in `vitest.config.ts`,
+`vitest.live.config.ts` and `vitest.playback.config.ts`) runs once per test file.
+It writes a **throwaway** store to a temp path, points `NAVIDROME_CONFIG_PATH` at
+it, and deletes it after the file finishes, so the suite never touches the real
+store.
 
 The temp store is seeded (via `buildFormSeed()`) from, in order: the developer's real
 canonical store if present, otherwise inline env (what `test:ci` injects), otherwise a

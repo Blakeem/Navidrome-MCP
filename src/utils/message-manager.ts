@@ -16,16 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/**
- * Manages one-time messages for LLM assistants.
- *
- * State is a process-wide singleton (see getInstance), so tips, reminders, and
- * helpful messages are shown only once per process. Under the stdio transport
- * that is one process per client session, so it reads as "once per session".
- * Under the multi-session HTTP transport all concurrent sessions share this
- * state, so once any session consumes a tip no other session in that process
- * sees it. That trade-off is accepted, since a helper tip not repeating is cosmetic.
- */
+/** One-time LLM tips tracked process-wide. Under HTTP all sessions share shown state,
+ *  accepted because a missed tip is cosmetic. */
 export class MessageManager {
   private static instance: MessageManager | null = null;
   private readonly shownMessages: Set<string>;
@@ -47,11 +39,6 @@ export class MessageManager {
       "TIP: Use 'validate_radio_stream' to test station URLs if playback issues occur");
   }
 
-  /**
-   * Get a message if it hasn't been shown yet
-   * @param messageKey The unique key for the message
-   * @returns The message if not shown before, null otherwise
-   */
   public getMessage(messageKey: string): string | null {
     if (this.shownMessages.has(messageKey)) {
       return null;
@@ -66,15 +53,12 @@ export class MessageManager {
     return template;
   }
 
-  /**
-   * Reset all shown messages (useful for testing)
-   */
+  /** Lets tests isolate cases, since the instance is process-wide. */
   public reset(): void {
     this.shownMessages.clear();
   }
 }
 
-// Export singleton getter for convenience
 export function getMessageManager(): MessageManager {
   return MessageManager.getInstance();
 }

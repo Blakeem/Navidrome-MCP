@@ -27,9 +27,6 @@ import {
 } from '../../constants/timeouts.js';
 import { logger } from '../../utils/logger.js';
 
-/**
- * Allowed primitive arg types for mpv command parameters.
- */
 type IpcArg = string | number | boolean | null;
 
 /**
@@ -45,11 +42,8 @@ interface IpcEvent {
  * Property-change event from mpv. Emitted after an `observe_property` call.
  */
 interface PropertyChangeEvent {
-  /** observe_property numeric id */
   id: number;
-  /** property name */
   name: string;
-  /** current value (any JSON type, including null) */
   data: unknown;
 }
 
@@ -59,7 +53,6 @@ interface PendingRequest {
 }
 
 interface IpcResponse {
-  request_id?: number;
   error?: string;
   data?: unknown;
 }
@@ -232,8 +225,6 @@ export class MpvIpc {
     return this.socket !== null && !this.closed;
   }
 
-  // ---------- internals ----------
-
   private openSocket(path: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const sock = createConnection({ path });
@@ -304,15 +295,12 @@ export class MpvIpc {
     if (typeof msg !== 'object' || msg === null) return;
 
     const obj = msg as Record<string, unknown>;
+    const requestId = obj['request_id'];
 
-    // Response to a command we sent
-    if (typeof obj['request_id'] === 'number') {
+    if (typeof requestId === 'number') {
       const response = obj as IpcResponse;
-      const id = response.request_id;
-      if (id === undefined) return;
-      const pending = this.pending.get(id);
+      const pending = this.pending.get(requestId);
       if (pending !== undefined) {
-        this.pending.delete(id);
         if (response.error === 'success') {
           pending.resolve(response.data);
         } else {
@@ -324,7 +312,6 @@ export class MpvIpc {
       return;
     }
 
-    // Unsolicited event
     if (typeof obj['event'] === 'string') {
       const evt = obj as unknown as IpcEvent;
       if (evt.event === 'property-change') {

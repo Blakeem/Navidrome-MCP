@@ -41,8 +41,7 @@ let inflight: Promise<string> | null = null;
 // generation still matches, so an invalidation that races it wins.
 let cacheGeneration = 0;
 
-/** Test-only reset of the cached state. */
-export function resetRadioBrowserResolverCache(): void {
+export function resetRadioBrowserResolverCacheForTests(): void {
   cached = null;
   inflight = null;
   cacheGeneration = 0;
@@ -50,9 +49,10 @@ export function resetRadioBrowserResolverCache(): void {
 
 /**
  * Drop the cached mirror and any in-flight resolution so the next call re-resolves.
- * Callers invoke it when a request fails in a way that suggests an unhealthy mirror.
+ * Only a failure against the cached mirror drops it, so a late failure against an older mirror keeps a newer one.
  */
-export function invalidateRadioBrowserBase(): void {
+export function invalidateRadioBrowserBase(failedBase: string): void {
+  if (cached === null || cached.base !== failedBase) return;
   cached = null;
   inflight = null;
   cacheGeneration += 1;

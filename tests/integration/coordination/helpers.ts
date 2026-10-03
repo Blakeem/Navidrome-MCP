@@ -6,7 +6,7 @@
  * MCP server) to exercise behaviors the single-process unit suite cannot:
  * port-as-lock ownership, attach-not-bind, and survive-MCP-close (spec §4.10).
  *
- * Gated like the live playback suite: skipped when Navidrome is unreachable
+ * Gated like the live playback suite: skipped when Navidrome is unconfigured
  * (the children call `createRuntime` which authenticates) or when the build
  * artifact is missing (these run the COMPILED `dist/web/main.js` — the prod
  * path). They manipulate only local ports + mpv, never Navidrome data.
@@ -20,10 +20,15 @@ import { join } from 'node:path';
 import { describe } from 'vitest';
 
 import { getSettingsStorePath } from '../../../src/config/store-path.js';
+import { MAX_AUTH_RATE_LIMIT_WAIT_MS } from '../../../src/constants/timeouts.js';
 import { getDefaultIpcPath } from '../../../src/services/playback/mpv-process.js';
 import { shouldSkipLiveTests } from '../../helpers/env-detection.js';
 
 const DIST_WEB_MAIN = join(process.cwd(), 'dist', 'web', 'main.js');
+
+/** Every spawned player logs in at startup, and back-to-back runs exceed Navidrome's login rate limit,
+ * so a startup wait must outlast one Retry-After wait plus the startup itself. */
+export const PLAYER_STARTUP_TIMEOUT_MS = MAX_AUTH_RATE_LIMIT_WAIT_MS + 10_000;
 const IPC_PARENT_HARNESS = join(
   process.cwd(),
   'tests',
@@ -97,11 +102,15 @@ export function makeTempStore(port: number, webuiOverrides: Record<string, unkno
  * Spawn the IPC-parent harness (mimics MCP): it spawns `navidrome-web` over an
  * IPC channel and stays alive until killed. Killing the harness is how we
  * simulate "the MCP server exited" so the web child's disconnect path runs.
+ * `exitAfterSpawn` exits the harness right after the spawn, during the child's startup.
  */
-export function spawnIpcParent(storePath: string): ChildProcess {
-  const child = spawn(process.execPath, [IPC_PARENT_HARNESS, DIST_WEB_MAIN, storePath], {
-    stdio: 'ignore',
-  });
+export function spawnIpcParent(
+  storePath: string,
+  { exitAfterSpawn = false }: { exitAfterSpawn?: boolean } = {},
+): ChildProcess {
+  const args = [IPC_PARENT_HARNESS, DIST_WEB_MAIN, storePath];
+  if (exitAfterSpawn) args.push('exit-after-spawn');
+  const child = spawn(process.execPath, args, { stdio: 'ignore' });
   children.push(child);
   return child;
 }
@@ -117,6 +126,20 @@ export function spawnWeb(storePath: string, extraEnv: NodeJS.ProcessEnv = {}): C
   });
   children.push(child);
   return child;
+}
+
+/**
+ * Spawn a compiled `navidrome-web` against a store that does not exist, with stdout
+ * piped so the test can read the settings URL. Untracked, since setup mode never
+ * binds the web port or touches mpv and its test owns the teardown.
+ */
+export function spawnUnconfiguredWeb(storePath: string): ChildProcess {
+  const env: NodeJS.ProcessEnv = { ...process.env, NAVIDROME_CONFIG_PATH: storePath, NAVIDROME_WEB_AUTO_OPEN: '0' };
+  // The env fallback would configure the child from these and skip setup mode.
+  delete env['NAVIDROME_URL'];
+  delete env['NAVIDROME_USERNAME'];
+  delete env['NAVIDROME_PASSWORD'];
+  return spawn(process.execPath, [DIST_WEB_MAIN], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 }
 
 /** Tear down everything a test started. Call in afterEach. Robust against
@@ -195,13 +218,10 @@ export async function healthz(port: number): Promise<HealthSignature | null> {
   }
 }
 
-/** Poll `predicate` until it resolves truthy or the timeout elapses. Default
- * timeout is generous because these tests spawn real authenticating child
- * processes whose startup (Navidrome login + filter-cache load) slows under the
- * load of several siblings in one fork. */
+/** Poll `predicate` until it resolves truthy or the timeout elapses. The default covers a player startup. */
 export async function waitFor(
   predicate: () => Promise<boolean>,
-  { timeoutMs = 30000, intervalMs = 250 }: { timeoutMs?: number; intervalMs?: number } = {},
+  { timeoutMs = PLAYER_STARTUP_TIMEOUT_MS, intervalMs = 250 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -246,7 +266,7 @@ export function mpvAlive(timeoutMs = 800): Promise<boolean> {
 }
 
 /** Resolve with the child's exit code (or null on timeout). */
-export function waitForExit(child: ChildProcess, timeoutMs = 20000): Promise<number | null> {
+export function waitForExit(child: ChildProcess, timeoutMs = PLAYER_STARTUP_TIMEOUT_MS): Promise<number | null> {
   return new Promise((resolve) => {
     if (child.exitCode !== null) {
       resolve(child.exitCode);

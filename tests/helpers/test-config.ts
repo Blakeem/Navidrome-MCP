@@ -8,6 +8,7 @@
  */
 
 import type { Config } from '../../src/config.js';
+import { DEFAULT_MCP_HTTP_PORT } from '../../src/constants/defaults.js';
 
 type FeatureOverrides = Partial<Config['features']>;
 type ConfigOverrides = Partial<Omit<Config, 'features'>> & { features?: FeatureOverrides };
@@ -17,8 +18,8 @@ const BASE: Config = {
   navidromeUsername: 'test-user',
   navidromePassword: 'test-password',
   debug: false,
-  cacheTtl: 300,
   tokenExpiry: 86400,
+  transport: { type: 'stdio', host: '127.0.0.1', port: DEFAULT_MCP_HTTP_PORT, expose: false },
   features: {
     lastfm: false,
     radioBrowser: false,

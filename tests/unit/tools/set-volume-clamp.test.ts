@@ -29,10 +29,10 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Engine mock echoes the applied volume so the tool's returned value is the
-// engine's (mocked) result. The REAL clamp is exercised end-to-end against a
-// fake IPC in tests/unit/services/playback/playback-engine.test.ts.
-const setVolumeMock = vi.fn((level: number) => Promise.resolve(level));
+// The mock returns a clamped value that differs from an out-of-range input, so the
+// tests prove the tool reports the engine's result. The REAL clamp is exercised
+// against a fake IPC in tests/unit/services/playback/playback-engine.test.ts.
+const setVolumeMock = vi.fn((level: number) => Promise.resolve(Math.max(0, Math.min(100, level))));
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -48,14 +48,14 @@ describe('set_volume clamps out-of-range input (does not reject)', () => {
   });
 
   it('accepts level > 100 and forwards it raw to the engine clamp', async () => {
-    await expect(setVolume({ level: 150 })).resolves.toEqual({ success: true, volume: 150 });
+    await expect(setVolume({ level: 150 })).resolves.toEqual({ success: true, volume: 100 });
     // The schema must NOT reject 150 — it forwards the raw value to the engine,
     // which owns the [0,100] clamp.
     expect(setVolumeMock).toHaveBeenCalledWith(150);
   });
 
   it('accepts level < 0 and forwards it raw to the engine clamp', async () => {
-    await expect(setVolume({ level: -5 })).resolves.toEqual({ success: true, volume: -5 });
+    await expect(setVolume({ level: -5 })).resolves.toEqual({ success: true, volume: 0 });
     expect(setVolumeMock).toHaveBeenCalledWith(-5);
   });
 

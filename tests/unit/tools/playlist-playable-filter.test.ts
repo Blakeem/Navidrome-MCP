@@ -105,6 +105,36 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
     expect(mockClient.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
   });
 
+  it('flag ON probes a smart playlist whose stored songCount is 0 and keeps it when the probe finds tracks', async () => {
+    mockClient.requestWithMeta.mockResolvedValue({
+      data: [rawPlaylist('a', 5), { ...rawPlaylist('smart', 0), rules: { all: [] } }, rawPlaylist('empty', 0)],
+      total: 3,
+    });
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 7 });
+
+    const result = await listPlaylists(mockClient, {
+      offset: 0,
+      limit: 100,
+      onlyWithPlayableTracks: true,
+    });
+
+    expect(result.playlists.map((p) => p.id)).toEqual(['a', 'smart']);
+    expect(result).not.toHaveProperty('truncated');
+    expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
+    expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledWith(
+      expect.stringContaining('/playlist/smart/tracks?_start=0&_end=1'),
+    );
+  });
+
+  it('flag ON marks the result truncated when the server holds more than 500 playlists', async () => {
+    mockClient.requestWithMeta.mockResolvedValue({ data: [rawPlaylist('a', 5)], total: 600 });
+
+    const result = await listPlaylists(mockClient, { onlyWithPlayableTracks: true });
+
+    expect(result.truncated).toBe(true);
+    expect(result.total).toBe(1);
+  });
+
   it('flag ON when libraryManager is NOT initialized → songCount>0 filter, NO probes', async () => {
     mockedIsInitialized.mockReturnValue(false);
 
@@ -165,6 +195,31 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
     expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledWith(
       expect.stringContaining('/playlist/other/tracks?_start=0&_end=1'),
     );
+  });
+
+  it('flag ON keeps a playlist whose probe rejects (fail-open) and still drops a probed-empty one', async () => {
+    mockedGetActiveLibraryIds.mockReturnValue([1]);
+
+    mockClient.requestWithMeta.mockResolvedValue({
+      data: [rawPlaylist('flaky', 5), rawPlaylist('other', 5)],
+      total: 2,
+    });
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation(
+      (endpoint: string) => {
+        if (endpoint.includes('/playlist/flaky/')) {
+          return Promise.reject(new Error('503'));
+        }
+        return Promise.resolve({ data: [], total: 0 });
+      },
+    );
+
+    const result = await listPlaylists(mockClient, {
+      offset: 0,
+      limit: 100,
+      onlyWithPlayableTracks: true,
+    });
+
+    expect(result.playlists.map((p) => p.id)).toEqual(['flaky']);
   });
 
   it('flag ON with subset active → pagination applies over the FILTERED view', async () => {

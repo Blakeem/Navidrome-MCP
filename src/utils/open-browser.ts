@@ -19,14 +19,7 @@
 import { spawn } from 'node:child_process';
 import { logger } from './logger.js';
 
-/**
- * Best-effort open `url` in the user's default browser.
- *
- * This is a convenience only. The URL is always surfaced separately (printed /
- * returned) because there is no reliable way to open a browser on a headless or
- * SSH session (no `DISPLAY`, no `xdg-open`). Failures are swallowed: a spawn
- * error just means "no GUI here," not an error condition for the caller.
- */
+/** Best effort only. Callers always surface the URL too, since headless or SSH hosts cannot open a browser. */
 export function openBrowser(url: string): void {
   const { command, args } = browserCommand(url);
   try {
@@ -46,8 +39,8 @@ function browserCommand(url: string): { command: string; args: string[] } {
     case 'darwin':
       return { command: 'open', args: [url] };
     case 'win32':
-      // `start` is a cmd builtin; the empty "" is the window title it expects
-      // before the URL, otherwise a URL with spaces is misparsed as the title.
+      // start is a cmd builtin that takes its first quoted argument as the window title.
+      // Without that title argument, a URL with spaces would be misparsed as the title.
       return { command: 'cmd', args: ['/c', 'start', '""', url] };
     default:
       return { command: 'xdg-open', args: [url] };

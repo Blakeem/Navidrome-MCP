@@ -72,6 +72,13 @@ describe('config resolution', () => {
       }
     });
 
+    it('trims the username and keeps the password verbatim', async () => {
+      write({ navidrome: { url: 'http://h:4533', username: ' u ', password: ' p ' } });
+      const c = await loadConfig();
+      expect(c.navidromeUsername).toBe('u');
+      expect(c.navidromePassword).toBe(' p ');
+    });
+
     it('treats an empty defaultLibraryIds as undefined (all libraries)', async () => {
       write({ ...BASE, library: { defaultLibraryIds: [] } });
       expect((await loadConfig()).defaultLibraryIds).toBeUndefined();
@@ -211,6 +218,11 @@ describe('config resolution', () => {
     it('throws when the URL is missing', async () => {
       write({ navidrome: { username: 'u', password: 'p' } });
       await expect(loadConfig()).rejects.toThrow();
+    });
+
+    it('throws when the URL has no http or https scheme', async () => {
+      write({ navidrome: { url: 'navidrome:4533', username: 'u', password: 'p' } });
+      await expect(loadConfig()).rejects.toThrow(/starting with http:\/\/ or https:\/\//);
     });
   });
 

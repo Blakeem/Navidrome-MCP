@@ -20,31 +20,17 @@ import { z } from 'zod';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import { createLimitSchema, ItemListTypeSchema, OffsetSchema, OrderSchema, PlaylistIdSchema, VerboseSchema } from './common.js';
 
-// Base pagination schema factory
-const createPaginationSchema = (
-  limitDefault: number,
-  maxLimit = 500,
-  sortDefault = 'name'
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- schema factory. Its return type is inferred by zod, and an explicit annotation would be unwieldy
-) => z.object({
-  limit: createLimitSchema(1, maxLimit, limitDefault),
-  offset: OffsetSchema,
-  sort: z.string().optional().default(sortDefault),
-  order: OrderSchema,
-});
-
 // Specific pagination schemas for different resources.
 //
 // `onlyWithPlayableTracks` (default false) gates an extra per-playlist probe:
 // when true, `list_playlists` returns only playlists with >=1 track in the
 // currently active libraries. Default false preserves the full management view
 // (so the LLM can still add songs to empty/other-library playlists).
-export const PlaylistPaginationSchema = createPaginationSchema(
-  DEFAULT_VALUES.PLAYLISTS_LIMIT,
-  500,
-  'name'
-).extend({
+export const PlaylistPaginationSchema = z.object({
+  limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAYLISTS_LIMIT),
+  offset: OffsetSchema,
   sort: z.enum(['name', 'songCount', 'duration', 'createdAt', 'updatedAt']).optional().default('name'),
+  order: OrderSchema,
   onlyWithPlayableTracks: z.boolean().optional().default(false),
 });
 
@@ -53,6 +39,11 @@ export const PlaylistTracksPaginationSchema = PlaylistIdSchema.extend({
   offset: OffsetSchema,
   format: z.enum(['json', 'm3u']).optional().default('json'),
   verbose: VerboseSchema,
+});
+
+export const PlayQueuePaginationSchema = z.strictObject({
+  limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAY_QUEUE_LIMIT),
+  offset: OffsetSchema,
 });
 
 // User preferences pagination. The type accepts singular or plural (see ItemListTypeSchema in common.ts)

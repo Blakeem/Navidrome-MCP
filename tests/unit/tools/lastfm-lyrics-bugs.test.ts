@@ -37,16 +37,17 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Config } from '../../../src/config.js';
+import { makeTestConfig } from '../../helpers/test-config.js';
 
 // ---- helpers ---------------------------------------------------------------
 
 function makeMockConfig(overrides: Partial<Config> = {}): Config {
   return {
+    ...makeTestConfig(),
     navidromeUrl: 'http://mock-server:4533',
     navidromeUsername: 'testuser',
     navidromePassword: 'testpass',
     debug: false,
-    cacheTtl: 300,
     tokenExpiry: 86400,
     features: {
       lastfm: true,
@@ -55,7 +56,6 @@ function makeMockConfig(overrides: Partial<Config> = {}): Config {
       playback: false,
     },
     lastFmApiKey: 'test-api-key',
-    radioBrowserBase: 'https://de1.api.radio-browser.info',
     lyricsProvider: 'lrclib',
     lrclibUserAgent: 'TestAgent/1.0',
     lrclibBase: 'https://lrclib.net',

@@ -12,7 +12,7 @@ Navidrome music server (plus optional Last.fm, LRCLIB, Radio Browser, mpv).
 Run after every change. Must all be zero issues:
 
 ```bash
-pnpm check:all      # lint + typecheck + dead-code (the usual one)
+pnpm check:all      # lint + typecheck (src and tests) + dead-code (the usual one)
 pnpm test:run       # unit tests
 pnpm build          # production bundle
 ```

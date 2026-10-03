@@ -31,11 +31,11 @@
     --surface-2: #eef2fb;
     --border: #d6def0;
     --text: #15203a;
-    --text-muted: #5d6b8c;
+    --text-muted: #475573;
     --accent: #3955c8;
     --accent-strong: #2a3fa1;
-    --good: #1b9a52;
-    --warn: #b07a00;
+    --good: #13703c;
+    --warn: #855c00;
     --bad: #c43b3b;
     --on-fill: #ffffff;
     --shadow: 0 6px 16px rgba(30, 40, 70, 0.08);
@@ -49,11 +49,11 @@
   --surface-2: #eef2fb;
   --border: #d6def0;
   --text: #15203a;
-  --text-muted: #5d6b8c;
+  --text-muted: #475573;
   --accent: #3955c8;
   --accent-strong: #2a3fa1;
-  --good: #1b9a52;
-  --warn: #b07a00;
+  --good: #13703c;
+  --warn: #855c00;
   --bad: #c43b3b;
   --on-fill: #ffffff;
   --shadow: 0 6px 16px rgba(30, 40, 70, 0.08);
@@ -179,7 +179,7 @@ main {
   background: var(--warn);
   animation: pulse 1.4s ease-in-out infinite;
 }
-.conn[data-state="disconnected"] .conn-dot { background: var(--bad); }
+.conn[data-state="disconnected"] .conn-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--bad); }
 /* JS owns the label text (setConnState writes textContent), so CSS sets only the per-state color. */
 .conn-label { font-variant-numeric: tabular-nums; }
 .conn[data-state="connected"] .conn-label { color: var(--good); }
@@ -482,6 +482,21 @@ main {
 .play-btn:not(:disabled):hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 .play-btn svg { width: 36px; height: 36px; }
 .play-btn svg path { fill: var(--on-fill); }
+
+.control-status {
+  margin: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--bad);
+}
+/* An empty line leaves the flex flow, so it adds no gap, yet stays in the accessibility tree for the next announcement. */
+.control-status:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
 
 /* ───────────────── volume ───────────────── */
 .volume-section {
@@ -804,7 +819,7 @@ main {
 
 /* Terminal state after the power button shuts the player down. */
 body.player-stopped main,
-body.player-stopped .topbar-actions .ghost-btn { opacity: 0.45; pointer-events: none; }
+body.player-stopped .topbar-actions .ghost-btn { opacity: 0.45; }
 body.player-stopped::after {
   content: 'Player stopped. Relaunch navidrome-web or restart the MCP server to use it again.';
   display: block;
@@ -888,8 +903,9 @@ body.player-stopped::after {
   flex-direction: column;
   gap: 8px;
 }
-/* Only the results scroll, so the search row and captions stay pinned. */
-#lib-results {
+/* Only the lists scroll, so the search row, captions and status lines stay pinned. */
+#lib-results,
+#playlists-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -967,6 +983,7 @@ body.player-stopped::after {
 .shuffle-toggle svg { width: 22px; height: 22px; }
 .mode-toggle-btn:hover,
 .shuffle-toggle:hover { color: var(--text); background: var(--surface-2); }
+.mode-toggle input:disabled + .mode-toggle-btn { opacity: 0.4; pointer-events: none; }
 /* z-index lifts the selected button so its accent border draws over the shared edge. */
 .mode-toggle input:checked + .mode-toggle-btn,
 .shuffle-toggle[aria-pressed="true"] {
@@ -1067,7 +1084,7 @@ body.player-stopped::after {
 .lib-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .lib-node:is([data-kind="artist"], [data-kind="album"]) > .lib-row > .lib-main { cursor: pointer; }
 .lib-node.is-expanded > .lib-row {
-  background: color-mix(in srgb, var(--accent) 24%, var(--surface-2));
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-2));
   box-shadow: inset 3px 0 0 var(--accent);
 }
 .lib-children {
@@ -1237,6 +1254,22 @@ body.player-stopped::after {
 }
 /* Blank lines in plain lyrics mark stanza breaks, so they keep a line of height. */
 .lyric-line:empty { min-height: 0.9em; }
+/* A timed row's text is a button so Enter and Space seek, and it keeps the row's own look. */
+.lyric-seek {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: inherit;
+}
+.lyric-seek:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .lyrics-transport {
   grid-area: lyrics-foot;

@@ -5,7 +5,7 @@ import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll } from 'vitest';
-import { buildFormSeed } from '../../src/config/seed.js';
+import { buildFormSeed } from '../../src/config/env-settings.js';
 import { writeSettings, type SettingsFile } from '../../src/config/store.js';
 
 // A worker that reruns this file would otherwise seed from its own redirected temp store.

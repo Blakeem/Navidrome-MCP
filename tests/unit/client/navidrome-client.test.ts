@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
-import { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import { NavidromeClient, NavidromeNotFoundError } from '../../../src/client/navidrome-client.js';
 import { FetchTimeoutError } from '../../../src/utils/fetch-with-timeout.js';
 import type { Config } from '../../../src/config.js';
 
@@ -19,7 +19,7 @@ global.fetch = mockFetch;
  * Mirrors how native fetch behaves on a server that accepts the connection
  * but never replies.
  */
-function hangingFetchImpl(_url: string, init?: RequestInit): Promise<Response> {
+function hangingFetchImpl(_url: unknown, init?: RequestInit): Promise<Response> {
   return new Promise<Response>((_resolve, reject) => {
     const signal = init?.signal;
     if (signal === undefined || signal === null) return;
@@ -104,6 +104,38 @@ describe('NavidromeClient', () => {
       await expect(client.request('/album/123')).rejects.toThrow();
       // login + req + re-login + retry = 4 fetches; no third attempt.
       expect(mockFetch).toHaveBeenCalledTimes(4);
+    });
+
+    it('maps a 500 with the data-not-found body on a read to a wrong-ID error', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ error: 'data not found' }, 500));
+
+      const client = new NavidromeClient(makeConfig());
+      const failure = client.request('/song/missing');
+
+      await expect(failure).rejects.toBeInstanceOf(NavidromeNotFoundError);
+      await expect(failure).rejects.toThrow('Navidrome GET /song/missing found no item. The ID is probably wrong.');
+    });
+
+    it('maps a 404 on a read to a wrong-ID error', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/album/missing')).rejects.toBeInstanceOf(NavidromeNotFoundError);
+    });
+
+    it('keeps the HTTP error for a data-not-found 500 on a write', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ error: 'data not found' }, 500));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/playlist/missing', { method: 'DELETE' })).rejects.toThrow(/Navidrome DELETE \/playlist\/missing - 500/);
     });
 
     it('non-401 errors do not trigger retry', async () => {

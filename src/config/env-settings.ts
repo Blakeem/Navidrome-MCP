@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Settings form seed (pre-fill source)
+ * Navidrome MCP Server - Settings built from the environment (form seed and headless runtime fallback)
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -21,7 +21,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readSettings, type SettingsFile } from './store.js';
 import {
-  DEFAULT_CACHE_TTL_SECONDS,
   DEFAULT_LRCLIB_BASE,
   DEFAULT_MCP_HTTP_PORT,
   DEFAULT_MUSICBRAINZ_USER_AGENT,
@@ -31,10 +30,11 @@ import {
   DEFAULT_USER_AGENT,
   DEFAULT_WEBUI_PORT,
 } from '../constants/defaults.js';
+import { logger } from '../utils/logger.js';
 
 /**
- * Recommended radio and lyrics values, keyed by form field path. A first run pre-fills them, and later runs only
- * hint them beside blank fields so a deliberate blank survives. `radioBrowserBase` is absent: blank selects a mirror by SRV.
+ * Recommended feature-field values keyed by form field path. A first run pre-fills them, and later runs only hint
+ * them beside blank fields so a deliberate blank survives. `radioBrowserBase` is absent: blank selects a mirror by SRV.
  */
 export const FORM_SUGGESTIONS = {
   'features.musicBrainzUserAgent': DEFAULT_MUSICBRAINZ_USER_AGENT,
@@ -57,8 +57,8 @@ export function buildFormSeed(): SettingsFile {
 }
 
 /**
- * Headless runtime fallback built from `process.env` only. It skips `.env` files and FORM_SUGGESTIONS, so radio
- * and lyrics enable only on an explicit env opt-in, and a usable settings.json wins over it.
+ * Headless runtime fallback built from `process.env` only. It skips `.env` files and the radio and lyrics suggestions,
+ * so radio and lyrics enable only on an explicit env opt-in, and a usable settings.json wins over it.
  */
 export function buildEnvRuntimeSettings(): SettingsFile {
   return settingsFromEnvSource((key) => {
@@ -69,7 +69,6 @@ export function buildEnvRuntimeSettings(): SettingsFile {
 
 function importFromLegacyEnv(): SettingsFile {
   const envFile = readLegacyEnvFile();
-  // Review-gated GUI form-seed path: keep the first-run convenience defaults.
   return settingsFromEnvSource((key: string): string | undefined => {
     const fromProcess = process.env[key];
     if (fromProcess !== undefined && fromProcess.trim() !== '') return fromProcess;
@@ -90,17 +89,13 @@ function settingsFromEnvSource(
   const suggest = (key: keyof typeof FORM_SUGGESTIONS): string | null =>
     applySuggestions ? FORM_SUGGESTIONS[key] : null;
 
-  const libsRaw = get('NAVIDROME_DEFAULT_LIBRARIES');
-  const defaultLibraryIds = libsRaw !== undefined
-    ? libsRaw.split(',').map(t => parseInt(t.trim(), 10)).filter(n => !Number.isNaN(n))
-    : [];
+  const defaultLibraryIds = toLibraryIds(get('NAVIDROME_DEFAULT_LIBRARIES'));
 
-  const port = toInt(get('WEBUI_PORT'), DEFAULT_WEBUI_PORT);
-  const cacheTtl = toInt(get('CACHE_TTL'), DEFAULT_CACHE_TTL_SECONDS);
-  const tokenExpiry = toInt(get('TOKEN_EXPIRY'), DEFAULT_TOKEN_EXPIRY_SECONDS);
+  const port = toInt('WEBUI_PORT', get('WEBUI_PORT'), DEFAULT_WEBUI_PORT);
+  const tokenExpiry = toInt('TOKEN_EXPIRY', get('TOKEN_EXPIRY'), DEFAULT_TOKEN_EXPIRY_SECONDS);
 
-  const transportType = get('MCP_TRANSPORT') === 'http' ? 'http' : 'stdio';
-  const transportPort = toInt(get('MCP_HTTP_PORT'), DEFAULT_MCP_HTTP_PORT);
+  const transportType = toTransportType(get('MCP_TRANSPORT'));
+  const transportPort = toInt('MCP_HTTP_PORT', get('MCP_HTTP_PORT'), DEFAULT_MCP_HTTP_PORT);
 
   return {
     navidrome: {
@@ -112,26 +107,19 @@ function settingsFromEnvSource(
       type: transportType,
       host: get('MCP_HTTP_HOST') ?? null,
       port: transportPort,
-      expose: get('MCP_HTTP_EXPOSE') === 'true',
+      expose: toBool('MCP_HTTP_EXPOSE', get('MCP_HTTP_EXPOSE'), false),
       authToken: get('MCP_HTTP_AUTH_TOKEN') ?? null,
       allowedHosts: toList(get('MCP_HTTP_ALLOWED_HOSTS')),
       allowedOrigins: toList(get('MCP_HTTP_ALLOWED_ORIGINS')),
     },
     library: {
       defaultLibraryIds,
-      filterCacheEnabled: get('NAVIDROME_FILTER_CACHE_ENABLED') !== 'false',
+      filterCacheEnabled: toBool('NAVIDROME_FILTER_CACHE_ENABLED', get('NAVIDROME_FILTER_CACHE_ENABLED'), true),
     },
     features: {
       lastFmApiKey: get('LASTFM_API_KEY') ?? null,
       musicBrainzUserAgent: get('MUSICBRAINZ_USER_AGENT') ?? FORM_SUGGESTIONS['features.musicBrainzUserAgent'],
-      // Radio + lyrics gating fields fall back to the recommended defaults ONLY
-      // when applySuggestions is set (the review-gated GUI form-seed path). The
-      // single-sourced FORM_SUGGESTIONS values match the form's later-run
-      // "suggested" hints exactly. On the unattended env-runtime path these stay
-      // blank so radio/lyrics enable only on an explicit operator opt-in.
       radioBrowserUserAgent: get('RADIO_BROWSER_USER_AGENT') ?? suggest('features.radioBrowserUserAgent'),
-      // Left blank by default: blank means SRV-based auto mirror selection, which
-      // is more robust than pinning one mirror that may go offline.
       radioBrowserBase: get('RADIO_BROWSER_BASE') ?? null,
       lyricsProvider: get('LYRICS_PROVIDER') ?? suggest('features.lyricsProvider'),
       lrclibUserAgent: get('LRCLIB_USER_AGENT') ?? suggest('features.lrclibUserAgent'),
@@ -143,25 +131,54 @@ function settingsFromEnvSource(
       transcodeBitrate: get('PLAYBACK_TRANSCODE_BITRATE') ?? DEFAULT_TRANSCODE_BITRATE,
     },
     webui: {
-      enabled: get('WEBUI_ENABLED') !== 'false',
+      enabled: toBool('WEBUI_ENABLED', get('WEBUI_ENABLED'), true),
       port,
       host: get('WEBUI_HOST') ?? null,
-      expose: get('WEBUI_EXPOSE') === 'true',
-      autoOpenBrowser: get('WEBUI_AUTO_OPEN_BROWSER') === 'true',
-      persistAfterMcpExit: get('WEBUI_PERSIST_AFTER_MCP_EXIT') === 'true',
+      expose: toBool('WEBUI_EXPOSE', get('WEBUI_EXPOSE'), false),
+      autoOpenBrowser: toBool('WEBUI_AUTO_OPEN_BROWSER', get('WEBUI_AUTO_OPEN_BROWSER'), false),
+      persistAfterMcpExit: toBool('WEBUI_PERSIST_AFTER_MCP_EXIT', get('WEBUI_PERSIST_AFTER_MCP_EXIT'), false),
     },
     advanced: {
-      debug: get('DEBUG') === 'true',
-      cacheTtl,
+      debug: toBool('DEBUG', get('DEBUG'), false),
       tokenExpiry,
     },
   };
 }
 
-function toInt(value: string | undefined, fallback: number): number {
+function toInt(name: string, value: string | undefined, fallback: number): number {
   if (value === undefined) return fallback;
   const n = parseInt(value, 10);
-  return Number.isFinite(n) ? n : fallback;
+  if (!Number.isNaN(n)) return n;
+  logger.warn(`${name}="${value}" is not an integer, so ${fallback} is used.`);
+  return fallback;
+}
+
+function toBool(name: string, value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  logger.warn(`${name}="${value}" is not true or false, so ${String(fallback)} is used.`);
+  return fallback;
+}
+
+function toLibraryIds(value: string | undefined): number[] {
+  if (value === undefined) return [];
+  const tokens = value.split(',').map((t) => t.trim()).filter((t) => t !== '');
+  const validTokens = tokens.filter((t) => /^\d+$/.test(t));
+  const invalidTokens = tokens.filter((t) => !/^\d+$/.test(t));
+  if (invalidTokens.length > 0) {
+    const quoted = invalidTokens.map((t) => `"${t}"`).join(', ');
+    logger.warn(`NAVIDROME_DEFAULT_LIBRARIES ignores ${quoted}, since a library ID is a number.`);
+  }
+  return validTokens.map((t) => parseInt(t, 10));
+}
+
+function toTransportType(value: string | undefined): 'stdio' | 'http' {
+  if (value === 'http') return 'http';
+  if (value !== undefined && value !== 'stdio') {
+    logger.warn(`MCP_TRANSPORT="${value}" is not supported (use http or stdio), so stdio is used.`);
+  }
+  return 'stdio';
 }
 
 /** Split a comma-separated env value into a trimmed list, or null when unset. */
@@ -189,17 +206,12 @@ function readLegacyEnvFile(): Record<string, string> {
 }
 
 function legacyEnvCandidates(): string[] {
-  const candidates: string[] = [];
-  try {
-    // dist/config/seed.js → project root is two levels up; src/config/seed.ts
-    // under tsx resolves the same way.
-    const here = dirname(fileURLToPath(import.meta.url));
-    candidates.push(join(here, '..', '..', '.env'));
-  } catch {
-    /* import.meta unavailable, so skip */
-  }
-  candidates.push(join(process.cwd(), '.env'));
-  return candidates;
+  return [
+    // dist/config/env-settings.js sits two levels below the project root.
+    // src/config/env-settings.ts under tsx resolves the same way.
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'),
+    join(process.cwd(), '.env'),
+  ];
 }
 
 function parseEnv(content: string): Record<string, string> {

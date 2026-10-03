@@ -18,6 +18,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import type { StateChangeEvent } from '../../../../src/services/playback/playback-engine.js';
+import { MAX_QUEUE_READ_PAGES, QUEUE_READ_PAGE_SIZE } from '../../../../src/constants/defaults.js';
+import { withPlatform } from '../../../helpers/platform.js';
 
 interface FakeIpc extends EventEmitter {
   connect: ReturnType<typeof vi.fn>;
@@ -77,7 +80,6 @@ vi.mock('../../../../src/services/playback/mpv-ipc.js', () => ({
 
 vi.mock('../../../../src/services/playback/mpv-process.js', () => ({
   getDefaultIpcPath: () => '/tmp/test-fake.sock',
-  detectMpvBinary: () => '/fake/mpv',
   spawnMpv: vi.fn(() => {
     const child = new EventEmitter() as EventEmitter & { kill: ReturnType<typeof vi.fn>; unref: () => void };
     child.kill = vi.fn();
@@ -94,18 +96,35 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn().mockResolvedValue(undefined),
 }));
 
+interface FakeNetSocket extends EventEmitter {
+  end: ReturnType<typeof vi.fn>;
+  destroy: ReturnType<typeof vi.fn>;
+}
+
+// A null outcome leaves the socket silent, so a test can emit its events by hand.
+// Sockets are recorded here, since a fresh engine module gets a fresh createConnection mock.
+const netState = vi.hoisted(() => ({
+  outcome: null as 'connect' | 'error' | null,
+  lastSocket: null as FakeNetSocket | null,
+}));
+
 vi.mock('node:net', () => ({
   createConnection: vi.fn(() => {
-    const sock = new EventEmitter() as EventEmitter & {
-      destroy: () => void;
-      once: EventEmitter['once'];
-    };
-    sock.destroy = (): void => undefined;
+    const sock = new EventEmitter() as FakeNetSocket;
+    sock.end = vi.fn();
+    sock.destroy = vi.fn();
+    netState.lastSocket = sock;
+    const outcome = netState.outcome;
+    if (outcome === 'connect') setImmediate(() => sock.emit('connect'));
+    if (outcome === 'error') setImmediate(() => sock.emit('error', new Error('ECONNREFUSED')));
     return sock;
   }),
 }));
 
 const { playbackEngine } = await import('../../../../src/services/playback/playback-engine.js');
+const { MpvIpc } = await import('../../../../src/services/playback/mpv-ipc.js');
+const { spawnMpv } = await import('../../../../src/services/playback/mpv-process.js');
+const { unlink } = await import('node:fs/promises');
 
 const baseConfig = {
   navidromeUrl: 'http://navidrome.test',
@@ -123,6 +142,8 @@ beforeEach(() => {
 
 afterEach(() => {
   playbackEngine.shutdown();
+  netState.outcome = null;
+  netState.lastSocket = null;
   vi.clearAllMocks();
 });
 
@@ -255,8 +276,8 @@ describe('getQueue filename caching (H4)', () => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
         return [
-          { filename: '/local/path/song.mp3', current: false, playing: false },
-          { filename: 'rtsp://radio.example/stream', current: true, playing: true },
+          { filename: '/music/rest/stream?id=5', current: false, playing: false },
+          { filename: 'rtsp://radio.example/rest/stream?id=5', current: true, playing: true },
         ];
       }
       return null;
@@ -287,7 +308,7 @@ describe('getQueue filename caching (H4)', () => {
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
       if (cmd === 'get_property' && args[1] === 'playlist') {
-        return [{ filename: 'http://[invalid-bracket', current: true, playing: true }];
+        return [{ filename: 'http://[invalid-bracket?id=1', current: true, playing: true }];
       }
       return null;
     });
@@ -307,6 +328,8 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
   it('recovers to clean idle state when a mid-sequence loadfile fails', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
+    const events: StateChangeEvent[] = [];
+    playbackEngine.onStateChange((e) => events.push(e));
 
     // Reset the call recorder so we only see commands from the test below
     ipc.command.mockReset();
@@ -328,16 +351,12 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
       playbackEngine.enqueue(['song-1', 'song-2', 'song-3'], 'replace'),
     ).rejects.toThrow(/queue was cleared and is now empty/);
 
-    // The engine should have called `stop` after the failure to leave
-    // the user in a clean idle state instead of a half-loaded queue.
+    // The failure path clears and stops after the failing loadfile, so mpv holds no half-loaded queue.
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
-    expect(commands).toContain('playlist-clear');
-    expect(commands).toContain('stop');
-
-    // The stop call must come AFTER the failing loadfile sequence
-    const stopIdx = commands.indexOf('stop');
-    const lastLoadfileIdx = commands.lastIndexOf('loadfile');
-    expect(stopIdx).toBeGreaterThan(lastLoadfileIdx);
+    expect(commands.slice(commands.lastIndexOf('loadfile') + 1)).toEqual(['playlist-clear', 'stop']);
+    expect(playbackEngine.getCachedProperty('playlist-count')).toBe(0);
+    expect(playbackEngine.getCachedProperty('playlist-pos')).toBeNull();
+    expect(events).toContainEqual({ kind: 'queue' });
   });
 
   it('passes through the underlying error message in the wrapper', async () => {
@@ -376,13 +395,8 @@ describe("enqueue('append') radio demotion", () => {
   it("demotes append to replace when the queue holds a radio stream", async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
 
-    // Drive hasRadioStream() entirely through the IPC mock at the same seams
-    // the other unit tests use:
-    //   - get_property('playlist-count') > 0  → primes the cache so isRunning()
-    //     is true AND hasRadioStream()'s cheap cached-count check passes.
-    //   - get_property('playlist') returns a single radio entry whose filename
-    //     is non-HTTP, so the engine parses songId as null → the queue is seen
-    //     as containing a radio stream.
+    // hasRadioStream() reads the live playlist. A single non-HTTP entry parses
+    // to songId null, so the queue is seen as holding a radio stream.
     // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
@@ -411,9 +425,8 @@ describe("enqueue('append') radio demotion", () => {
   it("does NOT demote append when the queue holds only real songs", async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
 
-    // playlist-count > 0 but every entry parses to a real songId (HTTP stream
-    // URL the engine built), so hasRadioStream() returns false and append stays
-    // append.
+    // Every entry parses to a real songId (HTTP stream URL the engine built),
+    // so hasRadioStream() returns false and append stays append.
     const songUrl = 'http://navidrome.test/rest/stream?id=song-existing&u=x&s=y&t=z';
     // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
@@ -433,6 +446,19 @@ describe("enqueue('append') radio demotion", () => {
     // A genuine append never clears the playlist.
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
     expect(commands).not.toContain('playlist-clear');
+  });
+
+  it('demotes append onto radio before the cached playlist-count catches up', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {
+      playlist: [{ filename: 'http://radio.example/live', current: true, playing: true }],
+    });
+    expect(playbackEngine.getCachedProperty('playlist-count')).toBeNull();
+
+    const result = await playbackEngine.enqueue(['song-1'], 'append');
+
+    expect(result).toEqual({ demoted: true });
   });
 });
 
@@ -767,5 +793,488 @@ describe('getQueue song-id parsing', () => {
 
     expect(entries[0]?.songId).toBeNull();
     expect(entries[0]).not.toHaveProperty('filename');
+  });
+});
+
+// ---------- stream URLs round-trip through getQueue ----------
+
+describe('stream URL round trip', () => {
+  function firstLoadfileUrl(ipc: FakeIpc): URL {
+    const call = ipc.command.mock.calls.find((c) => c[0] === 'loadfile');
+    return new URL(String(call?.[1]));
+  }
+
+  it('builds a transcode URL that getQueue parses back to the song id', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+
+    await playbackEngine.enqueue(['s1'], 'replace');
+    const url = firstLoadfileUrl(ipc);
+
+    expect(url.pathname).toBe('/rest/stream');
+    expect(url.searchParams.get('id')).toBe('s1');
+    expect(url.searchParams.get('format')).toBe('mp3');
+    expect(url.searchParams.get('maxBitRate')).toBe('192');
+    expect(url.searchParams.has('p')).toBe(false);
+    answerProperties(ipc, { playlist: [{ filename: url.toString(), current: true, playing: true }] });
+    expect((await playbackEngine.getQueue())[0]?.songId).toBe('s1');
+  });
+
+  it('builds a raw URL without maxBitRate', async () => {
+    playbackEngine.configure({ ...(baseConfig as object), playbackTranscodeFormat: 'raw' } as never);
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+
+    await playbackEngine.enqueue(['s1'], 'replace');
+    const url = firstLoadfileUrl(ipc);
+
+    expect(url.searchParams.get('format')).toBe('raw');
+    expect(url.searchParams.has('maxBitRate')).toBe(false);
+    answerProperties(ipc, { playlist: [{ filename: url.toString(), current: true, playing: true }] });
+    expect((await playbackEngine.getQueue())[0]?.songId).toBe('s1');
+  });
+});
+
+// ---------- seek retries only the transient transcode rejection ----------
+
+describe('seek retry', () => {
+  const retryable = 'mpv command error: error running command';
+
+  function failSeeks(ipc: FakeIpc, failures: number, message: string): () => number {
+    let seekCalls = 0;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] !== 'seek') return null;
+      seekCalls++;
+      if (seekCalls <= failures) throw new Error(message);
+      return null;
+    });
+    return () => seekCalls;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('retries a transient rejection until mpv accepts the seek', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    vi.useFakeTimers();
+    const seekCalls = failSeeks(ipc, 2, retryable);
+
+    const promise = playbackEngine.seek(10, 'absolute');
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(seekCalls()).toBe(3);
+  });
+
+  it('rethrows any other error at once', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    vi.useFakeTimers();
+    const seekCalls = failSeeks(ipc, Infinity, 'mpv command error: invalid parameter');
+
+    await expect(playbackEngine.seek(10, 'absolute')).rejects.toThrow(/invalid parameter/);
+    expect(seekCalls()).toBe(1);
+  });
+
+  it('gives up after four attempts', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    vi.useFakeTimers();
+    const seekCalls = failSeeks(ipc, Infinity, retryable);
+
+    const promise = playbackEngine.seek(10, 'absolute');
+    const assertion = expect(promise).rejects.toThrow(/error running command/);
+    await vi.advanceTimersByTimeAsync(750);
+
+    await assertion;
+    expect(seekCalls()).toBe(4);
+  });
+});
+
+// ---------- the mutation lock serializes queue operations ----------
+
+describe('mutation lock', () => {
+  it('runs a radio load only after a concurrent replace finishes', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+    ipc.command.mockImplementation(async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+      return null;
+    });
+
+    await Promise.all([
+      playbackEngine.enqueue(['a', 'b', 'c'], 'replace'),
+      playbackEngine.enqueueRadio('http://radio/x'),
+    ]);
+
+    const loadfiles = ipc.command.mock.calls.filter((c) => c[0] === 'loadfile').map((c) => c[1]);
+    expect(loadfiles).toHaveLength(4);
+    expect(loadfiles.at(-1)).toBe('http://radio/x');
+  });
+
+  it('keeps serving mutations after one fails', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    let loadfileCount = 0;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'loadfile' && ++loadfileCount === 2) throw new Error('mpv command error: file not found');
+      return null;
+    });
+    await expect(playbackEngine.enqueue(['a', 'b'], 'replace')).rejects.toThrow(/file not found/);
+
+    answerProperties(ipc, {});
+    await expect(playbackEngine.clearQueue()).resolves.toBeUndefined();
+    expect(mutatingCommands(ipc)).toEqual(['stop']);
+  });
+});
+
+// ---------- getQueue merges mpv titles with enqueue metadata ----------
+
+describe('getQueue metadata merge', () => {
+  it('prefers the mpv title, fills the rest from the cache, and drops it on a replace', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+    const s1 = 'http://navidrome.test/rest/stream?id=s1';
+    const s2 = 'http://navidrome.test/rest/stream?id=s2';
+
+    await playbackEngine.enqueue(['s1', 's2'], 'replace', [
+      { songId: 's1', title: 'T1', artist: 'A', album: 'B', duration: 200 },
+      { songId: 's2', title: 'T2', duration: 0 },
+    ]);
+    answerProperties(ipc, {
+      playlist: [
+        { filename: s1, title: 'ICY', current: true, playing: true },
+        { filename: s2, current: false, playing: false },
+      ],
+    });
+    const [first, second] = await playbackEngine.getQueue();
+
+    expect(first).toMatchObject({ title: 'ICY', artist: 'A', album: 'B', duration: 200 });
+    expect(second?.title).toBe('T2');
+    expect(second).not.toHaveProperty('duration');
+
+    await playbackEngine.enqueue(['s1'], 'replace');
+    answerProperties(ipc, { playlist: [{ filename: s1, current: true, playing: true }] });
+    const [afterReplace] = await playbackEngine.getQueue();
+
+    expect(afterReplace).not.toHaveProperty('artist');
+  });
+});
+
+// ---------- caches hold a live queue longer than their cap ----------
+
+describe('queue caches past the cap', () => {
+  const cap = MAX_QUEUE_READ_PAGES * QUEUE_READ_PAGE_SIZE;
+  const songIds = Array.from({ length: cap + 5 }, (_, i) => `s${i}`);
+  const playlist = songIds.map((id, i) => ({
+    filename: `http://navidrome.test/rest/stream?id=${id}`,
+    current: i === 0,
+    playing: i === 0,
+  }));
+
+  it('keeps back-filled metadata for every live entry', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist });
+    playbackEngine.ingestQueueMetadata(songIds.slice(0, cap).map((songId) => ({ songId, artist: 'A' })));
+
+    const missing = (await playbackEngine.getQueue()).filter((e) => e.artist === undefined);
+    playbackEngine.ingestQueueMetadata(missing.map((e) => ({ songId: e.songId ?? '', artist: 'A' })));
+    const missingAfterBackFill = (await playbackEngine.getQueue()).filter((e) => e.artist === undefined);
+
+    expect(missing).toHaveLength(5);
+    expect(missingAfterBackFill).toHaveLength(0);
+  });
+
+  it('parses each live filename once', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist });
+    await playbackEngine.getQueue();
+    const urlSpy = vi.spyOn(globalThis, 'URL');
+
+    try {
+      await playbackEngine.getQueue();
+      expect(urlSpy).not.toHaveBeenCalled();
+    } finally {
+      urlSpy.mockRestore();
+    }
+  });
+});
+
+// ---------- spawn fallback when no mpv can be attached ----------
+
+/** Queue one attach that fails and one spawn connect, so ensureRunning takes the spawn path. */
+function queueSpawnPath(spawnConnects: boolean): { spawnFake: FakeIpc } {
+  const attachFake = makeFakeIpc();
+  attachFake.connect.mockRejectedValue(new Error('ENOENT'));
+  const spawnFake = makeFakeIpc();
+  if (!spawnConnects) spawnFake.connect.mockRejectedValue(new Error('spawn connect failed'));
+  vi.mocked(MpvIpc)
+    .mockImplementationOnce(() => attachFake as never)
+    .mockImplementationOnce(() => spawnFake as never);
+  return { spawnFake };
+}
+
+describe('spawn fallback', () => {
+  it('kills the spawned mpv and resets state when its connect fails', async () => {
+    netState.outcome = 'error';
+    const { spawnFake } = queueSpawnPath(false);
+
+    await expect(playbackEngine.ensureRunning()).rejects.toThrow(/spawn connect failed/);
+
+    expect(spawnMpv).toHaveBeenCalledTimes(1);
+    const child = vi.mocked(spawnMpv).mock.results[0]?.value;
+    expect(child?.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(spawnFake.close).toHaveBeenCalled();
+    expect(playbackEngine.isRunning()).toBe(false);
+    expect(playbackEngine.getStatus().mpvVersion).toBeNull();
+  });
+
+  it('spawns mpv when nothing can be attached', async () => {
+    netState.outcome = 'error';
+    queueSpawnPath(true);
+
+    await expect(playbackEngine.ensureRunning()).resolves.toBeUndefined();
+
+    expect(spawnMpv).toHaveBeenCalledTimes(1);
+    expect(playbackEngine.isRunning()).toBe(true);
+  });
+});
+
+// ---------- the stale-socket probe guards the spawn ----------
+
+describe('stale socket probe', () => {
+  it('fails the start and keeps the socket when a live mpv answers the probe', async () => {
+    const attachFake = makeFakeIpc();
+    attachFake.connect.mockRejectedValue(new Error('mpv command timeout'));
+    vi.mocked(MpvIpc).mockImplementationOnce(() => attachFake as never);
+    netState.outcome = 'connect';
+
+    await withPlatform('linux', async () => {
+      await expect(playbackEngine.ensureRunning()).rejects.toThrow(/did not respond to IPC/);
+    });
+
+    expect(unlink).not.toHaveBeenCalled();
+    expect(spawnMpv).not.toHaveBeenCalled();
+  });
+
+  it('unlinks a stale socket file before spawning', async () => {
+    netState.outcome = 'error';
+    queueSpawnPath(true);
+
+    await withPlatform('linux', () => playbackEngine.ensureRunning());
+
+    expect(unlink).toHaveBeenCalledTimes(1);
+    expect(unlink).toHaveBeenCalledWith('/tmp/test-fake.sock');
+  });
+});
+
+// ---------- state-change dispatch ----------
+
+describe('onStateChange', () => {
+  it('a throwing subscriber does not block later subscribers', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+    const events: StateChangeEvent[] = [];
+    playbackEngine.onStateChange(() => {
+      throw new Error('dead client');
+    });
+    playbackEngine.onStateChange((e) => events.push(e));
+
+    await expect(playbackEngine.clearQueue()).resolves.toBeUndefined();
+
+    expect(events).toContainEqual({ kind: 'queue' });
+  });
+});
+
+// ---------- queue generation ----------
+
+describe('queue generation', () => {
+  it('rises by one on a replace', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+    const before = playbackEngine.getQueueGeneration();
+
+    await playbackEngine.enqueue(['s'], 'replace');
+
+    expect(playbackEngine.getQueueGeneration()).toBe(before + 1);
+  });
+
+  it('rises by one on a radio load', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+    const before = playbackEngine.getQueueGeneration();
+
+    await playbackEngine.enqueueRadio('http://r/x');
+
+    expect(playbackEngine.getQueueGeneration()).toBe(before + 1);
+  });
+
+  it('stays the same on an append', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': 0, 'playlist-count': 1 });
+    const before = playbackEngine.getQueueGeneration();
+
+    await playbackEngine.enqueue(['s'], 'append');
+
+    expect(playbackEngine.getQueueGeneration()).toBe(before);
+  });
+});
+
+// ---------- quitMpv is bounded and best effort ----------
+
+describe('quitMpv', () => {
+  let engine: typeof playbackEngine;
+
+  async function quitSocket(): Promise<FakeNetSocket> {
+    for (let i = 0; i < 10 && netState.lastSocket === null; i++) await Promise.resolve();
+    const sock = netState.lastSocket;
+    if (sock === null) throw new Error('quitMpv opened no socket');
+    return sock;
+  }
+
+  beforeEach(async () => {
+    ({ engine } = await loadFreshEngine());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    engine.shutdown();
+  });
+
+  it('sends quit on connect and resolves on close', async () => {
+    const promise = engine.quitMpv();
+    const sock = await quitSocket();
+
+    sock.emit('connect');
+    expect(sock.end).toHaveBeenCalledWith('{ "command": ["quit"] }\n');
+    sock.emit('close');
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('resolves when nothing is listening', async () => {
+    const promise = engine.quitMpv();
+    const sock = await quitSocket();
+
+    sock.emit('error', new Error('ENOENT'));
+
+    await expect(promise).resolves.toBeUndefined();
+  });
+
+  it('gives up on a peer that never answers', async () => {
+    vi.useFakeTimers();
+    const promise = engine.quitMpv();
+    const sock = await quitSocket();
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(sock.destroy).toHaveBeenCalled();
+  });
+});
+
+// ---------- hasControlledMpv gates the MCP exit quit ----------
+
+describe('hasControlledMpv', () => {
+  it('stays false through an attach and a read, then turns true on the first control call', async () => {
+    // The flag is never cleared, so a fresh module gives a fresh singleton.
+    vi.resetModules();
+    const { playbackEngine: freshEngine } = await import('../../../../src/services/playback/playback-engine.js');
+    freshEngine.configure(baseConfig);
+
+    try {
+      await freshEngine.ensureAttached();
+      await freshEngine.getQueue();
+      expect(freshEngine.isRunning()).toBe(true);
+      expect(freshEngine.hasControlledMpv()).toBe(false);
+
+      await freshEngine.pause();
+      expect(freshEngine.hasControlledMpv()).toBe(true);
+    } finally {
+      freshEngine.shutdown();
+    }
+  });
+});
+
+// ---------- quitMpv during an in-flight start ----------
+
+/** quitMpv latches its quit for the life of the engine, so a test that calls it needs a fresh singleton. */
+async function loadFreshEngine(): Promise<{
+  engine: typeof playbackEngine;
+  freshMpvIpc: typeof MpvIpc;
+  freshSpawnMpv: typeof spawnMpv;
+}> {
+  vi.resetModules();
+  const { playbackEngine: engine } = await import('../../../../src/services/playback/playback-engine.js');
+  const { MpvIpc: freshMpvIpc } = await import('../../../../src/services/playback/mpv-ipc.js');
+  const { spawnMpv: freshSpawnMpv } = await import('../../../../src/services/playback/mpv-process.js');
+  engine.configure(baseConfig);
+  return { engine, freshMpvIpc, freshSpawnMpv };
+}
+
+describe('quitMpv during a start', () => {
+  it('counts a spawn still connecting as control and kills it on quit', async () => {
+    const { engine, freshMpvIpc, freshSpawnMpv } = await loadFreshEngine();
+    const attachFake = makeFakeIpc();
+    attachFake.connect.mockRejectedValue(new Error('ENOENT'));
+    const spawnFake = makeFakeIpc();
+    let failSpawnConnect: (err: Error) => void = () => undefined;
+    spawnFake.connect.mockReturnValue(new Promise<void>((_resolve, reject) => { failSpawnConnect = reject; }));
+    vi.mocked(freshMpvIpc)
+      .mockImplementationOnce(() => attachFake as never)
+      .mockImplementationOnce(() => spawnFake as never);
+    netState.outcome = 'error';
+
+    try {
+      const start = engine.ensureRunning();
+      await vi.waitFor(() => { expect(freshSpawnMpv).toHaveBeenCalledTimes(1); });
+      const child = vi.mocked(freshSpawnMpv).mock.results[0]?.value;
+      expect(engine.hasControlledMpv()).toBe(true);
+
+      const quit = engine.quitMpv();
+      expect(child?.kill).toHaveBeenCalledWith('SIGTERM');
+      failSpawnConnect(new Error('mpv exited'));
+
+      await expect(start).rejects.toThrow(/mpv exited/);
+      await expect(quit).resolves.toBeUndefined();
+      expect(engine.hasControlledMpv()).toBe(false);
+    } finally {
+      engine.shutdown();
+    }
+  });
+
+  it('refuses to spawn once quit has begun', async () => {
+    const { engine, freshMpvIpc, freshSpawnMpv } = await loadFreshEngine();
+    const attachFake = makeFakeIpc();
+    let failAttach: (err: Error) => void = () => undefined;
+    attachFake.connect.mockReturnValue(new Promise<void>((_resolve, reject) => { failAttach = reject; }));
+    vi.mocked(freshMpvIpc).mockImplementationOnce(() => attachFake as never);
+    netState.outcome = 'error';
+
+    try {
+      const start = engine.ensureRunning();
+      await vi.waitFor(() => { expect(attachFake.connect).toHaveBeenCalled(); });
+      await engine.quitMpv();
+      failAttach(new Error('ENOENT'));
+
+      await expect(start).rejects.toThrow(/playback engine is quitting/);
+      expect(freshSpawnMpv).not.toHaveBeenCalled();
+    } finally {
+      engine.shutdown();
+    }
   });
 });

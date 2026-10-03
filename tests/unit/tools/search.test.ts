@@ -72,7 +72,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
         expect(result.totalAlbums).toBeGreaterThanOrEqual(result.albums.length);
         expect(result.totalSongs).toBeGreaterThanOrEqual(result.songs.length);
         // totalResults is the sum of the three per-type totals.
-        expect(result.totalResults).toBe(result.totalArtists + result.totalAlbums + result.totalSongs);
+        expect(result.totalResults).toBe((result.totalArtists ?? 0) + (result.totalAlbums ?? 0) + (result.totalSongs ?? 0));
 
         // Suppress unused variable warning — we intentionally don't assert on testQuery anymore.
         void testQuery;
@@ -407,10 +407,10 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
       // Only assert "different items" when both pages have items AND the
       // total is large enough to actually have a different second page.
-      if (page0.songs.length > 0 && page1.songs.length > 0 && page0.totalSongs > 2) {
+      if (page0.songs.length > 0 && page1.songs.length > 0 && (page0.totalSongs ?? 0) > 2) {
         expect(page1.songs[0]?.id).not.toBe(page0.songs[0]?.id);
       }
-      if (page0.albums.length > 0 && page1.albums.length > 0 && page0.totalAlbums > 2) {
+      if (page0.albums.length > 0 && page1.albums.length > 0 && (page0.totalAlbums ?? 0) > 2) {
         expect(page1.albums[0]?.id).not.toBe(page0.albums[0]?.id);
       }
     });
@@ -434,7 +434,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       expect(Array.isArray(result.songs)).toBe(true);
       for (const song of result.songs) {
         if (song.lyrics !== undefined) {
-          expect(['synced', 'plain']).toContain(song.lyrics);
+          expect(['synced', 'unsynced']).toContain(song.lyrics);
         }
       }
     });

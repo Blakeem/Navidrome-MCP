@@ -17,10 +17,6 @@
  */
 
 /**
- * Common interfaces shared across transformers
- */
-
-/**
  * Base interface for entities with genre information
  */
 interface RawEntityWithGenres {
@@ -67,11 +63,7 @@ export interface TransformOptions {
 }
 
 /**
- * Decide whether an optional/secondary field should be emitted given the
- * transform options. A field is emitted when verbose is on OR it is explicitly
- * named in `keep`. Identity fields never go through this gate, since each
- * transformer emits them directly.
- *
+ * Identity fields bypass this gate, since each transformer emits them directly.
  * Dependent fields such as `starredAt` are emitted under their gate field (`starred`).
  */
 export function shouldEmit(field: TransformField, options?: TransformOptions): boolean {
@@ -82,8 +74,8 @@ export function shouldEmit(field: TransformField, options?: TransformOptions): b
 }
 
 /**
- * The `starred` boolean is authoritative. Navidrome keeps `starredAt` as "last starred at"
- * history after an unstar, so `starredAt` is echoed only while the boolean confirms the star.
+ * Navidrome omits `starred` when false, so only `true` marks a star.
+ * `starredAt` outlives an unstar, so it is echoed only with `starred: true`.
  */
 export function starredFields(
   raw: { starred?: boolean | null; starredAt?: string },
@@ -95,10 +87,7 @@ export function starredFields(
   if (raw.starred === true) {
     return raw.starredAt !== undefined ? { starred: true, starredAt: raw.starredAt } : { starred: true };
   }
-  if (raw.starred === false) {
-    return { starred: false };
-  }
-  return {};
+  return { starred: false };
 }
 
 /**
@@ -158,14 +147,12 @@ export function formatDuration(seconds?: number): string {
  * @returns The primary genre name or undefined
  */
 export function extractGenre(entity: RawEntityWithGenres): string | undefined {
-  // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
     const first = entity.genres.find(g => g.name !== '');
     if (first) {
       return first.name;
     }
   }
-  // Fall back to genre string
   if (entity.genre !== undefined && entity.genre !== '') {
     return entity.genre;
   }
@@ -178,12 +165,12 @@ export function extractGenre(entity: RawEntityWithGenres): string | undefined {
  * @returns Array of genre names or undefined
  */
 export function extractAllGenres(entity: RawEntityWithGenres): string[] | undefined {
-  // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
     const names = entity.genres.map(g => g.name).filter(Boolean);
-    return names.length > 0 ? names : undefined;
+    if (names.length > 0) {
+      return names;
+    }
   }
-  // Fall back to single genre string as array
   if (entity.genre !== undefined && entity.genre !== '') {
     return [entity.genre];
   }

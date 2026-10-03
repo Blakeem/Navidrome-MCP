@@ -46,6 +46,13 @@ function makeServer(): Server {
   return server;
 }
 
+const INITIALIZE_BODY = JSON.stringify({
+  jsonrpc: '2.0',
+  id: 1,
+  method: 'initialize',
+  params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'c', version: '0' } },
+});
+
 /** Parse `http://host:port/mcp` back into a URL for the client transport. */
 function endpoint(handle: HttpTransport): URL {
   return new URL(handle.url);
@@ -205,6 +212,27 @@ describe('Streamable HTTP transport', () => {
     expect(res.status).toBe(400);
     const json = (await res.json()) as { error?: { code?: number } };
     expect(json.error?.code).toBe(-32700);
+  });
+
+  it('rejects a non-JSON Content-Type essence with 415 and opens no session', async () => {
+    const res = await fetch(handle.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain; application/json', Accept: 'application/json, text/event-stream' },
+      body: INITIALIZE_BODY,
+    });
+    expect(res.status).toBe(415);
+    expect(res.headers.get('mcp-session-id')).toBeNull();
+  });
+
+  it('initializes with a JSON Content-Type that carries parameters', async () => {
+    const res = await fetch(handle.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json, text/event-stream' },
+      body: INITIALIZE_BODY,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('mcp-session-id')).not.toBeNull();
+    await res.body?.cancel();
   });
 
   it('404s on a non-MCP path', async () => {

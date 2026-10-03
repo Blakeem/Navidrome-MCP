@@ -1,7 +1,7 @@
 // Navidrome MCP web UI: lyrics timing arithmetic. Vanilla ES2020, no deps, no build step.
 //
-// Every export is pure and takes the clock it needs as a parameter, so vitest can
-// run the whole module under its `node` environment where no browser global exists.
+// The line arithmetic is pure and the seek detector keeps only closure state. Every export takes
+// its clock as a parameter, so vitest runs the module under `node` with no browser global.
 
 /**
  * Largest media-versus-clock drift a healthy snapshot may show before the
@@ -74,7 +74,8 @@ function searchActiveLine(lines, timeMs) {
  * showing as a break is the separate question `isInterlude` answers.
  *
  * Feed the previous call's `cursor` back in: ordinary playback then costs a step
- * or two, and any other movement falls back to a search.
+ * or two, a forward move of any size walks from the cursor, and a backward move
+ * falls back to a search.
  */
 export function findActiveLine(lines, timeMs, cursor) {
   // INPUT

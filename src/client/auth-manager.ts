@@ -19,13 +19,49 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { Config } from '../config.js';
-import { MAX_AUTH_RATE_LIMIT_WAIT_MS } from '../constants/timeouts.js';
+import { MAX_AUTH_RATE_LIMIT_WAIT_MS, NAVIDROME_LOGIN_RATE_LIMIT_WINDOW_MS } from '../constants/timeouts.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import {
+  FetchTimeoutError,
   fetchWithTimeout,
   getNavidromeAuthTimeoutMs,
 } from '../utils/fetch-with-timeout.js';
+
+/** Navidrome answered the login with an outage status, so the URL and credentials were never judged. */
+class NavidromeUnavailableError extends Error {}
+
+const UNREACHABLE_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
+
+const MAX_CAUSE_DEPTH = 5;
+
+/**
+ * True when a startup failure means Navidrome could not be reached, as opposed to rejecting the
+ * configured URL or credentials. An unrecognized failure counts as a configuration problem.
+ */
+export function isNavidromeUnreachable(error: unknown): boolean {
+  if (error instanceof FetchTimeoutError || error instanceof NavidromeUnavailableError) return true;
+  return hasUnreachableCode(error, 0);
+}
+
+/** undici nests the socket error under `cause`, and a dual-stack connect wraps one per address in an AggregateError. */
+function hasUnreachableCode(error: unknown, depth: number): boolean {
+  if (depth > MAX_CAUSE_DEPTH || typeof error !== 'object' || error === null) return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === 'string' && UNREACHABLE_ERROR_CODES.has(code)) return true;
+  const nested: unknown[] = error instanceof AggregateError ? error.errors : [];
+  return [(error as { cause?: unknown }).cause, ...nested].some((inner) => hasUnreachableCode(inner, depth + 1));
+}
 
 export class AuthManager {
   private token: string | null = null;
@@ -50,10 +86,11 @@ export class AuthManager {
   }
 
   /**
-   * Discard the cached token so the next getToken() call re-authenticates.
-   * Used by NavidromeClient on 401 responses (server-rotated token, etc.).
+   * Discard the cached token so the next getToken() call re-authenticates. A late 401
+   * for a token already replaced by a refresh leaves the fresh token in place.
    */
-  invalidate(): void {
+  invalidate(staleToken: string): void {
+    if (this.token !== staleToken) return;
     this.token = null;
     this.tokenExpiry = null;
   }
@@ -78,12 +115,13 @@ export class AuthManager {
     if (response.status === 429) {
       const waitMs = retryAfterMs(response.headers.get('retry-after'));
       logger.warn(`Navidrome is rate-limiting logins (HTTP 429). Retrying in ${Math.ceil(waitMs / 1000)}s.`);
+      await response.body?.cancel().catch(() => undefined);
       await delay(waitMs);
       response = await this.postLogin();
     }
     if (response.status === 429) {
-      throw new Error(ErrorFormatter.authentication(
-        'Navidrome is rate-limiting logins (HTTP 429). Wait about 20 seconds, then retry.',
+      throw new NavidromeUnavailableError(ErrorFormatter.authentication(
+        `Navidrome is rate-limiting logins (HTTP 429). Wait about ${NAVIDROME_LOGIN_RATE_LIMIT_WINDOW_MS / 1000} seconds, then retry.`,
       ));
     }
 
@@ -94,11 +132,12 @@ export class AuthManager {
       ));
     }
     if (!response.ok) {
-      throw new Error(ErrorFormatter.httpRequest(
+      const message = ErrorFormatter.httpRequest(
         'Navidrome /auth/login',
         response,
         'check navidrome.url and that Navidrome is running',
-      ));
+      );
+      throw response.status >= 500 ? new NavidromeUnavailableError(message) : new Error(message);
     }
 
     let data: unknown;
@@ -148,9 +187,9 @@ export class AuthManager {
   }
 }
 
-/** Reads a delta-seconds `Retry-After`, falling back to Navidrome's 20s default window. */
+/** Reads a delta-seconds `Retry-After`, falling back to Navidrome's default login window. */
 function retryAfterMs(header: string | null): number {
   const seconds = Number(header);
-  const waitMs = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 20_000;
+  const waitMs = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : NAVIDROME_LOGIN_RATE_LIMIT_WINDOW_MS;
   return Math.min(waitMs, MAX_AUTH_RATE_LIMIT_WAIT_MS);
 }

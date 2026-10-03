@@ -16,19 +16,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
 
 /**
- * The undici mock must exist before `vi.mock`'s hoisted factory runs, hence
- * `vi.hoisted`. Only `fetch` is replaced — the real `EnvHttpProxyAgent` is kept
- * because constructing one opens no socket, and the code under test only has to
- * hand it to the (mocked) fetch.
+ * The undici mocks must exist before `vi.mock`'s hoisted factory runs, hence
+ * `vi.hoisted`. `fetch` is replaced. The real `EnvHttpProxyAgent` is kept, since
+ * constructing one opens no socket, and a subclass records its options.
  */
-const { mockUndiciFetch } = vi.hoisted(() => ({
+const { mockUndiciFetch, proxyAgentOptions } = vi.hoisted(() => ({
   mockUndiciFetch:
     vi.fn<(url: string, init: { signal?: AbortSignal; dispatcher?: unknown }) => Promise<Response>>(),
+  proxyAgentOptions: [] as unknown[],
 }));
 
 vi.mock('undici', async (importOriginal) => {
   const actual = await importOriginal<typeof import('undici')>();
-  return { ...actual, fetch: mockUndiciFetch };
+  class RecordingEnvHttpProxyAgent extends actual.EnvHttpProxyAgent {
+    constructor(options?: ConstructorParameters<typeof actual.EnvHttpProxyAgent>[0]) {
+      super(options);
+      proxyAgentOptions.push(options);
+    }
+  }
+  return { ...actual, fetch: mockUndiciFetch, EnvHttpProxyAgent: RecordingEnvHttpProxyAgent };
 });
 
 import {
@@ -57,10 +63,10 @@ global.fetch = mockFetch;
  * accepts the connection but never replies.
  */
 function hangingFetch(): (
-  url: string,
-  init?: RequestInit,
+  url: unknown,
+  init?: { signal?: AbortSignal | null },
 ) => Promise<Response> {
-  return (_url: string, init?: RequestInit) => {
+  return (_url: unknown, init?: { signal?: AbortSignal | null }) => {
     return new Promise<Response>((_resolve, reject) => {
       const signal = init?.signal;
       if (signal === undefined || signal === null) {
@@ -275,6 +281,20 @@ describe('fetchWithTimeout', () => {
       );
       expect(error?.message).toBe('Navidrome GET /album failed: connect ECONNREFUSED 127.0.0.1:4533');
       expect(error?.cause).toBeInstanceOf(TypeError);
+    });
+  });
+
+  describe('non-timeout errors', () => {
+    it('redacts URL credentials from the rethrown message', async () => {
+      mockFetch.mockRejectedValueOnce(
+        new TypeError('Request cannot be constructed from a URL that includes credentials: https://u:secret@host/x'),
+      );
+
+      const err = await fetchWithTimeout('https://u:secret@host/x', {}, baseOptions()).catch((e: unknown) => e);
+
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toContain('test op failed:');
+      expect((err as Error).message).not.toContain('secret');
     });
   });
 
@@ -522,6 +542,25 @@ describe('proxy transport selection', () => {
 
       expect(mockUndiciFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('hands the agent HTTPS_PROXY when the lowercase https_proxy is empty', async () => {
+      // A plain object keeps the two spellings distinct, since Windows process.env is case-insensitive.
+      const savedEnv = process.env;
+      process.env = { ...savedEnv, https_proxy: '', HTTPS_PROXY: 'http://proxy.test:8080' };
+      try {
+        vi.resetModules();
+        const fresh = await import('../../../src/utils/fetch-with-timeout.js');
+        proxyAgentOptions.length = 0;
+        mockUndiciFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+        await fresh.fetchWithTimeout('https://lrclib.net/api/search', {}, baseOptions({ respectProxy: true }));
+
+        expect(mockUndiciFetch).toHaveBeenCalledTimes(1);
+        expect(proxyAgentOptions).toEqual([{ httpProxy: '', httpsProxy: 'http://proxy.test:8080' }]);
+      } finally {
+        process.env = savedEnv;
+      }
     });
 
     it('still applies the timeout and the single safe retry', async () => {
