@@ -44,7 +44,7 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     vi.clearAllMocks();
   });
 
-  it('makes a single request for an album with <= MAX_ALBUM_TRACKS tracks', async () => {
+  it('makes a single request for an album with <= ALBUM_TRACKS_PAGE_SIZE tracks', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
 
     const result = await playAlbums(client as never, {

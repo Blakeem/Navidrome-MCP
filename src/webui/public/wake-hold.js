@@ -96,8 +96,7 @@ function startVideo() {
   el.setAttribute('playsinline', '');
   el.setAttribute('aria-hidden', 'true');
   el.tabIndex = -1;
-  // Laid out but invisible, since a video the layout drops stops counting as playing video.
-  el.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+  el.className = 'wake-video';
   el.src = WAKE_VIDEO_SRC;
   video = el;
   document.body.appendChild(el);

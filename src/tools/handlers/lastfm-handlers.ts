@@ -22,18 +22,15 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-// Import tool functions
 import {
   getSimilarArtists,
   getSimilarTracks,
   getArtistInfo,
   getTopTracksByArtist,
   getTrendingMusic,
-  getArtistAlbums,
-  getAlbumInfo,
 } from '../lastfm-discovery.js';
+import { getArtistAlbums, getAlbumInfo } from '../artist-discography.js';
 
-// Tool definitions for LastFM discovery category
 const tools: Tool[] = [
   {
     name: 'get_similar_artists',
@@ -152,7 +149,7 @@ const tools: Tool[] = [
   {
     name: 'get_artist_albums',
     description:
-      "Get an artist's full discography with release types/years (MusicBrainz), genres and popularity " +
+      "Get an artist's full discography with release types, years, and genres (MusicBrainz), popularity " +
       '(Last.fm), and an inLibrary flag for each album (Navidrome). Answers "what full albums by X am I ' +
       'missing?" in one call (use onlyMissing). Defaults to studio albums only; for electronic/synthwave ' +
       'artists where EPs are first-class releases consider includeTypes: ["album","ep"].',
@@ -210,8 +207,9 @@ const tools: Tool[] = [
     description:
       'Deep-dive on ONE album: full tracklist with durations, release year/type, genres, wiki summary, ' +
       "Last.fm popularity, and whether it's in the Navidrome library. The natural follow-up to " +
-      "get_artist_albums — pass that result's album mbid (a MusicBrainz release-group ID) or artist+album " +
-      'names. Works for albums NOT in the library (the discovery case); for owned albums get_album works too.',
+      "get_artist_albums. For a row with source 'musicbrainz', pass its mbid (a MusicBrainz release-group ID). " +
+      "For a row with source 'lastfm-only', which carries no mbid, pass artist and album names. " +
+      'Works for albums NOT in the library (the discovery case). For owned albums get_album works too.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -225,7 +223,7 @@ const tools: Tool[] = [
         },
         mbid: {
           type: 'string',
-          description: 'MusicBrainz release-group MBID (UUID) — e.g. the mbid field from get_artist_albums output.',
+          description: "MusicBrainz release-group MBID (UUID), e.g. the mbid of a get_artist_albums row with source 'musicbrainz'. Not valid for 'lastfm-only' rows.",
         },
         verbose: {
           type: 'boolean',
@@ -238,7 +236,8 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating LastFM tool category with dependencies
+export const LASTFM_TOOL_NAMES = tools.map((tool) => tool.name);
+
 export function createLastFmToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,

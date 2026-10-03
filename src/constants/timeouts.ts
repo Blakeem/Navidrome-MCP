@@ -1,9 +1,4 @@
-/**
- * Timeout constants for radio stream validation operations
- * 
- * Different timeout values based on operation context to balance
- * thoroughness with performance and user experience.
- */
+/** Timeouts for radio stream validation, mpv IPC, and outbound fetches. */
 
 /**
  * Timeout for single, explicit validation operations
@@ -25,12 +20,9 @@ export const BATCH_VALIDATION_TIMEOUT = 3000; // 3 seconds
  *
  * Discovery validates the first N stations IN PARALLEL (see
  * validateDiscoveredStations), so wall-clock is bounded by the single slowest
- * probe, not the sum. The old 2000ms left only 1200ms for the HEAD probe
- * (HEAD_TIMEOUT_RATIO 0.6), which a slow HTTPS/TLS handshake on a non-standard
- * port (e.g. icecast on :8443) blows past, aborting the HEAD before its ICY
- * headers arrive and false-negativing real streams (Issue #7). 3000ms gives the
- * HEAD an 1800ms budget — comfortable headroom for slow TLS handshakes (observed
- * ~800-1100ms standalone) — while capping discovery latency at 3s.
+ * probe, not the sum. 3000ms gives the HEAD probe an 1800ms budget
+ * (HEAD_TIMEOUT_RATIO 0.6), enough for a slow TLS handshake on a non-standard
+ * port (observed ~800-1100ms), and caps discovery latency at 3s.
  *
  * NOTE: this does NOT cure every discovery false-negative. Some hosts serve
  * multiple popular streams from one icecast host:port (e.g. walmradio's
@@ -63,24 +55,12 @@ export const RADIO_VALIDATION = {
    * 60% of total timeout allows time for subsequent audio sampling
    */
   HEAD_TIMEOUT_RATIO: 0.6,
-  
-  /**
-   * Maximum timeout for the audio sampling phase
-   * Caps how long a generous overall budget will linger sampling audio content
-   */
-  MAX_SAMPLE_TIMEOUT: 2000, // 2 seconds
-  
+
   /**
    * Buffer size for audio content sampling
    * 8KB provides good balance between detection accuracy and efficiency
    */
   SAMPLE_BUFFER_SIZE: 8192, // 8KB
-
-  /**
-   * Fallback HEAD timeout when calculated value would be too high
-   * Prevents excessive wait times for HEAD requests
-   */
-  FALLBACK_HEAD_TIMEOUT: 4000, // 4 seconds
 } as const;
 
 /**
@@ -104,21 +84,35 @@ export const MPV_COMMAND_TIMEOUT_QUICK_MS = 2000;
 export const MPV_COMMAND_TIMEOUT_LOAD_MS = 5000;
 
 /** Initial-connect retry budget when opening the IPC socket post-spawn while
- *  mpv is binding the socket. 50 × 100ms = 5s total budget. */
+ *  mpv is binding the socket. Fast-failing attempts give 50 x 100ms = 5s.
+ *  Hung attempts can each take MPV_IPC_CONNECT_TIMEOUT_MS, for a worst case
+ *  near 55s. */
 export const MPV_IPC_CONNECT_RETRIES = 50;
 export const MPV_IPC_CONNECT_DELAY_MS = 100;
 
+/** Attach retry budget. An existing mpv answers fast, so attach skips the
+ *  post-spawn budget. */
+export const MPV_ATTACH_CONNECT_RETRIES = 3;
+export const MPV_ATTACH_CONNECT_DELAY_MS = 50;
+
 /** Per-attempt connect timeout for a single openSocket() try. A local IPC
  *  connect (Unix socket / named pipe) settles in single-digit ms via
- *  'connect'/'error'; if one attempt hangs without either (exotic, but it would
+ *  'connect'/'error'. If one attempt hangs without either (exotic, but it would
  *  otherwise stall connect()'s awaited retry loop indefinitely), we tear the
- *  socket down and reject so the loop advances/throws per its documented
- *  budget. Generous relative to the ~100ms retry delay. */
+ *  socket down and reject so the loop advances or throws.
+ *  Generous relative to the ~100ms retry delay. */
 export const MPV_IPC_CONNECT_TIMEOUT_MS = 1000;
+
+/** Bounds the one-shot quit connection, so shutdown never waits on a wedged mpv. */
+export const MPV_QUIT_SOCKET_TIMEOUT_MS = 1000;
 
 /** Probe timeout used by cleanupStaleSocket to decide whether a socket file
  *  is bound to a live mpv before unlinking. */
 export const MPV_STALE_SOCKET_PROBE_MS = 100;
+
+/** How often an unattached web owner retries attaching to mpv. Bounds how long
+ *  an mpv the MCP process spawned goes without the owner tracking its plays. */
+export const WEB_OWNER_ATTACH_INTERVAL_MS = 5000;
 
 /** Set of mpv command names that should use the LOAD tier timeout. */
 export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
@@ -137,9 +131,8 @@ export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
  *
  * Our timeouts MUST be strictly less than 60_000ms even after one retry, so
  * that we surface a clear "Navidrome did not respond" error to the LLM
- * before the SDK gives up. Ceiling: 30s wall-clock = (15s timeout + 15s
- * retry) — leaves ~30s of slack for the SDK envelope and any in-process
- * post-processing.
+ * before the SDK gives up. The defaults give a 30s worst case (15s plus one
+ * 15s retry). MAX_FETCH_TIMEOUT_MS caps it at 50s.
  *
  * Configurable via `NAVIDROME_REQUEST_TIMEOUT_MS`,
  * `NAVIDROME_AUTH_TIMEOUT_MS`, and `EXTERNAL_API_TIMEOUT_MS` env vars.
@@ -158,9 +151,7 @@ export const DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS = 15_000;
 export const DEFAULT_NAVIDROME_AUTH_TIMEOUT_MS = 10_000;
 
 /** Default per-request timeout for external APIs (Last.fm, LRCLIB,
- *  Radio Browser). Slightly more generous than Navidrome because these are
- *  third-party services with variable latency, but still well under the SDK
- *  60s envelope after retry. */
+ *  Radio Browser). It equals the Navidrome request default. */
 export const DEFAULT_EXTERNAL_API_TIMEOUT_MS = 15_000;
 
 /** Hard upper bound for any fetch timeout — protects against env-var

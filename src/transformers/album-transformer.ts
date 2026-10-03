@@ -17,13 +17,21 @@
  */
 
 import type { AlbumDTO } from '../types/index.js';
-import { formatDuration, extractGenre, extractAllGenres, shouldEmit, type TransformOptions } from './shared-transformers.js';
+import {
+  formatDuration,
+  extractGenre,
+  extractAllGenres,
+  shouldEmit,
+  starredFields,
+  transformObjectRows,
+  type TransformOptions,
+} from './shared-transformers.js';
 
 /**
  * Raw album data from Navidrome API
  *
  * Navidrome's `/api/album` rows do NOT include a top-level `artist`/`artistId`
- * field — only `albumArtist`/`albumArtistId`. We carry both shapes here so the
+ * field, only `albumArtist`/`albumArtistId`. We carry both shapes here so the
  * transformer can fall back cleanly when the REST surface omits `artist`.
  *
  * Year is exposed as `maxYear` / `minYear` (release date range) and
@@ -99,7 +107,7 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
   const artist = pickString(rawAlbum.artist, rawAlbum.albumArtist) ?? '';
   const artistId = pickString(rawAlbum.artistId, rawAlbum.albumArtistId) ?? '';
 
-  // Identity block — always emitted.
+  // Identity block, always emitted.
   const dto: AlbumDTO = {
     id: rawAlbum.id,
     name: rawAlbum.name || '',
@@ -109,7 +117,7 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
     durationFormatted: formatDuration(rawAlbum.duration),
   };
 
-  // Secondary fields — verbose-gated (or force-kept).
+  // Secondary fields, verbose-gated (or force-kept).
   if (shouldEmit('albumArtist', options) && rawAlbum.albumArtist !== undefined && rawAlbum.albumArtist !== '') {
     dto.albumArtist = rawAlbum.albumArtist;
   }
@@ -153,28 +161,16 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
     dto.compilation = rawAlbum.compilation;
   }
 
-  if (shouldEmit('playCount', options) && rawAlbum.playCount !== undefined) {
-    dto.playCount = rawAlbum.playCount;
+  // Navidrome omits playCount for never-played rows (see the artist transformer).
+  if (shouldEmit('playCount', options)) {
+    dto.playCount = rawAlbum.playCount ?? 0;
   }
 
   if (shouldEmit('rating', options) && rawAlbum.rating !== undefined && rawAlbum.rating > 0) {
     dto.rating = rawAlbum.rating;
   }
 
-  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
-  // as a "last starred at" history field even after unstarring, so a
-  // populated timestamp alone does NOT mean the item is currently starred.
-  // Only echo `starredAt` when the boolean confirms the starred state.
-  if (shouldEmit('starred', options)) {
-    if (rawAlbum.starred === true) {
-      dto.starred = true;
-      if (rawAlbum.starredAt !== undefined) {
-        dto.starredAt = rawAlbum.starredAt;
-      }
-    } else if (rawAlbum.starred === false) {
-      dto.starred = false;
-    }
-  }
+  Object.assign(dto, starredFields(rawAlbum, options));
 
   return dto;
 }
@@ -186,15 +182,5 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
  * @returns Array of clean album DTOs
  */
 export function transformAlbumsToDTO(rawAlbums: unknown, options?: TransformOptions): AlbumDTO[] {
-  if (!Array.isArray(rawAlbums)) {
-    return [];
-  }
-
-  // Guard each element: Navidrome can return null / non-object entries on
-  // certain API errors. The `as RawAlbum` cast would pass TS but crash the
-  // single-item transformer at runtime, aborting the whole batch. Drop the
-  // bad rows instead so one malformed entry doesn't lose every good one.
-  return rawAlbums
-    .filter((album): album is RawAlbum => typeof album === 'object' && album !== null)
-    .map((album) => transformToAlbumDTO(album, options));
+  return transformObjectRows(rawAlbums, (album: RawAlbum) => transformToAlbumDTO(album, options));
 }

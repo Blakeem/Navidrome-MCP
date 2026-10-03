@@ -8,8 +8,6 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import type { Config } from '../../../src/config.js';
-import { loadConfig } from '../../../src/config.js';
 import { shouldSkipLiveTests, getSkipReason, describeLive } from '../../helpers/env-detection.js';
 import { getSharedLiveClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
@@ -20,10 +18,9 @@ import {
   searchSongs,
   searchAlbums,
   searchArtists,
-} from '../../../src/tools/search.js';
+} from '../../../src/tools/search/index.js';
 
 describe('Search Operations - Tier 1 Critical Tests', () => {
-  let config: Config;
   let liveClient: NavidromeClient;
 
   beforeAll(async () => {
@@ -31,8 +28,6 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
-    // Load configuration and create shared client for live testing
-    config = await loadConfig();
     liveClient = await getSharedLiveClient();
   });
 
@@ -42,7 +37,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     describe('searchAll', () => {
       it('should return valid cross-content search structure from live server', async () => {
-        const result = await searchAll(liveClient, config, { 
+        const result = await searchAll(liveClient, { 
           query: testQuery,
           artistCount: 1,
           albumCount: 1,
@@ -117,7 +112,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle count parameters correctly', async () => {
-        const result = await searchAll(liveClient, config, { 
+        const result = await searchAll(liveClient, { 
           query: testQuery,
           artistCount: 2,
           albumCount: 3,
@@ -131,7 +126,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle zero count parameters', async () => {
-        const result = await searchAll(liveClient, config, { 
+        const result = await searchAll(liveClient, { 
           query: testQuery,
           artistCount: 0,
           albumCount: 1,
@@ -152,7 +147,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     describe('searchSongs', () => {
       it('should return valid song search structure', async () => {
-        const result = await searchSongs(liveClient, config, {
+        const result = await searchSongs(liveClient, {
           query: testQuery,
           limit: 2
         });
@@ -195,7 +190,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle limit parameter correctly', async () => {
-        const result = await searchSongs(liveClient, config, { 
+        const result = await searchSongs(liveClient, { 
           query: testQuery,
           limit: 1
         });
@@ -206,7 +201,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     describe('searchAlbums', () => {
       it('should return valid album search structure', async () => {
-        const result = await searchAlbums(liveClient, config, {
+        const result = await searchAlbums(liveClient, {
           query: testQuery,
           limit: 2
         });
@@ -252,7 +247,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle limit parameter correctly', async () => {
-        const result = await searchAlbums(liveClient, config, { 
+        const result = await searchAlbums(liveClient, { 
           query: testQuery,
           limit: 1
         });
@@ -263,7 +258,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     describe('searchArtists', () => {
       it('should return valid artist search structure', async () => {
-        const result = await searchArtists(liveClient, config, {
+        const result = await searchArtists(liveClient, {
           query: testQuery,
           limit: 2
         });
@@ -301,7 +296,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should handle limit parameter correctly', async () => {
-        const result = await searchArtists(liveClient, config, { 
+        const result = await searchArtists(liveClient, { 
           query: testQuery,
           limit: 1
         });
@@ -313,7 +308,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
   describe('Edge Cases and Error Handling', () => {
     it.skipIf(shouldSkipLiveTests())('should handle empty query strings gracefully', async () => {
-      const result = await searchAll(liveClient, config, {
+      const result = await searchAll(liveClient, {
         query: '',
         artistCount: 1,
         albumCount: 1,
@@ -327,7 +322,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     });
 
     it.skipIf(shouldSkipLiveTests())('should handle special characters in query', async () => {
-      const result = await searchAll(liveClient, config, { 
+      const result = await searchAll(liveClient, { 
         query: '!@#$%^&*()', 
         artistCount: 1, 
         albumCount: 1, 
@@ -340,7 +335,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     });
 
     it.skipIf(shouldSkipLiveTests())('should handle unicode characters in query', async () => {
-      const result = await searchSongs(liveClient, config, { 
+      const result = await searchSongs(liveClient, { 
         query: 'café naïve résumé', 
         limit: 1 
       });
@@ -358,7 +353,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       let caughtError: unknown;
 
       try {
-        result = await searchSongs(liveClient, config, {
+        result = await searchSongs(liveClient, {
           query: longQuery,
           limit: 1,
         });
@@ -387,7 +382,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     const testQuery = 'the';
 
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchAll', async () => {
-      const result = await searchAll(liveClient, config, {
+      const result = await searchAll(liveClient, {
         artistCount: 1,
         albumCount: 1,
         songCount: 1
@@ -407,8 +402,8 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
       // from the offset=0 page (when the library is large enough to have
       // multiple pages — gated behind a length check).
       const sortArgs = { sort: 'name' as const, order: 'ASC' as const, songCount: 2, albumCount: 2, artistCount: 0 };
-      const page0 = await searchAll(liveClient, config, { query: '', offset: 0, ...sortArgs });
-      const page1 = await searchAll(liveClient, config, { query: '', offset: 2, ...sortArgs });
+      const page0 = await searchAll(liveClient, { query: '', offset: 0, ...sortArgs });
+      const page1 = await searchAll(liveClient, { query: '', offset: 2, ...sortArgs });
 
       // Only assert "different items" when both pages have items AND the
       // total is large enough to actually have a different second page.
@@ -421,7 +416,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     });
 
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchSongs', async () => {
-      const result = await searchSongs(liveClient, config, { limit: 1 });
+      const result = await searchSongs(liveClient, { limit: 1 });
 
       // searchSongs should work without query (returns all songs). `query`
       // is no longer echoed.
@@ -434,7 +429,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     // that authenticates adds a concurrent login, and a fifth one rate-limits
     // (429) the whole live suite.
     it.skipIf(shouldSkipLiveTests())('emits the lyrics flag as absent or one of the two literals', async () => {
-      const result = await searchSongs(liveClient, config, { limit: 5 });
+      const result = await searchSongs(liveClient, { limit: 5 });
 
       expect(Array.isArray(result.songs)).toBe(true);
       for (const song of result.songs) {
@@ -445,7 +440,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     });
 
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchAlbums', async () => {
-      const result = await searchAlbums(liveClient, config, { limit: 1 });
+      const result = await searchAlbums(liveClient, { limit: 1 });
 
       // searchAlbums should work without query (returns all albums). `query`
       // is no longer echoed.
@@ -455,7 +450,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     });
 
     it.skipIf(shouldSkipLiveTests())('should validate optional query parameter for searchArtists', async () => {
-      const result = await searchArtists(liveClient, config, { limit: 1 });
+      const result = await searchArtists(liveClient, { limit: 1 });
 
       // searchArtists should work without query (returns all artists).
       // `query` is no longer echoed.
@@ -467,7 +462,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     it('should validate count parameters are within bounds', async () => {
       // Test with values beyond allowed range - should throw validation errors
       await expect(
-        searchAll(liveClient, config, { 
+        searchAll(liveClient, { 
           query: testQuery,
           artistCount: 150, // Over maximum of 100
           albumCount: -5,   // Below minimum of 0
@@ -479,7 +474,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     it('should validate limit parameters are within bounds', async () => {
       // Should throw validation error for values beyond allowed range
       await expect(
-        searchSongs(liveClient, config, {
+        searchSongs(liveClient, {
           query: testQuery,
           limit: 600 // Over maximum of 500
         })
@@ -493,7 +488,7 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
     it.skipIf(shouldSkipLiveTests())('should complete searches within reasonable time', async () => {
       const startTime = Date.now();
       
-      await searchAll(liveClient, config, { 
+      await searchAll(liveClient, { 
         query: testQuery,
         artistCount: 10,
         albumCount: 10,
@@ -508,9 +503,9 @@ describe('Search Operations - Tier 1 Critical Tests', () => {
 
     it.skipIf(shouldSkipLiveTests())('should handle multiple concurrent searches', async () => {
       const searches = [
-        searchSongs(liveClient, config, { query: 'rock', limit: 5 }),
-        searchAlbums(liveClient, config, { query: 'jazz', limit: 5 }),
-        searchArtists(liveClient, config, { query: 'blues', limit: 5 })
+        searchSongs(liveClient, { query: 'rock', limit: 5 }),
+        searchAlbums(liveClient, { query: 'jazz', limit: 5 }),
+        searchArtists(liveClient, { query: 'blues', limit: 5 })
       ];
 
       // All searches should complete successfully

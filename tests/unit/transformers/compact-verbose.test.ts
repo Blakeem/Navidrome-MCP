@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { transformToSongDTO } from '../../../src/transformers/song-transformer.js';
 import { transformToAlbumDTO } from '../../../src/transformers/album-transformer.js';
 import { transformToArtistDTO } from '../../../src/transformers/artist-transformer.js';
+import { transformToPlaylistDTO } from '../../../src/transformers/playlist-transformer.js';
 import { shouldEmit, type TransformOptions } from '../../../src/transformers/shared-transformers.js';
 
 const rawSong = {
@@ -38,7 +39,7 @@ const rawArtist = {
 };
 
 const SONG_IDENTITY = ['id', 'title', 'artist', 'artistId', 'album', 'albumId', 'durationFormatted'];
-const SONG_SECONDARY = ['albumArtist', 'albumArtistId', 'genre', 'genres', 'year', 'addedDate', 'path', 'trackNumber', 'playCount', 'rating', 'starred', 'starredAt', 'playDate'];
+const SONG_SECONDARY = ['albumArtist', 'albumArtistId', 'genre', 'genres', 'year', 'duration', 'addedDate', 'path', 'trackNumber', 'playCount', 'rating', 'starred', 'starredAt', 'playDate'];
 
 describe('shouldEmit', () => {
   it('emits nothing extra in compact (default) mode', () => {
@@ -77,6 +78,20 @@ describe('transformToSongDTO projection', () => {
     expect(dto).toHaveProperty('playCount', 7);
     expect(dto).not.toHaveProperty('path');
     expect(dto).not.toHaveProperty('year');
+  });
+});
+
+describe('transformToPlaylistDTO projection', () => {
+  const rawPlaylist = { id: 'pl1', name: 'Mix', songCount: 40, duration: 7800 };
+
+  it('compact carries only the formatted duration', () => {
+    const dto = transformToPlaylistDTO(rawPlaylist);
+    expect(dto).toHaveProperty('durationFormatted');
+    expect(dto).not.toHaveProperty('duration');
+  });
+
+  it('keep adds the numeric duration in seconds', () => {
+    expect(transformToPlaylistDTO(rawPlaylist, { keep: ['duration'] })).toHaveProperty('duration', 7800);
   });
 });
 

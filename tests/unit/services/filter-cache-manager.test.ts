@@ -2,10 +2,11 @@
  * Unit tests for FilterCacheManager - Simplified Implementation
  * Tests the improved logic without complex nested iteration
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { filterCacheManager, type FilterType } from '../../../src/services/filter-cache-manager.js';
+import { getFilterOptions } from '../../../src/tools/tags.js';
 
 // Mock data matching Navidrome API responses
 const mockGenres = [
@@ -83,6 +84,17 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     it('should return null for non-existent entries', () => {
       expect(filterCacheManager.resolve('genres', 'NonExistent')).toBeNull();
       expect(filterCacheManager.resolve('mediaTypes', 'cassette')).toBeNull();
+    });
+
+    it('requests every tag value with no _end window, so large tag sets are not truncated', () => {
+      const tagEndpoints = (client.requestWithLibraryFilter as unknown as Mock<(endpoint: string) => Promise<unknown>>).mock.calls
+        .map(([endpoint]) => endpoint)
+        .filter(endpoint => endpoint.startsWith('/tag'));
+
+      expect(tagEndpoints).toHaveLength(5);
+      for (const endpoint of tagEndpoints) {
+        expect(endpoint).not.toContain('_end');
+      }
     });
   });
 
@@ -242,41 +254,50 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       // Regression: limit=0 used to flow into slice(0,0) → [] with no error.
       // The schema clamps limit to [1,200], so 0 is now rejected.
       await expect(
-        filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 0 }),
+        getFilterOptions({ filterType: 'genres', limit: 0 }),
       ).rejects.toThrow();
 
       // Sanity: a valid call against the same cache still returns data, proving
       // the rejection above is the limit=0 guard and not an empty cache.
-      const ok = await filterCacheManager.getFilterOptions({ filterType: 'genres' });
+      const ok = await getFilterOptions({ filterType: 'genres' });
       expect(ok.available.length).toBeGreaterThan(0);
     });
 
     it('rejects an invalid filterType via the schema enum', async () => {
       await expect(
-        filterCacheManager.getFilterOptions({ filterType: 'bogus' }),
+        getFilterOptions({ filterType: 'bogus' }),
       ).rejects.toThrow();
     });
 
     it('rejects a missing filterType', async () => {
       await expect(
-        filterCacheManager.getFilterOptions({ limit: 10 }),
+        getFilterOptions({ limit: 10 }),
       ).rejects.toThrow();
     });
 
+    it('pages with offset and reports the full total', async () => {
+      const page = await getFilterOptions({ filterType: 'genres', limit: 2, offset: 2 });
+
+      expect(page.available).toEqual(['Rock', 'jazz']);
+      expect(page.total).toBe(4);
+    });
+
+    it('rejects a negative offset', async () => {
+      await expect(getFilterOptions({ filterType: 'genres', offset: -1 })).rejects.toThrow(/get_filter_options/);
+    });
+
     it('defaults limit to 50 when omitted', async () => {
-      const result = await filterCacheManager.getFilterOptions({ filterType: 'genres' });
+      const result = await getFilterOptions({ filterType: 'genres' });
       // Only 4 genres exist, so the default cap of 50 returns all of them.
       expect(result.available).toHaveLength(4);
       expect(result.total).toBe(4);
     });
 
     it('error message uses the registered tool name get_filter_options', async () => {
-      // Force the inner try/catch path: a valid schema parse, but the cache is
-      // not initialized, so getAvailableOptions throws and the catch wraps the
-      // error with the (now corrected) registered tool name.
+      // A valid parse against an uninitialized cache reaches the catch that names the tool.
       filterCacheManager.reset();
       try {
-        await filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 5 });
+        await getFilterOptions({ filterType: 'genres', limit: 5 });
         throw new Error('expected getFilterOptions to reject');
       } catch (error) {
         expect(error).toBeInstanceOf(Error);
@@ -377,7 +398,7 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
     // Simulate new genre added
     returnUpdated = true;
 
-    const result = await filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 50 });
+    const result = await getFilterOptions({ filterType: 'genres', limit: 50 });
 
     expect(result.available).toContain('Rock');
     expect(result.available).toContain('Shoegaze');

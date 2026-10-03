@@ -8,7 +8,6 @@ import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
-import { makeTestConfig } from '../../helpers/test-config.js';
 
 // searchAll refreshes the filter cache before resolving text filters, which would hit Navidrome.
 vi.mock('../../../src/services/filter-cache-manager.js', () => ({
@@ -24,8 +23,8 @@ vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
 
 import { EmptyLibrarySourceError, playLibrarySource } from '../../../src/tools/playback.js';
 import {
-  handleAlbumSongs,
-  handleArtistAlbums,
+  handleLibraryAlbumSongs,
+  handleLibraryArtistAlbums,
   handleLibraryFavorites,
   handleLibraryPlay,
   handleLibraryRecent,
@@ -145,7 +144,7 @@ describe('handleLibrarySearch', () => {
     ['501-character', 'a'.repeat(501)],
   ])('rejects a %s query with 400 and no client call', async (_label, rawQuery) => {
     const cap = fakeRes();
-    await handleLibrarySearch(cap.res, asClient(client), makeTestConfig(), rawQuery);
+    await handleLibrarySearch(cap.res, asClient(client), rawQuery);
 
     expect(cap.status()).toBe(400);
     expect(cap.json()).toEqual({ error: 'Invalid query' });
@@ -157,12 +156,12 @@ describe('handleLibrarySearch', () => {
     client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
       if (endpoint.startsWith('/artist?')) return Promise.resolve({ data: [{ id: 'ar1', name: 'Artist' }], total: 1 });
       if (endpoint.startsWith('/album?')) return Promise.resolve({ data: [{ id: 'al1', name: 'Album' }], total: 1 });
-      if (endpoint.startsWith('/song?')) return Promise.resolve({ data: [{ id: 'so1', title: 'Song' }], total: 1 });
+      if (endpoint.startsWith('/song?')) return Promise.resolve({ data: [{ id: 'so1', title: 'Song', duration: 7800 }], total: 1 });
       return Promise.reject(new Error(`unexpected endpoint: ${endpoint}`));
     });
 
     const cap = fakeRes();
-    await handleLibrarySearch(cap.res, asClient(client), makeTestConfig(), '  daft  ');
+    await handleLibrarySearch(cap.res, asClient(client), '  daft  ');
 
     const endpoints = client.requestWithLibraryFilterAndMeta.mock.calls.map((call) => call[0]);
     expect(endpoints).toHaveLength(3);
@@ -182,6 +181,8 @@ describe('handleLibrarySearch', () => {
     expect(ids(body['artists'])).toEqual(['ar1']);
     expect(ids(body['albums'])).toEqual(['al1']);
     expect(ids(body['songs'])).toEqual(['so1']);
+    // The remote formats numeric seconds itself, so a song past one hour reads H:MM:SS like the queue.
+    expect((body['songs'] as Array<{ duration?: number }>)[0]?.duration).toBe(7800);
   });
 });
 
@@ -221,13 +222,13 @@ describe('handleLibraryFavorites', () => {
   });
 });
 
-describe('handleArtistAlbums', () => {
+describe('handleLibraryArtistAlbums', () => {
   it.each([
     ['missing', null],
     ['slash-bearing', 'ar1/../x'],
   ])('rejects a %s id with 400 and no client call', async (_label, rawId) => {
     const cap = fakeRes();
-    await handleArtistAlbums(cap.res, asClient(client), rawId);
+    await handleLibraryArtistAlbums(cap.res, asClient(client), rawId);
 
     expect(cap.status()).toBe(400);
     expect(cap.json()).toEqual({ error: 'Invalid id' });
@@ -241,7 +242,7 @@ describe('handleArtistAlbums', () => {
     ]);
 
     const cap = fakeRes();
-    await handleArtistAlbums(cap.res, asClient(client), 'ar-1_x');
+    await handleLibraryArtistAlbums(cap.res, asClient(client), 'ar-1_x');
 
     expect(client.requestWithLibraryFilter).toHaveBeenCalledTimes(1);
     expect(client.requestWithLibraryFilter).toHaveBeenCalledWith(
@@ -257,13 +258,13 @@ describe('handleArtistAlbums', () => {
   });
 });
 
-describe('handleAlbumSongs', () => {
+describe('handleLibraryAlbumSongs', () => {
   it.each([
     ['missing', null],
     ['slash-bearing', 'al1/x'],
   ])('rejects a %s id with 400 and no client call', async (_label, rawId) => {
     const cap = fakeRes();
-    await handleAlbumSongs(cap.res, asClient(client), rawId);
+    await handleLibraryAlbumSongs(cap.res, asClient(client), rawId);
 
     expect(cap.status()).toBe(400);
     expect(cap.json()).toEqual({ error: 'Invalid id' });
@@ -272,12 +273,12 @@ describe('handleAlbumSongs', () => {
 
   it('lists the album tracks in disc and track order', async () => {
     client.requestWithLibraryFilter.mockResolvedValue([
-      { id: 'so1', title: 'Track One' },
+      { id: 'so1', title: 'Track One', duration: 245 },
       { id: 'so2', title: 'Track Two' },
     ]);
 
     const cap = fakeRes();
-    await handleAlbumSongs(cap.res, asClient(client), 'al-1_x');
+    await handleLibraryAlbumSongs(cap.res, asClient(client), 'al-1_x');
 
     expect(client.requestWithLibraryFilter).toHaveBeenCalledTimes(1);
     expect(client.requestWithLibraryFilter).toHaveBeenCalledWith(
@@ -287,13 +288,16 @@ describe('handleAlbumSongs', () => {
     const body = cap.json() as Record<string, unknown>;
     expect(Object.keys(body)).toEqual(['songs']);
     expect(ids(body['songs'])).toEqual(['so1', 'so2']);
+    const songs = body['songs'] as Array<{ duration?: number }>;
+    expect(songs[0]?.duration).toBe(245);
+    expect(songs[1]).not.toHaveProperty('duration');
   });
 
   it('maps an upstream failure to 500', async () => {
     client.requestWithLibraryFilter.mockRejectedValue(new Error('upstream down'));
 
     const cap = fakeRes();
-    await handleAlbumSongs(cap.res, asClient(client), 'al1');
+    await handleLibraryAlbumSongs(cap.res, asClient(client), 'al1');
 
     expect(cap.status()).toBe(500);
     expect(cap.json()).toEqual({ error: 'upstream down' });

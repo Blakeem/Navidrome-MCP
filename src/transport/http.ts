@@ -22,6 +22,7 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { writeError, readJsonBody } from '../webui/http-helpers.js';
+import { isLanReachable } from '../webui/network.js';
 import { logger } from '../utils/logger.js';
 
 /** The single HTTP path the MCP Streamable HTTP transport is served on. */
@@ -32,8 +33,8 @@ const HEALTH_PATH = '/healthz';
 
 /**
  * Body cap for the MCP endpoint. Generous compared with the web UI's 16 KB
- * control routes — a real tool call (e.g. `add_tracks_to_playlist` with many
- * ids) can be sizeable — but still bounded so a client can't make us buffer
+ * control routes, since a real tool call (e.g. `add_tracks_to_playlist` with
+ * many ids) can be sizeable. Still bounded so a client can't make us buffer
  * arbitrary input. Bodies over this are rejected with 400.
  */
 const MCP_MAX_BODY_BYTES = 4 * 1024 * 1024;
@@ -41,7 +42,7 @@ const MCP_MAX_BODY_BYTES = 4 * 1024 * 1024;
 /**
  * Idle-session reaper tuning. A GET SSE stream that goes silent without a clean
  * TCP close (NAT timeout, client crash, network partition) would otherwise leave
- * its transport + Server resident in the sessions map forever — an unbounded
+ * its transport + Server resident in the sessions map forever, an unbounded
  * growth vector for a long-lived process serving many remote clients. Sessions
  * with no request activity for {@link SESSION_IDLE_TIMEOUT_MS} are closed on each
  * {@link SESSION_SWEEP_INTERVAL_MS} tick. The window is generous so a client
@@ -49,6 +50,12 @@ const MCP_MAX_BODY_BYTES = 4 * 1024 * 1024;
  */
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const SESSION_SWEEP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** JSON-RPC error codes, matching the SDK's own Streamable HTTP transport. */
+const JSONRPC_PARSE_ERROR = -32_700;
+const JSONRPC_INTERNAL_ERROR = -32_603;
+const JSONRPC_SERVER_ERROR = -32_000;
+const JSONRPC_SESSION_NOT_FOUND = -32_001;
 
 /** A running HTTP transport: where clients connect, and how to stop it. */
 export interface HttpTransport {
@@ -63,34 +70,26 @@ interface HttpTransportOptions {
    * Optional bearer token. When set, every `/mcp` request must carry
    * `Authorization: Bearer <token>` (compared in constant time) or it is
    * rejected with 401 before reaching the transport. Left undefined, the
-   * endpoint is unauthenticated — only safe on loopback or behind a network
-   * policy / authenticating proxy. `/healthz` is never gated.
+   * endpoint is unauthenticated, which is only safe on loopback or behind a
+   * network policy / authenticating proxy. `/healthz` is never gated.
    */
   authToken?: string | undefined;
   /**
    * `Host` header values to accept, enforced whenever provided (the check
    * matches the literal `Host` header, e.g. `mcp.example.com:8080`).
-   *
-   * When NOT provided, Host filtering depends on the deployment shape:
-   * loopback bind without an auth token → automatic loopback allow-list
-   * (DNS-rebinding protection for the local, unauthenticated default);
-   * any other shape (bearer token set, or a deliberate non-loopback bind) →
-   * no Host filtering, because the token already defeats rebinding and a
-   * remote deployment cannot know its external names in advance — the old
-   * auto-list rejected every legitimate remote client (403 Invalid Host
-   * header) for container-to-container and proxied setups.
+   * When not provided, {@link resolveAllowedHosts} picks the posture.
    */
   allowedHosts?: string[] | undefined;
   /**
    * Allowed `Origin` header values (browser clients only). When set, requests
-   * with a missing or non-listed Origin are rejected; left unset, Origin is not
+   * with a missing or non-listed Origin are rejected. Left unset, Origin is not
    * checked (non-browser MCP clients send none).
    */
   allowedOrigins?: string[] | undefined;
   /**
    * Builds a fresh, fully-configured MCP {@link Server} for a new session. The
-   * Streamable HTTP transport is stateful — one transport (and one Server) per
-   * client session — so this is invoked once per `initialize`, sharing the
+   * Streamable HTTP transport is stateful, with one transport (and one Server)
+   * per client session, so this is invoked once per `initialize`, sharing the
    * already-authenticated Navidrome client captured in the closure.
    */
   createMcpServer: () => Server;
@@ -100,7 +99,7 @@ interface HttpTransportOptions {
  * Start the MCP server over the Streamable HTTP transport (MCP spec
  * 2025-03-26). Unlike stdio, this binds a TCP socket so a long-lived process
  * (e.g. a container alongside Navidrome in a cluster) can serve remote MCP
- * clients directly — no `supergateway`/`mcp-proxy` bridge required.
+ * clients directly, with no `supergateway`/`mcp-proxy` bridge.
  *
  * Stateful session model (the SDK's recommended pattern):
  *   - POST `/mcp` with an `initialize` request and NO session id → a new
@@ -110,16 +109,15 @@ interface HttpTransportOptions {
  *     session's transport (GET opens the SSE stream, DELETE terminates it).
  *   - Anything else → a JSON-RPC / HTTP error, leaving no orphaned session.
  *
- * Binding host comes from config (loopback by default; `expose`/an explicit
- * host opt into network exposure). An optional bearer `authToken` gates every
- * `/mcp` request; without one, front it with a reverse proxy / network policy.
+ * Binding host comes from config (loopback by default, while `expose` or an
+ * explicit host opt into network exposure). An optional bearer `authToken`
+ * gates every `/mcp` request. Without one, front it with a reverse proxy or
+ * network policy.
  */
 export async function startHttpTransport(options: HttpTransportOptions): Promise<HttpTransport> {
   const { host, port, authToken, allowedOrigins, createMcpServer } = options;
 
-  // Computed after listen() (so the ephemeral `port: 0` case resolves to the
-  // real bound port) and read when each per-session transport is constructed —
-  // safe because requests only arrive after listen resolves.
+  // Assign synchronously with the listen resolution, since an empty list disables the SDK Host check.
   let allowedHosts: string[] = [];
 
   // Active sessions keyed by the SDK-generated session id. A transport removes
@@ -137,9 +135,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   });
 
   async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    // `/mcp` is the protocol endpoint; query strings are ignored. `req.url` is
-    // always a path here (origin-form), so a prefix check on the pathname is
-    // sufficient.
+    // The query string is stripped, and the path must equal /mcp exactly.
     const method = req.method ?? 'GET';
     const path = (req.url ?? '/').split('?')[0];
 
@@ -156,8 +152,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     const startedAt = Date.now();
     res.once('finish', () => {
       const sid = headerValue(req, 'mcp-session-id');
-      // Log a short fingerprint, never the raw id: with no other auth the
-      // session id IS the access token, so it must not land in INFO logs.
+      // With no other auth the session id is the access token, so only a fingerprint is logged.
       const session = sid !== undefined ? ` [session ${sessionFingerprint(sid)}]` : '';
       const elapsed = Date.now() - startedAt;
       logger.info(`HTTP ${method} ${path} -> ${String(res.statusCode)} (${String(elapsed)}ms)${session}`);
@@ -168,8 +163,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       return;
     }
 
-    // Bearer gate (when configured): the session id is the only other access
-    // control, so a missing/wrong token is rejected before we touch a session.
+    // The session id is the only other access control, so a bad token is rejected before any session lookup.
     if (authToken !== undefined && !isAuthorized(req, authToken)) {
       res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
       res.end(JSON.stringify({ error: 'Unauthorized' }));
@@ -182,12 +176,12 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       } else if (req.method === 'GET' || req.method === 'DELETE') {
         await handleSessionRequest(req, res);
       } else {
-        writeError(res, 405, 'Method Not Allowed');
+        writeJsonRpcError(res, 405, 'Method not allowed.', JSONRPC_SERVER_ERROR, { Allow: 'GET, POST, DELETE' });
       }
     } catch (err) {
       logger.error('HTTP transport request failed:', err);
       if (!res.headersSent) {
-        writeError(res, 500, 'Internal server error');
+        writeJsonRpcError(res, 500, 'Internal server error', JSONRPC_INTERNAL_ERROR);
       } else {
         res.end();
       }
@@ -202,42 +196,38 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     try {
       body = await readJsonBody(req, MCP_MAX_BODY_BYTES);
     } catch {
-      writeError(res, 400, 'Invalid or oversized request body');
+      writeJsonRpcError(res, 400, 'Parse error: invalid or oversized request body', JSONRPC_PARSE_ERROR);
       return;
     }
 
     const sessionId = headerValue(req, 'mcp-session-id');
     if (sessionId !== undefined) {
       const existing = transports.get(sessionId);
-      if (existing !== undefined) {
-        lastActivity.set(sessionId, Date.now());
-        await existing.handleRequest(req, res, body);
+      if (existing === undefined) {
+        // A 404 tells the client the session ended, so it re-initializes.
+        writeJsonRpcError(res, 404, 'Session not found', JSONRPC_SESSION_NOT_FOUND);
         return;
       }
+      lastActivity.set(sessionId, Date.now());
+      await existing.handleRequest(req, res, body);
+      return;
     }
 
-    // No live session: only an `initialize` request may open one. Anything else
-    // is a stale/unknown session id (or a non-init first message) and is
-    // rejected per the spec rather than silently spawning a session.
-    if (sessionId !== undefined || !isInitializeRequest(body)) {
+    // Only an `initialize` request may open a session.
+    if (!isInitializeRequest(body)) {
       writeJsonRpcError(res, 400, 'Bad Request: no valid session ID provided');
       return;
     }
 
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: (): string => randomUUID(),
-      // DNS-rebinding protection: reject requests whose Host (and, if configured,
-      // Origin) header isn't allow-listed, blocking a malicious web page from
-      // driving this server through the victim's browser even on loopback. An
-      // empty `allowedHosts` (token-gated or exposed deployments — see the
-      // posture block below) makes the SDK skip the Host check entirely.
       enableDnsRebindingProtection: true,
       allowedHosts,
       ...(allowedOrigins !== undefined ? { allowedOrigins } : {}),
       onsessioninitialized: (sid): void => {
         transports.set(sid, transport);
         lastActivity.set(sid, Date.now());
-        logger.debug(`MCP HTTP session initialized: ${sid}`);
+        logger.debug(`MCP HTTP session initialized: ${sessionFingerprint(sid)}`);
       },
     });
     // Drop the session from the map when the transport closes (DELETE or
@@ -247,7 +237,7 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
       if (sid !== undefined) {
         lastActivity.delete(sid);
         if (transports.delete(sid)) {
-          logger.debug(`MCP HTTP session closed: ${sid}`);
+          logger.debug(`MCP HTTP session closed: ${sessionFingerprint(sid)}`);
         }
       }
     };
@@ -259,9 +249,13 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
 
   async function handleSessionRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const sessionId = headerValue(req, 'mcp-session-id');
-    const transport = sessionId !== undefined ? transports.get(sessionId) : undefined;
-    if (transport === undefined || sessionId === undefined) {
+    if (sessionId === undefined) {
       writeJsonRpcError(res, 400, 'Bad Request: no valid session ID provided');
+      return;
+    }
+    const transport = transports.get(sessionId);
+    if (transport === undefined) {
+      writeJsonRpcError(res, 404, 'Session not found', JSONRPC_SESSION_NOT_FOUND);
       return;
     }
     lastActivity.set(sessionId, Date.now());
@@ -276,10 +270,17 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     });
   });
 
-  // Idle-session reaper: evict sessions with no request activity past the
-  // threshold so an abandoned SSE stream can't pin its transport forever.
-  // Unref'd so it never keeps the process alive on its own — the listening
-  // server does that; this only bounds how long dead sessions linger.
+  // The bound port differs from the requested one when `port: 0` asks the OS for an ephemeral port.
+  const address = httpServer.address();
+  const boundPort = typeof address === 'object' && address !== null ? address.port : port;
+  allowedHosts = resolveAllowedHosts(host, boundPort, authToken, options.allowedHosts ?? []);
+  logger.debug(
+    allowedHosts.length > 0
+      ? `MCP HTTP Host filtering active: ${allowedHosts.join(', ')}`
+      : 'MCP HTTP Host filtering off (bearer token set or non-loopback bind without allowedHosts)'
+  );
+
+  // Unref'd, since the listening server keeps the process alive and this only bounds how long dead sessions linger.
   const reaper = setInterval(() => {
     const now = Date.now();
     for (const [sid, ts] of lastActivity) {
@@ -299,11 +300,8 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
   const close = async (): Promise<void> => {
     // Stop the reaper first so it can't fire mid-teardown.
     clearInterval(reaper);
-    // Close each transport so its in-flight SSE stream ends and its final
-    // response flushes BEFORE we destroy sockets — otherwise closeAllConnections()
-    // would yank the very sockets each transport.close() is still using to flush,
-    // resetting connected clients and dropping any in-flight tool-call response.
-    // Swallow per-transport errors so one bad session can't abort shutdown.
+    // Close each transport before destroying sockets, or closeAllConnections()
+    // drops in-flight responses. One bad session must not abort shutdown.
     await Promise.all(
       [...transports.values()].map((transport) =>
         transport.close().catch((err: unknown) => {
@@ -321,44 +319,36 @@ export async function startHttpTransport(options: HttpTransportOptions): Promise
     });
   };
 
-  // Read the actually-bound port from the socket — it differs from the
-  // requested one when `port: 0` asks the OS for an ephemeral port (used by
-  // tests). Report a loopback-friendly host when bound to a wildcard address.
-  const address = httpServer.address();
-  const boundPort = typeof address === 'object' && address !== null ? address.port : port;
-
-  // Host-filtering posture (an empty list disables the SDK's Host check):
-  //   1. Operator listed hosts → enforce them (plus the loopback aliases and
-  //      bound host a local client/debug session legitimately sends).
-  //   2. No list, no token, loopback bind → the local unauthenticated default:
-  //      auto allow-list loopback so a malicious web page can't drive this
-  //      server via DNS rebinding through the user's own browser.
-  //   3. No list, but a bearer token or a deliberate non-loopback bind → no
-  //      Host filtering. The token gate (which runs before the transport)
-  //      already defeats rebinding, and an exposed deployment is reached via
-  //      external names/IPs we cannot enumerate — auto-listing loopback here
-  //      403'd every legitimate remote client (compose service names,
-  //      host.docker.internal, a VPS IP).
-  const portStr = String(boundPort);
-  const autoAllowList = [host, '127.0.0.1', 'localhost', '[::1]'].map((h) => `${h}:${portStr}`);
-  const operatorHosts = options.allowedHosts ?? [];
-  const loopbackBind = host === '127.0.0.1' || host === '::1' || host === 'localhost';
-  if (operatorHosts.length > 0) {
-    allowedHosts = [...new Set([...autoAllowList, ...operatorHosts])];
-  } else if (authToken === undefined && loopbackBind) {
-    allowedHosts = [...new Set(autoAllowList)];
-  } else {
-    allowedHosts = [];
-  }
-  logger.debug(
-    allowedHosts.length > 0
-      ? `MCP HTTP Host filtering active: ${allowedHosts.join(', ')}`
-      : 'MCP HTTP Host filtering off (bearer token set or non-loopback bind without allowedHosts)'
-  );
-
+  // A wildcard bind reports a loopback-friendly host.
   const displayHost = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
   const url = `http://${displayHost}:${String(boundPort)}${MCP_PATH}`;
   return { url, close };
+}
+
+/**
+ * Host-filtering posture for DNS-rebinding protection. An empty list disables the SDK Host check.
+ * Operator hosts are enforced plus the local aliases. Without them, only an
+ * unauthenticated loopback bind gets the loopback list, since a bearer token
+ * already defeats rebinding and an exposed deployment cannot enumerate the
+ * external names its clients send.
+ */
+export function resolveAllowedHosts(
+  host: string,
+  boundPort: number,
+  authToken: string | undefined,
+  operatorHosts: string[],
+): string[] {
+  const portStr = String(boundPort);
+  const autoAllowList = [host, '127.0.0.1', 'localhost', '[::1]'].map((h) => `${h}:${portStr}`);
+  const loopbackBind = !isLanReachable(host);
+
+  if (operatorHosts.length > 0) {
+    return [...new Set([...autoAllowList, ...operatorHosts])];
+  }
+  if (authToken === undefined && loopbackBind) {
+    return [...new Set(autoAllowList)];
+  }
+  return [];
 }
 
 /**
@@ -378,7 +368,7 @@ function isAuthorized(req: IncomingMessage, token: string): boolean {
 }
 
 /**
- * A short, non-reversible fingerprint of a session id for logs — the first 8 hex
+ * A short, non-reversible fingerprint of a session id for logs, the first 8 hex
  * of its sha256. Enough to correlate a session's requests without writing the
  * (auth-equivalent) id itself to the log stream.
  */
@@ -394,12 +384,18 @@ function headerValue(req: IncomingMessage, name: string): string | undefined {
 }
 
 /** Emit a JSON-RPC error envelope (what MCP clients expect) with an HTTP code. */
-function writeJsonRpcError(res: ServerResponse, status: number, message: string): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+function writeJsonRpcError(
+  res: ServerResponse,
+  status: number,
+  message: string,
+  code: number = JSONRPC_SERVER_ERROR,
+  extraHeaders: Record<string, string> = {},
+): void {
+  res.writeHead(status, { ...extraHeaders, 'Content-Type': 'application/json' });
   res.end(
     JSON.stringify({
       jsonrpc: '2.0',
-      error: { code: -32_000, message },
+      error: { code, message },
       id: null,
     })
   );

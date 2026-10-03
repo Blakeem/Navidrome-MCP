@@ -16,9 +16,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
-import type { 
-  ExternalRadioStationDTO, 
+import type { z } from 'zod';
+import type {
+  ExternalRadioStationDTO,
   DiscoverRadioStationsResponse,
   RadioFiltersResponse,
   ClickRadioStationResponse,
@@ -28,17 +28,17 @@ import type { Config } from '../config.js';
 import { validateRadioStream } from './radio-validation.js';
 import { DISCOVERY_VALIDATION_TIMEOUT } from '../constants/timeouts.js';
 import { DEFAULT_VALUES, DEFAULT_USER_AGENT } from '../constants/defaults.js';
-import type { NavidromeClient } from '../client/navidrome-client.js';
+import { DiscoverRadioStationsArgsSchema, GetRadioFiltersArgsSchema, StationUuidSchema } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import { safeNumber } from '../utils/safe-number.js';
 import {
   fetchWithTimeout,
   getExternalApiTimeoutMs,
+  type RetryPolicy,
 } from '../utils/fetch-with-timeout.js';
 import { getRadioBrowserBase, invalidateRadioBrowserBase } from '../utils/radio-browser-resolver.js';
 import { hasRecentlyVoted, hasRecentlyClicked, markVoted, markClicked } from '../utils/radio-browser-rate-limit.js';
-const MAX_LIMIT = 500;
 
 /**
  * Radio Browser API station response
@@ -81,9 +81,9 @@ interface RadioBrowserStation {
 }
 
 /**
- * Radio Browser API tag response
+ * Radio Browser API tag, language or codec response
  */
-interface RadioBrowserTag {
+interface RadioBrowserNamedCount {
   name: string;
   stationcount: number;
 }
@@ -98,23 +98,6 @@ interface RadioBrowserCountry {
 }
 
 /**
- * Radio Browser API language response
- */
-interface RadioBrowserLanguage {
-  name: string;
-  iso_639?: string;
-  stationcount: number;
-}
-
-/**
- * Radio Browser API codec response
- */
-interface RadioBrowserCodec {
-  name: string;
-  stationcount: number;
-}
-
-/**
  * Radio Browser API click/vote response
  */
 interface RadioBrowserActionResponse {
@@ -123,75 +106,78 @@ interface RadioBrowserActionResponse {
   url?: string;
 }
 
-/**
- * Schema for discovering radio stations
- */
-const DiscoverRadioStationsArgsSchema = z.object({
-  query: z.string().optional(),
-  tag: z.string().optional(),
-  countryCode: z.string().optional(),
-  language: z.string().optional(),
-  codec: z.string().optional(),
-  bitrateMin: z.number().min(0).optional(),
-  isHttps: z.boolean().optional(),
-  order: z.enum(['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random']).default('votes'),
-  reverse: z.boolean().default(true),
-  offset: z.number().min(0).optional(),
-  limit: z.number().min(1).max(MAX_LIMIT).default(DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT),
-  hideBroken: z.boolean().default(true)
-});
+type RadioFilterKind = z.infer<typeof GetRadioFiltersArgsSchema>['kinds'][number];
+
+interface RadioBrowserRequest {
+  retryPolicy: RetryPolicy;
+  label: string;
+}
 
 /**
- * Schema for getting radio filter options
+ * GET a Radio Browser JSON endpoint. Only a network error, a timeout or a 5xx
+ * suggests an unhealthy mirror, so only those drop the cached mirror.
  */
-const GetRadioFiltersArgsSchema = z.object({
-  kinds: z.array(z.enum(['tags', 'countries', 'languages', 'codecs'])).default(['tags', 'countries', 'languages', 'codecs'])
-});
+async function radioBrowserGetJson<T>(
+  config: Config,
+  base: string,
+  pathAndQuery: string,
+  request: RadioBrowserRequest,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${base}${pathAndQuery}`,
+      {
+        headers: {
+          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
+          'Accept': 'application/json'
+        }
+      },
+      {
+        timeoutMs: getExternalApiTimeoutMs(),
+        retryPolicy: request.retryPolicy,
+        operationLabel: `Radio Browser ${request.label}`,
+        respectProxy: true,
+        // Only click and vote skip the retry, because each records an event server-side.
+        nonIdempotent: request.retryPolicy === 'never',
+      },
+    );
+  } catch (error) {
+    invalidateRadioBrowserBase();
+    throw error;
+  }
+
+  if (response.status >= 500) {
+    invalidateRadioBrowserBase();
+  }
+  if (!response.ok) {
+    throw new Error(ErrorFormatter.radioBrowserApi(response));
+  }
+  return await response.json() as T;
+}
+
+function splitList(value: string | undefined): string[] {
+  if (value === undefined || value === '') {
+    return [];
+  }
+  return value.split(',').map(item => item.trim()).filter(item => item !== '');
+}
 
 /**
- * Schema for getting station by UUID
- */
-const GetStationByUuidArgsSchema = z.object({
-  stationUuid: z.string().min(1)
-});
-
-/**
- * Schema for clicking a station
- */
-const ClickStationArgsSchema = z.object({
-  stationUuid: z.string().min(1)
-});
-
-/**
- * Schema for voting for a station
- */
-const VoteStationArgsSchema = z.object({
-  stationUuid: z.string().min(1)
-});
-
-/**
- * Convert Radio Browser API response to our DTO.
- * Returns null for rows missing required fields (stationuuid, name, or url) —
- * Radio Browser occasionally serves partially-populated rows and we'd rather
- * drop them silently than surface a station with no way to identify or play it.
+ * Convert a Radio Browser row to our DTO. Returns null for a row missing its
+ * uuid, name or url, since the station could not be identified or played.
  */
 function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO | null {
-  // Guard required fields. An empty stationuuid means we can't identify the
-  // station later (e.g. for click/vote); an empty name or url means we can't
-  // play or display it. Drop these rows before they reach the LLM.
-  //
-  // Prefer url_resolved when it's a non-empty string. `??` would keep an empty
-  // string (falsy but not null/undefined), yielding playUrl=''; the explicit
-  // empty-string check handles `url_resolved=''` + `url='http://...'`.
+  // An empty url_resolved falls back to url. `??` would keep the empty string.
   const stationUuid = station.stationuuid;
   const name = station.name;
-  const playUrl = (station.url_resolved !== undefined && station.url_resolved !== '')
+  const streamUrl = (station.url_resolved !== undefined && station.url_resolved !== '')
     ? station.url_resolved
     : station.url ?? '';
   if (
     stationUuid === undefined || stationUuid === null || stationUuid === '' ||
     name === undefined || name === null || name === '' ||
-    playUrl === ''
+    streamUrl === ''
   ) {
     logger.debug('mapStationToDTO: dropping station with missing required field', {
       stationuuid: station.stationuuid,
@@ -204,41 +190,38 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
   const dto: ExternalRadioStationDTO = {
     stationUuid,
     name,
-    playUrl,
-    tags: (station.tags !== undefined && station.tags !== '') ? station.tags.split(',').map(t => t.trim()).filter(t => t !== '') : [],
-    languageCodes: (station.languagecodes !== undefined && station.languagecodes !== '') ? station.languagecodes.split(',').map(l => l.trim()).filter(l => l !== '') : [],
+    streamUrl,
+    tags: splitList(station.tags),
+    // Names, not ISO codes, because discover's language filter matches language names.
+    languages: splitList(station.language),
     hls: Boolean(station.hls),
-    // safeNumber guards against Radio Browser sometimes returning numerics
-    // as strings or non-numeric placeholders (matches the Last.fm pattern).
+    // Radio Browser sometimes returns numerics as strings or placeholders.
     votes: safeNumber(station.votes),
     clickCount: safeNumber(station.clickcount),
   };
 
-  // Only include essential fields for cleaner LLM context
-  if (station.homepage !== undefined && station.homepage !== '') dto.homepage = station.homepage;
+  // favicon and lastCheckTime are left out to keep the LLM context small.
+  if (station.homepage !== undefined && station.homepage !== '') dto.homePageUrl = station.homepage;
   if (station.countrycode !== undefined && station.countrycode !== '') dto.countryCode = station.countrycode;
   if (station.codec !== undefined && station.codec !== '') dto.codec = station.codec;
   if (station.bitrate !== undefined) {
     const bitrate = safeNumber(station.bitrate, -1);
     if (bitrate >= 0) dto.bitrate = bitrate;
   }
-  // Skip favicon and lastCheckTime to reduce context size
-  
+
   return dto;
 }
 
 /**
- * Probe a single discovered station and attach its validation verdict. Never
- * throws — a failed probe becomes an `isValid:false` result so one bad host
- * can't sink the batch.
+ * Probe one discovered station. A failed probe becomes an `isValid:false`
+ * result, so one bad host cannot sink the batch.
  */
 async function probeStation(
-  client: NavidromeClient,
   station: ExternalRadioStationDTO,
 ): Promise<ExternalRadioStationDTO> {
   try {
-    const validationResult = await validateRadioStream(client, {
-      url: station.playUrl,
+    const validationResult = await validateRadioStream({
+      url: station.streamUrl,
       timeout: DISCOVERY_VALIDATION_TIMEOUT,
     });
     return {
@@ -263,12 +246,9 @@ async function probeStation(
 }
 
 /**
- * Concurrency-control key for a station's probe: its `host:port`. Stations that
- * share a host must be probed one-at-a-time (some servers — e.g. icecast hosting
- * several popular mounts on one host:port — rate-limit concurrent connections
- * per IP, which stalls and false-FAILs real streams; see Issue #7). Falls back
- * to a per-station unique key when the URL can't be parsed, so an unparseable
- * URL runs in its own lane rather than being lumped in with others.
+ * Probe lane key for a station: its `host:port`. Some icecast hosts rate-limit
+ * concurrent connections per IP, which false-FAILs real streams (Issue #7). An
+ * unparseable URL gets its own lane.
  */
 function stationHostKey(playUrl: string, index: number): string {
   try {
@@ -279,36 +259,21 @@ function stationHostKey(playUrl: string, index: number): string {
 }
 
 /**
- * Validate discovered radio stations.
+ * Probe the first RADIO_DISCOVERY_PROBE_COUNT stations. Different hosts run in parallel and same-host
+ * stations run one at a time, so no rate-limiting host sees concurrent probes.
  *
- * Probes the first 8 stations, bucketed by `host:port`: DIFFERENT hosts run
- * fully in parallel (the common case — 8 distinct hosts — is as fast as before),
- * while SAME-host stations run sequentially so we never open concurrent
- * connections to a host that rate-limits per IP (Issue #7). Every bucket is
- * launched at once, so a multi-station bucket starts its sequential chain
- * immediately and the longest single chain bounds total wall-clock — the slow,
- * clustered hosts surface and drain as early as possible.
- *
- * Results are written back by original index, so the caller's discovery order
- * (e.g. sorted by votes) is preserved regardless of which bucket finishes first.
- *
- * Why 8: practical cap so we don't fan out to hundreds of hosts for large
- * result sets; Radio Browser's `hideBroken` filter already pre-screens for
- * recently-verified stations, so the first 8 are a representative sample.
+ * Results are written back by original index, so the discovery order is kept.
  */
 async function validateDiscoveredStations(
-  client: NavidromeClient,
   stations: ExternalRadioStationDTO[]
 ): Promise<ExternalRadioStationDTO[]> {
-  const maxValidations = Math.min(stations.length, 8);
+  const maxValidations = Math.min(stations.length, DEFAULT_VALUES.RADIO_DISCOVERY_PROBE_COUNT);
   const stationsToValidate = stations.slice(0, maxValidations);
   const remainingStations = stations.slice(maxValidations);
 
-  // Bucket by host:port, carrying each station's original index so results can
-  // be slotted back in order.
   const buckets = new Map<string, Array<{ index: number; station: ExternalRadioStationDTO }>>();
   stationsToValidate.forEach((station, index) => {
-    const key = stationHostKey(station.playUrl, index);
+    const key = stationHostKey(station.streamUrl, index);
     const bucket = buckets.get(key);
     if (bucket === undefined) {
       buckets.set(key, [{ index, station }]);
@@ -317,18 +282,15 @@ async function validateDiscoveredStations(
     }
   });
 
-  // One lane per host, all launched concurrently; within a lane, probe one
-  // station at a time.
   const results = new Array<ExternalRadioStationDTO>(stationsToValidate.length);
   await Promise.all(
     Array.from(buckets.values()).map(async (entries) => {
       for (const { index, station } of entries) {
-        results[index] = await probeStation(client, station);
+        results[index] = await probeStation(station);
       }
     }),
   );
 
-  // Add remaining stations without validation
   return [...results, ...remainingStations];
 }
 
@@ -337,79 +299,54 @@ async function validateDiscoveredStations(
  */
 export async function discoverRadioStations(
   config: Config,
-  client: NavidromeClient,
   args: unknown
 ): Promise<DiscoverRadioStationsResponse> {
-  const params = DiscoverRadioStationsArgsSchema.parse(args);
-
-  logger.debug('Tool discoverRadioStations called with args:', params);
-
-  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
-
   try {
-    const url = new URL('/json/stations/search', radioBrowserBase);
-    
-    // Map parameters to Radio Browser API format
-    if (params.query !== undefined && params.query !== '') url.searchParams.set('name', params.query);
-    if (params.tag !== undefined && params.tag !== '') url.searchParams.set('tag', params.tag);
-    if (params.countryCode !== undefined && params.countryCode !== '') url.searchParams.set('countrycode', params.countryCode);
-    if (params.language !== undefined && params.language !== '') url.searchParams.set('language', params.language);
-    if (params.codec !== undefined && params.codec !== '') url.searchParams.set('codec', params.codec);
-    if (params.bitrateMin !== undefined) url.searchParams.set('bitrateMin', String(params.bitrateMin));
-    if (params.isHttps !== undefined) url.searchParams.set('is_https', params.isHttps ? 'true' : 'false');
-    url.searchParams.set('order', params.order);
-    url.searchParams.set('reverse', params.reverse ? 'true' : 'false');
-    if (params.offset !== undefined) url.searchParams.set('offset', String(params.offset));
-    url.searchParams.set('limit', String(params.limit));
-    url.searchParams.set('hidebroken', params.hideBroken ? 'true' : 'false');
-    
-    const response = await fetchWithTimeout(
-      url.toString(),
-      {
-        headers: {
-          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-          'Accept': 'application/json'
-        }
-      },
-      {
-        timeoutMs: getExternalApiTimeoutMs(),
-        retryPolicy: 'safe',
-        operationLabel: 'Radio Browser /json/stations/search',
-        respectProxy: true,
-      },
+    const params = DiscoverRadioStationsArgsSchema.parse(args);
+    // Popularity orders read best first. A name order reads A to Z.
+    const reverse = params.reverse ?? params.order !== 'name';
+
+    logger.debug('Tool discoverRadioStations called with args:', params);
+
+    const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+
+    const searchParams = new URLSearchParams();
+    if (params.query !== undefined && params.query !== '') searchParams.set('name', params.query);
+    if (params.tag !== undefined && params.tag !== '') searchParams.set('tag', params.tag);
+    if (params.countryCode !== undefined && params.countryCode !== '') searchParams.set('countrycode', params.countryCode);
+    if (params.language !== undefined && params.language !== '') searchParams.set('language', params.language);
+    if (params.codec !== undefined && params.codec !== '') searchParams.set('codec', params.codec);
+    if (params.bitrateMin !== undefined) searchParams.set('bitrateMin', String(params.bitrateMin));
+    if (params.isHttps !== undefined) searchParams.set('is_https', params.isHttps ? 'true' : 'false');
+    searchParams.set('order', params.order);
+    searchParams.set('reverse', reverse ? 'true' : 'false');
+    searchParams.set('offset', String(params.offset));
+    searchParams.set('limit', String(params.limit));
+    searchParams.set('hidebroken', params.hideBroken ? 'true' : 'false');
+
+    const data = await radioBrowserGetJson<RadioBrowserStation[]>(
+      config,
+      radioBrowserBase,
+      `/json/stations/search?${searchParams.toString()}`,
+      { retryPolicy: 'safe', label: '/json/stations/search' },
     );
 
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.radioBrowserApi(response));
-    }
-
-    const data = await response.json() as RadioBrowserStation[];
-
-    // Filter out rows missing required fields (stationuuid/name/url) before
-    // any further processing. mapStationToDTO returns null for these.
     const rawStations = data.map(mapStationToDTO).filter((s): s is ExternalRadioStationDTO => s !== null);
 
-    // Dedupe on (name, playUrl): Radio Browser commonly returns multiple rows
-    // for the same logical station (e.g., from different regional mirrors).
-    // Apply dedupe BEFORE validation so we don't waste round-trips probing
-    // the same stream twice. Key on playUrl alone — Radio Browser commonly
-    // returns the same logical station with case/spelling variants of `name`
-    // ("Jazz FM" vs "jazz fm") all pointing at the same playUrl, and the URL
-    // is a stable unique identifier for the stream itself.
+    // Radio Browser returns one stream under several name spellings, so streamUrl is
+    // the dedupe key. Deduping before validation avoids probing a stream twice.
     const seen = new Set<string>();
     const stations = rawStations.filter(s => {
-      if (seen.has(s.playUrl)) {
-        logger.debug('discoverRadioStations: deduping duplicate station', { name: s.name, playUrl: s.playUrl });
+      if (seen.has(s.streamUrl)) {
+        logger.debug('discoverRadioStations: deduping duplicate station', { name: s.name, streamUrl: s.streamUrl });
         return false;
       }
-      seen.add(s.playUrl);
+      seen.add(s.streamUrl);
       return true;
     });
 
-    // Automatically validate all discovered stations (parallelized — see below)
-    const validatedStations = await validateDiscoveredStations(client, stations);
+    const validatedStations = await validateDiscoveredStations(stations);
 
-    // Create validation summary
     const validatedCount = validatedStations.filter(s => s.validation?.validated === true).length;
     const workingCount = validatedStations.filter(s => s.validation?.isValid === true).length;
 
@@ -421,13 +358,9 @@ export async function discoverRadioStations(
 
     if (validatedCount > 0) {
       const failedCount = validatedCount - workingCount;
-      // A FAIL here is a best-effort quick probe, not a verdict: probes run in
-      // parallel, so a slow TLS handshake or a host that throttles concurrent
-      // connections (e.g. several popular streams sharing one icecast host) can
-      // time out a station that actually works. Tell the caller to re-check a
-      // FAIL one-at-a-time with validate_radio_stream before discarding it.
+      // Parallel probes can time out on slow or throttling hosts, so a FAIL is not a verdict.
       const failNote = failedCount > 0
-        ? ' A "FAIL" is a best-effort parallel probe and can be a false negative for slow or rate-limiting hosts — re-check a FAIL with validate_radio_stream before discarding it.'
+        ? ' A "FAIL" is a best-effort parallel probe and can be a false negative for slow or rate-limiting hosts. Re-check a FAIL with validate_radio_stream before discarding it.'
         : '';
       result.validationSummary = {
         totalStations: stations.length,
@@ -436,136 +369,111 @@ export async function discoverRadioStations(
         message: `Auto-validated first ${validatedCount} stations: ${workingCount} working, ${failedCount} not working.${failNote}`,
       };
     }
-    
+
     return result;
   } catch (error) {
-    // Drop the cached mirror so the next call re-resolves SRV. Cheap (one
-    // DNS lookup) and self-heals from a mirror that went down mid-cache-window.
-    invalidateRadioBrowserBase();
-    throw new Error(ErrorFormatter.toolExecution('discoverRadioStations', error));
+    throw new Error(ErrorFormatter.toolExecution('discover_radio_stations', error));
   }
 }
+
+interface RadioFilterSpec {
+  kind: RadioFilterKind;
+  pathAndQuery: string;
+  limit: number;
+  map: (rows: unknown[]) => RadioFiltersResponse;
+}
+
+// Radio Browser sorts these lists by name by default, which puts junk rows first and pushes out rock, english and US.
+const POPULAR_FIRST = 'order=stationcount&reverse=true&hidebroken=true';
+
+const RADIO_FILTER_SPECS: readonly RadioFilterSpec[] = [
+  {
+    kind: 'tags',
+    pathAndQuery: `/json/tags?${POPULAR_FIRST}&limit=100`,
+    limit: 100,
+    map: rows => ({
+      tags: (rows as RadioBrowserNamedCount[]).map(t => ({ name: t.name, stationCount: safeNumber(t.stationcount) })),
+    }),
+  },
+  {
+    kind: 'countries',
+    pathAndQuery: `/json/countries?${POPULAR_FIRST}&limit=100`,
+    limit: 100,
+    map: rows => ({
+      countries: (rows as RadioBrowserCountry[]).map(c => ({
+        code: c.iso_3166_1,
+        name: c.name,
+        stationCount: safeNumber(c.stationcount),
+      })),
+    }),
+  },
+  {
+    kind: 'languages',
+    pathAndQuery: `/json/languages?${POPULAR_FIRST}&limit=100`,
+    limit: 100,
+    map: rows => ({
+      languages: (rows as RadioBrowserNamedCount[]).map(l => ({ name: l.name, stationCount: safeNumber(l.stationcount) })),
+    }),
+  },
+  {
+    kind: 'codecs',
+    pathAndQuery: `/json/codecs?${POPULAR_FIRST}&limit=50`,
+    limit: 50,
+    map: rows => ({
+      codecs: (rows as RadioBrowserNamedCount[]).map(c => ({ name: c.name, stationCount: safeNumber(c.stationcount) })),
+    }),
+  },
+];
+
+async function fetchRadioFilter(config: Config, base: string, spec: RadioFilterSpec): Promise<RadioFiltersResponse> {
+  const rows = await radioBrowserGetJson<unknown[]>(config, base, spec.pathAndQuery, {
+    retryPolicy: 'safe',
+    label: `/json/${spec.kind}`,
+  });
+  // The server limit already applies. The slice caps a mirror that ignores it.
+  return spec.map(rows.slice(0, spec.limit));
+}
+
+type RadioFilterOutcome =
+  | { kind: RadioFilterKind; entries: RadioFiltersResponse }
+  | { kind: RadioFilterKind; reason: unknown };
 
 /**
  * Get available filter options for radio station discovery
  */
 export async function getRadioFilters(config: Config, args: unknown): Promise<RadioFiltersResponse> {
-  const params = GetRadioFiltersArgsSchema.parse(args);
-  logger.debug('Tool getRadioFilters called with args:', params);
-  const result: RadioFiltersResponse = {};
-
-  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
-
   try {
-    // Each task carries its `kind` label so a rejected fetch can be named in
-    // `partialFailures` below — an LLM caller otherwise can't distinguish
-    // "I didn't request languages" from "the languages fetch errored".
-    const fetchTasks: { kind: string; promise: Promise<void> }[] = [];
+    const params = GetRadioFiltersArgsSchema.parse(args);
+    const result: RadioFiltersResponse = {};
 
-    // All four filter-list endpoints are pure reads — safe to retry on timeout.
-    const filterFetchOptions = {
-      timeoutMs: getExternalApiTimeoutMs(),
-      retryPolicy: 'safe' as const,
-      respectProxy: true,
-    };
-    const filterHeaders = {
-      headers: { 'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT, 'Accept': 'application/json' }
-    };
+    logger.debug('Tool getRadioFilters called with args:', params);
 
-    if (params.kinds.includes('tags')) {
-      fetchTasks.push({ kind: 'tags', promise: (async (): Promise<void> => {
-        const res = await fetchWithTimeout(
-          `${radioBrowserBase}/json/tags`,
-          filterHeaders,
-          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/tags' },
-        );
-        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
-        const data = await res.json() as RadioBrowserTag[];
-        result.tags = data
-          .slice(0, 100)
-          .map(t => ({ name: t.name, stationCount: safeNumber(t.stationcount) }));
-      })() });
-    }
+    const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
 
-    if (params.kinds.includes('countries')) {
-      fetchTasks.push({ kind: 'countries', promise: (async (): Promise<void> => {
-        const res = await fetchWithTimeout(
-          `${radioBrowserBase}/json/countries`,
-          filterHeaders,
-          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/countries' },
-        );
-        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
-        const data = await res.json() as RadioBrowserCountry[];
-        result.countries = data
-          .slice(0, 100)
-          .map(c => ({
-            code: c.iso_3166_1,
-            name: c.name,
-            stationCount: safeNumber(c.stationcount)
-          }));
-      })() });
-    }
-
-    if (params.kinds.includes('languages')) {
-      fetchTasks.push({ kind: 'languages', promise: (async (): Promise<void> => {
-        const res = await fetchWithTimeout(
-          `${radioBrowserBase}/json/languages`,
-          filterHeaders,
-          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/languages' },
-        );
-        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
-        const data = await res.json() as RadioBrowserLanguage[];
-        result.languages = data
-          .slice(0, 100)
-          .map(l => ({
-            code: l.iso_639 ?? l.name,
-            name: l.name,
-            stationCount: safeNumber(l.stationcount)
-          }));
-      })() });
-    }
-
-    if (params.kinds.includes('codecs')) {
-      fetchTasks.push({ kind: 'codecs', promise: (async (): Promise<void> => {
-        const res = await fetchWithTimeout(
-          `${radioBrowserBase}/json/codecs`,
-          filterHeaders,
-          { ...filterFetchOptions, operationLabel: 'Radio Browser /json/codecs' },
-        );
-        if (!res.ok) throw new Error(ErrorFormatter.radioBrowserApi(res));
-        const data = await res.json() as RadioBrowserCodec[];
-        result.codecs = data
-          .slice(0, 50)
-          .map(c => ({
-            name: c.name,
-            stationCount: safeNumber(c.stationcount)
-          }));
-      })() });
-    }
-
-    // Settle every requested kind while retaining its label. The promises are
-    // already in-flight, so awaiting them here stays fully parallel.
-    const failures = (
-      await Promise.all(
-        fetchTasks.map(async ({ kind, promise }): Promise<{ kind: string; reason: unknown } | null> => {
+    const outcomes = await Promise.all(
+      RADIO_FILTER_SPECS
+        .filter(spec => params.kinds.includes(spec.kind))
+        .map(async (spec): Promise<RadioFilterOutcome> => {
           try {
-            await promise;
-            return null;
+            return { kind: spec.kind, entries: await fetchRadioFilter(config, radioBrowserBase, spec) };
           } catch (reason) {
-            return { kind, reason };
+            return { kind: spec.kind, reason };
           }
         }),
-      )
-    ).filter((f): f is { kind: string; reason: unknown } => f !== null);
+    );
+    const failures = outcomes.filter((outcome) => 'reason' in outcome);
 
-    const allFailed = fetchTasks.length > 0 && failures.length === fetchTasks.length;
-    if (allFailed) {
+    if (outcomes.length > 0 && failures.length === outcomes.length) {
       const firstReason = failures[0]?.reason;
       throw firstReason instanceof Error ? firstReason : new Error(String(firstReason));
     }
+    for (const outcome of outcomes) {
+      if ('entries' in outcome) {
+        Object.assign(result, outcome.entries);
+      }
+    }
     if (failures.length > 0) {
-      // Some kinds succeeded and some failed — surface the failed ones so the
-      // caller doesn't read a missing category as "zero available options".
+      // A missing category would otherwise read as zero available options.
       result.partialFailures = failures.map((f) => f.kind);
       for (const f of failures) {
         logger.warn('getRadioFilters sub-fetch failed:', f.kind, f.reason);
@@ -573,8 +481,7 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
     }
     return result;
   } catch (error) {
-    invalidateRadioBrowserBase();
-    throw new Error(ErrorFormatter.toolExecution('getRadioFilters', error));
+    throw new Error(ErrorFormatter.toolExecution('get_radio_filters', error));
   }
 }
 
@@ -582,200 +489,117 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
  * Get a specific radio station by UUID
  */
 export async function getStationByUuid(config: Config, args: unknown): Promise<ExternalRadioStationDTO> {
-  const params = GetStationByUuidArgsSchema.parse(args);
-
-  logger.debug('Tool getStationByUuid called with args:', params);
-
-  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
-
   try {
-    const url = `${radioBrowserBase}/json/stations/byuuid?uuids=${encodeURIComponent(params.stationUuid)}`;
+    const { stationUuid } = StationUuidSchema.parse(args);
 
-    const response = await fetchWithTimeout(
-      url,
-      {
-        headers: {
-          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-          'Accept': 'application/json'
-        }
-      },
-      {
-        timeoutMs: getExternalApiTimeoutMs(),
-        retryPolicy: 'safe',
-        operationLabel: 'Radio Browser /json/stations/byuuid',
-        respectProxy: true,
-      },
+    logger.debug('Tool getStationByUuid called with args:', { stationUuid });
+
+    const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+    const data = await radioBrowserGetJson<RadioBrowserStation[]>(
+      config,
+      radioBrowserBase,
+      `/json/stations/byuuid?uuids=${encodeURIComponent(stationUuid)}`,
+      { retryPolicy: 'safe', label: '/json/stations/byuuid' },
     );
 
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.radioBrowserApi(response));
-    }
-
-    const data = await response.json() as RadioBrowserStation[];
-
-    if (data.length === 0) {
-      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
-    }
-    
     const firstStation = data[0];
-    if (!firstStation) {
-      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
-    }
-
-    const dto = mapStationToDTO(firstStation);
+    const dto = firstStation === undefined ? null : mapStationToDTO(firstStation);
     if (dto === null) {
-      throw new Error(ErrorFormatter.notFound('Station', params.stationUuid));
+      throw new Error(ErrorFormatter.notFound('Station', stationUuid));
     }
     return dto;
   } catch (error) {
-    invalidateRadioBrowserBase();
-    throw new Error(ErrorFormatter.toolExecution('getStationByUuid', error));
+    throw new Error(ErrorFormatter.toolExecution('get_station_by_uuid', error));
   }
 }
 
 /**
  * Register a play click for a station (helps with popularity metrics).
  *
- * Per-session dedup: the second call for the same UUID returns a friendly
- * no-op (success: true, ok: false) instead of hitting Radio Browser. The
- * upstream tracks clicks per-IP-per-day server-side anyway, so additional
- * calls would be silently rejected — surfacing this client-side keeps an
- * LLM from looping and risking a UA ban.
+ * A second click for the same UUID in this process returns a no-op instead of
+ * calling Radio Browser, which counts one click per IP per day.
  */
 export async function clickStation(config: Config, args: unknown): Promise<ClickRadioStationResponse> {
-  const params = ClickStationArgsSchema.parse(args);
-
-  logger.debug('Tool clickStation called with args:', params);
-
-  if (hasRecentlyClicked(params.stationUuid)) {
-    logger.debug(`clickStation: deduped (already clicked ${params.stationUuid} this session)`);
-    return {
-      ok: false,
-      playUrl: '',
-      message: `Already clicked station ${params.stationUuid} this session — Radio Browser counts unique clicks per IP per day, so additional calls would be no-ops anyway.`
-    };
-  }
-
-  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
-
   try {
-    const url = `${radioBrowserBase}/json/url/${encodeURIComponent(params.stationUuid)}`;
+    const { stationUuid } = StationUuidSchema.parse(args);
 
-    // No retry: a click registers a popularity-metric event server-side.
-    // Retrying on timeout could double-count if the first request landed.
-    const response = await fetchWithTimeout(
-      url,
-      {
-        headers: {
-          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-          'Accept': 'application/json'
-        }
-      },
-      {
-        timeoutMs: getExternalApiTimeoutMs(),
-        retryPolicy: 'never',
-        operationLabel: 'Radio Browser /json/url (click)',
-        respectProxy: true,
-      },
+    logger.debug('Tool clickStation called with args:', { stationUuid });
+
+    if (hasRecentlyClicked(stationUuid)) {
+      logger.debug(`clickStation: deduped (already clicked ${stationUuid} this session)`);
+      return {
+        success: false,
+        streamUrl: '',
+        message: `Already clicked station ${stationUuid} this session. Radio Browser counts unique clicks per IP per day, so additional calls would be no-ops anyway.`
+      };
+    }
+
+    const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+    // No retry: a retried click could be counted twice if the first one landed.
+    const data = await radioBrowserGetJson<RadioBrowserActionResponse>(
+      config,
+      radioBrowserBase,
+      `/json/url/${encodeURIComponent(stationUuid)}`,
+      { retryPolicy: 'never', label: '/json/url (click)' },
     );
-
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.radioBrowserApi(response));
-    }
-
-    const data = await response.json() as RadioBrowserActionResponse;
-
-    // Mark as clicked only on a successful round-trip — if Radio Browser
-    // rejected the click (data.ok=false), let the caller retry next turn.
-    if (data.ok) {
-      markClicked(params.stationUuid);
-    }
-
-    // On a successful click we override Radio Browser's `message`. Upstream
-    // returns the internal debug-y text "retrieved station url" which reads
-    // like a leak of implementation detail to LLM consumers — semantically
-    // a click registers a play with Radio Browser's popularity counters.
-    // On failure we surface the upstream message so the caller can see what
-    // went wrong (e.g. "station not found").
     const ok = Boolean(data.ok);
-    const message = ok
-      ? 'Click registered successfully'
-      : (data.message ?? 'Click failed');
 
+    // A rejected click stays unmarked so the caller can retry it.
+    if (ok) {
+      markClicked(stationUuid);
+    }
+
+    // Upstream's success text "retrieved station url" reads as an implementation leak, so success gets our own message.
     return {
-      ok,
-      playUrl: data.url ?? '',
-      message,
+      success: ok,
+      streamUrl: data.url ?? '',
+      message: ok ? 'Click registered successfully' : (data.message ?? 'Click failed'),
     };
   } catch (error) {
-    invalidateRadioBrowserBase();
-    throw new Error(ErrorFormatter.toolExecution('clickStation', error));
+    throw new Error(ErrorFormatter.toolExecution('click_station', error));
   }
 }
 
 /**
  * Vote for a radio station.
  *
- * Per-session dedup: the second call for the same UUID returns a friendly
- * no-op instead of hitting Radio Browser. Per the upstream docs votes are
- * dedup'd per-IP-per-day server-side, so an LLM looping would accumulate
- * rejected requests and risk getting our shared User-Agent banned.
+ * A second vote for the same UUID in this process returns a no-op instead of
+ * calling Radio Browser, which accepts one vote per IP per day.
  */
 export async function voteStation(config: Config, args: unknown): Promise<VoteRadioStationResponse> {
-  const params = VoteStationArgsSchema.parse(args);
-
-  logger.debug('Tool voteStation called with args:', params);
-
-  if (hasRecentlyVoted(params.stationUuid)) {
-    logger.debug(`voteStation: deduped (already voted ${params.stationUuid} this session)`);
-    return {
-      ok: false,
-      message: `Already voted for station ${params.stationUuid} this session — Radio Browser counts unique votes per IP per day, so additional calls would be rejected anyway.`
-    };
-  }
-
-  const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
-
   try {
-    const url = `${radioBrowserBase}/json/vote/${encodeURIComponent(params.stationUuid)}`;
+    const { stationUuid } = StationUuidSchema.parse(args);
 
-    // No retry: a vote is recorded server-side. Retrying on timeout risks
-    // double-voting if the first request landed but the response was lost.
-    const response = await fetchWithTimeout(
-      url,
-      {
-        headers: {
-          'User-Agent': config.radioBrowserUserAgent ?? DEFAULT_USER_AGENT,
-          'Accept': 'application/json'
-        }
-      },
-      {
-        timeoutMs: getExternalApiTimeoutMs(),
-        retryPolicy: 'never',
-        operationLabel: 'Radio Browser /json/vote',
-        respectProxy: true,
-      },
-    );
+    logger.debug('Tool voteStation called with args:', { stationUuid });
 
-    if (!response.ok) {
-      throw new Error(ErrorFormatter.radioBrowserApi(response));
+    if (hasRecentlyVoted(stationUuid)) {
+      logger.debug(`voteStation: deduped (already voted ${stationUuid} this session)`);
+      return {
+        success: false,
+        message: `Already voted for station ${stationUuid} this session. Radio Browser counts unique votes per IP per day, so additional calls would be rejected anyway.`
+      };
     }
 
-    const data = await response.json() as RadioBrowserActionResponse;
+    const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
+    // No retry: a retried vote could be recorded twice if the first one landed.
+    const data = await radioBrowserGetJson<RadioBrowserActionResponse>(
+      config,
+      radioBrowserBase,
+      `/json/vote/${encodeURIComponent(stationUuid)}`,
+      { retryPolicy: 'never', label: '/json/vote' },
+    );
+    const ok = Boolean(data.ok);
 
-    // Only record the dedup marker on a confirmed-successful vote; if
-    // Radio Browser declined (data.ok=false, e.g. "station not found"),
-    // a retry next session/process is still meaningful.
-    if (data.ok) {
-      markVoted(params.stationUuid);
+    // A declined vote stays unmarked, so a retry later is still meaningful.
+    if (ok) {
+      markVoted(stationUuid);
     }
 
     return {
-      ok: Boolean(data.ok),
-      message: data.message ?? 'Vote registered successfully'
+      success: ok,
+      message: ok ? 'Vote registered successfully' : (data.message ?? 'Vote failed'),
     };
   } catch (error) {
-    invalidateRadioBrowserBase();
-    throw new Error(ErrorFormatter.toolExecution('voteStation', error));
+    throw new Error(ErrorFormatter.toolExecution('vote_station', error));
   }
 }

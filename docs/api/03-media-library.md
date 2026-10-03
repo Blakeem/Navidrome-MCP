@@ -34,12 +34,12 @@ List songs with pagination and filtering.
 - `genre_id` (string): Filter by genre tag ID
 
 **Dynamic Tag-Based Filters:**
-All tag fields support filtering using `{tag_name}_id` format:
-- `mood_id` (string): Filter by mood tag
-- `grouping_id` (string): Filter by grouping tag
-- `media_id` (string): Filter by media type tag
-- `recordlabel_id` (string): Filter by record label tag
-- `releasecountry_id` (string): Filter by release country tag
+Tag fields other than genre filter with the bare tag name and the tag UUID. Navidrome ignores the `{tag_name}_id` form for them.
+- `mood` (string): Filter by mood tag
+- `grouping` (string): Filter by grouping tag
+- `media` (string): Filter by media type tag
+- `recordlabel` (string): Filter by record label tag
+- `releasecountry` (string): Filter by release country tag
 - `composer_id` (string): Filter by composer role
 - `producer_id` (string): Filter by producer role
 - `conductor_id` (string): Filter by conductor role
@@ -154,13 +154,13 @@ List albums with pagination and filtering.
 
 **Genre and Tag Filters:**
 - `genre_id` (string): Filter by genre tag ID
-- `mood_id` (string): Filter by mood tag
-- `albumversion_id` (string): Filter by album version tag
-- `releasetype_id` (string): Filter by release type (EP, LP, etc.)
-- `grouping_id` (string): Filter by grouping/collection tag
-- `media_id` (string): Filter by media type (CD, vinyl, etc.)
-- `recordlabel_id` (string): Filter by record label tag
-- `releasecountry_id` (string): Filter by release country tag
+- `mood` (string): Filter by mood tag
+- `albumversion` (string): Filter by album version tag
+- `releasetype` (string): Filter by release type (EP, LP, etc.)
+- `grouping` (string): Filter by grouping/collection tag
+- `media` (string): Filter by media type (CD, vinyl, etc.)
+- `recordlabel` (string): Filter by record label tag
+- `releasecountry` (string): Filter by release country tag
 
 **Role-Based Filters:**
 Filter albums by participant roles using `role_{role}_id` format:
@@ -487,7 +487,7 @@ All list endpoints also support the legacy `filter` query parameter with JSON cr
 
 **Filter by multiple criteria:**
 ```
-GET /api/album?genre_id=abc123&releasetype_id=def456&library_id=1
+GET /api/album?genre_id=abc123&releasetype=def456&library_id=1
 ```
 
 **Filter by role participants:**
@@ -564,7 +564,7 @@ GET /api/album?genre_id=abc123&role_producer_id=def456&library_id=1
 
 **Recent rock albums on vinyl:**
 ```
-GET /api/album?genre_id=rock123&media_id=vinyl456&_sort=recently_added&_order=DESC
+GET /api/album?genre_id=rock123&media=vinyl456&_sort=recently_added&_order=DESC
 ```
 
 **Songs by composer with high rating:**

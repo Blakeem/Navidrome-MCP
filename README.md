@@ -16,13 +16,13 @@ An MCP (Model Context Protocol) server for Navidrome. Claude Desktop, Claude Cod
 
 ### 🎵 Music Library
 
-Browse and search songs, albums, artists, genres, and tags. Filters cover query, starred status, year range, sort order, and tag values, and they combine: *"all my starred jazz albums from the 90s, sorted by year"* or *"every song tagged Soundtrack with a 5-star rating"*. Tag analysis tools show what is in your library, so you don't have to guess at filter values.
+Browse and search songs, albums, artists, genres, and tags. Filters cover the query, starred status, a single year, sort order, and tag values. They combine, such as *"all my starred jazz albums from 1994"* or *"every song tagged Soundtrack with a 5-star rating"*. Tag analysis tools show what is in your library, so you don't have to guess at filter values.
 
 ### 🔊 Local Audio Playback
 
 > Requires [`mpv`](https://mpv.io/) on the host running the MCP server (see [Installing mpv](#installing-mpv-optional)).
 
-Audio plays through your machine's speakers with no browser or Navidrome web UI. Search and play in one step: *"play 5 random starred albums"*, *"queue everything I've starred from the 90s sorted by year"*, or *"add 10 random rock songs to whatever's already playing, shuffled"*. Albums have three shuffle modes: keep order, randomize album order, or interleave tracks.
+Audio plays through your machine's speakers with no browser or Navidrome web UI. Search and play in one step, such as *"play 5 random starred albums"*, *"queue everything I've starred from 1994"*, or *"add 10 random rock songs to whatever's already playing, shuffled"*. Albums have three shuffle modes, which keep order, randomize album order, or interleave tracks.
 
 The queue is editable during playback: reorder or shuffle without interrupting the current song, and removing the current track advances to the next. Saved Navidrome radio stations (Icecast, SHOUTcast) stream through mpv with live ICY metadata, so you can see what the station is playing. Plays scrobble back to Navidrome, so play counts and recent activity stay in sync. mpv starts on first use, can survive MCP client restarts through a per-user socket (see [MPV Remote setup](#mpv-remote-setup) for the lifetime rules), and works on Linux, macOS, and Windows 11.
 
@@ -58,7 +58,7 @@ The web player shows a lyrics view that highlights the current line and scrolls 
 
 ### 📻 Internet Radio
 
-Manage Navidrome radio stations and discover new ones globally. Stream URLs are validated before they are added (MP3, AAC, OGG, and FLAC detection), and SHOUTcast/Icecast metadata is extracted. Bulk maintenance works: *"validate all my stations and remove the broken ones"* or *"test these 10 URLs and add the working ones"*.
+Manage Navidrome radio stations and discover new ones globally. `create_radio_station` probes stream URLs before adding them when `validateBeforeAdd` is set (MP3, AAC, OGG, and FLAC detection), and `validate_radio_stream` tests any http(s) URL on demand. SHOUTcast and Icecast metadata is extracted. Bulk maintenance works, such as *"validate all my stations and remove the broken ones"* or *"test these 10 URLs and add the working ones"*.
 
 Global discovery uses Radio Browser (requires a user agent, set in the settings page). It covers thousands of stations with filters for genre, country, language, codec, bitrate, and popularity. Votes and clicks are registered, so your usage feeds the community ranking.
 
@@ -142,8 +142,8 @@ Tool categories whose heading says **requires ...** are only registered when tha
 
 | Tool | Description |
 |------|-------------|
-| `search_by_tags` | Search by tag values (genre, releasetype, media, etc.) |
-| `get_tag_distribution` | Tag usage counts across the library |
+| `list_tag_values` | List tag values (genre, releasetype, media, etc.) with their counts |
+| `get_tag_distribution` | Tag usage counts. Genre gives the top values by count, and other tags give an alphabetical sample |
 | `get_filter_options` | Discover available filter values for search operations |
 
 ### Last.fm Discovery (requires a Last.fm API key)
@@ -155,7 +155,7 @@ Tool categories whose heading says **requires ...** are only registered when tha
 | `get_artist_info` | Artist biography and tags |
 | `get_top_tracks_by_artist` | Top tracks for an artist |
 | `get_trending_music` | Trending artists, tracks, and tags from Last.fm charts |
-| `get_artist_albums` | Full discography with release types and years (MusicBrainz), genres and popularity (Last.fm), and an in-library flag per album. Answers "what albums by X am I missing?" |
+| `get_artist_albums` | Full discography with release types, years, and genres (MusicBrainz), popularity (Last.fm), and an in-library flag per album. Answers "what albums by X am I missing?" |
 | `get_album_info` | Album detail: tracklist with durations, year and type, genres, wiki summary, popularity, and library membership. Works for albums you don't own |
 
 ### Lyrics
@@ -208,7 +208,7 @@ Playback streams the original file by default (see **Transcode format** in [Firs
 | `get_play_queue` | Snapshot of the live queue with metadata and current-track index |
 | `clear_play_queue` | Clear the queue and stop playback |
 | `shuffle_play_queue` | Randomize queue order without changing membership. The current track keeps playing and moves to the top |
-| `move_in_play_queue` | Move a queue entry between indices. Never changes what is playing |
+| `move_in_play_queue` | Move a queue entry so that it lands at the given index. Never changes what is playing |
 | `remove_from_play_queue` | Remove an entry. mpv advances to the next track if the current one is removed |
 | `play_queue_index` | Jump to the queue entry at the given index. Does not reorder |
 
@@ -223,11 +223,13 @@ Playback streams the original file by default (see **Transcode format** in [Firs
 
 ### Quick Setup
 
-Install the published package (auto-updates on launch):
+Install the published package:
 
 ```bash
 npm install -g navidrome-mcp
 ```
+
+Update it later with `npm update -g navidrome-mcp`.
 
 Package: [navidrome-mcp on npm](https://www.npmjs.com/package/navidrome-mcp).
 
@@ -257,6 +259,8 @@ For Claude Desktop, edit `claude_desktop_config.json` (locations: `%APPDATA%/Cla
 }
 ```
 
+On native Windows, a client that starts the server without a shell (such as Claude Code) needs `"command": "cmd"` with `"args": ["/c", "npx", "navidrome-mcp"]`.
+
 For a manual build, replace `command`/`args` with:
 
 ```json
@@ -266,15 +270,24 @@ For a manual build, replace `command`/`args` with:
 
 ### First-run setup
 
-On first start without configuration, the settings page opens in your browser. This happens whether you launched the MCP server or the standalone web player (`navidrome-web`). If a browser can't open (e.g. over SSH), the URL is printed to the console, and the unconfigured MCP server exposes an `open_settings` tool that returns it. Open the settings page any time with:
+On first start without configuration, the settings page opens in your browser. This happens whether you launched the MCP server or the standalone web player (`navidrome-web`). If a browser can't open (e.g. over SSH), the URL is printed to the console, and the unconfigured MCP server exposes an `open_settings` tool that returns it. On the stdio transport, the same setup mode starts when the saved credentials fail at startup, and the tool notice gives the reason. Open the settings page any time with:
 
 ```bash
-npx navidrome-config
+navidrome-config
 ```
 
-Enter your Navidrome URL, username, and password, plus any optional features. Then click **Test connection** and **Save**. This writes a local `settings.json` (shape: [`settings.example.json`](settings.example.json)). Settings load at startup and don't hot reload, so restart what you launched: quit and reopen the MCP client, or re-run `navidrome-web`. When upgrading from the old env setup, the form pre-fills from your previous `env`/`.env` values. Verify and save.
+Enter your Navidrome URL, username, and password, plus any optional features. Then click **Test connection** and **Save**. This writes a local `settings.json` (shape: [`settings.example.json`](settings.example.json)). Settings load at startup and don't hot reload, so restart what you launched: quit and reopen the MCP client, or re-run `navidrome-web`. When upgrading from the old env setup, the form pre-fills from your shell environment and a `.env` file. It sees the `env` block in your MCP client's JSON only when the MCP server opens the settings page itself. Otherwise re-enter those values, or export them in the shell before running `navidrome-config`.
 
-**Headless machines and containers:** the settings page binds loopback only, so a host with no browser (a VPS, a Docker container) is configured with environment variables instead. When no `settings.json` exists, the server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD`, plus optional variables such as `MCP_TRANSPORT` and `LASTFM_API_KEY`. A `settings.json`, once created, always wins over env.
+**Headless machines and containers:** the settings page binds loopback only, so a host with no browser (a VPS, a Docker container) is configured with environment variables instead. When no usable `settings.json` exists, the server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD`. Optional features read these variables.
+
+- `LASTFM_API_KEY` enables Last.fm discovery.
+- `RADIO_BROWSER_USER_AGENT` (such as `Navidrome-MCP`) enables radio discovery.
+- `LYRICS_PROVIDER=lrclib` with `LRCLIB_USER_AGENT` enables LRCLIB lyrics.
+- `NAVIDROME_DEFAULT_LIBRARIES` sets the default library IDs, comma separated.
+- `MPV_PATH` sets the mpv binary location.
+- `DEBUG=true` turns on verbose logs.
+
+Radio discovery and lyrics stay off until their variables are set. The transport variables are listed in [Running over HTTP](#running-over-http). A usable `settings.json` is always used instead of env.
 
 **Required:** Navidrome URL, username, password.
 
@@ -348,7 +361,7 @@ navidrome-web                # after: npm install -g navidrome-mcp
 node dist/web/main.js
 ```
 
-It reads `settings.json`, opens your browser, and runs in the background until you stop it with the power button. It coexists with an MCP-launched instance: the process that binds the port first owns it and the other attaches. Logs go to `navidrome-web.log` in your config directory.
+It reads `settings.json` and opens your browser. Run from a terminal, it stays in the foreground and stops when you close the terminal, press Ctrl+C, or click the power button. The desktop shortcut below runs it in the background. It coexists with an MCP-launched instance, since the process that binds the port first owns it and the other attaches. Logs go to `navidrome-web.log` in your config directory.
 
 If nothing is configured yet, launching it opens the settings page instead of the player (see [First-run setup](#first-run-setup)). Fill it in and Save. Then re-launch `navidrome-web`.
 
@@ -364,38 +377,43 @@ pnpm make:launcher
 
 The shortcut bakes in the absolute paths to your `node` and the built player, so it works with nothing on `PATH`. It writes:
 
-- **Linux:** `Navidrome Player.desktop` on your Desktop and in your app menu (`~/.local/share/applications`). On GNOME, right-click → *Allow Launching* the first time.
+- **Linux:** `navidrome-player.desktop` on your Desktop and in your app menu (`~/.local/share/applications`). On GNOME, right-click → *Allow Launching* the first time.
 - **macOS:** `Navidrome Player.app` on your Desktop (drag to `/Applications` if you like).
-- **Windows:** `Navidrome Player.vbs` on your Desktop and Start Menu. (A OneDrive-redirected Desktop puts it there.)
+- **Windows:** `Navidrome Player.lnk` shortcuts on your Desktop and in the Start Menu.
 
 Re-run the generator after moving or rebuilding the project to refresh the paths.
 
 #### Configuration
 
-All settings are optional and live in the **Web UI** section of the settings page, keyed below by their `settings.json` paths. Restart the client after saving. The exceptions are `persistAfterMcpExit` and `theme`, which the gear modal applies live.
+All settings are optional and live in the **Web UI** section of the settings page, keyed below by their `settings.json` paths. To apply a change, stop a running player with the power button, then restart the MCP client or `navidrome-web`. The exceptions are `persistAfterMcpExit` and `theme`, which the gear modal applies live.
 
 | Setting (`settings.json`) | Default | Effect |
 |---|---|---|
 | `webui.enabled` | `true` | Set `false` to disable the panel. |
 | `webui.port` | `8808` | Port the HTTP server listens on. Pick a free port if 8808 is taken on your host. |
-| `webui.host` | `127.0.0.1` | Bind address. Override only if you need a specific interface. Usually **Expose on LAN** is the right setting. |
-| `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel. |
+| `webui.host` | `127.0.0.1` | Bind address, one of `127.0.0.1`, `0.0.0.0`, or `::`. Any other value falls back to `127.0.0.1`. A value set here overrides `webui.expose`. |
+| `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel, unless `webui.host` is set. |
 | `webui.autoOpenBrowser` | `false` | Open the player in your browser when the MCP server starts. Running `navidrome-web` directly always opens a browser. |
 | `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player (and mpv) running after the MCP server closes or restarts. Toggle it live in the in-player gear modal. |
-| `webui.theme` | unset | Forces `light` or `dark` on every device viewing the player. Unset, each device follows its own setting. It is set only in the in-player gear modal. |
+| `webui.theme` | unset | Forces `light` or `dark` on every device viewing the player. Unset, each device follows its own setting. The in-player gear modal sets it, and deleting the key from `settings.json` clears it. |
 
 #### Using it as a phone/tablet remote
 
 1. Enable **Expose on LAN** in the settings page and Save.
-2. Restart the MCP client (or restart `navidrome-web`).
-3. The player logs the LAN URLs it's reachable on at bind time (e.g. `http://192.168.1.42:8808`). Open one in your phone's browser and bookmark it.
+2. Stop a running player with the power button, then restart the MCP client (or run `navidrome-web`).
+3. Open the player's **Network info** dialog to see its LAN URLs (e.g. `http://192.168.1.42:8808`). A player run from a terminal also prints them. Open one in your phone's browser and bookmark it.
 
 #### Security note
 
-The web UI has **no authentication**. Anyone who can reach the port can pause, skip, seek, change volume, and jump around the queue.
+The web UI has **no authentication**. Anyone who can reach the port can use two groups of features.
+
+- **Control:** playback transport, volume, queue jumps, shuffling, clearing the queue, and starting any library source.
+- **Read:** library search, recently played history, playlist names, starred counts, and cover art.
+
+Who can reach the port depends on the bind address.
 
 - With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
-- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's fine on a trusted home network, but **do not expose it to the public internet**. There is no rate limiting, and the control API allows queue changes and starting playlists. Player settings and the power button stay loopback only and are hidden for remote browsers, so a phone on your LAN can control playback but can't change settings or shut the player down. The main settings page is never exposed. Once exposed, `GET /healthz` returns `404` off the host to avoid leaking a version fingerprint, so check the player's health from its host.
+- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's fine on a trusted home network, but **do not expose it to the public internet**. There is no rate limiting. Player settings and the power button stay loopback only and are hidden for remote browsers, so a phone on your LAN can control playback but can't change settings or shut the player down. The main settings page is never exposed. Once exposed, `GET /healthz` returns `404` off the host to avoid leaking a version fingerprint, so check the player's health from its host.
 
 ### Running over HTTP
 
@@ -430,7 +448,7 @@ Point an HTTP-capable MCP client at `http://<host>:<port>/mcp`:
 
 When a token is set, every `/mcp` request must carry `Authorization: Bearer <token>` (compared in constant time), and anything else gets a `401`. If the transport binds a non-loopback address with no token, the server logs a warning at startup instead of refusing to start, so a deployment locked down by a firewall or NetworkPolicy still runs. `GET /healthz` is never gated. It is an unauthenticated liveness endpoint for container health checks, returns `200 {"status":"ok"}`, and makes no Navidrome call.
 
-**Host filtering (DNS rebinding protection):** on the default bind (loopback with no auth token), requests whose `Host` header isn't a loopback alias are rejected, so a malicious web page can't drive the server through your browser. Setting an `authToken` or binding a non-loopback address turns the automatic filter off. A remote deployment is reached by names the server can't know in advance, and the bearer token already blocks rebinding (a lured browser can't attach your token). To pin the accepted names, set `transport.allowedHosts`, which is enforced whenever present. Set `transport.allowedOrigins` only for browser clients. It gates the `Origin` header.
+**Host filtering (DNS rebinding protection):** on the default bind (loopback with no auth token), requests whose `Host` header isn't a loopback alias are rejected, so a malicious web page can't drive the server through your browser. Setting an `authToken` or binding a non-loopback address turns the automatic filter off. A remote deployment is reached by names the server can't know in advance, and the bearer token already blocks rebinding (a lured browser can't attach your token). To pin the accepted names, set `transport.allowedHosts`, which is enforced whenever present. Each entry is the exact `Host` header value, with the port when it is not 80 or 443 (such as `mcp.example.com:3000`). Set `transport.allowedOrigins` only for browser clients. It gates the `Origin` header.
 
 The transport can also be configured through environment variables: `MCP_TRANSPORT` (`stdio`|`http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, and `MCP_HTTP_ALLOWED_HOSTS` / `MCP_HTTP_ALLOWED_ORIGINS` (comma-separated). The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`). These apply when no `settings.json` exists, and they pre-fill the settings form on first run (see [First-run setup](#first-run-setup)).
 
@@ -464,8 +482,8 @@ ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and doe
 ### Known Limitations
 
 - **No audio without mpv.** Use the Navidrome web UI or a Subsonic client instead (see [Installing mpv](#installing-mpv-optional)).
-- **Recently played has no timestamps.** Navidrome exposes play counts and completion status, not when a track was last played.
-- **Saved queue ≠ live queue.** The `*_saved_queue` tools operate on Navidrome's server-side queue (web UI sync). The `*_play_queue` tools operate on the local mpv playlist.
+- **Recently played shows one play per track.** Navidrome stores each track's last play time, not a full play history.
+- **Saved queue ≠ live queue.** The `*_saved_queue` tools operate on Navidrome's server-side queue (web UI sync). The `*_play_queue` tools operate on the live mpv queue.
 
 ## Development
 
@@ -508,8 +526,7 @@ pnpm make:launcher               # writes a shortcut to your Desktop + app menu
 **Windows notes** (PowerShell):
 
 - Use `pnpm build` then `node dist\web\main.js`, same as above with backslashes.
-- `pnpm make:launcher` writes `Navidrome Player.vbs` to your Desktop and Start Menu. It launches `node dist\web\main.js` with no console window and bakes in the absolute path to this checkout, so re-run it after moving the folder.
-- If a redirected/OneDrive Desktop hides the file, the Start Menu copy still works (Start → type "Navidrome").
+- `pnpm make:launcher` writes `Navidrome Player.lnk` shortcuts to your Desktop and Start Menu. They launch `node dist\web\main.js` with no console window and bake in the absolute path to this checkout, so re-run it after moving the folder.
 - mpv must be installed for playback. Set `playback.mpvPath` in the settings page if it isn't on `PATH`.
 
 After `npm install -g navidrome-mcp`, the same flows run as `navidrome-web`, `navidrome-config`, and `navidrome-web-shortcut` with no clone or build.

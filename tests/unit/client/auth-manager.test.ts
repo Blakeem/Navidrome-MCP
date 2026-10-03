@@ -122,6 +122,28 @@ describe('AuthManager', () => {
     await expect(auth.getToken()).rejects.toThrow(/Authentication failed: unexpected \/auth\/login response shape/);
   });
 
+  it('reports a 401 login as rejected credentials', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('{}', { status: 401, statusText: 'Unauthorized' }));
+    const auth = new AuthManager(makeConfig());
+
+    await expect(auth.authenticate()).rejects.toThrow(
+      'Authentication failed: Navidrome rejected the username or password (401 Unauthorized)',
+    );
+  });
+
+  it('reports a 404 login as a URL or server problem, not bad credentials', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('', { status: 404, statusText: 'Not Found' }));
+    const auth = new AuthManager(makeConfig());
+
+    const error = await auth.authenticate().then(
+      () => null,
+      (err: unknown) => err as Error,
+    );
+    expect(error?.message).toContain('Navidrome /auth/login - 404 Not Found');
+    expect(error?.message).toContain('check navidrome.url');
+    expect(error?.message).not.toContain('Authentication failed');
+  });
+
   it('concurrent callers all see the same failure when authenticate fails', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ message: 'down' }, 500));
     const auth = new AuthManager(makeConfig());

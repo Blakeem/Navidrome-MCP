@@ -19,15 +19,12 @@
 import { fileTypeFromBuffer } from 'file-type';
 import { stripHtml } from '../../utils/strip-html.js';
 
-// Audio format detection result (module-private — only the return type of the
-// exported detectAudioFormat below; consumers get it via inference).
 interface AudioDetectionResult {
   readonly detected: boolean;
   readonly format?: string;
   readonly mime?: string;
 }
 
-// Valid audio MIME types (module-private — consumed only by isAudioContentType)
 const VALID_AUDIO_MIMES = [
   'audio/mpeg',
   'audio/mp3',
@@ -45,21 +42,12 @@ const VALID_AUDIO_MIMES = [
   'audio/x-mpegurl',  // M3U playlist
   'audio/x-scpls',    // PLS playlist
   'application/vnd.apple.mpegurl', // HLS
+  'application/x-mpegurl', // HLS
 ];
 
-// Streaming-specific headers to check (module-private — consumed only by
-// extractStreamingHeaders)
-const STREAMING_HEADERS = [
-  'icy-name',
-  'icy-br',
-  'icy-metaint',
-  'icy-genre',
-  'icy-url',
-  'icy-pub',
-  'x-audiocast-name',
-  'x-audiocast-genre',
-  'x-audiocast-bitrate',
-];
+const STREAMING_HEADER_PREFIXES = ['icy-', 'x-audiocast-'];
+// Shoutcast sends its notice banners on error responses too, so they prove no stream.
+const NOTICE_HEADER_PREFIX = 'icy-notice';
 
 /**
  * Check if content type indicates audio
@@ -75,10 +63,8 @@ export function isAudioContentType(contentType: string | null): boolean {
  * Extract streaming headers from response.
  *
  * Header values pass through `stripHtml` because some SHOUTcast/Icecast
- * servers ship ICY notice fields with embedded markup (e.g.
- * `icy-notice2: <BR>This stream requires <a href="...">Winamp</a><BR>`).
- * Raw HTML in LLM-facing output reads like a bug and breaks markdown
- * rendering in clients; the strip is a tag-only pass so legitimate text
+ * servers ship ICY fields with embedded markup. Raw HTML in LLM-facing output
+ * breaks markdown rendering in clients. The strip is a tag-only pass, so text
  * inside the tags survives.
  */
 export function extractStreamingHeaders(headers: Headers): Record<string, string> {
@@ -86,7 +72,8 @@ export function extractStreamingHeaders(headers: Headers): Record<string, string
 
   headers.forEach((value, key) => {
     const lowerKey = key.toLowerCase();
-    if (STREAMING_HEADERS.includes(lowerKey) || lowerKey.startsWith('icy-')) {
+    const isStreamingHeader = STREAMING_HEADER_PREFIXES.some((prefix) => lowerKey.startsWith(prefix));
+    if (isStreamingHeader && !lowerKey.startsWith(NOTICE_HEADER_PREFIX)) {
       streamHeaders[lowerKey] = stripHtml(value);
     }
   });
@@ -118,8 +105,7 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
     ];
 
     for (const sig of signatures) {
-      // A buffer shorter than the signature can never match — an absent byte
-      // (i >= buffer.length) must count as a mismatch, not a wildcard, so a
+      // An absent byte must count as a mismatch, not a wildcard, so a
       // 1-byte [0xFF] sample doesn't falsely match MP3/AAC/OGG.
       if (buffer.length < sig.bytes.length) continue;
       let matches = true;

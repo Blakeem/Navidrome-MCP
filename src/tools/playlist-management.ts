@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Playlist Management Tools (Re-export from modular structure)
+ * Navidrome MCP Server - Playlist Management Tools
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Re-export all playlist management functions from the new modular structure
 export {
   listPlaylists,
   getPlaylist,

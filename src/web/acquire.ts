@@ -21,9 +21,9 @@ import type { Config } from '../config.js';
 import { HEALTH_APP_ID } from '../webui/routes/health.js';
 
 /**
- * Port-as-lock decision (standalone-web spec §5). The configured TCP port is
- * the lock: whoever binds it first owns the web server; everyone else probes
- * `/healthz`, confirms it's our server, and stands down (attaches).
+ * Port-as-lock decision. The configured TCP port is the lock: whoever binds it
+ * first owns the web server. Everyone else probes `/healthz`, confirms it's our
+ * server, and stands down (attaches).
  */
 export type AcquireResult =
   /** We bound the port; `server` is the live HTTP server we now own. */
@@ -36,32 +36,42 @@ export type AcquireResult =
  * - `ours`    — 200 + matching app signature ⇒ a navidrome-web is already up.
  * - `refused` — connection refused ⇒ nobody is listening; we may bind.
  * - `foreign` — 200 with a different signature, a non-200, or a timeout/hang
- *               (per §5.2 we must NOT block forever) ⇒ port conflict.
+ *               ⇒ port conflict. A hung listener must not block startup, so a
+ *               timeout counts as a conflict.
  */
 export type ProbeOutcome = 'ours' | 'refused' | 'foreign';
 
 export interface AcquireDeps {
-  probe: (port: number) => Promise<ProbeOutcome>;
+  probe: (port: number, bindHost: string) => Promise<ProbeOutcome>;
   bind: (server: Server, port: number, host: string) => Promise<'ok' | 'eaddrinuse'>;
+}
+
+/** A probe outcome plus whether the owner's playback engine is attached to mpv. */
+interface HealthzProbe {
+  outcome: ProbeOutcome;
+  playbackAttached: boolean;
 }
 
 const PROBE_TIMEOUT_MS = 500;
 const MAX_PROBE_BODY_BYTES = 4096;
+const WILDCARD_HOSTS: ReadonlySet<string> = new Set(['0.0.0.0', '::', '']);
 
-/** Probe loopback `/healthz` — ALWAYS 127.0.0.1, even when the bind host is
- * 0.0.0.0 (binding 0.0.0.0 accepts loopback connections, spec §5.2.1).
- * Exported so the MCP spawner can fast-path "already running → don't spawn." */
-export function probeHealthz(port: number): Promise<ProbeOutcome> {
-  return new Promise<ProbeOutcome>((resolve) => {
+/** A wildcard bind accepts loopback connections, and a specific host accepts only its own address. */
+function probeHost(bindHost: string): string {
+  return WILDCARD_HOSTS.has(bindHost) ? '127.0.0.1' : bindHost;
+}
+
+function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProbe> {
+  return new Promise<HealthzProbe>((resolve) => {
     let settled = false;
-    const done = (outcome: ProbeOutcome): void => {
+    const done = (outcome: ProbeOutcome, playbackAttached = false): void => {
       if (settled) return;
       settled = true;
-      resolve(outcome);
+      resolve({ outcome, playbackAttached });
     };
 
     const req = httpGet(
-      { host: '127.0.0.1', port, path: '/healthz', timeout: PROBE_TIMEOUT_MS },
+      { host: probeHost(bindHost), port, path: '/healthz', timeout: PROBE_TIMEOUT_MS },
       (res) => {
         if (res.statusCode !== 200) {
           res.resume();
@@ -82,8 +92,13 @@ export function probeHealthz(port: number): Promise<ProbeOutcome> {
         });
         res.on('end', () => {
           try {
-            const json = JSON.parse(body) as { app?: unknown };
-            done(json.app === HEALTH_APP_ID ? 'ours' : 'foreign');
+            const json = JSON.parse(body) as { app?: unknown; playbackAttached?: unknown };
+            if (json.app !== HEALTH_APP_ID) {
+              done('foreign');
+              return;
+            }
+            // An owner older than the playbackAttached field always scrobbled, so a missing field counts as attached.
+            done('ours', json.playbackAttached !== false);
           } catch {
             done('foreign');
           }
@@ -101,14 +116,28 @@ export function probeHealthz(port: number): Promise<ProbeOutcome> {
 }
 
 /**
- * A real navidrome-web currently owns the web port (live loopback `/healthz`
- * app-signature check). The single source of truth for "defer mpv + scrobble
- * ownership to a web owner" — used by both the MCP teardown path (quit mpv only
- * if no web owns it) and the scrobble verdict (MCP submits only if no web owns
- * it). Keeping the predicate in one place stops the two sites from drifting.
+ * Probe `/healthz` at the bind host. A wildcard bind host ('0.0.0.0', '::' or
+ * '') is probed at 127.0.0.1. Exported so the MCP spawner can skip a doomed spawn.
  */
-export async function webOwnerPresent(port: number): Promise<boolean> {
-  return (await probeHealthz(port)) === 'ours';
+export async function probeHealthz(port: number, bindHost: string): Promise<ProbeOutcome> {
+  return (await probeHealthzDetail(port, bindHost)).outcome;
+}
+
+/**
+ * A real navidrome-web currently owns the web port. The MCP teardown path keys
+ * off it, since the owner quits mpv itself whether or not it is attached.
+ */
+export async function webOwnerPresent(port: number, bindHost: string): Promise<boolean> {
+  return (await probeHealthz(port, bindHost)) === 'ours';
+}
+
+/**
+ * A navidrome-web owns the web port and its engine is attached to mpv. Only an
+ * attached owner sees track changes, so the MCP tracker submits unless this holds.
+ */
+export async function webOwnerScrobbling(port: number, bindHost: string): Promise<boolean> {
+  const probe = await probeHealthzDetail(port, bindHost);
+  return probe.outcome === 'ours' && probe.playbackAttached;
 }
 
 /** Bind an unstarted HTTP server, resolving `eaddrinuse` instead of throwing on
@@ -143,7 +172,7 @@ function conflictError(port: number): Error {
 }
 
 /**
- * Acquire the web port or attach to an already-running navidrome-web (§5.2).
+ * Acquire the web port or attach to an already-running navidrome-web.
  *
  * `makeServer` is only invoked when we actually attempt to bind, so attaching
  * to an existing server never constructs a throwaway one. Deps are injectable
@@ -157,7 +186,7 @@ export async function acquireOrAttach(
   const { port, host } = config.webui;
   const url = `http://127.0.0.1:${port}`;
 
-  const first = await deps.probe(port);
+  const first = await deps.probe(port, host);
   if (first === 'ours') return { mode: 'attached', url };
   if (first === 'foreign') throw conflictError(port);
 
@@ -168,7 +197,7 @@ export async function acquireOrAttach(
 
   // EADDRINUSE — lost a cold-start race. Re-probe once: if it's ours, attach;
   // otherwise a foreign process grabbed the port between our probe and bind.
-  const second = await deps.probe(port);
+  const second = await deps.probe(port, host);
   if (second === 'ours') return { mode: 'attached', url };
   throw conflictError(port);
 }

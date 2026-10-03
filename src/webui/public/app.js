@@ -1,4 +1,4 @@
-// Navidrome MCP web remote entry point. Vanilla ES2020 modules, no dependencies, no build step.
+// Navidrome MCP web remote entry point. Production serves the copy pnpm build places in dist/webui/public, so an edit here needs a build and a server restart.
 
 import { getJson } from './api.js';
 import { connect } from './connection.js';

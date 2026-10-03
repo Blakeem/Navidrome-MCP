@@ -13,12 +13,13 @@ import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 
 // Import category factory functions for comprehensive tool validation
-import { createTestToolCategory } from '../../../src/tools/test.js';
-import { createLibraryToolCategory } from '../../../src/tools/library.js';
+import { createTestToolCategory } from '../../../src/tools/handlers/test-handlers.js';
+import { createLibraryToolCategory } from '../../../src/tools/handlers/library-handlers.js';
 import { createPlaylistToolCategory } from '../../../src/tools/handlers/playlist-handlers.js';
 import { createSearchToolCategory } from '../../../src/tools/handlers/search-handlers.js';
 import { createUserPreferencesToolCategory } from '../../../src/tools/handlers/user-preferences-handlers.js';
 import { createQueueToolCategory } from '../../../src/tools/handlers/queue-handlers.js';
+import { createListeningHistoryToolCategory } from '../../../src/tools/handlers/listening-history-handlers.js';
 import { createRadioToolCategory } from '../../../src/tools/handlers/radio-handlers.js';
 import { createLastFmToolCategory } from '../../../src/tools/handlers/lastfm-handlers.js';
 import { createLyricsToolCategory } from '../../../src/tools/handlers/lyrics-handlers.js';
@@ -81,7 +82,7 @@ const EXPECTED_CORE_TOOLS = [
   'validate_radio_stream',
 
   // Tags category
-  'search_by_tags',
+  'list_tag_values',
   'get_tag_distribution',
   'get_filter_options',
 
@@ -195,6 +196,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('search', createSearchToolCategory(liveClient, config));
       registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
+      registry.register('listening-history', createListeningHistoryToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
       registry.register('lyrics', createLyricsToolCategory(liveClient, config));
@@ -256,6 +258,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('search', createSearchToolCategory(liveClient, config));
       registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
+      registry.register('listening-history', createListeningHistoryToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
       registry.register('lyrics', createLyricsToolCategory(liveClient, config));
@@ -287,6 +290,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('search', createSearchToolCategory(liveClient, config));
       registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
+      registry.register('listening-history', createListeningHistoryToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
 
@@ -322,6 +326,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('search', createSearchToolCategory(liveClient, config));
       registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
+      registry.register('listening-history', createListeningHistoryToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
 
@@ -373,6 +378,7 @@ describe('Tools Registry - Tool Count Verification', () => {
       registry.register('search', createSearchToolCategory(liveClient, config));
       registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
       registry.register('queue-management', createQueueToolCategory(liveClient, config));
+      registry.register('listening-history', createListeningHistoryToolCategory(liveClient, config));
       registry.register('radio', createRadioToolCategory(liveClient, config));
       registry.register('tags', createTagsToolCategory(liveClient, config));
       registry.register('lyrics', createLyricsToolCategory(liveClient, config));

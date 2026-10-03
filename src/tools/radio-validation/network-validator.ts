@@ -17,20 +17,27 @@
  */
 
 import { RADIO_VALIDATION } from '../../constants/timeouts.js';
-import { describeFetchError, hostResolvesToPrivateIp, isHttpUrlScheme, PRIVATE_ADDRESS_REFUSAL, safeFetch } from '../../utils/network-safety.js';
+import {
+  describeFetchError,
+  hostResolvesToPrivateIp,
+  isHttpParserError,
+  isHttpUrlScheme,
+  NON_STANDARD_HTTP_RESPONSE,
+  PRIVATE_ADDRESS_REFUSAL,
+  safeFetch,
+} from '../../utils/network-safety.js';
 
-// Validation context for internal use
-export interface ValidationContext {
+interface ValidationContext {
   readonly url: string;
-  readonly startTime: number;
   readonly timeout: number;
   readonly followRedirects: boolean;
 }
 
-/** Maximum redirect hops we'll follow before giving up. Matches the spirit
- *  of fetch's default (20) but is tighter — radio stream redirects are
- *  almost always 1-2 hops; anything past 5 is suspicious. */
+/** Radio stream redirects are almost always 1-2 hops, so anything past 5 is suspicious. */
 const MAX_REDIRECTS = 5;
+
+// Shoutcast DNAS v2 serves its HTML status page to any User-Agent carrying a `Mozilla` token.
+const PROBE_USER_AGENT = 'NavidromeBot/1.0';
 
 interface FetchWithRedirectsResult {
   readonly response: Response | null;
@@ -39,23 +46,8 @@ interface FetchWithRedirectsResult {
 }
 
 /**
- * Fetch with manual redirect following + private-IP gating on each hop.
- *
- * Why manual: native `redirect: 'follow'` chases redirects opaquely, so a
- * public-looking URL that 302s to http://localhost:4533/api/admin would
- * silently land on a localhost endpoint and surface its status / final URL
- * back through the validator's response. Following manually lets us reject
- * each hop with a specific, useful message before requesting it.
- *
- * Every request here goes through `safeFetch`, whose dispatcher refuses any
- * connection whose actual peer IP is private/local — covering the initial URL
- * AND every redirect hop, and closing the DNS-rebinding TOCTOU that the
- * per-hop `hostResolvesToPrivateIp` pre-check below cannot (that pre-check
- * remains only for its clearer error message; the dispatcher is the real
- * enforcement). Note this now also gates the initial URL — `discover` feeds
- * untrusted Radio Browser URLs straight in, so any private/LAN initial URL
- * (loopback, RFC1918, link-local incl. the cloud metadata IP) is refused
- * rather than probed — not just localhost.
+ * Manual redirect following lets each hop be refused with a specific message.
+ * safeFetch's dispatcher enforces the private-IP block on every connection, the initial URL included.
  */
 async function fetchWithManualRedirects(
   initialUrl: string,
@@ -74,7 +66,7 @@ async function fetchWithManualRedirects(
 
     const location = response.headers.get('location');
     if (location === null || location === '') {
-      // 3xx with no Location — return as-is, treat like the terminal response.
+      // A 3xx with no Location is treated as the terminal response.
       return { response, finalUrl: currentUrl, error: null };
     }
 
@@ -111,16 +103,19 @@ async function fetchWithManualRedirects(
   return { response: null, finalUrl: currentUrl, error: `Exceeded maximum redirects (${MAX_REDIRECTS})` };
 }
 
+/** undici's strict parser fails deterministically on legacy ICY responses, so the reason is marked. */
+function describeProbeError(err: unknown): string {
+  const marker = isHttpParserError(err) ? ` (${NON_STANDARD_HTTP_RESPONSE})` : '';
+  return `${describeFetchError(err)}${marker}`;
+}
+
 /**
  * Perform HEAD request validation
  */
 export async function validateWithHead(
   context: ValidationContext
 ): Promise<{ response: Response | null; finalUrl: string; error: string | null }> {
-  const headTimeout = Math.min(
-    RADIO_VALIDATION.FALLBACK_HEAD_TIMEOUT,
-    Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO),
-  ); // Use 60% of total timeout
+  const headTimeout = Math.floor(context.timeout * RADIO_VALIDATION.HEAD_TIMEOUT_RATIO);
 
   try {
     const controller = new AbortController();
@@ -135,7 +130,7 @@ export async function validateWithHead(
           method: 'HEAD',
           signal: controller.signal,
           headers: {
-            'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
+            'User-Agent': PROBE_USER_AGENT,
             'Accept': 'audio/*',
           },
         },
@@ -151,7 +146,7 @@ export async function validateWithHead(
       if (err.name === 'AbortError') {
         return { response: null, finalUrl: context.url, error: `HEAD request timeout after ${headTimeout}ms` };
       }
-      return { response: null, finalUrl: context.url, error: `HEAD request failed: ${describeFetchError(err)}` };
+      return { response: null, finalUrl: context.url, error: `HEAD request failed: ${describeProbeError(err)}` };
     }
     return { response: null, finalUrl: context.url, error: 'Unknown HEAD request error' };
   }
@@ -166,16 +161,11 @@ export async function sampleAudioData(
   followRedirects: boolean,
   overallSignal?: AbortSignal,
 ): Promise<{ buffer: Uint8Array | null; headers: Headers | null; httpStatus?: number; finalUrl: string; error: string | null }> {
-  // Clamp the sample timeout to the caller's remaining budget — never raise it
-  // above what's left (e.g. when remainingTimeout is in (1000, 2000) the old
-  // Math.max would have over-run the overall deadline). We still cap at the
-  // MAX_SAMPLE_TIMEOUT cap so a generous budget doesn't sample forever.
-  const sampleTimeout = Math.min(RADIO_VALIDATION.MAX_SAMPLE_TIMEOUT, remainingTimeout);
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
       controller.abort();
-    }, sampleTimeout);
+    }, remainingTimeout);
     // Combine our local sample-timeout signal with the caller's overall-deadline
     // signal so the overall timeout aborts an in-flight sample, not just the
     // starting of a new one. AbortSignal.any fires when either input aborts.
@@ -192,8 +182,8 @@ export async function sampleAudioData(
         {
           method: 'GET',
           headers: {
-            'Range': `bytes=0-${RADIO_VALIDATION.SAMPLE_BUFFER_SIZE - 1}`, // Get first 8KB
-            'User-Agent': 'Mozilla/5.0 (compatible; NavidromeBot/1.0)',
+            'Range': `bytes=0-${RADIO_VALIDATION.SAMPLE_BUFFER_SIZE - 1}`,
+            'User-Agent': PROBE_USER_AGENT,
             'Accept': 'audio/*',
           },
           signal,
@@ -207,7 +197,7 @@ export async function sampleAudioData(
 
       const response = result.response;
       if (!response.ok && response.status !== 206) {
-        // Error responses (404/500 etc.) can carry a body we never read; cancel
+        // Error responses (404/500 etc.) can carry a body we never read. Cancel
         // it so the socket returns to the pool without waiting on GC.
         if (response.body) {
           await response.body.cancel().catch(() => { /* body already released */ });
@@ -220,6 +210,10 @@ export async function sampleAudioData(
           error: `HTTP ${response.status}: ${response.statusText}`,
         };
       }
+
+      // The catch below keeps what was read before an abort.
+      const chunks: Uint8Array[] = [];
+      let totalLength = 0;
 
       // Some servers don't handle Range requests properly and hang on arrayBuffer()
       // Use streaming approach with timeout protection
@@ -240,34 +234,15 @@ export async function sampleAudioData(
         const reader: ReadableStreamDefaultReader<Uint8Array> = bodyStream.getReader();
 
         try {
-          const chunks: Uint8Array[] = [];
-          let totalLength = 0;
-          const maxBytes = RADIO_VALIDATION.SAMPLE_BUFFER_SIZE; // 8KB limit
-          const startTime = Date.now();
-          // Track the actual sample budget rather than a fixed constant so this
-          // wall-clock guard stays meaningful if MAX_SAMPLE_TIMEOUT changes; the
-          // AbortController (armed at sampleTimeout) handles the stall case too.
-          const readTimeout = sampleTimeout;
+          const maxBytes = RADIO_VALIDATION.SAMPLE_BUFFER_SIZE;
 
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop; exits via break/return
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop, exits via break/return
           while (true) {
-            // Check if we've exceeded our read timeout
-            if (Date.now() - startTime > readTimeout) {
-              return {
-                buffer: totalLength > 0 ? concatChunks(chunks, totalLength) : null,
-                headers: response.headers,
-                httpStatus: response.status,
-                finalUrl: result.finalUrl,
-                error: 'Read timeout - got partial data',
-              };
-            }
-
             const { value, done } = await reader.read();
 
             if (done) break;
-            // Slice oversized chunks BEFORE pushing — a server that ignores the
-            // Range header can hand us one multi-MB chunk; the post-push limit
-            // check would already have allocated the entire blob in heap.
+            // A server that ignores the Range header can hand over one multi-MB chunk.
+            // Slicing before the push keeps that blob off the heap.
             const remaining = maxBytes - totalLength;
             const slice = value.length > remaining ? value.subarray(0, remaining) : value;
             chunks.push(slice);
@@ -305,6 +280,9 @@ export async function sampleAudioData(
         }
       } catch (streamErr) {
         if (streamErr instanceof Error && streamErr.name === 'AbortError') {
+          if (totalLength > 0) {
+            return { buffer: concatChunks(chunks, totalLength), headers: response.headers, httpStatus: response.status, finalUrl: result.finalUrl, error: null };
+          }
           return { buffer: null, headers: response.headers, httpStatus: response.status, finalUrl: result.finalUrl, error: 'Stream reading aborted' };
         }
         throw streamErr;
@@ -315,9 +293,9 @@ export async function sampleAudioData(
   } catch (err) {
     if (err instanceof Error) {
       if (err.name === 'AbortError') {
-        return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling timeout after ${sampleTimeout}ms` };
+        return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling timeout after ${remainingTimeout}ms` };
       }
-      return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling failed: ${describeFetchError(err)}` };
+      return { buffer: null, headers: null, finalUrl: url, error: `Audio sampling failed: ${describeProbeError(err)}` };
     }
     return { buffer: null, headers: null, finalUrl: url, error: 'Unknown audio sampling error' };
   }

@@ -22,6 +22,7 @@ import {
   transformToPlaylistDTO,
   type RawPlaylist,
 } from '../../transformers/index.js';
+import type { TransformOptions } from '../../transformers/shared-transformers.js';
 import type {
   PlaylistDTO,
   CreatePlaylistRequest,
@@ -37,21 +38,14 @@ import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { libraryManager } from '../../services/library-manager.js';
 
-// Upper bound for the pre-filter fetch when `onlyWithPlayableTracks` is on:
-// we must pull the full candidate set before filtering so in-memory
-// offset/limit are correct over the FILTERED view. Matches the schema's max
-// limit (500); playlist counts are small in practice.
+// The playable-only view filters the whole candidate set before paging it, so it reads up to the schema's max limit.
 const PLAYLIST_FETCH_MAX = 500;
-// Concurrency cap for the per-playlist track probes — bounded fan-out so we
-// don't open one connection per playlist at once.
+// Bounds the per-playlist probe fan-out, so the view never opens one connection per playlist at once.
 const PROBE_CONCURRENCY = 6;
 
 /**
- * Return true when filtering by active library is a no-op — either the
- * library manager isn't initialized yet, or every available library is
- * active. In both cases an "active-library" probe would match the same rows
- * as the unfiltered call, so we can skip probing and just drop empty
- * playlists.
+ * True when an active-library probe would match the same rows as the unfiltered read: the library
+ * manager is not initialized yet, or every available library is active.
  */
 function activeLibrariesCoverEverything(): boolean {
   if (!libraryManager.isInitialized()) return true;
@@ -89,10 +83,8 @@ async function filterToPlayablePlaylists(
   const kept: PlaylistDTO[] = [];
   for (let i = 0; i < nonEmpty.length; i += PROBE_CONCURRENCY) {
     const batch = nonEmpty.slice(i, i + PROBE_CONCURRENCY);
-    // allSettled (not all) so one transient probe failure can't blank the whole
-    // list — this powers the web-UI play picker. Fail OPEN: a rejected probe
-    // keeps the playlist (better to show a maybe-unplayable entry than to hide a
-    // playable one because of a network blip).
+    // One failed probe must not blank the web-UI play picker. A rejected probe keeps
+    // the playlist, since hiding a playable one is worse than showing a maybe-unplayable one.
     const results = await Promise.allSettled(
       batch.map((p) => playlistHasPlayableTracks(client, p.playlistId)),
     );
@@ -111,11 +103,11 @@ async function filterToPlayablePlaylists(
 }
 
 /**
- * List all playlists accessible to the user. `offset`/`limit` are NOT echoed
- * — the LLM just sent them and tracks its own pagination state. `total` is
- * server-derived (X-Total-Count) so the LLM can plan further pages.
+ * List all playlists accessible to the user. `offset`/`limit` are not echoed, since the LLM
+ * just sent them. `total` comes from X-Total-Count so the LLM can plan further pages.
+ * `transformOptions` lets a non-MCP caller such as the web remote force-keep a field like the numeric duration.
  */
-export async function listPlaylists(client: NavidromeClient, args: unknown): Promise<{
+export async function listPlaylists(client: NavidromeClient, args: unknown, transformOptions: TransformOptions = {}): Promise<{
   playlists: PlaylistDTO[];
   total: number;
 }> {
@@ -123,10 +115,8 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
     const params = PlaylistPaginationSchema.parse(args);
     logger.debug('Tool listPlaylists called with args:', params);
 
-    // Default path (full management view) — single server-paginated read.
-    // `/api/playlist?library_id=X` is IGNORED by Navidrome, so there is no
-    // server-side library filter to apply here; the LLM needs the full set so
-    // it can add songs to empty/other-library playlists too.
+    // Navidrome ignores `library_id` on /api/playlist. The full set also lets the LLM add songs
+    // to empty or other-library playlists.
     if (!params.onlyWithPlayableTracks) {
       const queryParams = new URLSearchParams({
         _start: params.offset.toString(),
@@ -136,7 +126,7 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
       });
 
       const { data, total } = await client.requestWithMeta<unknown>(`/playlist?${queryParams.toString()}`);
-      const playlists = transformPlaylistsToDTO(data);
+      const playlists = transformPlaylistsToDTO(data, transformOptions);
 
       return {
         playlists,
@@ -154,13 +144,9 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
       _order: params.order,
     });
     const { data, total } = await client.requestWithMeta<unknown>(`/playlist?${queryParams.toString()}`);
-    const allPlaylists = transformPlaylistsToDTO(data);
+    const allPlaylists = transformPlaylistsToDTO(data, transformOptions);
 
-    // The playable-only view pulls a hard-capped candidate window
-    // (PLAYLIST_FETCH_MAX). If the server holds more playlists than that, rows
-    // beyond the cap are never fetched, filtered, or counted — so the returned
-    // total understates the true filtered count. Warn so the truncation is at
-    // least visible in logs.
+    // Rows past PLAYLIST_FETCH_MAX are never fetched or counted, so the returned total would understate silently.
     if (
       (total !== null && total > PLAYLIST_FETCH_MAX) ||
       allPlaylists.length >= PLAYLIST_FETCH_MAX
@@ -171,9 +157,7 @@ export async function listPlaylists(client: NavidromeClient, args: unknown): Pro
       );
     }
 
-    // Optimization: when the active libraries cover everything (or the
-    // library manager isn't initialized), a probe would match the same rows
-    // as `songCount`, so just drop empty playlists — no per-playlist probes.
+    // When a probe would match the same rows as `songCount`, dropping empty playlists skips every probe.
     const filtered = activeLibrariesCoverEverything()
       ? allPlaylists.filter((p) => p.songCount > 0)
       : await filterToPlayablePlaylists(client, allPlaylists);
@@ -221,11 +205,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       requestBody.comment = params.comment;
     }
 
-    // Navidrome's `POST /playlist` only echoes `{id}` — no metadata. Re-fetch
-    // the playlist by id so callers receive the same DTO shape as
-    // `get_playlist` / `list_playlists` (owner, ownerId, createdAt,
-    // updatedAt, etc.). The transformer's `name`/`comment` fallbacks remain
-    // as defence-in-depth in case the GET also comes back incomplete.
+    // `POST /playlist` echoes only `{id}`, so a re-fetch gives callers the same DTO as `get_playlist`.
     const created = await client.request<{ id?: string }>('/playlist', {
       method: 'POST',
       headers: {
@@ -286,29 +266,16 @@ export async function updatePlaylist(client: NavidromeClient, args: unknown): Pr
       body: JSON.stringify(requestBody),
     });
 
-    const playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist);
-
-    // Fix the name if it was updated but not properly returned from API
-    if (params.name !== undefined && params.name !== '' && playlist.name === '') {
-      playlist.name = params.name;
-    }
-
-    // Fix the comment if it was updated but not properly returned from API
-    if (params.comment !== undefined && (playlist.comment === undefined || playlist.comment === '')) {
-      playlist.comment = params.comment;
-    }
-
-    return playlist;
+    // Navidrome's PUT answers with the full stored playlist.
+    return transformToPlaylistDTO(rawPlaylist as RawPlaylist);
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('update_playlist', error));
   }
 }
 
 /**
- * Delete a playlist (owner or admin only). The deleted id is intentionally
- * NOT echoed in the response — the LLM just sent it. The success flag plus
- * the message ("Successfully deleted playlist") is enough to confirm the
- * round trip; the id is captured in the DEBUG log for diagnostics.
+ * Delete a playlist (owner or admin only). The deleted id is not echoed, since the LLM just sent it.
+ * The DEBUG log keeps it.
  */
 export async function deletePlaylist(client: NavidromeClient, args: unknown): Promise<{ success: boolean; message: string }> {
   try {

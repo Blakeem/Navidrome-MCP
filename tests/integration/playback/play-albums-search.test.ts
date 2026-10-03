@@ -42,8 +42,7 @@ import { filterCacheManager } from '../../../src/services/filter-cache-manager.j
  */
 async function findSeedArtistName(): Promise<string | null> {
   const client = await getSharedLiveClient();
-  const config = await loadConfig();
-  const seed = await searchAlbums(client, config, {
+  const seed = await searchAlbums(client, {
     query: '',
     sort: 'random',
     limit: 20,

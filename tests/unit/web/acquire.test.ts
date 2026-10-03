@@ -2,20 +2,25 @@
  * Navidrome MCP Server - Port-as-lock acquire/attach unit tests
  * Copyright (C) 2025
  *
- * Covers the acquire decision flow (standalone-web spec §5.2) with injected
- * probe + bind, so no real sockets are bound (that's the multi-process
- * coordination suite's job under test:playback).
+ * Covers the acquire decision flow with injected probe + bind (the
+ * multi-process coordination suite binds the real port under test:playback).
+ * The probe verdict tests bind one ephemeral loopback server.
  */
 
-import type { Server } from 'node:http';
-import { describe, expect, it, vi } from 'vitest';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   type AcquireDeps,
   type AcquireResult,
   type ProbeOutcome,
   acquireOrAttach,
+  probeHealthz,
+  webOwnerPresent,
+  webOwnerScrobbling,
 } from '../../../src/web/acquire.js';
+import { HEALTH_APP_ID } from '../../../src/webui/routes/health.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 
 const config = makeTestConfig();
@@ -93,5 +98,66 @@ describe('acquireOrAttach', () => {
   it('throws when it loses a bind race to a foreign process', async () => {
     const d = deps(['refused', 'foreign'], 'eaddrinuse');
     await expect(acquireOrAttach(config, fakeServer, d)).rejects.toThrow(/in use by another application/);
+  });
+
+  it('probes at the configured bind host', async () => {
+    const lanConfig = makeTestConfig({ webui: { ...config.webui, host: '192.168.1.10' } });
+    const probe = vi.fn().mockResolvedValue('ours');
+    await acquireOrAttach(lanConfig, fakeServer, { probe, bind: vi.fn() });
+
+    expect(probe).toHaveBeenCalledWith(8808, '192.168.1.10');
+  });
+});
+
+describe('/healthz probe verdicts', () => {
+  let healthServer: Server | null = null;
+
+  afterEach(async () => {
+    const closing = healthServer;
+    healthServer = null;
+    if (closing === null) return;
+    closing.closeAllConnections();
+    await new Promise<void>((resolve) => closing.close(() => resolve()));
+  });
+
+  async function serveHealthz(body: unknown): Promise<number> {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+    });
+    healthServer = server;
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return (server.address() as AddressInfo).port;
+  }
+
+  it('reports a scrobbling owner when its engine is attached', async () => {
+    const port = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: true });
+
+    expect(await webOwnerScrobbling(port, '127.0.0.1')).toBe(true);
+  });
+
+  it('reports a present but non-scrobbling owner when its engine is not attached', async () => {
+    const port = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: false });
+
+    expect(await webOwnerScrobbling(port, '127.0.0.1')).toBe(false);
+    expect(await webOwnerPresent(port, '127.0.0.1')).toBe(true);
+  });
+
+  it('reports an owner without the playbackAttached field as scrobbling', async () => {
+    const port = await serveHealthz({ app: HEALTH_APP_ID });
+
+    expect(await webOwnerScrobbling(port, '127.0.0.1')).toBe(true);
+  });
+
+  it('never reports a foreign signature as scrobbling', async () => {
+    const port = await serveHealthz({ app: 'something-else', playbackAttached: true });
+
+    expect(await webOwnerScrobbling(port, '127.0.0.1')).toBe(false);
+  });
+
+  it.each(['0.0.0.0', '::'])('probes a wildcard bind host %s at loopback', async (bindHost) => {
+    const port = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: false });
+
+    expect(await probeHealthz(port, bindHost)).toBe('ours');
   });
 });

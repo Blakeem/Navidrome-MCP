@@ -24,6 +24,7 @@ import {
   MIN_FETCH_TIMEOUT_MS,
 } from '../constants/timeouts.js';
 import { logger } from './logger.js';
+import { describeFetchError } from './network-safety.js';
 
 /**
  * Dispatcher honoring HTTP_PROXY/HTTPS_PROXY/NO_PROXY. Node's native `fetch`
@@ -69,7 +70,7 @@ function hasProxyEnvConfigured(): boolean {
 export type RetryPolicy = 'safe' | 'never';
 
 export interface FetchWithTimeoutOptions {
-  /** Per-attempt timeout in ms. Clamped to [MIN_FETCH_TIMEOUT_MS, MAX_FETCH_TIMEOUT_MS]. */
+  /** Per-attempt timeout in ms, used as given. The env getters clamp it to [MIN_FETCH_TIMEOUT_MS, MAX_FETCH_TIMEOUT_MS]. */
   readonly timeoutMs: number;
   /** Whether to retry once on AbortError. `'safe'` = retry, `'never'` = single attempt. */
   readonly retryPolicy: RetryPolicy;
@@ -81,6 +82,8 @@ export interface FetchWithTimeoutOptions {
    * third-party internet APIs, which may be unreachable without a proxy.
    */
   readonly respectProxy?: boolean;
+  /** A timeout leaves this write's outcome unknown, so the timeout error says to check state before retrying. */
+  readonly nonIdempotent?: boolean;
 }
 
 /**
@@ -95,10 +98,13 @@ export class FetchTimeoutError extends Error {
   readonly attempts: number;
   readonly timeoutMs: number;
 
-  constructor(operationLabel: string, timeoutMs: number, attempts: number) {
+  constructor(operationLabel: string, timeoutMs: number, attempts: number, nonIdempotent = false) {
     const suffix = attempts > 1 ? ` (after ${attempts} attempts)` : '';
+    const writeNote = nonIdempotent
+      ? ' The change may already have been applied. Check the current state before retrying.'
+      : '';
     super(
-      `${operationLabel} did not respond within ${timeoutMs}ms${suffix} — server may be down or overloaded`,
+      `${operationLabel} did not respond within ${timeoutMs}ms${suffix}. The server may be down or overloaded.${writeNote}`,
     );
     this.attempts = attempts;
     this.timeoutMs = timeoutMs;
@@ -203,24 +209,19 @@ function isTimeoutAbort(err: unknown): boolean {
  *   3. Surfaces a `FetchTimeoutError` (name: 'TimeoutError') on final failure
  *      with a message safe to expose to the LLM.
  *
- * Non-timeout errors (DNS failure, connection refused, 4xx/5xx) are re-thrown
- * unchanged — the standard error-handling paths upstream already format these.
+ * Non-timeout errors (DNS failure, connection refused) are rethrown as an Error
+ * naming the operation and the root cause. 4xx/5xx responses resolve normally.
  *
- * The caller-provided `init.signal`, if any, is respected and combined via
- * `AbortSignal.any` (Node 20.3+); on older Node the timeout signal alone is
- * used. Both `AbortSignal.timeout` and `AbortSignal.any` are part of the
- * package's stated `engines: ">=18"` because we already require Node 20+
- * for other features (verified at runtime via package.json `engines`).
+ * A caller `init.signal` is combined with the timeout through AbortSignal.any,
+ * which needs Node 20.3, the engines floor in package.json.
  */
 export async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   options: FetchWithTimeoutOptions,
 ): Promise<Response> {
-  const { timeoutMs, retryPolicy, operationLabel, respectProxy = false } = options;
+  const { timeoutMs, retryPolicy, operationLabel, respectProxy = false, nonIdempotent = false } = options;
   const maxAttempts = retryPolicy === 'safe' ? 2 : 1;
-
-  let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -247,16 +248,14 @@ export async function fetchWithTimeout(
       }
       return await fetch(url, { ...init, signal });
     } catch (err) {
-      lastError = err;
-
-      // If the caller's own signal aborted, don't retry — the caller wants out.
+      // The caller wants out, so a caller abort is never retried.
       if (callerSignal?.aborted === true) {
         throw err;
       }
 
       if (!isTimeoutAbort(err)) {
-        // Non-timeout error (DNS, connection refused, etc.) — surface immediately.
-        throw err;
+        // undici reports every connection failure as "fetch failed", with the reason in `cause`.
+        throw new Error(`${operationLabel} failed: ${describeFetchError(err)}`, { cause: err });
       }
 
       if (attempt < maxAttempts) {
@@ -268,9 +267,6 @@ export async function fetchWithTimeout(
     }
   }
 
-  // All attempts exhausted on timeout. `lastError` is intentionally not chained
-  // — the AbortError stack is uninformative, and surfacing it would expose the
-  // string "AbortError" to the LLM where "TimeoutError" is more meaningful.
-  void lastError;
-  throw new FetchTimeoutError(operationLabel, timeoutMs, maxAttempts);
+  // The AbortError is not chained, since "TimeoutError" is the meaningful name for the LLM.
+  throw new FetchTimeoutError(operationLabel, timeoutMs, maxAttempts, nonIdempotent);
 }

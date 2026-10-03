@@ -58,7 +58,8 @@ const tools: Tool[] = [
         },
         sort: {
           type: 'string',
-          description: 'Field to sort by',
+          description: 'Field to sort by: name, songCount, duration, createdAt or updatedAt',
+          enum: ['name', 'songCount', 'duration', 'createdAt', 'updatedAt'],
           default: 'name',
         },
         order: {
@@ -155,7 +156,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_playlist_tracks',
-    description: 'Get all tracks in a playlist (supports JSON or M3U export). Response shape is discriminated by `format`: JSON mode returns `{ format: "json", tracks, total }` with each track exposing both an `id` (the track\'s 1-based POSITION in the playlist, a string) and a `mediaFileId` (the stable song ID for playback/metadata). The `id` is the key used to remove/reorder a track — duplicate songs each occupy their own position, which is WHY removal/reorder keys on position, not song id. IMPORTANT: positions SHIFT after any add/remove/reorder, so you MUST call get_playlist_tracks again for fresh ids before each mutation and must never reuse ids across mutations. M3U mode returns `{ format: "m3u", m3uContent }` — the raw .m3u text payload (no tracks/total arrays, since they would be redundant with the playlist body).\n\nBy default each track is compact (id, mediaFileId, title, artist, album, durationFormatted) to keep large playlists under the response size cap. Set `verbose: true` for full per-track metadata (path, bitRate, raw duration, playlistId, trackNumber, year, genre, albumArtist).',
+    description: 'Get all tracks in a playlist (supports JSON or M3U export). Response shape is discriminated by `format`: JSON mode returns `{ format: "json", tracks, total }` with each track exposing a `position` (its 1-based position in the playlist, a string) and a `songId` (the stable song ID for playback/metadata). remove_tracks_from_playlist and reorder_playlist_track take the `position`. Duplicate songs each occupy their own position. IMPORTANT: positions SHIFT after any add/remove/reorder, so you MUST call get_playlist_tracks again for fresh positions before each mutation and must never reuse positions across mutations. M3U mode returns `{ format: "m3u", m3uContent }`, the raw .m3u text payload (no tracks/total arrays, since they would be redundant with the playlist body). M3U mode ignores limit and offset and always returns the whole playlist.\n\nBy default each track is compact (position, songId, title, artist, album, durationFormatted) to keep large playlists under the response size cap. Set `verbose: true` for full per-track metadata (path, bitRate, raw duration, playlistId, trackNumber, year, genre, albumArtist).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -165,14 +166,14 @@ const tools: Tool[] = [
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of tracks to return (1-500)',
+          description: 'Maximum number of tracks to return (1-500). M3U mode ignores limit and offset and always returns the whole playlist.',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
           type: 'number',
-          description: 'Number of tracks to skip for pagination',
+          description: 'Number of tracks to skip for pagination. M3U mode ignores limit and offset and always returns the whole playlist.',
           minimum: 0,
           default: 0,
         },
@@ -184,7 +185,7 @@ const tools: Tool[] = [
         },
         verbose: {
           type: 'boolean',
-          description: 'When false (default) each track carries only identity fields (id, mediaFileId, title, artist, album, durationFormatted) to save context; set true for full per-track metadata (path, bitRate, raw duration, playlistId, trackNumber, year, genre, albumArtist).',
+          description: 'When false (default) each track carries only identity fields (position, songId, title, artist, album, durationFormatted) to save context. Set true for full per-track metadata (path, bitRate, raw duration, playlistId, trackNumber, year, genre, albumArtist).',
           default: false,
         },
       },
@@ -234,7 +235,7 @@ const tools: Tool[] = [
   },
   {
     name: 'remove_tracks_from_playlist',
-    description: 'Remove tracks from a playlist by their `id` (the track\'s 1-based POSITION in the playlist, matching the `id` field from get_playlist_tracks — mediaFileId is the stable song id, NOT used here). Duplicate songs each occupy their own position, which is why removal keys on position rather than song id. Positions SHIFT after any add/remove/reorder, so call get_playlist_tracks again for fresh ids before each mutation and never reuse ids across mutations. Remove at most 500 tracks per call; for larger clears, batch into repeated calls (re-read positions between batches).',
+    description: 'Remove tracks from a playlist by position. `positions` takes the 1-based `position` values from get_playlist_tracks, never song IDs. Duplicate songs each occupy their own position. Positions SHIFT after any add/remove/reorder, so call get_playlist_tracks again for fresh positions before each mutation and never reuse positions across mutations. Remove at most 500 tracks per call. For larger clears, batch into repeated calls and re-read positions between batches.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -242,20 +243,20 @@ const tools: Tool[] = [
           type: 'string',
           description: 'The unique ID of the playlist',
         },
-        trackIds: {
+        positions: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Array of track position IDs to remove (max 500 per call)',
+          description: 'The 1-based `position` values from get_playlist_tracks to remove (max 500 per call)',
           minItems: 1,
           maxItems: 500,
         },
       },
-      required: ['playlistId', 'trackIds'],
+      required: ['playlistId', 'positions'],
     },
   },
   {
     name: 'reorder_playlist_track',
-    description: 'Reorder a track within a playlist to a new position. Positions are 1-based and match the `id` field returned by get_playlist_tracks. This id is a 1-based position that SHIFTS after any mutation, so re-read get_playlist_tracks before reordering — and when making several moves, re-read between them rather than reusing stale positions. Use insert_before=1 to move a track to the first slot; insert_before=N+1 to send it to the end of an N-track playlist.',
+    description: 'Reorder a track within a playlist to a new position. `position` takes the 1-based `position` value from get_playlist_tracks. Positions SHIFT after any mutation, so re-read get_playlist_tracks before reordering. When making several moves, re-read between them rather than reusing stale positions. Use insertBefore=1 to move a track to the first slot and insertBefore=N+1 to send it to the end of an N-track playlist.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -263,17 +264,17 @@ const tools: Tool[] = [
           type: 'string',
           description: 'The unique ID of the playlist',
         },
-        trackId: {
+        position: {
           type: 'string',
-          description: 'The current 1-based track position ID to move (matches the `id` field from get_playlist_tracks)',
+          description: 'The current 1-based position of the track to move (the `position` value from get_playlist_tracks)',
         },
-        insert_before: {
+        insertBefore: {
           type: 'number',
           description: 'Target 1-based position to insert the track before. 1 = first slot, N+1 = append to an N-track playlist.',
           minimum: 1,
         },
       },
-      required: ['playlistId', 'trackId', 'insert_before'],
+      required: ['playlistId', 'position', 'insertBefore'],
     },
   },
 ];

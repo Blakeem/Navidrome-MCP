@@ -247,14 +247,11 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockRejectedValue(new Error('HTTP 500'));
 
-      // ErrorFormatter.toolExecution dedupes nested wrapping (see
-      // src-tools-3-1): loadUserLibraries already wraps the HTTP 500 with its
-      // own tool-name prefix, so the outer initialize() wrapper preserves that
-      // innermost meaningful message rather than stacking a second prefix. The
-      // caller still sees a clear, rethrown error naming the failure site.
+      // The outermost wrapper's name replaces the inner loadUserLibraries
+      // prefix, so exactly one prefix reaches the caller.
       await expect(
         libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
-      ).rejects.toThrow(/Tool 'loadUserLibraries' failed: HTTP 500/);
+      ).rejects.toThrow("Tool 'LibraryManager.initialize' failed: HTTP 500");
 
       expect(libraryManager.isInitialized()).toBe(false);
     });

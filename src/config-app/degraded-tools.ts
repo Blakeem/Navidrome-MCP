@@ -23,26 +23,31 @@ import { openBrowser } from '../utils/open-browser.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
 /**
- * Register the minimal toolset for an unconfigured server. The full toolset is
- * withheld until a valid `settings.json` exists; these two tools exist only to
- * route the user into the settings page. The settings URL is surfaced in every
- * response (the channel the user actually sees in their AI client) because the
+ * Register the minimal toolset for an unconfigured server, or for one whose
+ * saved settings failed at startup (`failureReason`). The full toolset is
+ * withheld until the settings work. These two tools exist only to route the
+ * user into the settings page. The settings URL is surfaced in every response
+ * (the channel the user actually sees in their AI client) because the
  * auto-opened browser silently no-ops on headless/SSH hosts.
  */
-export function registerDegradedTools(server: Server, settingsUrl: string): void {
+export function registerDegradedTools(server: Server, settingsUrl: string, failureReason?: string): void {
+  const headline =
+    failureReason === undefined
+      ? 'Navidrome MCP is not configured yet.'
+      : `Navidrome MCP could not start with the saved settings: ${failureReason}`;
   const notice =
-    `Navidrome MCP is not configured yet. Open the settings page to set it up:\n  ${settingsUrl}\n` +
+    `${headline}\nOpen the settings page to set it up:\n  ${settingsUrl}\n` +
     `Enter your Navidrome URL, username, and password (plus any optional features), Save, then restart this server.\n` +
     `On a headless machine or in a container (where that loopback URL is unreachable), set environment ` +
-    `variables instead and restart: NAVIDROME_URL, NAVIDROME_USERNAME, NAVIDROME_PASSWORD — they are used ` +
-    `automatically whenever no settings.json exists.`;
+    `variables instead and restart: NAVIDROME_URL, NAVIDROME_USERNAME, NAVIDROME_PASSWORD. They are used ` +
+    `automatically whenever no usable settings.json exists.`;
 
   const tools: Tool[] = [
     {
       name: 'open_settings',
       description:
         'Open the Navidrome MCP settings page in a browser and return its local URL. ' +
-        'Use this when the server is not configured (no Navidrome URL set).',
+        'Use this when the server is not configured or its saved settings failed at startup.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
     {

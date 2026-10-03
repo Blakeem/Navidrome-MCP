@@ -6,7 +6,7 @@ import { drainSlew, jumpLyricsClock, lyricsShownMs } from './lyrics-clock.js';
 import { lyricOffsetMs } from './lyrics-prefs.js';
 import { applyOffset, findActiveLine, isInterlude } from './lyrics-sync.js';
 
-/** A gap this long is an instrumental break rather than a verse pause. LRC line gaps run 2 to 3 seconds. */
+/** Time still left before the next line, once a blank LRC end marker has closed the active line, that reads as an instrumental break. */
 const INTERLUDE_MS = 4000;
 
 const view = byId('lyrics-view');
@@ -50,12 +50,16 @@ export function resetFollowFrame() {
   frameWallMs = 0;
 }
 
+export function isFollowing() {
+  return following;
+}
+
 export function setFollowing(next) {
   following = next;
   setHidden(pill, next);
 }
 
-// A pointer or wheel gesture on the words is the only signal that the reader moved the view.
+// A pointer, wheel or scrolling-key gesture on the words is the only signal that the reader moved the view.
 // The scroll event cannot tell the reader from the follow loop, so it is never listened for.
 export function suspendFollow() {
   if (timed.length === 0) return;

@@ -1,8 +1,8 @@
 # `get_artist_albums` — Tool Spec
 
-> Return an artist's **full discography** with correct release **types/years** (MusicBrainz),
-> enriched with **genres + popularity** (Last.fm), and flagged **in-library / missing** (Navidrome).
-> Answers "what full albums by X am I missing?" in one call. Status: **proposed**.
+> Return an artist's **full discography** with correct release **types, years, and genres** (MusicBrainz),
+> enriched with **popularity** (Last.fm), and flagged **in-library / missing** (Navidrome).
+> Answers "what full albums by X am I missing?" in one call. Status: **implemented**.
 
 Sources: [`LAST-FM-API-SPEC.md`](./LAST-FM-API-SPEC.md) · [`musicbrainz-api.md`](./musicbrainz-api.md).
 
@@ -30,7 +30,7 @@ plus junk (`null`, `<unknown>`, `uploaded by…`, `*.com`). MBID-presence is **n
 
 | Param | Type | Default | Notes |
 |---|---|---|---|
-| `artist` | string | — | Name *or* MBID. Required unless `mbid`. |
+| `artist` | string | — | Artist name. Required unless `mbid`. |
 | `mbid` | string | — | MusicBrainz artist MBID; skips artist resolution. |
 | `includeTypes` | enum[] `album\|ep\|single` | `["album"]` | MB primary types to keep. |
 | `excludeSecondary` | enum[] | `["live","compilation","soundtrack","remix","dj-mix","demo"]` | Dropped MB secondary types. `[]` = keep all. |
@@ -67,9 +67,10 @@ plus junk (`null`, `<unknown>`, `uploaded by…`, `*.com`). MBID-presence is **n
 ### Field provenance
 | Output field | Source |
 |---|---|
-| `title`, `year`, `primaryType`, `secondaryTypes`, `mbid` | MB release-group |
+| `title`, `year`, `primaryType`, `secondaryTypes` | MB release-group |
+| `mbid` | MB release-group id on `source: musicbrainz` rows. `null` on `lastfm-only` rows. |
 | `genres` | MB release-group `inc=genres` (same request as spine; `[]` if MB has none — artist-level tags remain available via existing `get_artist_info`) |
-| `popularityRank`, `playcount`, `url` | Last.fm `getTopAlbums` join; `popularityRank` = rank **within the returned set**; `null` if outside Last.fm's top 100 |
+| `popularityRank`, `playcount`, `url` | Last.fm `getTopAlbums` join. `popularityRank` = rank by playcount within the full filtered discography, assigned before `onlyMissing` so ranks stay stable. `null` if outside Last.fm's top 100 |
 | `inLibrary`, `libraryAlbumId`, `navidromeArtistId` | Navidrome |
 | `source` (`musicbrainz`\|`lastfm-only`), `typeUnverified` | derived in merge |
 
@@ -159,9 +160,9 @@ single-word tokens are **word-bounded** so titles merely containing them as a fr
 | **Feature gate** | Requires `features.lastFmApiKey` (consistent w/ sibling discovery tools). MB always on. |
 | **MB User-Agent** | Required by MB. Add `features.musicBrainzUserAgent` (fallback to a sane default w/ contact). |
 | **MB rate limit** | ≤ **1 req/s** — serialize MB calls through a throttle/queue. |
-| **Last.fm calls** | Reuse `callLastFmApi()` in `lastfm-discovery.ts`. Exactly **one** `getTopAlbums` call per invocation; `album.getInfo` is never called by this tool. |
+| **Last.fm calls** | Reuse `callLastFmApi()` in `utils/lastfm.ts`. One `getTopAlbums` call per invocation. `album.getInfo` is never called by this tool. |
 | **Caching** | Per-artist result cached (`utils/cache`, TTL ~24h). Cache MB + Last.fm raw separately. |
-| **Errors** | `ErrorFormatter.toolExecution('get_artist_albums', err)`. MB/Last.fm failures **degrade, not fail**: MB-down ⇒ Last.fm-only (all `typeUnverified`); Last.fm-down ⇒ MB-only (no genres/popularity). Navidrome-down ⇒ omit `inLibrary` (null) + note. |
+| **Errors** | `ErrorFormatter.toolExecution('get_artist_albums', err)`. MB/Last.fm failures **degrade, not fail**: MB-down ⇒ Last.fm-only (all `typeUnverified`). Last.fm-down ⇒ MB-only (no popularity). Navidrome-down ⇒ omit `inLibrary` (null) + note. |
 | **Logging** | `logger` only (never `console`). DEBUG: resolved MBID, counts per source, join hit-rate. |
 
 ---
@@ -193,8 +194,8 @@ junk drop, join hit-rate, `onlyMissing`, and **that the Last.fm client is invoke
    the genre union / "only when empty" conditional logic disappears. Per-album deep dives
    (tracklist, wiki) move to `get_album_info` (§9), which spends its 1–2 requests only on the
    one album the user actually asked about.
-2. **`popularityRank`** = rank within the returned set (small stable integers the LLM can
-   reason about); raw `playcount` only under `verbose`.
+2. **`popularityRank`** = rank by playcount within the full filtered discography, assigned
+   before `onlyMissing` so ranks stay stable. Raw `playcount` appears only under `verbose`.
 3. **Cache TTL 24h, no `refresh` flag.** Discographies change rarely; the flag is purely
    additive if staleness ever bites in practice.
 
@@ -236,8 +237,8 @@ Soundtrack": MB count 0, Last.fm has listeners but no tracks — then `tracks: [
 
 ### 9.2 Tool I/O
 
-Input (`GetAlbumInfoSchema` → `validation.ts`): `mbid` (a **release-group** MBID — exactly what
-`get_artist_albums` emits per album, making the follow-up call a copy-paste), **or** `artist` +
+Input (`GetAlbumInfoSchema` → `validation.ts`): `mbid` (a **release-group** MBID, the mbid of a
+`get_artist_albums` row with `source: musicbrainz`. `lastfm-only` rows go by names), **or** `artist` +
 `album` names; plus `verbose` (default false). Either `mbid` or both names required.
 
 ⚠️ Last.fm's own `mbid=` param is **never used**: it wants a *release* MBID — feeding it a

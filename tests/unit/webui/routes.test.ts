@@ -84,6 +84,7 @@ import { handleCover } from '../../../src/webui/routes/cover.js';
 import { handlePlayQueueIndex, handleSeek, handleVolume } from '../../../src/webui/routes/controls.js';
 import { handleNetworkInfo } from '../../../src/webui/routes/network-info.js';
 import { isLanReachable } from '../../../src/webui/network.js';
+import { playbackEngine } from '../../../src/services/playback/playback-engine.js';
 import { playQueueIndex, seek, setVolume, shuffleQueueFromTop } from '../../../src/tools/playback.js';
 import { createServer } from '../../../src/webui/server.js';
 
@@ -197,6 +198,14 @@ describe('handleHealth loopback gate (resolved bind host matrix)', () => {
     const cap = fakeRes();
     handleHealth(fakeReq('::1'), cap.res, configWith({ expose: false, host: '0.0.0.0' }));
     expect(cap.status()).toBe(200);
+  });
+
+  it.each([true, false])('reports playbackAttached=%s from the playback engine', (attached) => {
+    const isRunning = vi.spyOn(playbackEngine, 'isRunning').mockReturnValue(attached);
+    const cap = fakeRes();
+    handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: false, host: '127.0.0.1' }));
+    isRunning.mockRestore();
+    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID, playbackAttached: attached });
   });
 });
 
@@ -363,6 +372,46 @@ describe('handleSetPlayerSettings theme', () => {
     expect(setTheme).not.toHaveBeenCalled();
     expect(writeSettings).not.toHaveBeenCalled();
     expect(broadcaster.broadcastNow).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleSetPlayerSettings reports autoOpenBrowser as stored', () => {
+  const STORED: SettingsFile = {
+    navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
+    webui: { autoOpenBrowser: false },
+  };
+
+  async function postAutoOpen(): Promise<unknown> {
+    const cap = fakeRes();
+    await handleSetPlayerSettings(
+      fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ autoOpenBrowser: true }))]),
+      cap.res,
+      fakeBroadcaster(),
+    );
+    expect(cap.status()).toBe(200);
+    return cap.json();
+  }
+
+  it('reports the written value once settings.json is saved', async () => {
+    vi.mocked(readSettings).mockReturnValue(STORED);
+
+    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: true });
+  });
+
+  it('reports the stored value when the write fails', async () => {
+    vi.mocked(readSettings).mockReturnValue(STORED);
+    vi.mocked(writeSettings).mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+
+    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: false });
+  });
+
+  it('reports false when no settings.json exists to hold the value', async () => {
+    vi.mocked(readSettings).mockReturnValue(null);
+
+    expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: false });
+    expect(writeSettings).not.toHaveBeenCalled();
   });
 });
 

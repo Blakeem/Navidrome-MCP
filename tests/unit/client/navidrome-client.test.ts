@@ -112,7 +112,7 @@ describe('NavidromeClient', () => {
         .mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500));
 
       const client = new NavidromeClient(makeConfig());
-      await expect(client.request('/album/123')).rejects.toThrow();
+      await expect(client.request('/album/123')).rejects.toThrow(/Navidrome GET \/album\/123 - 500/);
       // login + one request only — 500 is not retried.
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
@@ -375,6 +375,15 @@ describe('NavidromeClient', () => {
       await expect(client.request('https://evil.example/api')).rejects.toThrow(/path, not an absolute URL/);
     });
 
+    it('accepts an ellipsis in the query string', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse([]));
+      await expect(client.request('/album?name=...And+Justice+for+All')).resolves.toEqual([]);
+    });
+
+    it('still rejects traversal in the path when a query string follows', async () => {
+      await expect(client.request('/album/../user?x=1')).rejects.toThrow(/path-traversal/);
+    });
+
     it('also guards subsonicRequest', async () => {
       await expect(client.subsonicRequest('/../auth/login')).rejects.toThrow(/path-traversal/);
     });
@@ -475,6 +484,8 @@ describe('NavidromeClient', () => {
 
       const result = await settled;
       expect(result).toBeInstanceOf(FetchTimeoutError);
+      // A read has no side effect, so its timeout carries no write note.
+      expect((result as Error).message).not.toContain('may already have been applied');
       // login + 2 attempts = 3 fetches total.
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
@@ -503,6 +514,9 @@ describe('NavidromeClient', () => {
       const result = await settled;
       expect(result).toBeInstanceOf(FetchTimeoutError);
       expect((result as FetchTimeoutError).attempts).toBe(1);
+      expect((result as Error).message).toContain(
+        'The change may already have been applied. Check the current state before retrying.',
+      );
       // login + single POST attempt = 2 fetches. No retry.
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });

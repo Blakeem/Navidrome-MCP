@@ -1,17 +1,20 @@
 // Interpolated playback position. Snapshots report it about once a second, so the
 // progress bar and the lyrics overlay read a clock that keeps running between them.
 
+import { playingIndex } from './snapshot.js';
+
 let baseSeconds = 0;
 let baseWallMs = 0;
 let paused = true;
 let duration = 0;
 
+// An idle mpv keeps its last pause value, so a clock with no current track stays stopped.
 export function rebaseClock(np) {
-  const running = np !== null && np.engineRunning;
-  paused = np?.paused !== false;
+  const hasTrack = playingIndex(np) !== null;
+  paused = !hasTrack || np.paused !== false;
   baseWallMs = Date.now();
-  baseSeconds = running && typeof np.position === 'number' ? np.position : 0;
-  duration = running && typeof np.duration === 'number' ? np.duration : 0;
+  baseSeconds = hasTrack && typeof np.position === 'number' ? np.position : 0;
+  duration = hasTrack && typeof np.duration === 'number' ? np.duration : 0;
 }
 
 export function isPaused() {

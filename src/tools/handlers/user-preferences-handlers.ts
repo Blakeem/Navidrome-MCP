@@ -160,6 +160,11 @@ const tools: Tool[] = [
           minimum: 0,
           default: 0,
         },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each item carries only identity fields (plus its rating) to save context. Set true for full per-item metadata (genres, year, starred, path, etc.).',
+          default: false,
+        },
       },
       required: ['type'],
     },

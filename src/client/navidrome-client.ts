@@ -25,6 +25,7 @@ import { buildSubsonicAuthParams } from '../utils/subsonic-auth.js';
 import {
   fetchWithTimeout,
   getNavidromeRequestTimeoutMs,
+  type RetryPolicy,
 } from '../utils/fetch-with-timeout.js';
 
 export class NavidromeClient {
@@ -100,7 +101,7 @@ export class NavidromeClient {
     const totalHeader = response.headers.get('x-total-count');
     const parsed = totalHeader !== null ? Number.parseInt(totalHeader, 10) : NaN;
     const total = Number.isFinite(parsed) ? parsed : null;
-    const data = await this.parseResponse<T>(response);
+    const data = await this.parseResponse<T>(response, `Navidrome ${options.method ?? 'GET'} ${endpoint}`);
     return { data, total };
   }
 
@@ -154,59 +155,42 @@ export class NavidromeClient {
   }
 
   /**
-   * Send a Subsonic API request. Defaults to POST with auth in the body —
-   * keeps the salted-MD5 secret out of URL query strings (where reverse
-   * proxies and access logs would capture it). Pass `method: 'GET'` only
-   * when the endpoint cannot accept POST (rare; Navidrome's Subsonic
-   * implementation accepts POST for everything we use).
+   * Send a Subsonic API request as a POST with auth in the body, which keeps
+   * the salted-MD5 secret out of URL query strings (where reverse proxies and
+   * access logs would capture it).
    */
   async subsonicRequest(
     endpoint: string,
     params: Record<string, string> = {},
-    options: { method?: 'GET' | 'POST' } = {},
+    options: { retryPolicy?: RetryPolicy } = {},
   ): Promise<unknown> {
     this.assertSafeEndpoint(endpoint);
-    const method = options.method ?? 'POST';
     const authParams = buildSubsonicAuthParams(
       this.config.navidromeUsername,
       this.config.navidromePassword,
       params,
     );
 
-    // Subsonic POST endpoints we use are all idempotent (`/star`, `/unstar`,
-    // `/setRating`, `/scrobble` with `submission=false`, etc.) — re-applying
-    // the same call doesn't double-apply. So they're safe to retry on
-    // timeout, just like GETs. If a future caller adds a non-idempotent
-    // Subsonic POST (none exist in Navidrome's Subsonic surface today),
-    // this needs to be revisited.
-    const timeoutMs = getNavidromeRequestTimeoutMs();
-    const url = `${this.baseUrl}/rest${endpoint}`;
-    const response = method === 'POST'
-      ? await fetchWithTimeout(
-          url,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: authParams.toString(),
-          },
-          {
-            timeoutMs,
-            retryPolicy: 'safe',
-            operationLabel: `Navidrome Subsonic ${endpoint}`,
-          },
-        )
-      : await fetchWithTimeout(
-          `${url}?${authParams.toString()}`,
-          {},
-          {
-            timeoutMs,
-            retryPolicy: 'safe',
-            operationLabel: `Navidrome Subsonic ${endpoint}`,
-          },
-        );
+    // Most Subsonic calls (star, setRating, now-playing scrobble) are idempotent, so 'safe' is the default.
+    // Station create and delete and scrobble submission pass 'never', since a resend would double-apply.
+    const retryPolicy = options.retryPolicy ?? 'safe';
+    const response = await fetchWithTimeout(
+      `${this.baseUrl}/rest${endpoint}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: authParams.toString(),
+      },
+      {
+        timeoutMs: getNavidromeRequestTimeoutMs(),
+        retryPolicy,
+        operationLabel: `Navidrome Subsonic ${endpoint}`,
+        nonIdempotent: retryPolicy === 'never',
+      },
+    );
 
     if (!response.ok) {
-      throw new Error(ErrorFormatter.subsonicApi(response));
+      throw new Error(ErrorFormatter.subsonicApi(endpoint, response));
     }
 
     let data: unknown;
@@ -234,20 +218,22 @@ export class NavidromeClient {
   /**
    * Reject endpoints that could escape the `/api` path or hit a different
    * host. Tools build endpoints from constants + interpolated IDs, so an
-   * endpoint with `..` segments or an absolute URL is always a bug —
-   * either a loose schema or a hand-built string that bypassed validation.
+   * endpoint with `..` segments or an absolute URL is always a bug, either a
+   * loose schema or a hand-built string that bypassed validation. The
+   * traversal check covers the path component only, since a query string
+   * cannot traverse and legitimately carries text such as an ellipsis.
    */
   private assertSafeEndpoint(endpoint: string): void {
-    if (endpoint.includes('..')) {
+    const queryStart = endpoint.indexOf('?');
+    const path = queryStart === -1 ? endpoint : endpoint.slice(0, queryStart);
+    if (path.includes('..')) {
       throw new Error('Endpoint must not contain path-traversal segments');
     }
-    // URL-encoded traversal (`%2e%2e`) survives the literal check above but
-    // Node normalizes it back to `..` before the request leaves the process.
-    // Decode and re-check; a malformed escape sequence is itself suspect, so
-    // reject it rather than letting it through.
+    // Node normalizes URL-encoded traversal (`%2e%2e`) back to `..`, so decode
+    // and re-check. A malformed escape sequence is itself suspect.
     let decoded: string;
     try {
-      decoded = decodeURIComponent(endpoint);
+      decoded = decodeURIComponent(path);
     } catch {
       throw new Error('Endpoint contains a malformed percent-encoding sequence');
     }
@@ -302,17 +288,18 @@ export class NavidromeClient {
         timeoutMs: getNavidromeRequestTimeoutMs(),
         retryPolicy: isIdempotent ? 'safe' : 'never',
         operationLabel: `Navidrome ${method} ${endpoint}`,
+        nonIdempotent: !isIdempotent,
       },
     );
   }
 
-  private async parseResponse<T>(response: Response): Promise<T> {
+  private async parseResponse<T>(response: Response, label: string): Promise<T> {
     if (!response.ok) {
       // Cap the raw error body before it flows to the LLM via toolExecution: a
       // proxy's large HTML 5xx page (server version/OS/path info) or a 4xx body
       // referencing internal paths would otherwise reach the context unbounded.
       const errorText = (await response.text()).slice(0, 512);
-      throw new Error(ErrorFormatter.httpRequest('navidrome API', response, errorText));
+      throw new Error(ErrorFormatter.httpRequest(label, response, errorText));
     }
 
     const contentType = response.headers.get('content-type');
@@ -321,7 +308,7 @@ export class NavidromeClient {
       try {
         return JSON.parse(text) as T;
       } catch {
-        throw new Error(ErrorFormatter.httpRequest('navidrome API', response, 'invalid JSON in response body'));
+        throw new Error(ErrorFormatter.httpRequest(label, response, 'invalid JSON in response body'));
       }
     }
 
@@ -335,16 +322,11 @@ export class NavidromeClient {
       try {
         return JSON.parse(text) as T;
       } catch {
-        // Body looked like JSON but didn't parse — fall through to text.
+        // The body looked like JSON but didn't parse, so fall through to text.
       }
     }
-    // KNOWN LATENT TRAP (left as-is per maintainer decision): this cast is only
-    // sound when `T` is `string` or `unknown` — i.e. callers that genuinely want
-    // the raw text/plain body (M3U export, etc.). A future typed caller such as
-    // `request<AlbumDTO[]>()` whose endpoint returns a non-JSON text/plain body
-    // would silently receive a raw string typed as `AlbumDTO[]`, with no parse
-    // error. No current caller hits that path; revisit if a typed JSON caller
-    // starts relying on the text/plain fallthrough.
+    // The cast is sound only when T is string or unknown, for callers that want
+    // a raw text/plain body such as M3U export.
     return text as T;
   }
 }

@@ -26,6 +26,8 @@ import type { StateChangeEvent } from '../../../src/services/playback/playback-e
 interface FakeEntry {
   index: number;
   songId: string | null;
+  entryId?: number;
+  isCurrent?: boolean;
   duration?: number;
 }
 
@@ -46,8 +48,8 @@ function createFakeEngine(): FakeEngine {
         if (handler === h) handler = null;
       };
     },
-    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async ScrobbleEngine.getPlaylist interface
-    async getPlaylist(): Promise<FakeEntry[]> {
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async ScrobbleEngine.getQueue interface
+    async getQueue(): Promise<FakeEntry[]> {
       return playlist;
     },
     getCachedProperty(name): unknown {
@@ -113,7 +115,6 @@ describe('ScrobbleTracker', () => {
     expect(client.subsonicRequest).toHaveBeenCalledWith(
       '/scrobble',
       { id: 'song-A', submission: 'false' },
-      { method: 'POST' },
     );
   });
 
@@ -160,7 +161,7 @@ describe('ScrobbleTracker', () => {
     expect(call?.[1]).toMatchObject({ id: 'song-A', submission: 'true' });
     expect(typeof call?.[1]?.time).toBe('string');
     expect(Number(call?.[1]?.time)).toBeGreaterThan(0);
-    expect(call?.[2]).toEqual({ method: 'POST' });
+    expect(call?.[2]).toEqual({ retryPolicy: 'never' });
   });
 
   it('submits at 4 minutes for long tracks (cap)', async () => {
@@ -328,7 +329,7 @@ describe('ScrobbleTracker', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     client.subsonicRequest.mockClear();
-    // Same playlist-pos value emitted again (e.g. jumpToPlaylistEntry to
+    // Same playlist-pos value emitted again (e.g. jumpToQueueEntry to
     // the current index, or mpv re-emit). Must NOT fire another now-playing.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
@@ -368,10 +369,159 @@ describe('ScrobbleTracker', () => {
     expect(client.subsonicRequest).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'mpv entry ids',
+      [
+        { index: 0, songId: 'X', entryId: 1, duration: 200 },
+        { index: 1, songId: 'A', entryId: 2, duration: 200 },
+      ],
+      [{ index: 0, songId: 'A', entryId: 2, duration: 200 }],
+    ],
+    [
+      'the songId fallback',
+      [
+        { index: 0, songId: 'X', duration: 200 },
+        { index: 1, songId: 'A', duration: 200 },
+      ],
+      [{ index: 0, songId: 'A', duration: 200 }],
+    ],
+  ])('submits a play once when a queue edit shifts its index after submission (%s)', async (_label, before, after) => {
+    engine.setPlaylist(before);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    // Removing the entry before the playing one moves it from index 1 to 0.
+    engine.setPlaylist(after);
+    engine.setCached('playlist-pos', 0);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    engine.fire({ kind: 'queue' });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 102 });
+    await flush();
+
+    const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+    expect(params.filter((p) => p.submission === 'true')).toHaveLength(1);
+    expect(params.filter((p) => p.submission === 'false')).toHaveLength(1);
+  });
+
+  it('submits a play once when the queue event for an index shift lands before playlist-pos', async () => {
+    engine.setPlaylist([
+      { index: 0, songId: 'X', entryId: 1, duration: 200 },
+      { index: 1, songId: 'A', entryId: 2, duration: 200, isCurrent: true },
+      { index: 2, songId: 'B', entryId: 3, duration: 200 },
+    ]);
+    engine.setCached('playlist-pos', 1);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    // The playlist-pos cache still names index 1 when the queue event fires.
+    engine.setPlaylist([
+      { index: 0, songId: 'A', entryId: 2, duration: 200, isCurrent: true },
+      { index: 1, songId: 'B', entryId: 3, duration: 200 },
+    ]);
+    engine.fire({ kind: 'queue' });
+    await flush();
+    engine.setCached('playlist-pos', 0);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 102 });
+    await flush();
+
+    const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+    expect(params.filter((p) => p.submission === 'true')).toHaveLength(1);
+    expect(params.filter((p) => p.submission === 'false').map((p) => p.id)).toEqual(['A']);
+  });
+
+  it('counts a new mpv entry of the same song as a new play', async () => {
+    engine.setPlaylist([{ index: 0, songId: 'A', entryId: 1, duration: 200 }]);
+    engine.setCached('playlist-pos', 0);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    // A replace-enqueue of the same song keeps index 0 but creates a new mpv entry.
+    engine.setPlaylist([{ index: 0, songId: 'A', entryId: 5, duration: 200 }]);
+    engine.fire({ kind: 'queue' });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+    expect(params.filter((p) => p.submission === 'true')).toHaveLength(2);
+  });
+
+  it('a re-attach to a new mpv at a different index counts neither play, then tracks the next one', async () => {
+    engine.setPlaylist([
+      { index: 0, songId: 'X', entryId: 1, duration: 200 },
+      { index: 1, songId: 'Y', entryId: 2, duration: 200 },
+      { index: 2, songId: 'A', entryId: 3, duration: 200 },
+    ]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 2 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 20 });
+    await flush();
+    client.subsonicRequest.mockClear();
+
+    // The previous mpv exited and another process started a new one playing B.
+    engine.setPlaylist([
+      { index: 0, songId: 'B', entryId: 1, duration: 200 },
+      { index: 1, songId: 'C', entryId: 2, duration: 200 },
+    ]);
+    engine.fire({ kind: 'attach' });
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    engine.fire({ kind: 'property', name: 'time-pos', data: 150 });
+    engine.fire({ kind: 'property', name: 'duration', data: 200 });
+    await flush();
+    expect(client.subsonicRequest).not.toHaveBeenCalled();
+
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    const params = client.subsonicRequest.mock.calls.map((c) => c[1] as Record<string, string>);
+    expect(params.map((p) => [p.id, p.submission])).toEqual([['C', 'false'], ['C', 'true']]);
+  });
+
+  it('a re-attach to a new mpv at the same index does not submit the previous mpv\'s song', async () => {
+    engine.setPlaylist([{ index: 0, songId: 'A', entryId: 1, duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 20 });
+    await flush();
+    client.subsonicRequest.mockClear();
+
+    // Entry ids restart per mpv instance, so the new song B reuses entry id 1.
+    engine.setPlaylist([{ index: 0, songId: 'B', entryId: 1, duration: 200 }]);
+    engine.fire({ kind: 'attach' });
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    engine.fire({ kind: 'property', name: 'duration', data: 200 });
+    engine.fire({ kind: 'property', name: 'time-pos', data: 150 });
+    await flush();
+    expect(client.subsonicRequest).not.toHaveBeenCalled();
+  });
+
+  it('a playlist read begun before a re-attach does not start tracking after it', async () => {
+    let resolveRead!: (entries: FakeEntry[]) => void;
+    engine.getQueue = (): Promise<FakeEntry[]> => new Promise((res) => { resolveRead = res; });
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    engine.fire({ kind: 'attach' });
+    resolveRead([{ index: 0, songId: 'A', entryId: 1, duration: 200 }]);
+    await flush();
+    engine.fire({ kind: 'property', name: 'time-pos', data: 150 });
+    await flush();
+    expect(client.subsonicRequest).not.toHaveBeenCalled();
+  });
+
   it('does not corrupt state when playlist reads resolve out of order', async () => {
-    // Two rapid playlist-pos transitions; the first getPlaylist resolves
+    // Two rapid playlist-pos transitions. The first getQueue resolves
     // AFTER the second has already completed. The stale resolution must
-    // not overwrite state — the generation token catches it.
+    // not overwrite state. The generation token catches it.
     let resolveFirst!: (entries: FakeEntry[]) => void;
     const firstPromise = new Promise<FakeEntry[]>((res) => {
       resolveFirst = res;
@@ -382,8 +532,8 @@ describe('ScrobbleTracker', () => {
       { index: 1, songId: 'B', duration: 200 },
     ];
     engine.setPlaylist(playlist);
-    // Override getPlaylist to defer the first call only.
-    engine.getPlaylist = async (): Promise<FakeEntry[]> => {
+    // Override getQueue to defer the first call only.
+    engine.getQueue = async (): Promise<FakeEntry[]> => {
       callCount++;
       if (callCount === 1) return firstPromise;
       return playlist;

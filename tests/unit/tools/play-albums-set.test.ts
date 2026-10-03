@@ -127,7 +127,7 @@ describe('album-set playback', () => {
       total: 3,
     });
 
-    const result = await playAlbumsSearch(client as never, {} as never, { genre: 'Rock', mode: 'append' });
+    const result = await playAlbumsSearch(client as never, { genre: 'Rock', mode: 'append' });
 
     expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
     expect(enqueuedIds()).toEqual(['alpha-t1', 'alpha-t2', 'beta-t1']);

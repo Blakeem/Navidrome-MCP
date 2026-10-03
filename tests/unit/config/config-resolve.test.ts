@@ -65,6 +65,13 @@ describe('config resolution', () => {
       expect(c.navidromePassword).toBe('p');
     });
 
+    it('trims the Navidrome URL and strips trailing slashes', async () => {
+      for (const url of ['http://host:4533/', ' http://host:4533// ']) {
+        write({ navidrome: { ...BASE.navidrome, url } });
+        expect((await loadConfig()).navidromeUrl).toBe('http://host:4533');
+      }
+    });
+
     it('treats an empty defaultLibraryIds as undefined (all libraries)', async () => {
       write({ ...BASE, library: { defaultLibraryIds: [] } });
       expect((await loadConfig()).defaultLibraryIds).toBeUndefined();
@@ -111,6 +118,16 @@ describe('config resolution', () => {
 
     it('lets an explicit host win over expose', async () => {
       write({ ...BASE, webui: { expose: true, host: '127.0.0.1' } });
+      expect((await loadConfig()).webui.host).toBe('127.0.0.1');
+    });
+
+    it.each(['0.0.0.0', '::'])('keeps the supported explicit web host %j', async (host) => {
+      write({ ...BASE, webui: { host } });
+      expect((await loadConfig()).webui.host).toBe(host);
+    });
+
+    it.each(['192.168.1.20', '127.0.0.2', 'localhost', '::1'])('falls back to 127.0.0.1 for the unsupported web host %j', async (host) => {
+      write({ ...BASE, webui: { expose: true, host } });
       expect((await loadConfig()).webui.host).toBe('127.0.0.1');
     });
 

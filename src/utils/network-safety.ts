@@ -173,21 +173,6 @@ function isLikelyIpLiteral(host: string): boolean {
 }
 
 /**
- * Shared undici connector that establishes the connection normally (so DNS
- * resolution, the Host header, and TLS SNI all use the original hostname —
- * no IP pinning, so vhost/CDN routing is unaffected) and then inspects the
- * ACTUAL peer the socket connected to. If that address is private/local the
- * socket is destroyed before any request bytes are written.
- *
- * This closes the DNS-rebinding TOCTOU that a pre-fetch `hostResolvesToPrivateIp`
- * check cannot: the pre-check and `fetch()` resolve DNS independently, so a
- * short-TTL domain can answer "public" for the check and "private" for the
- * connection. Here the address we validate IS the address we're connected to,
- * so there is no window between the two.
- */
-const baseConnector = buildConnector({});
-
-/**
  * Marker phrase shared by every private/local refusal message (the dispatcher
  * below and the validator's redirect gate). The recommendation engine matches
  * on it to distinguish a deliberate SSRF refusal from a network hiccup — keep
@@ -196,6 +181,22 @@ const baseConnector = buildConnector({});
  */
 export const PRIVATE_ADDRESS_REFUSAL = 'private/local address';
 
+// The plain connector with no address check, wrapped by privateIpBlockingDispatcher.
+const baseConnector = buildConnector({});
+
+/**
+ * Dispatcher that connects normally (so DNS resolution, the Host header, and
+ * TLS SNI all use the original hostname, with no IP pinning, so vhost/CDN
+ * routing is unaffected) and then inspects the ACTUAL peer the socket
+ * connected to. If that address is private/local the socket is destroyed
+ * before any request bytes are written.
+ *
+ * This closes the DNS-rebinding TOCTOU that a pre-fetch `hostResolvesToPrivateIp`
+ * check cannot: the pre-check and `fetch()` resolve DNS independently, so a
+ * short-TTL domain can answer "public" for the check and "private" for the
+ * connection. Here the address we validate IS the address we're connected to,
+ * so there is no window between the two.
+ */
 const privateIpBlockingDispatcher = new Agent({
   connect(options, callback): void {
     baseConnector(options, (err, socket) => {
@@ -215,6 +216,25 @@ const privateIpBlockingDispatcher = new Agent({
   },
 });
 
+// Guards cause-chain walks against circular chains.
+const MAX_CAUSE_DEPTH = 8;
+
+/**
+ * Marker phrase for a response undici's strict parser rejected. The recommendation engine
+ * matches on it, since that failure is deterministic and a retry never helps.
+ */
+export const NON_STANDARD_HTTP_RESPONSE = 'server sent a non-standard HTTP/ICY response';
+
+/** True when the cause chain holds undici's HTTPParserError, which carries no `code` to match on. */
+export function isHttpParserError(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH && current instanceof Error; depth++) {
+    if (current.name === 'HTTPParserError') return true;
+    current = current.cause;
+  }
+  return false;
+}
+
 /**
  * Best human-readable message for a failed fetch. undici wraps every
  * connection-level failure — including the private-IP refusal from the
@@ -230,8 +250,8 @@ export function describeFetchError(err: unknown): string {
 
   let best = err.message;
   let cause: unknown = err.cause;
-  // Depth cap guards against circular cause chains; deeper = more specific.
-  for (let depth = 0; depth < 8 && cause instanceof Error; depth++) {
+  // Deeper causes are more specific.
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cause instanceof Error; depth++) {
     if (cause.message !== '') {
       best = cause.message;
     } else if (cause instanceof AggregateError) {

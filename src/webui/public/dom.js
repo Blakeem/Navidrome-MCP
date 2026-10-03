@@ -2,6 +2,8 @@
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
+export const ICON_PLAY = 'M8 5v14l11-7z';
+
 export function byId(id) {
   return document.getElementById(id);
 }

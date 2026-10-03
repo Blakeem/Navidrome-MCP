@@ -145,7 +145,7 @@ export async function getTestSongIds(count: number): Promise<string[]> {
     throw new Error('getTestSongIds: count must be >= 1');
   }
   const ctx = await setupClientAndConfig();
-  const result = await searchSongs(ctx.client, ctx.config, {
+  const result = await searchSongs(ctx.client, {
     query: '',
     sort: 'random',
     limit: count,
@@ -174,7 +174,7 @@ export async function getTestAlbumIds(count: number): Promise<string[]> {
 
   // Over-fetch and filter for non-empty albums. Most albums in a real
   // library are non-empty so over-fetch ratio of 2x is plenty.
-  const result = await searchAlbums(ctx.client, ctx.config, {
+  const result = await searchAlbums(ctx.client, {
     query: '',
     sort: 'random',
     limit: Math.max(count * 2, 10),
@@ -295,8 +295,8 @@ export async function playAlbums(args: {
 export async function playAlbumsSearch(
   args: Record<string, unknown>
 ): Promise<Awaited<ReturnType<typeof playAlbumsSearchTool>>> {
-  const { client, config } = await ctx();
-  return playAlbumsSearchTool(client, config, args);
+  const { client } = await ctx();
+  return playAlbumsSearchTool(client, args);
 }
 
 /**
@@ -307,8 +307,8 @@ export async function playAlbumsSearch(
 export async function playSongsSearch(
   args: Record<string, unknown>
 ): Promise<Awaited<ReturnType<typeof playSongsSearchTool>>> {
-  const { client, config } = await ctx();
-  return playSongsSearchTool(client, config, args);
+  const { client } = await ctx();
+  return playSongsSearchTool(client, args);
 }
 
 export async function getPlayQueue(): Promise<Awaited<ReturnType<typeof getPlayQueueTool>>> {

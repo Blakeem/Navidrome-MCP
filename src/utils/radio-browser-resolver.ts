@@ -16,39 +16,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/**
- * Resolves a working Radio Browser API base URL via SRV record lookup.
- *
- * Per Radio Browser docs (https://api.radio-browser.info/), the canonical way
- * to find a live mirror is to resolve the `_api._tcp.radio-browser.info` SRV
- * record and pick one randomly. Hardcoding `de1.api.radio-browser.info` makes
- * us dependent on a single upstream — when `de1` is in maintenance every
- * radio-discovery tool fails.
- *
- * Strategy:
- *   1. If RADIO_BROWSER_BASE env var was explicitly set (i.e. the user picked
- *      a specific mirror) → respect that override, never hit DNS.
- *   2. Otherwise, lazily resolve the SRV record and cache the picked host
- *      for the rest of the process lifetime (1 hour TTL, refreshed on miss).
- *   3. If SRV lookup fails (DNS issues, sandboxed env, etc.) → fall back to
- *      the historical hardcoded `de1.api.radio-browser.info` so we don't
- *      take down radio discovery just because DNS is broken.
- *
- * The result is a plain `https://<host>` base URL — Radio Browser API runs
- * on standard HTTPS port 443 across every mirror, so the SRV port field is
- * informational only.
- */
+// Resolves a Radio Browser mirror from the `_api._tcp.radio-browser.info` SRV record, unless settings.json
+// `features.radioBrowserBase` pins one. An SRV failure caches RADIO_BROWSER_FALLBACK_BASE for CACHE_TTL_MS until a request failure invalidates it.
 
 import { resolveSrv } from 'node:dns/promises';
 import { logger } from './logger.js';
 
-/** Hardcoded fallback when SRV resolution fails. Matches old behavior. */
+/** Mirror used when SRV resolution fails. */
 export const RADIO_BROWSER_FALLBACK_BASE = 'https://de1.api.radio-browser.info';
 
-/** SRV record name documented by Radio Browser. */
 const SRV_NAME = '_api._tcp.radio-browser.info';
 
-/** Cache TTL — 1 hour. Mirrors don't churn often, refresh after this. */
+// Mirrors rarely churn, so a picked mirror is kept for an hour.
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
 interface CacheEntry {
@@ -58,14 +37,11 @@ interface CacheEntry {
 
 let cached: CacheEntry | null = null;
 let inflight: Promise<string> | null = null;
-// Bumped by every invalidation. A resolution captures the generation it started
-// under and only writes to `cached` if the generation still matches — so an
-// invalidation that races an in-flight resolution wins.
+// Bumped by every invalidation. A resolution writes `cached` only while its starting
+// generation still matches, so an invalidation that races it wins.
 let cacheGeneration = 0;
 
-/**
- * Reset cached state. Test-only — never called from production code.
- */
+/** Test-only reset of the cached state. */
 export function resetRadioBrowserResolverCache(): void {
   cached = null;
   inflight = null;
@@ -73,20 +49,8 @@ export function resetRadioBrowserResolverCache(): void {
 }
 
 /**
- * Drop the cached mirror so the next `getRadioBrowserBase()` call re-resolves
- * via SRV. Call from production caller error paths when a request fails in a
- * way that suggests the mirror is unhealthy (network errors, 5xx, timeouts).
- * Without this, a mirror that goes into maintenance immediately after caching
- * stays the active pick for up to CACHE_TTL_MS — so every subsequent radio
- * tool call fails for the rest of the cache window. Idempotent and cheap.
- *
- * Also drops any in-flight SRV resolution and bumps a generation token: without
- * the token, a resolution started by a concurrent call would complete after
- * invalidation and re-cache its (now stale) result with a fresh 1h TTL,
- * silently undoing the invalidation. The bumped generation makes that late
- * resolution's cache write a no-op. Clearing `inflight` also forces the next
- * getRadioBrowserBase() to start a fresh resolution. A caller already holding
- * the in-flight promise reference still receives its result.
+ * Drop the cached mirror and any in-flight resolution so the next call re-resolves.
+ * Callers invoke it when a request fails in a way that suggests an unhealthy mirror.
  */
 export function invalidateRadioBrowserBase(): void {
   cached = null;
@@ -95,30 +59,24 @@ export function invalidateRadioBrowserBase(): void {
 }
 
 /**
- * Returns a Radio Browser API base URL.
+ * Returns a Radio Browser API base URL with no trailing slash.
  *
- * @param override - If provided (e.g., user set RADIO_BROWSER_BASE), bypass
- *   SRV resolution entirely and return this value. Lets users pin a specific
- *   mirror for compliance / debugging without DNS round-trips.
+ * @param override - settings.json `features.radioBrowserBase`. A non-empty value skips SRV resolution.
  */
 export async function getRadioBrowserBase(override?: string): Promise<string> {
   if (override !== undefined && override !== '') {
-    return override;
+    // Call sites append `/json/...`, and a doubled slash makes Radio Browser answer 404.
+    return override.replace(/\/+$/, '');
   }
 
-  // Cache hit: return immediately.
   if (cached !== null && cached.expiresAt > Date.now()) {
     return cached.base;
   }
 
-  // In-flight dedup: a parallel call already started resolving; reuse its promise.
   if (inflight !== null) {
     return inflight;
   }
 
-  // Snapshot the generation this resolution starts under; if an invalidation
-  // bumps it mid-flight, the writes below become no-ops so we don't re-cache a
-  // mirror that was just invalidated.
   const gen = cacheGeneration;
   const resolution = resolveBaseFromSrv()
     .then((base) => {
@@ -127,22 +85,8 @@ export async function getRadioBrowserBase(override?: string): Promise<string> {
       }
       return base;
     })
-    .catch((error: unknown) => {
-      // Only DNS failures land here — resolveBaseFromSrv() catches its own
-      // errors and returns the fallback. This catch is belt-and-suspenders
-      // for unexpected resolver bugs; cache the fallback briefly so we don't
-      // hammer DNS on every call when something is very wrong.
-      logger.warn('Radio Browser SRV resolution threw unexpectedly; using fallback', error);
-      if (gen === cacheGeneration) {
-        cached = { base: RADIO_BROWSER_FALLBACK_BASE, expiresAt: Date.now() + CACHE_TTL_MS };
-      }
-      return RADIO_BROWSER_FALLBACK_BASE;
-    })
     .finally(() => {
-      // Only clear the shared var when it still points at THIS chain. An
-      // invalidation (invalidateRadioBrowserBase) may have nulled it and a
-      // newer call started its own resolution; nulling unconditionally would
-      // clobber that newer inflight and defeat the dedup during a retry storm.
+      // A newer resolution may own `inflight` after an invalidation, so only this chain's own slot is cleared.
       if (inflight === resolution) {
         inflight = null;
       }
@@ -160,20 +104,17 @@ async function resolveBaseFromSrv(): Promise<string> {
       return RADIO_BROWSER_FALLBACK_BASE;
     }
 
-    // Pick uniformly at random. Radio Browser docs note all mirrors are
-    // equivalent, so RFC 2782 priority/weight selection is over-engineering.
+    // Radio Browser documents every mirror as equivalent, so RFC 2782 priority and weight are ignored.
     const picked = records[Math.floor(Math.random() * records.length)];
     if (picked === undefined) {
-      // Defensive — Math.random()*length is always a valid index when length>0.
       return RADIO_BROWSER_FALLBACK_BASE;
     }
 
-    // Strip trailing dot if DNS resolver returned the FQDN form.
+    // DNS can return the FQDN form with a trailing dot.
     const host = picked.name.replace(/\.$/, '');
     return `https://${host}`;
   } catch (error: unknown) {
-    // DNS lookup failed entirely (no network, sandboxed env, broken DNS).
-    // Log at debug — this is recoverable and we don't want to spam logs.
+    // No network or broken DNS is recoverable, so it logs at debug.
     logger.debug('Radio Browser SRV lookup failed, using fallback', error);
     return RADIO_BROWSER_FALLBACK_BASE;
   }

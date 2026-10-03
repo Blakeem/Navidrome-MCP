@@ -26,10 +26,9 @@ import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
 /**
- * Raster image MIME types we'll proxy + cache. SVG (`image/svg+xml`) is
- * intentionally excluded: it can embed script, so a long-cached SVG served
- * same-origin would be a stored-XSS risk. Anything outside this set is
- * treated as an upstream error rather than forwarded.
+ * Raster image MIME types we'll proxy and cache for 24h. A non-image body (e.g. a text/html
+ * error page) or an SVG, which can embed script, would otherwise become a long-lived
+ * same-origin stored-XSS vector. Anything outside this set is treated as an upstream error.
  */
 const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set([
   'image/png',
@@ -49,19 +48,17 @@ function parseCoverSize(rawSize: string): string | null {
 }
 
 /**
- * GET /api/cover/:id — Proxy the Subsonic `getCoverArt.view` endpoint.
+ * GET /api/cover/:id proxies the Subsonic `getCoverArt.view` endpoint.
  *
- * Credentials stay server-side (built per-request with a fresh salt; the
- * browser never sees a Subsonic auth token). The response body is streamed
+ * Credentials stay server-side (built per-request with a fresh salt), so the
+ * browser never sees a Subsonic auth token. The response body is streamed
  * through unmodified, preserving Navidrome's choice of image encoding so
  * the browser can pick the best decoder.
  *
- * `id` is validated against the Navidrome ID character set (`[A-Za-z0-9_-]+`)
- * before we even reach for the network — that pattern is also what `IdSchema`
- * enforces elsewhere in the codebase, so a request with `..` or path
- * separators is rejected as 400 with no upstream call. The Subsonic endpoint
- * accepts both album and song IDs (it returns the album-level art for either),
- * so we accept either kind without disambiguating.
+ * `id` is validated with `IdSchema` before any upstream call, so a request with
+ * `..` or path separators is rejected as 400 with no network I/O. The Subsonic
+ * endpoint accepts both album and song IDs (it returns the album-level art for
+ * either), so either kind is accepted without disambiguating.
  *
  * The optional `size` lets a list view fetch a thumbnail instead of full-resolution art.
  */
@@ -89,8 +86,7 @@ export async function handleCover(
     config.navidromePassword,
     size === null ? { id } : { id, size },
   );
-  const base = config.navidromeUrl.replace(/\/+$/, '');
-  const url = `${base}/rest/getCoverArt.view?${params.toString()}`;
+  const url = `${config.navidromeUrl}/rest/getCoverArt.view?${params.toString()}`;
 
   let upstream: Response;
   try {
@@ -104,9 +100,7 @@ export async function handleCover(
       },
     );
   } catch (err) {
-    // Network failure reaching Navidrome — surface a discreet 502 so the
-    // UI can render a placeholder without making the user think the server
-    // itself is dead.
+    // A discreet 502 lets the UI render a placeholder without making the user think the server itself is dead.
     logger.debug(
       `webui: cover proxy fetch failed for id=${id}: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -115,23 +109,13 @@ export async function handleCover(
   }
 
   if (!upstream.ok || upstream.body === null) {
-    // Navidrome returns 404 for unknown IDs; pass it through.
+    // Navidrome returns 404 for unknown IDs, so that status passes through.
     writeError(res, upstream.status === 404 ? 404 : 502, `Upstream returned ${upstream.status}`);
     upstream.body?.cancel().catch(() => undefined);
     return;
   }
 
-  // Pass through the content type Navidrome chose (image/jpeg, image/png, …)
-  // and instruct the browser to cache aggressively — album art rarely changes
-  // and re-fetching it on every UI snapshot would be wasteful, especially on
-  // a phone.
-  //
-  // MIME allowlist (BEFORE the long Cache-Control): the upstream type is
-  // forwarded verbatim and cached for 24h, so a non-image body (e.g. a
-  // text/html error page) would otherwise become a long-lived, cacheable
-  // stored-XSS vector. Reject anything that isn't a known raster image type.
-  // svg+xml is deliberately excluded — SVG can carry inline script, so even
-  // though Navidrome shouldn't emit it for cover art, we don't proxy it.
+  // Album art rarely changes, so a long browser cache saves a phone re-fetching it on every snapshot.
   const rawType = upstream.headers.get('content-type') ?? '';
   const baseType = rawType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
   if (!ALLOWED_IMAGE_TYPES.has(baseType)) {

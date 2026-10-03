@@ -23,8 +23,11 @@ export function currentQueue() {
 }
 
 // An idle or stopped engine has no current row, whatever queueIndex it last reported.
+// mpv idles at queueIndex -1 after a clear or the end of the queue.
 export function playingIndex(np) {
-  return np !== null && np.engineRunning && typeof np.queueIndex === 'number' ? np.queueIndex : null;
+  return np !== null && np.engineRunning && typeof np.queueIndex === 'number' && np.queueIndex >= 0
+    ? np.queueIndex
+    : null;
 }
 
 // The now-playing snapshot carries no songId, so the cover art and the lyrics read it from the queue row.

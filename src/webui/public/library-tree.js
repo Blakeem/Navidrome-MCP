@@ -1,14 +1,14 @@
 // Rows of the Play Music dialog. An artist row expands into its albums and an album row into its songs.
 
 import { getJson } from './api.js';
-import { buildIcon } from './dom.js';
+import { buildIcon, ICON_PLAY } from './dom.js';
 import { FAVORITE_SOURCES } from './favorite-sources.js';
 import { playLibraryItem } from './library-play.js';
 import { playMode } from './play-toolbar.js';
+import { formatTime } from './time-format.js';
 
 const ICON_NOTE = 'M12 3v10.55A4 4 0 1 0 14 17V7h4V3Z';
 const ICON_PLUS = 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z';
-const ICON_PLAY = 'M8 5v14l11-7z';
 const ICON_CHEVRON = 'M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z';
 const ICON_HEART = 'm12 21.35-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z';
 const CHILD_SOURCES = {
@@ -73,6 +73,11 @@ function countLabel(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
+// The numeric seconds go through formatTime, so a row reads like the queue and the transport past one hour.
+function durationLabel(seconds) {
+  return typeof seconds === 'number' && seconds > 0 ? formatTime(seconds) : '';
+}
+
 // Artist and playlist cover ids carry the `ar-` and `pl-` prefixes, and a song shows its album's cover.
 // A nested row omits what its parent row already shows: an album its artist, a song its album and cover.
 function libraryRowFields(kind, item, depth) {
@@ -82,7 +87,7 @@ function libraryRowFields(kind, item, depth) {
     return { name: favorite.name, meta: [countLabel(item[favorite.countKey], favorite.noun)], coverId: null, glyph: ICON_HEART, thumb: true };
   }
   if (kind === 'playlist') {
-    return { name: item.name ?? '', meta: [countLabel(item.songCount, 'song'), item.durationFormatted], coverId: `pl-${item.id}`, thumb: true };
+    return { name: item.name ?? '', meta: [countLabel(item.songCount, 'song'), durationLabel(item.duration)], coverId: `pl-${item.id}`, thumb: true };
   }
   if (kind === 'artist') {
     return { name: item.name ?? '', meta: [countLabel(item.albumCount, 'album')], coverId: `ar-${item.id}`, thumb: true };
@@ -95,9 +100,9 @@ function libraryRowFields(kind, item, depth) {
     return { name: item.name ?? '', meta: [item.artist, countLabel(item.songCount, 'song')], coverId: item.id, thumb: true };
   }
   if (nested) {
-    return { name: item.title ?? '', meta: [item.durationFormatted], coverId: null, thumb: false };
+    return { name: item.title ?? '', meta: [durationLabel(item.duration)], coverId: null, thumb: false };
   }
-  return { name: item.title ?? '', meta: [item.artist, item.album, item.durationFormatted], coverId: item.albumId, thumb: true };
+  return { name: item.title ?? '', meta: [item.artist, item.album, durationLabel(item.duration)], coverId: item.albumId, thumb: true };
 }
 
 function buildThumbPlaceholder(glyph = ICON_NOTE) {

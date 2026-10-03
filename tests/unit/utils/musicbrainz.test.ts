@@ -33,6 +33,17 @@ function jsonResponse(body: unknown): Response {
   } as unknown as Response;
 }
 
+function errorResponse(status: number, statusText: string): Response {
+  return {
+    ok: false,
+    status,
+    statusText,
+    json: () => Promise.resolve({}),
+    text: () => Promise.resolve(''),
+    headers: new Headers(),
+  } as unknown as Response;
+}
+
 function artistSearchBody(artists: Array<{ id: string; name: string; score: number; disambiguation?: string }>): unknown {
   return { artists };
 }
@@ -161,6 +172,16 @@ describe('lookupMbArtist', () => {
     const match = await lookupMbArtist('df1356d3-3c66-48bc-ac79-475c6cf76266', makeTestConfig());
     expect(match?.name).toBe('GUNSHIP');
     expect(match?.disambiguation).toBe('synthwave');
+  });
+
+  it('returns null when MB answers 404 for an unknown MBID', async () => {
+    global.fetch = vi.fn().mockResolvedValue(errorResponse(404, 'Not Found')) as unknown as typeof fetch;
+    expect(await lookupMbArtist('00000000-0000-4000-8000-000000000000', makeTestConfig())).toBeNull();
+  });
+
+  it('still throws when MB answers 503', async () => {
+    global.fetch = vi.fn().mockResolvedValue(errorResponse(503, 'Service Unavailable')) as unknown as typeof fetch;
+    await expect(lookupMbArtist('mbid-x', makeTestConfig())).rejects.toThrow(/MusicBrainz/);
   });
 });
 
@@ -316,6 +337,16 @@ describe('lookupMbReleaseGroup', () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({ title: 'No Id' })) as unknown as typeof fetch;
     expect(await lookupMbReleaseGroup('rg', makeTestConfig())).toBeNull();
   });
+
+  it('returns null when MB answers 404, as for a release MBID', async () => {
+    global.fetch = vi.fn().mockResolvedValue(errorResponse(404, 'Not Found')) as unknown as typeof fetch;
+    expect(await lookupMbReleaseGroup('release-mbid-not-rg', makeTestConfig())).toBeNull();
+  });
+
+  it('still throws when MB answers 503', async () => {
+    global.fetch = vi.fn().mockResolvedValue(errorResponse(503, 'Service Unavailable')) as unknown as typeof fetch;
+    await expect(lookupMbReleaseGroup('rg', makeTestConfig())).rejects.toThrow(/MusicBrainz/);
+  });
 });
 
 describe('searchMbReleaseGroup', () => {
@@ -442,6 +473,29 @@ describe('browseMbReleaseTracklist', () => {
     expect(list?.releaseMbid).toBe('partial');
     expect(list?.date).toBe('2018');
     expect(list?.country).toBe('XW');
+  });
+
+  it('treats an empty-string date as undated, so the dated original wins', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      releases: [
+        release('undated-reissue', { date: '', country: '' }),
+        release('original', { date: '1969-09-26' }),
+      ],
+    })) as unknown as typeof fetch;
+
+    const list = await browseMbReleaseTracklist('rg', makeTestConfig());
+    expect(list?.releaseMbid).toBe('original');
+    expect(list?.date).toBe('1969-09-26');
+  });
+
+  it('reports an empty-string date and country as null', async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse({
+      releases: [release('only', { date: '', country: '' })],
+    })) as unknown as typeof fetch;
+
+    const list = await browseMbReleaseTracklist('rg', makeTestConfig());
+    expect(list?.date).toBeNull();
+    expect(list?.country).toBeNull();
   });
 
   it('returns null when no release has a usable tracklist', async () => {

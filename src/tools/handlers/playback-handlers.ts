@@ -21,19 +21,16 @@ import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
-import { logger } from '../../utils/logger.js';
-import { ensureWebForPlayback } from '../../web/spawn.js';
+import { ALBUM_FILTER_PROPERTIES, SONG_FILTER_PROPERTIES } from './search-handlers.js';
+import { respawnWebForPlay } from './respawn-on-play.js';
 
 /**
- * Tools that START playback by loading new content into the queue. Before any
- * of these runs, we re-ensure the web player is up (respawn-on-play): the user
- * may have powered the player off mid-session — which also quit mpv — and a new
- * play should bring back the controls surface that owns and scrobbles it. This
- * is gated internally on `webui.enabled`, so with the UI disabled it no-ops and
- * the MCP process keeps owning mpv. Queue NAVIGATORS (next/previous/resume/
- * play_queue_index) are deliberately excluded — they operate on mpv's in-memory
- * queue, which is empty after a fresh respawn, so they report an empty queue
- * instead of resurrecting the player (see their impls in playback.ts).
+ * Tools that START playback by loading new content into the queue. The user may have powered the web
+ * player off, which also quits mpv, so each starter first respawns it (a no-op when `webui.enabled` is off).
+ * play_radio_station is also a starter and respawns in radio-handlers.ts.
+ * Queue navigators (next/previous/resume/play_queue_index) and queue mutators (clear_play_queue/
+ * shuffle_play_queue/move_in_play_queue/remove_from_play_queue) are excluded. mpv's queue is empty
+ * after a respawn, so they attach only and never resurrect the player.
  */
 const PLAYBACK_STARTERS = new Set([
   'play_songs',
@@ -65,14 +62,8 @@ import {
   playQueueIndex,
 } from '../playback.js';
 
-// Upper bound for the `year` filter, mirroring EnhancedSearchSchema in
-// src/schemas/common.ts (`y <= new Date().getFullYear() + 1`). Computed once at
-// module load; the published JSON Schema `maximum` can lag the Zod refine by one
-// day across a New-Year boundary if the process runs past midnight Dec 31 — an
-// accepted edge, since Zod remains the authoritative validator.
-const MAX_YEAR = new Date().getFullYear() + 1;
+const QUEUE_MODE_DESCRIPTION = "'replace' clears the queue and starts playback. 'append' adds to the end without clearing or unpausing. When the queue holds a radio stream, 'append' acts as 'replace': the station is removed, playback starts, and the result carries `demoted: true`. Defaults to 'replace'.";
 
-// Tool definitions for the playback category (Stage 2 + Stage 3 + Stage 4 — 18 tools).
 const tools: Tool[] = [
   {
     name: 'pause',
@@ -85,7 +76,7 @@ const tools: Tool[] = [
   },
   {
     name: 'resume',
-    description: 'Resume local audio playback (mpv). Reports nothing to resume when no playback is active (does not start mpv) — use a play tool to begin.',
+    description: 'Resume local audio playback (mpv). Reports nothing to resume when no playback is active (does not start mpv). Use a play tool to begin.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -118,7 +109,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_songs',
-    description: "Play one or many songs through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback; `mode: 'append'` adds to the end of the queue without clearing or unpausing. `shuffle: true` randomizes only the new batch before queueing.",
+    description: "Play one or many songs through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end of the queue without clearing or unpausing. `shuffle: true` randomizes only the new batch before queueing.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -131,7 +122,7 @@ const tools: Tool[] = [
         mode: {
           type: 'string',
           enum: ['replace', 'append'],
-          description: "'replace' clears the queue and starts playback; 'append' adds to the end without clearing or unpausing. Defaults to 'replace'.",
+          description: QUEUE_MODE_DESCRIPTION,
           default: 'replace',
         },
         shuffle: {
@@ -146,7 +137,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_albums',
-    description: "Play one or many albums through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback; `mode: 'append'` adds to the end without clearing or unpausing. `shuffle` controls track ordering: 'none' = input album order with natural track order; 'albums' = randomize album order, natural track order within each; 'songs' = fully randomize all tracks across all albums.",
+    description: "Play one or many albums through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end without clearing or unpausing. `shuffle` controls track ordering. 'none' keeps input album order with natural track order. 'albums' randomizes album order with natural track order within each. 'songs' fully randomizes all tracks across all albums.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -159,13 +150,13 @@ const tools: Tool[] = [
         mode: {
           type: 'string',
           enum: ['replace', 'append'],
-          description: "'replace' clears the queue and starts playback; 'append' adds to the end without clearing or unpausing. Defaults to 'replace'.",
+          description: QUEUE_MODE_DESCRIPTION,
           default: 'replace',
         },
         shuffle: {
           type: 'string',
           enum: ['none', 'albums', 'songs'],
-          description: "'none' keeps input order; 'albums' shuffles the album order only; 'songs' flattens all tracks then shuffles. Defaults to 'none'.",
+          description: "'none' keeps input order. 'albums' shuffles the album order only. 'songs' flattens all tracks then shuffles. Defaults to 'none'.",
           default: 'none',
         },
       },
@@ -175,93 +166,21 @@ const tools: Tool[] = [
   },
   {
     name: 'play_albums_search',
-    description: "ONE-SHOT search + enqueue for albums — runs the album search AND pipes every matched album's tracks into mpv in a single call. PREFER THIS over the two-step pattern (`search_albums` or `list_starred_items` → `play_albums`); passing matched IDs back through the LLM wastes context tokens. Accepts every `search_albums` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace') and `shuffle` ('none' | 'albums' | 'songs', default 'none'). Example invocations: `{starred: true, sort: 'random', limit: 5}`; `{genre: 'Jazz', limit: 10}`; `{year: 2024, shuffle: 'songs'}`; `{query: '<artist>', mode: 'append'}`. Use the two-step pattern only when you need to show the album list first before playing.",
+    description: "ONE-SHOT search + enqueue for albums. Runs the album search AND pipes every matched album's tracks into mpv in a single call. PREFER THIS over the two-step pattern (`search_albums` or `list_starred_items` → `play_albums`), since passing matched IDs back through the LLM wastes context tokens. Accepts every `search_albums` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace') and `shuffle` ('none' | 'albums' | 'songs', default 'none'). Example invocations: `{starred: true, sort: 'random', limit: 5}`, `{genre: 'Jazz', limit: 10}`, `{year: 2024, shuffle: 'songs'}`, `{query: '<artist>', mode: 'append'}`. Use the two-step pattern only when you need to show the album list first before playing.",
     inputSchema: {
       type: 'object',
       properties: {
-        query: {
-          type: 'string',
-          description: 'Search terms to look for in album names or artists',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of albums to return',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of albums to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        // Enhanced filtering options
-        genre: {
-          type: 'string',
-          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
-        },
-        mediaType: {
-          type: 'string',
-          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
-        },
-        country: {
-          type: 'string',
-          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
-        },
-        releaseType: {
-          type: 'string',
-          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
-        },
-        recordLabel: {
-          type: 'string',
-          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
-        },
-        mood: {
-          type: 'string',
-          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
-        },
-        // Advanced sorting options
-        sort: {
-          type: 'string',
-          enum: ['name', 'artist', 'year', 'songCount', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
-          description: 'Sort field for results',
-          default: 'name',
-        },
-        order: {
-          type: 'string',
-          enum: ['ASC', 'DESC'],
-          description: 'Sort order',
-          default: 'ASC',
-        },
-        randomSeed: {
-          type: 'number',
-          description: 'Seed for consistent random ordering (use with sort=random)',
-        },
-        // Single-year filter. Navidrome's REST API has no range filter — for
-        // multi-year queries, call the tool once per year and merge client-side.
-        year: {
-          type: 'integer',
-          minimum: 1900,
-          maximum: MAX_YEAR,
-          description: 'Filter to a single year. Albums match if [minYear, maxYear] contains this year; songs match the exact year column.',
-        },
-        // Boolean filters
-        starred: {
-          type: 'boolean',
-          description: 'Filter for starred/favorited items only',
-        },
-        // Playback-specific args
+        ...ALBUM_FILTER_PROPERTIES,
         mode: {
           type: 'string',
           enum: ['replace', 'append'],
-          description: "'replace' clears the queue and starts playback; 'append' adds to the end without clearing or unpausing. Defaults to 'replace'.",
+          description: QUEUE_MODE_DESCRIPTION,
           default: 'replace',
         },
         shuffle: {
           type: 'string',
           enum: ['none', 'albums', 'songs'],
-          description: "'none' keeps search-result album order; 'albums' shuffles the album order only; 'songs' flattens all tracks then shuffles. Defaults to 'none'.",
+          description: "'none' keeps search-result album order. 'albums' shuffles the album order only. 'songs' flattens all tracks then shuffles. Defaults to 'none'.",
           default: 'none',
         },
       },
@@ -271,87 +190,15 @@ const tools: Tool[] = [
   },
   {
     name: 'play_songs_search',
-    description: "ONE-SHOT search + enqueue for songs — runs the song search AND pipes the matched track IDs into mpv in a single call. PREFER THIS over the two-step pattern (`search_songs` or `list_starred_items` → `play_songs`); passing matched IDs back through the LLM wastes context tokens, especially for large result sets. Accepts every `search_songs` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace') and `shuffle` (boolean, default false). Example invocations: `{starred: true, limit: 500}`; `{genre: 'Rock', sort: 'random', limit: 50}`; `{sort: 'rating', order: 'DESC', limit: 100}`; `{sort: 'recently_added', order: 'DESC', limit: 100, shuffle: true}`; `{query: '<artist>', mode: 'append'}`. Use the two-step pattern only when you need to show the song list first before playing.",
+    description: "ONE-SHOT search + enqueue for songs. Runs the song search AND pipes the matched track IDs into mpv in a single call. PREFER THIS over the two-step pattern (`search_songs` or `list_starred_items` → `play_songs`), since passing matched IDs back through the LLM wastes context tokens, especially for large result sets. Accepts every `search_songs` filter (query, genre, mediaType, country, releaseType, recordLabel, mood, year, starred, sort, order, randomSeed) plus `mode` ('replace' | 'append', default 'replace') and `shuffle` (boolean, default false). Example invocations: `{starred: true, limit: 500}`, `{genre: 'Rock', sort: 'random', limit: 50}`, `{sort: 'rating', order: 'DESC', limit: 100}`, `{sort: 'recently_added', order: 'DESC', limit: 100, shuffle: true}`, `{query: '<artist>', mode: 'append'}`. Use the two-step pattern only when you need to show the song list first before playing.",
     inputSchema: {
       type: 'object',
       properties: {
-        query: {
-          type: 'string',
-          description: 'Search terms to look for in song titles, artists, or albums',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of songs to return',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of songs to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        // Enhanced filtering options
-        genre: {
-          type: 'string',
-          description: 'Filter by music genre (e.g., "Rock", "Jazz", "Classical")',
-        },
-        mediaType: {
-          type: 'string',
-          description: 'Filter by media type (e.g., "CD", "Vinyl", "Digital")',
-        },
-        country: {
-          type: 'string',
-          description: 'Filter by release country as an ISO 3166-1 alpha-2 code (e.g., "US", "GB", "DE", "JP"). Use get_filter_options(filterType="countries") to see codes available in your library.',
-        },
-        releaseType: {
-          type: 'string',
-          description: 'Filter by release type (lowercase, MusicBrainz convention: "album", "ep", "single", "compilation", "live", "soundtrack", "demo", "remix", etc.). Use get_filter_options(filterType="releaseTypes") to see values available in your library.',
-        },
-        recordLabel: {
-          type: 'string',
-          description: 'Filter by record label (e.g., "Columbia Records", "Sony Music")',
-        },
-        mood: {
-          type: 'string',
-          description: 'Filter by musical mood (e.g., "Energetic", "Melancholy", "Upbeat")',
-        },
-        // Advanced sorting options
-        sort: {
-          type: 'string',
-          enum: ['title', 'artist', 'album', 'year', 'duration', 'playCount', 'rating', 'recently_added', 'starred_at', 'random'],
-          description: 'Sort field for results',
-          default: 'title',
-        },
-        order: {
-          type: 'string',
-          enum: ['ASC', 'DESC'],
-          description: 'Sort order',
-          default: 'ASC',
-        },
-        randomSeed: {
-          type: 'number',
-          description: 'Seed for consistent random ordering (use with sort=random)',
-        },
-        // Single-year filter. Navidrome's REST API has no range filter — for
-        // multi-year queries, call the tool once per year and merge client-side.
-        year: {
-          type: 'integer',
-          minimum: 1900,
-          maximum: MAX_YEAR,
-          description: 'Filter to a single year. Albums match if [minYear, maxYear] contains this year; songs match the exact year column.',
-        },
-        // Boolean filters
-        starred: {
-          type: 'boolean',
-          description: 'Filter for starred/favorited items only',
-        },
-        // Playback-specific args
+        ...SONG_FILTER_PROPERTIES,
         mode: {
           type: 'string',
           enum: ['replace', 'append'],
-          description: "'replace' clears the queue and starts playback; 'append' adds to the end without clearing or unpausing. Defaults to 'replace'.",
+          description: QUEUE_MODE_DESCRIPTION,
           default: 'replace',
         },
         shuffle: {
@@ -366,7 +213,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_playlist',
-    description: "ONE-SHOT load a Navidrome playlist into the local mpv queue — fetches every track in the playlist AND enqueues them in a single call. PREFER THIS over the two-step pattern (`get_playlist_tracks` → `play_songs`); passing every `mediaFileId` back through the LLM wastes context tokens, especially for long playlists. Takes a `playlistId` (a Navidrome playlist ID, NOT a playlist name); obtain it from the `list_playlists` tool. `mode: 'replace'` (default) clears the queue and starts playback; `mode: 'append'` adds to the end without clearing or unpausing. `shuffle: true` Fisher-Yates the playlist's tracks before queueing. Throws if the playlist has no tracks.",
+    description: "ONE-SHOT load a Navidrome playlist into the local mpv queue. Fetches every track in the playlist AND enqueues them in a single call. PREFER THIS over the two-step pattern (`get_playlist_tracks` → `play_songs`), since passing every `songId` back through the LLM wastes context tokens, especially for long playlists. Takes a `playlistId` (a Navidrome playlist ID, NOT a playlist name). Obtain it from the `list_playlists` tool. `mode: 'replace'` (default) clears the queue and starts playback. `mode: 'append'` adds to the end without clearing or unpausing. `shuffle: true` Fisher-Yates the playlist's tracks before queueing. Throws if the playlist has no tracks.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -378,7 +225,7 @@ const tools: Tool[] = [
         mode: {
           type: 'string',
           enum: ['replace', 'append'],
-          description: "'replace' clears the queue and starts playback; 'append' adds to the end without clearing or unpausing. Defaults to 'replace'.",
+          description: QUEUE_MODE_DESCRIPTION,
           default: 'replace',
         },
         shuffle: {
@@ -393,7 +240,7 @@ const tools: Tool[] = [
   },
   {
     name: 'next',
-    description: 'Skip to the next track in the local mpv playlist. Reports an empty queue when nothing is playing (does not start mpv).',
+    description: 'Skip to the next track in the play queue. Reports an empty queue when nothing is playing (does not start mpv).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -402,7 +249,7 @@ const tools: Tool[] = [
   },
   {
     name: 'previous',
-    description: 'Skip to the previous track in the local mpv playlist. Reports an empty queue when nothing is playing (does not start mpv).',
+    description: 'Skip to the previous track in the play queue. Reports an empty queue when nothing is playing (does not start mpv).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -411,7 +258,7 @@ const tools: Tool[] = [
   },
   {
     name: 'seek',
-    description: "Move the playback position within the current track. `mode: 'absolute'` jumps to the given second; `mode: 'relative'` (default) offsets from the current position (negative seeks backwards). Reports nothing to seek when no playback is active (does not start mpv).",
+    description: "Move the playback position within the current track. `mode: 'absolute'` jumps to the given second. `mode: 'relative'` (default) offsets from the current position (negative seeks backwards). Reports nothing to seek when no playback is active (does not start mpv).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -432,7 +279,7 @@ const tools: Tool[] = [
   },
   {
     name: 'now_playing',
-    description: "Report the current local playback state — title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache; does NOT spawn mpv if it isn't already running. `title`/`artist`/`album` and `duration` are reconciled against Navidrome's per-song metadata (by songId), so they're accurate from the first poll — even during the brief track-load window where mpv would otherwise report the raw stream URL as the title, or a partial VBR duration during its scan.",
+    description: "Report the current local playback state: title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache. Does NOT spawn mpv if it isn't already running. `title`/`artist`/`album` and `duration` are reconciled against Navidrome's per-song metadata (by songId), so they're accurate from the first poll. That holds even during the brief track-load window where mpv would otherwise report the raw stream URL as the title, or a partial VBR duration during its scan.",
     inputSchema: {
       type: 'object',
       properties: {},
@@ -441,7 +288,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_play_queue',
-    description: "Return the current live mpv play queue with track metadata and the index of the currently-playing track. Read-only; does not start mpv if it isn't running.",
+    description: "Return the current live mpv play queue with track metadata and the index of the currently-playing track. Read-only. Does not start mpv if it isn't running.",
     inputSchema: {
       type: 'object',
       properties: {},
@@ -450,7 +297,7 @@ const tools: Tool[] = [
   },
   {
     name: 'clear_play_queue',
-    description: 'Clear the live play queue and stop playback. Use to fully halt audio output.',
+    description: 'Clear the live play queue and stop playback. Use to fully halt audio output. Succeeds without starting mpv when nothing is playing.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -459,7 +306,7 @@ const tools: Tool[] = [
   },
   {
     name: 'shuffle_play_queue',
-    description: 'Randomize the order of items in the current live play queue. Does not change membership. The currently-playing track keeps playing (it is not restarted) and is moved to the top of the queue; the rest of the queue is shuffled around it.',
+    description: 'Randomize the order of items in the current live play queue. Does not change membership. The currently-playing track keeps playing (it is not restarted) and is moved to the top of the queue. The rest of the queue is shuffled around it. Reports an empty queue when nothing is playing (does not start mpv).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -468,7 +315,7 @@ const tools: Tool[] = [
   },
   {
     name: 'move_in_play_queue',
-    description: 'Move the play-queue entry at index `from` so that it takes the place of the entry at index `to`. Reordering never changes what is currently playing — the play head stays on the same track (following it to its new index if it was the one moved).',
+    description: 'Move the play-queue entry at index `from` so it ends at index `to`. Reordering never changes what is currently playing. The play head stays on the same track and follows it if it was the one moved. Reports an empty queue when nothing is playing (does not start mpv).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -480,7 +327,7 @@ const tools: Tool[] = [
         to: {
           type: 'integer',
           minimum: 0,
-          description: 'Destination index for the entry.',
+          description: 'Final zero-based index of the moved entry, from 0 to the queue length minus 1. A larger value is rejected.',
         },
       },
       required: ['from', 'to'],
@@ -489,7 +336,7 @@ const tools: Tool[] = [
   },
   {
     name: 'remove_from_play_queue',
-    description: 'Remove the play-queue entry at the given index. mpv auto-advances if the removed track was currently playing.',
+    description: 'Remove the play-queue entry at the given index. mpv auto-advances if the removed track was currently playing. Reports an empty queue when nothing is playing (does not start mpv).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -505,7 +352,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_queue_index',
-    description: "Jump directly to the play-queue entry at the given index — equivalent to clicking a track row in the web UI. Does NOT reorder the queue, only moves the play head. Unpauses if paused. Reports an empty queue when nothing is playing (does not start mpv). Discovery flow: call `get_play_queue` first to find the index of the target track. For adjacent moves prefer `next`/`previous`.",
+    description: "Jump directly to the play-queue entry at the given index, like clicking a track row in the web UI. Does NOT reorder the queue, only moves the play head. Unpauses if paused. Reports an empty queue when nothing is playing (does not start mpv). Discovery flow: call `get_play_queue` first to find the index of the target track. For adjacent moves prefer `next`/`previous`.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -521,26 +368,17 @@ const tools: Tool[] = [
   },
 ];
 
+export const PLAYBACK_TOOL_NAMES = tools.map((tool) => tool.name);
+
 /**
- * Factory for the playback ToolCategory. Wires the Stage 2 + Stage 3 + Stage 4
- * playback tools to their underlying engine calls. `config` is forwarded to
- * the search-driven playback tools so they can reuse the existing
- * `searchAlbums` / `searchSongs` implementations.
+ * Factory for the playback ToolCategory. `config` gates the web player respawn before a play.
  */
 export function createPlaybackToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
-      // Respawn-on-play: bring the web player back up (if enabled) before
-      // loading new content, so it owns + scrobbles the play. Best-effort —
-      // never block playback if the (re)spawn can't happen, so swallow any
-      // failure here rather than let it propagate and fail the play.
       if (PLAYBACK_STARTERS.has(name)) {
-        try {
-          await ensureWebForPlayback(config);
-        } catch (err) {
-          logger.warn('respawn-on-play: ensureWebForPlayback failed, continuing with playback:', err);
-        }
+        await respawnWebForPlay(config);
       }
       switch (name) {
         case 'pause':
@@ -556,9 +394,9 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
         case 'play_albums':
           return playAlbums(client, args);
         case 'play_albums_search':
-          return playAlbumsSearch(client, config, args);
+          return playAlbumsSearch(client, args);
         case 'play_songs_search':
-          return playSongsSearch(client, config, args);
+          return playSongsSearch(client, args);
         case 'play_playlist':
           return playPlaylist(client, args);
         case 'next':

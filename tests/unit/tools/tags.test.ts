@@ -2,13 +2,13 @@
  * Navidrome MCP Server - tags tool tests
  * Copyright (C) 2025
  *
- * Covers searchByTags and getTagDistribution from src/tools/tags.ts.
+ * Covers listTagValues and getTagDistribution from src/tools/tags.ts.
  * Both are reads, but they use requestWithLibraryFilter / requestWithLibraryFilterAndMeta
  * which are mockable — mocked approach keeps tests fast and deterministic.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { searchByTags, getTagDistribution } from '../../../src/tools/tags.js';
+import { listTagValues, getTagDistribution } from '../../../src/tools/tags.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
@@ -23,9 +23,9 @@ function makeTag(overrides: Record<string, unknown> = {}): Record<string, unknow
   };
 }
 
-// ---- searchByTags -----------------------------------------------------------
+// ---- listTagValues -----------------------------------------------------------
 
-describe('searchByTags', () => {
+describe('listTagValues', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
@@ -38,7 +38,7 @@ describe('searchByTags', () => {
       total: 2,
     });
 
-    const result = await searchByTags(mockClient as unknown as NavidromeClient, {
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, {
       tagName: 'genre',
     });
 
@@ -54,26 +54,37 @@ describe('searchByTags', () => {
     expect(typeof first.songCount).toBe('number');
   });
 
-  it('sorts matches by songCount descending', async () => {
+  it('pages genre by songCount DESC on the server and keeps the server order', async () => {
     mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
       data: [
-        makeTag({ id: 'low', tagValue: 'Blues', songCount: 10 }),
         makeTag({ id: 'high', tagValue: 'Rock', songCount: 500 }),
         makeTag({ id: 'mid', tagValue: 'Jazz', songCount: 100 }),
       ],
-      total: 3,
+      total: 2,
     });
 
-    const result = await searchByTags(mockClient as unknown as NavidromeClient, { tagName: 'genre' });
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'genre' });
 
-    expect(result.matches[0]!.songCount).toBeGreaterThanOrEqual(result.matches[1]!.songCount);
-    expect(result.matches[1]!.songCount).toBeGreaterThanOrEqual(result.matches[2]!.songCount);
+    const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
+    expect(endpoint).toContain('_sort=songCount');
+    expect(endpoint).toContain('_order=DESC');
+    expect(result.matches.map(tag => tag.id)).toEqual(['high', 'mid']);
+  });
+
+  it('pages non-genre tag names alphabetically, since only genre rows carry counts', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+
+    await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'recordlabel' });
+
+    const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
+    expect(endpoint).toContain('_sort=tagValue');
+    expect(endpoint).toContain('_order=ASC');
   });
 
   it('includes tag_name in the request URL', async () => {
     mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
 
-    await searchByTags(mockClient as unknown as NavidromeClient, { tagName: 'mood' });
+    await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'mood' });
 
     const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
     expect(endpoint).toContain('tag_name=mood');
@@ -82,7 +93,7 @@ describe('searchByTags', () => {
   it('includes tag_value when specified', async () => {
     mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
 
-    await searchByTags(mockClient as unknown as NavidromeClient, { tagName: 'genre', tagValue: 'Rock' });
+    await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'genre', tagValue: 'Rock' });
 
     const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
     expect(endpoint).toContain('tag_value=Rock');
@@ -94,14 +105,14 @@ describe('searchByTags', () => {
       total: null,
     });
 
-    const result = await searchByTags(mockClient as unknown as NavidromeClient, { tagName: 'genre' });
+    const result = await listTagValues(mockClient as unknown as NavidromeClient, { tagName: 'genre' });
 
     expect(result.total).toBe(1);
   });
 
   it('throws when tagName is missing (Zod validation)', async () => {
     await expect(
-      searchByTags(mockClient as unknown as NavidromeClient, {})
+      listTagValues(mockClient as unknown as NavidromeClient, {})
     ).rejects.toThrow();
   });
 });
@@ -170,16 +181,12 @@ describe('getTagDistribution', () => {
     expect(genreDist).toBeUndefined();
   });
 
-  it('skips tag names that throw (e.g., 404 from Navidrome)', async () => {
-    mockClient.requestWithLibraryFilterAndMeta.mockRejectedValue(new Error('404 not found'));
+  it('throws a tool error when a /tag request fails instead of reporting an empty library', async () => {
+    mockClient.requestWithLibraryFilterAndMeta.mockRejectedValue(new Error('503 Service Unavailable'));
 
-    const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
-      tagNames: ['nonexistent_tag'],
-    });
-
-    // Should return gracefully with empty distributions
-    expect(Array.isArray(result.distributions)).toBe(true);
-    expect(result.distributions).toHaveLength(0);
+    await expect(getTagDistribution(mockClient as unknown as NavidromeClient, {
+      tagNames: ['genre'],
+    })).rejects.toThrow(/get_tag_distribution.*503/s);
   });
 
   it('uses distributionLimit to cap the distribution array', async () => {
@@ -188,16 +195,21 @@ describe('getTagDistribution', () => {
       tagValue: `Val${i}`,
       songCount: 100 - i,
     }));
-    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: tags, total: 20 });
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
+      const end = Number(new URLSearchParams(endpoint.split('?')[1]).get('_end'));
+      return Promise.resolve({ data: tags.slice(0, end), total: 20 });
+    });
 
     const result = await getTagDistribution(mockClient as unknown as NavidromeClient, {
       tagNames: ['genre'],
       distributionLimit: 5,
     });
 
-    // Mock provides 20 tags; one distribution entry must come back.
+    const [endpoint] = mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]!;
+    expect(endpoint).toContain('_end=5');
     expect(result.distributions).toHaveLength(1);
     expect(result.distributions[0]!.distribution.length).toBe(5);
+    expect(result.distributions[0]!.uniqueValues).toBe(20);
   });
 
   it('requests genre distribution sorted by songCount DESC (true top-N, not alphabetical)', async () => {

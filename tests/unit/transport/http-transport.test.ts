@@ -16,7 +16,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { request as httpRequest } from 'node:http';
-import { startHttpTransport, type HttpTransport } from '../../../src/transport/http.js';
+import { resolveAllowedHosts, startHttpTransport, type HttpTransport } from '../../../src/transport/http.js';
 
 /**
  * Build a tiny MCP server exposing a single `ping` tool, fresh per session.
@@ -166,9 +166,45 @@ describe('Streamable HTTP transport', () => {
       },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
     });
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as { error?: { code?: number; message?: string } };
+    expect(json.error?.code).toBe(-32001);
+    expect(json.error?.message).toMatch(/session not found/i);
+  });
+
+  it('answers a GET with an unknown session id with 404', async () => {
+    const res = await fetch(handle.url, {
+      method: 'GET',
+      headers: { Accept: 'text/event-stream', 'mcp-session-id': 'does-not-exist' },
+    });
+    expect(res.status).toBe(404);
+    const json = (await res.json()) as { error?: { code?: number } };
+    expect(json.error?.code).toBe(-32001);
+  });
+
+  it('answers a GET without a session id with 400', async () => {
+    const res = await fetch(handle.url, { method: 'GET', headers: { Accept: 'text/event-stream' } });
     expect(res.status).toBe(400);
-    const json = (await res.json()) as { error?: { message?: string } };
-    expect(json.error?.message).toMatch(/session/i);
+  });
+
+  it('answers an unsupported method with a JSON-RPC 405 and an Allow header', async () => {
+    const res = await fetch(handle.url, { method: 'PUT' });
+    expect(res.status).toBe(405);
+    expect(res.headers.get('allow')).toBe('GET, POST, DELETE');
+    const json = (await res.json()) as { jsonrpc?: string; error?: { code?: number } };
+    expect(json.jsonrpc).toBe('2.0');
+    expect(json.error?.code).toBe(-32000);
+  });
+
+  it('answers an unparseable body with a JSON-RPC parse error', async () => {
+    const res = await fetch(handle.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: '{not json',
+    });
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as { error?: { code?: number } };
+    expect(json.error?.code).toBe(-32700);
   });
 
   it('404s on a non-MCP path', async () => {
@@ -352,5 +388,27 @@ describe('Streamable HTTP transport — bearer auth', () => {
     const base = endpoint(handle);
     const res = await fetch(`http://${base.host}/healthz`, { method: 'GET' });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('resolveAllowedHosts', () => {
+  it('auto-lists loopback for an unauthenticated 127/8 alias bind', () => {
+    const hosts = resolveAllowedHosts('127.0.0.2', 3000, undefined, []);
+    expect(hosts).toContain('127.0.0.2:3000');
+    expect(hosts).toContain('localhost:3000');
+  });
+
+  it('turns Host filtering off for a token-gated loopback bind', () => {
+    expect(resolveAllowedHosts('127.0.0.1', 3000, 'secret', [])).toEqual([]);
+  });
+
+  it('turns Host filtering off for an unauthenticated LAN bind', () => {
+    expect(resolveAllowedHosts('0.0.0.0', 3000, undefined, [])).toEqual([]);
+  });
+
+  it('enforces operator hosts plus the local aliases', () => {
+    const hosts = resolveAllowedHosts('0.0.0.0', 3000, 'secret', ['mcp.example.com:3000']);
+    expect(hosts).toContain('mcp.example.com:3000');
+    expect(hosts).toContain('127.0.0.1:3000');
   });
 });

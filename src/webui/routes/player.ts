@@ -18,16 +18,16 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
-import { readSettings, writeSettings, SettingsFileSchema } from '../../config/store.js';
+import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../../config/store.js';
 import { PlayerSettingsPatchSchema } from '../../schemas/index.js';
 import { logger } from '../../utils/logger.js';
 import { getPersist, getTheme, setPersist, setTheme } from '../../web/player-runtime.js';
 import type { SseBroadcaster } from '../broadcaster.js';
-import { readJsonBody, writeError, writeJson } from '../http-helpers.js';
+import { readValidBody, writeError, writeJson } from '../http-helpers.js';
 import { isLoopbackPeer } from '../loopback.js';
 
 /**
- * GET /api/player-state — per-peer flags the frontend needs at load. `isLocal` reflects
+ * GET /api/player-state returns per-peer flags the frontend needs at load. `isLocal` reflects
  * THIS request's peer and decides the local-only affordances (settings gear, power).
  *
  * `theme` is the live color theme every peer renders, or null to follow each device.
@@ -45,9 +45,9 @@ export function handlePlayerState(req: IncomingMessage, res: ServerResponse, con
 }
 
 /**
- * GET /api/player/settings — current player-scoped settings (loopback-only).
- * `persistAfterMcpExit` reflects the LIVE flag (toggled this session);
- * `autoOpenBrowser` is the stored value (only affects the next launch).
+ * GET /api/player/settings returns the player-scoped settings (loopback-only).
+ * `persistAfterMcpExit` reflects the LIVE flag (toggled this session).
+ * `autoOpenBrowser` is the stored value, since it only affects the next launch.
  */
 export function handleGetPlayerSettings(req: IncomingMessage, res: ServerResponse): void {
   if (!isLoopbackPeer(req)) {
@@ -63,13 +63,13 @@ export function handleGetPlayerSettings(req: IncomingMessage, res: ServerRespons
 }
 
 /**
- * POST /api/player/settings — update player-scoped settings (loopback-only).
+ * POST /api/player/settings updates player-scoped settings (loopback-only).
  * Body `{ persistAfterMcpExit?: boolean, autoOpenBrowser?: boolean, theme?: WebuiTheme }`.
  * `persistAfterMcpExit` and `theme` take effect immediately AND are persisted,
  * and the snapshot broadcast carries them to every open remote.
  * `autoOpenBrowser` is persisted for next launch.
- * Only the webui keys are touched (read-merge-write) so other settings — and
- * credentials — are never clobbered.
+ * Only the webui keys are touched (read-merge-write), so other settings and
+ * credentials are never clobbered.
  */
 export async function handleSetPlayerSettings(
   req: IncomingMessage,
@@ -81,23 +81,11 @@ export async function handleSetPlayerSettings(
     return;
   }
 
-  let body: unknown;
-  try {
-    body = await readJsonBody(req);
-  } catch (err) {
-    writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
-    return;
-  }
-  const validation = PlayerSettingsPatchSchema.safeParse(body);
-  if (!validation.success) {
-    const message = validation.error.issues.map((issue) => issue.message).join('; ');
-    writeError(res, 400, message !== '' ? message : 'invalid request body');
-    return;
-  }
-  const input = validation.data;
+  const input = await readValidBody(req, res, PlayerSettingsPatchSchema);
+  if (input === null) return;
+  let persistedWebui: NonNullable<SettingsFile['webui']> | null = null;
 
-  // Apply the live flag first (this is the part that matters for the running
-  // process); persistence to disk is best-effort below.
+  // The live flags matter for the running process, so they apply before the best-effort write below.
   if (input.persistAfterMcpExit !== undefined) {
     setPersist(input.persistAfterMcpExit);
   }
@@ -123,26 +111,25 @@ export async function handleSetPlayerSettings(
     } else {
       try {
         writeSettings(merged);
+        persistedWebui = webui;
       } catch (err) {
         logger.warn('player settings: failed to persist to settings.json:', err);
       }
     }
   }
 
-  // Build the response from values already in hand rather than re-reading
-  // settings.json — a concurrent writer (e.g. the config-app) could change the
-  // file in the window after writeSettings, and a caught write failure above
-  // would make a re-read report stale/un-persisted values as if applied.
+  // Live flags report live state. `autoOpenBrowser` has no live state, so it reports the stored value.
+  const storedWebui = persistedWebui ?? current?.webui;
   writeJson(res, 200, {
     persistAfterMcpExit: getPersist(),
-    autoOpenBrowser: input.autoOpenBrowser ?? current?.webui?.autoOpenBrowser ?? false,
+    autoOpenBrowser: storedWebui?.autoOpenBrowser ?? false,
     theme: getTheme(),
   });
   broadcaster.broadcastNow();
 }
 
 /**
- * POST /api/shutdown — power button (loopback-only). Stops mpv and exits the
+ * POST /api/shutdown is the power button (loopback-only). Stops mpv and exits the
  * web server via the injected shutdown callback. Responds 200 first so the
  * browser sees success before the server closes.
  */

@@ -1,18 +1,10 @@
-/**
- * Default record counts for MCP server endpoints
- * 
- * Centralized configuration for default result limits to make them easy to adjust.
- * Higher defaults (100 instead of 20) help prevent missing results when building playlists or searching.
- */
+/** Shared defaults and limits live here so every module that reads one sees the same value. */
 
 export const DEFAULT_VALUES = {
-  // Core list endpoints - increased from 20 to 100 to avoid missing results
-  SONGS_LIMIT: 100,
-  ALBUMS_LIMIT: 100,
+  // Core list endpoints
   PLAYLISTS_LIMIT: 100,
-  
-  // Search endpoints - increased from 20 to 100 for better search coverage
-  SEARCH_LIMIT: 100,
+
+  // Search endpoints
   SEARCH_ALL_LIMIT: 15, // for artistCount, albumCount, songCount in search_all - optimized for LLM context
   
   // Playlist endpoints
@@ -32,23 +24,14 @@ export const DEFAULT_VALUES = {
   TRENDING_MUSIC_LIMIT: 100,
   
   // Tag management
-  TAGS_LIMIT: 100,
   TAG_SEARCH_LIMIT: 100,
   TAG_DISTRIBUTION_LIMIT: 10, // for analysis, keep reasonable
   TAG_DISTRIBUTION_VALUES_LIMIT: 20, // max values per tag
   
   // Radio discovery
   RADIO_DISCOVERY_LIMIT: 15, // optimal for discovery without overwhelming
+  RADIO_DISCOVERY_PROBE_COUNT: 8, // bounds the probe fan-out, since hideBroken pre-screens the rest
 } as const;
-
-/**
- * Upper cap on how many tag values `getTagDistribution` fetches per tag name
- * (the `_end` of the per-`tagName` `/tag` query). The response only surfaces
- * the top `distributionLimit` values, so fetching far more is wasted work —
- * we derive `_end` from `distributionLimit` and clamp it to this ceiling so a
- * pathological `distributionLimit` can't request an unbounded page.
- */
-export const TAG_DISTRIBUTION_FETCH_CAP = 200;
 
 /**
  * Subsonic API protocol version we report when calling Subsonic-compatible endpoints.
@@ -68,7 +51,7 @@ export const SUBSONIC_CLIENT_NAME = 'navidrome-mcp';
  *
  * Intentionally carries NO version suffix: the value is a stable identifier
  * these services log to attribute traffic, not a build marker, and it doubles
- * as the pre-filled default in the settings form — so it shouldn't churn (or
+ * as the pre-filled default in the settings form, so it shouldn't churn (or
  * need re-typing) on every release.
  */
 export const DEFAULT_USER_AGENT = 'Navidrome-MCP';
@@ -76,7 +59,7 @@ export const DEFAULT_USER_AGENT = 'Navidrome-MCP';
 /**
  * Default User-Agent for MusicBrainz calls when `musicBrainzUserAgent` is not
  * configured. MusicBrainz *requires* a meaningful User-Agent with contact info
- * (https://musicbrainz.org/doc/MusicBrainz_API — generic agents may be
+ * (https://musicbrainz.org/doc/MusicBrainz_API, generic agents may be
  * blocked), hence the repo URL suffix that the plain DEFAULT_USER_AGENT lacks.
  * Like DEFAULT_USER_AGENT, intentionally unversioned: it doubles as the
  * settings-form suggestion and shouldn't churn on every release.
@@ -91,20 +74,23 @@ export const DEFAULT_MUSICBRAINZ_USER_AGENT =
  */
 export const DEFAULT_LRCLIB_BASE = 'https://lrclib.net';
 
-/**
- * Per-page size when expanding `play_albums` / `play_albums_search` requests.
- * `fetchPages` paginates with this page size and follows X-Total-Count
- * until the full track list is fetched, so multi-disc boxsets play through
- * completely instead of truncating at the first 500 tracks.
- */
-export const MAX_ALBUM_TRACKS = 500;
+/** Config defaults shared by the runtime schema, the store projection and the form seed. */
+export const DEFAULT_CACHE_TTL_SECONDS = 300;
+export const DEFAULT_TOKEN_EXPIRY_SECONDS = 86400;
+export const DEFAULT_MCP_HTTP_PORT = 3000;
+export const DEFAULT_WEBUI_PORT = 8808;
+export const DEFAULT_TRANSCODE_FORMAT = 'raw';
+export const DEFAULT_TRANSCODE_BITRATE = '192';
 
 /**
- * Safety cap on the number of pages `fetchPages` will follow before
- * giving up and returning what it has. Protects against an inconsistent
- * X-Total-Count loop. 20 × 500 = 10000 tracks per album is well past any
- * realistic release, including the "complete works" boxsets the original
- * 500-track ceiling used to silently truncate.
+ * Per-request page size when `fetchPages` expands an album. It is a request
+ * stride, not a track cap: pages repeat until X-Total-Count is reached.
+ */
+export const ALBUM_TRACKS_PAGE_SIZE = 500;
+
+/**
+ * Safety cap on the pages `fetchPages` follows before returning what it has.
+ * It guards against an inconsistent X-Total-Count loop.
  */
 export const MAX_ALBUM_PAGES = 20;
 /** The web remote's color themes. With none set, each device follows its own light or dark preference. */
@@ -115,3 +101,9 @@ export type WebuiTheme = (typeof WEBUI_THEMES)[number];
 export function parseWebuiTheme(value: unknown): WebuiTheme | null {
   return WEBUI_THEMES.find((theme) => theme === value) ?? null;
 }
+
+/**
+ * The web player probes and links 127.0.0.1, so only a bind that answers 127.0.0.1 works.
+ * localhost and ::1 bind IPv6 loopback under Node's DNS order, and a specific interface skips loopback.
+ */
+export const WEBUI_BIND_HOSTS: readonly string[] = ['127.0.0.1', '0.0.0.0', '::'];

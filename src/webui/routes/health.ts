@@ -18,6 +18,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
+import { playbackEngine } from '../../services/playback/playback-engine.js';
 import { getPackageVersion } from '../../utils/version.js';
 import { writeError, writeJson } from '../http-helpers.js';
 import { isLoopbackPeer } from '../loopback.js';
@@ -25,24 +26,28 @@ import { isLanReachable } from '../network.js';
 
 /**
  * The signature `acquireOrAttach` (src/web/acquire.ts) probes to distinguish
- * *our* server from an unrelated process squatting the configured port. The
- * probe always uses loopback, so a foreign signature ⇒ port conflict.
+ * *our* server from an unrelated process squatting the configured port, so a
+ * foreign signature ⇒ port conflict.
  */
 export const HEALTH_APP_ID = 'navidrome-mcp-web';
 
 /**
- * GET /healthz — small JSON signature used for port-as-lock coexistence.
+ * GET /healthz is a small JSON signature used for port-as-lock coexistence.
+ * `playbackAttached` tells the MCP tracker whether this owner sees track changes.
  *
- * When `expose=true` the player is reachable on the LAN, but /healthz leaks a
- * version fingerprint, so it is gated to loopback peers (returning 404 to hide
- * its existence). The acquire probe always connects via 127.0.0.1, so this
- * gate never interferes with coexistence.
+ * When the resolved bind host is LAN-reachable, /healthz would leak a version
+ * fingerprint, so it is gated to loopback peers (returning 404 to hide its
+ * existence). The acquire probe always connects via 127.0.0.1, so this gate
+ * never interferes with coexistence.
  */
 export function handleHealth(req: IncomingMessage, res: ServerResponse, config: Config): void {
-  // A LAN-reachable bind gates the version fingerprint to loopback peers.
   if (isLanReachable(config.webui.host) && !isLoopbackPeer(req)) {
     writeError(res, 404, 'Not found');
     return;
   }
-  writeJson(res, 200, { app: HEALTH_APP_ID, version: getPackageVersion() });
+  writeJson(res, 200, {
+    app: HEALTH_APP_ID,
+    version: getPackageVersion(),
+    playbackAttached: playbackEngine.isRunning(),
+  });
 }

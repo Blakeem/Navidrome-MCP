@@ -5,7 +5,7 @@ Comprehensive documentation for all list-based endpoints that provide filter opt
 
 ## Tag System Overview
 
-Navidrome's tag system provides extensive metadata filtering capabilities through a unified tag architecture. All tags can be used as filters using the `{tag_name}_id` parameter format.
+Navidrome's tag system provides extensive metadata filtering capabilities through a unified tag architecture. Genre filters with `genre_id`. Every other tag filters with its bare tag name and the tag UUID, such as `mood=<UUID>`.
 
 ### Base URL: `/api/tag`
 
@@ -95,42 +95,42 @@ Get a specific genre by ID with detailed statistics.
 
 #### Mood Tags
 - **Endpoint**: `/api/tag?tagType=mood`
-- **Filter Usage**: `mood_id={id}`
+- **Filter Usage**: `mood={id}`
 - **Description**: Musical moods and emotions (Happy, Sad, Energetic, etc.)
 
 #### Grouping/Collection Tags
 - **Endpoint**: `/api/tag?tagType=grouping`
-- **Filter Usage**: `grouping_id={id}`
+- **Filter Usage**: `grouping={id}`
 - **Description**: Content groupings and collections
 
 ### Album-Level Tags
 
 #### Release Type Tags
 - **Endpoint**: `/api/tag?tagType=releasetype`
-- **Filter Usage**: `releasetype_id={id}`
+- **Filter Usage**: `releasetype={id}`
 - **Description**: Album release types
 - **Common Values**: EP, LP, Single, Compilation, Soundtrack, Live
 
 #### Album Version Tags
 - **Endpoint**: `/api/tag?tagType=albumversion`
-- **Filter Usage**: `albumversion_id={id}`
+- **Filter Usage**: `albumversion={id}`
 - **Description**: Album versions and releases
 - **Common Values**: Remaster, Deluxe Edition, Anniversary Edition, Director's Cut
 
 #### Media Type Tags
 - **Endpoint**: `/api/tag?tagType=media`
-- **Filter Usage**: `media_id={id}`
+- **Filter Usage**: `media={id}`
 - **Description**: Physical and digital media types
 - **Common Values**: CD, Vinyl, Digital, Cassette, DVD, Blu-ray
 
 #### Record Label Tags
 - **Endpoint**: `/api/tag?tagType=recordlabel`
-- **Filter Usage**: `recordlabel_id={id}`
+- **Filter Usage**: `recordlabel={id}`
 - **Description**: Record labels and publishers
 
 #### Release Country Tags
 - **Endpoint**: `/api/tag?tagType=releasecountry`
-- **Filter Usage**: `releasecountry_id={id}`
+- **Filter Usage**: `releasecountry={id}`
 - **Description**: Countries of release
 - **Common Values**: US, UK, DE, JP, etc. (ISO country codes)
 
@@ -262,7 +262,7 @@ GET /api/tag?tagType=recordlabel&name=electronic&library_id=1
 
 **Albums by mood and genre:**
 ```
-GET /api/album?genre_id=rock123&mood_id=energetic456&library_id=1
+GET /api/album?genre_id=rock123&mood=energetic456&library_id=1
 ```
 
 **Albums by specific producer and label:**

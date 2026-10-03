@@ -28,12 +28,8 @@ import {
   saveQueue,
   clearSavedQueue,
 } from '../queue-management.js';
-import {
-  listRecentlyPlayed,
-  listMostPlayed,
-} from '../listening-history.js';
 
-// Tool definitions for queue management and listening history categories
+// Tool definitions for the saved-queue category
 const tools: Tool[] = [
   {
     name: 'get_saved_queue',
@@ -78,78 +74,6 @@ const tools: Tool[] = [
       properties: {},
     },
   },
-  {
-    name: 'list_recently_played',
-    description: 'List recently played tracks with time filtering',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        limit: {
-          type: 'number',
-          description: 'Maximum number of tracks to return (1-500)',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of tracks to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        timeRange: {
-          type: 'string',
-          description: 'Time range for recently played tracks',
-          enum: ['today', 'week', 'month', 'all'],
-          default: 'all',
-        },
-        verbose: {
-          type: 'boolean',
-          description: 'When false (default) each track carries only identity fields (plus lastPlayed) to save context; set true for full per-track metadata (genres, year, rating, path, etc.).',
-          default: false,
-        },
-      },
-    },
-  },
-  {
-    name: 'list_most_played',
-    description: 'List most played songs, albums, or artists',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        type: {
-          type: 'string',
-          description: 'Type of items to list',
-          enum: ['songs', 'albums', 'artists'],
-          default: 'songs',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of items to return (1-500)',
-          minimum: 1,
-          maximum: 500,
-          default: 100,
-        },
-        offset: {
-          type: 'number',
-          description: 'Number of items to skip for pagination',
-          minimum: 0,
-          default: 0,
-        },
-        minPlayCount: {
-          type: 'number',
-          description: 'Minimum play count to include',
-          minimum: 1,
-          default: 1,
-        },
-        verbose: {
-          type: 'boolean',
-          description: 'When false (default) each item carries only identity fields (plus playCount) to save context; set true for full per-item metadata (genres, year, rating, path, etc.).',
-          default: false,
-        },
-      },
-    },
-  },
 ];
 
 // Factory function for creating queue tool category with dependencies  
@@ -164,10 +88,6 @@ export function createQueueToolCategory(client: NavidromeClient, _config: Config
           return await saveQueue(client, args);
         case 'clear_saved_queue':
           return await clearSavedQueue(client, args);
-        case 'list_recently_played':
-          return await listRecentlyPlayed(client, args);
-        case 'list_most_played':
-          return await listMostPlayed(client, args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(`queue ${name}`));
       }

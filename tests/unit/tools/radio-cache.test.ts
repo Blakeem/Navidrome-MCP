@@ -192,7 +192,7 @@ describe('radio station cache', () => {
       makeRestList([{ id: 'st-new', name: 'New', streamUrl: 'http://new.test/' }])
     );
 
-    await createRadioStation(mockClient as unknown as NavidromeClient, config, {
+    await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'New', streamUrl: 'http://new.test/' }],
     });
 
@@ -209,6 +209,40 @@ describe('radio station cache', () => {
     expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
   });
 
+  it('does not cache a list fetched before an invalidation that landed mid-fetch', async () => {
+    const config = makeConfig();
+    let resolveStale: (rows: unknown) => void = () => undefined;
+    mockClient.request.mockReturnValueOnce(new Promise(resolve => { resolveStale = resolve; }));
+
+    const ownerRead = listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
+    const piggybackRead = listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
+    invalidateRadioStationCache();
+    resolveStale(makeRestList([{ id: 'st-deleted', name: 'Gone', streamUrl: 'http://gone.test/' }]));
+    await Promise.all([ownerRead, piggybackRead]);
+
+    mockClient.request.mockResolvedValueOnce(makeRestList([]));
+    const fresh = await listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
+
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
+    expect(fresh.stations).toEqual([]);
+  });
+
+  it('starts a fresh fetch after an invalidation instead of joining the stale one', async () => {
+    const config = makeConfig();
+    let resolveStale: (rows: unknown) => void = () => undefined;
+    mockClient.request.mockReturnValueOnce(new Promise(resolve => { resolveStale = resolve; }));
+
+    const staleRead = listRadioStations(mockClient as unknown as NavidromeClient, {}, config);
+    invalidateRadioStationCache();
+    mockClient.request.mockResolvedValueOnce(makeRestList([{ id: 'st-new', name: 'New', streamUrl: 'http://new.test/' }]));
+    const freshRead = await listRadioStations(mockClient as unknown as NavidromeClient, {});
+    resolveStale(makeRestList([]));
+    await staleRead;
+
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
+    expect(freshRead.stations.map(s => s.id)).toEqual(['st-new']);
+  });
+
   it('createRadioStation does NOT invalidate when every station fails validation', async () => {
     const config = makeConfig();
 
@@ -218,7 +252,7 @@ describe('radio station cache', () => {
     expect(mockClient.request).toHaveBeenCalledTimes(1);
 
     // All-fail batch: validation errors only, no Subsonic POST happens
-    await createRadioStation(mockClient as unknown as NavidromeClient, config, {
+    await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: '', streamUrl: 'http://x.test/' }], // empty name fails validation
     });
 

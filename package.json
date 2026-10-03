@@ -10,7 +10,7 @@
     "start": "node dist/index.js",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:playback": "vitest run --config vitest.playback.config.ts",
+    "test:playback": "pnpm build && vitest run --config vitest.playback.config.ts",
     "test:live": "vitest run --config vitest.live.config.ts",
     "test:ci": "SKIP_INTEGRATION_TESTS=true MOCK_ONLY_TESTS=true NAVIDROME_URL=http://ci-dummy:4533 NAVIDROME_USERNAME=ci-user NAVIDROME_PASSWORD=ci-pass vitest run",
     "test:all": "pnpm test:run && pnpm test:live && pnpm check:all",

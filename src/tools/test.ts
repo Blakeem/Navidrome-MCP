@@ -16,14 +16,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
-import type { ToolCategory } from './handlers/registry.js';
 import { getPackageVersion } from '../utils/version.js';
 import { TestConnectionSchema } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
+import { LASTFM_TOOL_NAMES } from './handlers/lastfm-handlers.js';
+import { LRCLIB_TOOL_NAMES } from './handlers/lyrics-handlers.js';
+import { PLAYBACK_TOOL_NAMES } from './handlers/playback-handlers.js';
+import { RADIO_BROWSER_TOOL_NAMES, RADIO_PLAYBACK_TOOL_NAMES } from './handlers/radio-handlers.js';
 
 interface TestConnectionResult {
   success: boolean;
@@ -45,6 +47,11 @@ interface TestConnectionResult {
         tools: string[];
       };
       lyrics: {
+        enabled: boolean;
+        description: string;
+        tools: string[];
+      };
+      playback: {
         enabled: boolean;
         description: string;
         tools: string[];
@@ -81,6 +88,7 @@ export async function testConnection(
       const hasLastFm = config.features.lastfm;
       const hasRadioBrowser = config.features.radioBrowser;
       const hasLyrics = config.features.lyrics;
+      const hasPlayback = config.features.playback;
 
       result.serverInfo = {
         url: config.navidromeUrl,
@@ -93,27 +101,28 @@ export async function testConnection(
             description: hasLastFm
               ? 'Last.fm integration enabled - music discovery and recommendations available'
               : 'Last.fm integration disabled - set features.lastFmApiKey in settings.json (run navidrome-config to edit)',
-            tools: hasLastFm 
-              ? ['get_similar_artists', 'get_similar_tracks', 'get_artist_info', 'get_top_tracks_by_artist', 'get_trending_music']
-              : []
+            tools: hasLastFm ? [...LASTFM_TOOL_NAMES] : []
           },
           radioBrowser: {
             enabled: hasRadioBrowser,
             description: hasRadioBrowser
               ? 'Radio Browser integration enabled - internet radio station discovery available'
               : 'Radio Browser integration disabled - set features.radioBrowserUserAgent in settings.json (run navidrome-config to edit)',
-            tools: hasRadioBrowser
-              ? ['discover_radio_stations', 'get_radio_filters', 'get_station_by_uuid', 'click_station', 'vote_station']
-              : []
+            tools: hasRadioBrowser ? [...RADIO_BROWSER_TOOL_NAMES] : []
           },
           lyrics: {
             enabled: hasLyrics,
             description: hasLyrics
               ? 'Lyrics integration enabled via LRCLIB - synced and unsynced lyrics available'
               : 'Lyrics integration disabled - get_lyrics still reads the lyrics stored in the audio file. Set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json (run navidrome-config to edit)',
-            tools: hasLyrics
-              ? ['search_lyrics']
-              : []
+            tools: hasLyrics ? [...LRCLIB_TOOL_NAMES] : []
+          },
+          playback: {
+            enabled: hasPlayback,
+            description: hasPlayback
+              ? 'Local playback enabled - mpv was found, so the play tools drive the local speakers'
+              : 'Local playback disabled - mpv was not found. Install mpv or set playback.mpvPath in settings.json (run navidrome-config to edit)',
+            tools: hasPlayback ? [...PLAYBACK_TOOL_NAMES, ...RADIO_PLAYBACK_TOOL_NAMES] : []
           }
         }
       };
@@ -126,35 +135,4 @@ export async function testConnection(
       message: ErrorFormatter.toolExecution('test_connection', error),
     };
   }
-}
-
-// Tool definitions
-const tools: Tool[] = [
-  {
-    name: 'test_connection',
-    description: 'Test the connection to the Navidrome server',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        includeServerInfo: {
-          type: 'boolean',
-          description: 'Include detailed server information in the response',
-          default: false,
-        },
-      },
-    },
-  },
-];
-
-// Factory function for creating tool category with dependencies
-export function createTestToolCategory(client: NavidromeClient, config: Config): ToolCategory {
-  return {
-    tools,
-    async handleToolCall(name: string, args: unknown): Promise<unknown> {
-      if (name === 'test_connection') {
-        return await testConnection(client, config, args);
-      }
-      throw new Error(ErrorFormatter.toolUnknown(name));
-    }
-  };
 }

@@ -21,16 +21,19 @@
  * and Navidrome, where the same release appears with cosmetic variations:
  * "Dark All Day [Explicit]", "Dark All Day (Deluxe Edition)", "dark all day".
  *
- * The output is a join key, not a display string — it is intentionally lossy.
+ * The output is a join key, not a display string. It is intentionally lossy.
  */
 
 // Bracketed/suffix noise that labels and scrapers append to the same release.
 // Matched case-insensitively against the whole parenthetical/bracket group.
 const NOISE_GROUP =
-  /[([](?:[^)\]]*\b(?:explicit|clean|deluxe|expanded|remaster(?:ed)?|anniversary|edition|bonus|instrumentals?|remix(?:es)?|version|feat\.?[^)\]]*)\b[^)\]]*)[)\]]/gi;
+  /[([](?:[^)\]]*\b(?:explicit|clean|deluxe|expanded|remaster(?:ed)?|anniversary|edition|bonus|instrumentals?|remix(?:es)?|version|web|cdm|cds|feat\.?[^)\]]*)\b[^)\]]*)[)\]]/gi;
 
-// Trailing release-format suffixes: "Foo - Single", "Foo - EP", "Foo EP".
+// Trailing release-format suffixes: "Foo - Single", "Foo - EP".
 const TRAILING_FORMAT = /\s*[-–]\s*(?:single|ep)\s*$/i;
+
+// Unbracketed trailing source tags: "Foo WEB", "Foo CDM".
+const TRAILING_SOURCE = /\s+(?:web|cdm|cds)\s*$/i;
 
 /**
  * Normalize an album (or artist) title to a join key:
@@ -45,9 +48,16 @@ export function normTitle(s: string): string {
 
   out = out.replace(NOISE_GROUP, ' ');
   out = out.replace(TRAILING_FORMAT, ' ');
+  out = out.replace(TRAILING_SOURCE, ' ');
+  const denoised = out;
 
   // Collapse punctuation/whitespace to single spaces.
   out = out.replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+  // Symbol-only titles ("÷", "+") would otherwise all share the empty key.
+  if (out === '') {
+    return denoised.replace(/\s+/gu, '');
+  }
 
   out = out.replace(/^the\s+/, '');
 
@@ -65,8 +75,8 @@ const JUNK_CONTAINS =
 
 /**
  * True when a Last.fm album name is scrobble junk that must never reach the
- * MCP response (spec §5). Variant duplicates ("Foo [Explicit]", "Foo WEB")
- * are NOT junk — they collapse via normTitle-keyed dedup instead.
+ * MCP response (docs/ARTIST-ALBUMS-SPEC.md §5). Variant duplicates ("Foo [Explicit]",
+ * "Foo WEB") are not junk. They collapse via normTitle-keyed dedup instead.
  */
 export function isJunkAlbumName(s: string): boolean {
   const trimmed = s.trim();

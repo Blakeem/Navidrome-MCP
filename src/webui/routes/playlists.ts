@@ -22,22 +22,24 @@ import { listPlaylists } from '../../tools/playlist-management/playlist-crud.js'
 import { runAction } from '../http-helpers.js';
 
 /**
- * GET /api/playlists — List the user's playlists for the picker modal. Reuses
- * the `list_playlists` tool impl; sorted by name, generous page (the schema
- * caps limit at 500). The frontend renders id/name/songCount.
+ * GET /api/playlists lists the user's playlists for the picker modal. It reuses
+ * the `list_playlists` tool impl, sorted by name, with the largest page its schema allows (500).
  *
- * `onlyWithPlayableTracks: true` — the picker is for *playing*, so only show
- * playlists with at least one track in the currently active libraries (an
- * empty or fully-other-library playlist would yield nothing to play).
+ * The picker is for *playing*, so `onlyWithPlayableTracks` keeps only playlists
+ * with at least one track in the currently active libraries.
  */
 export function handleListPlaylists(res: ServerResponse, client: NavidromeClient): Promise<void> {
   return runAction(res, () =>
-    listPlaylists(client, {
-      offset: 0,
-      limit: 500,
-      sort: 'name',
-      order: 'ASC',
-      onlyWithPlayableTracks: true,
-    }),
+    listPlaylists(
+      client,
+      {
+        offset: 0,
+        limit: 500,
+        sort: 'name',
+        order: 'ASC',
+        onlyWithPlayableTracks: true,
+      },
+      { keep: ['duration'] },
+    ),
   );
 }

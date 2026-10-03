@@ -264,6 +264,18 @@ describe('fetchWithTimeout', () => {
       // Single attempt — connection-refused is a fail-fast, not a retry-eligible timeout.
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
+
+    it('surfaces the root cause of a "fetch failed" error with the operation label', async () => {
+      const cause = new Error('connect ECONNREFUSED 127.0.0.1:4533');
+      mockFetch.mockRejectedValueOnce(new TypeError('fetch failed', { cause }));
+
+      const error = await fetchWithTimeout('http://x/y', {}, baseOptions({ operationLabel: 'Navidrome GET /album' })).then(
+        () => null,
+        (err: unknown) => err as Error,
+      );
+      expect(error?.message).toBe('Navidrome GET /album failed: connect ECONNREFUSED 127.0.0.1:4533');
+      expect(error?.cause).toBeInstanceOf(TypeError);
+    });
   });
 
   describe('caller-provided AbortSignal', () => {
@@ -305,10 +317,17 @@ describe('FetchTimeoutError', () => {
 
   it('formats message differently when single vs. multiple attempts', () => {
     expect(new FetchTimeoutError('op', 1000, 1).message).toBe(
-      'op did not respond within 1000ms — server may be down or overloaded',
+      'op did not respond within 1000ms. The server may be down or overloaded.',
     );
     expect(new FetchTimeoutError('op', 1000, 2).message).toBe(
-      'op did not respond within 1000ms (after 2 attempts) — server may be down or overloaded',
+      'op did not respond within 1000ms (after 2 attempts). The server may be down or overloaded.',
+    );
+  });
+
+  it('adds a check-before-retry note for a non-idempotent write', () => {
+    expect(new FetchTimeoutError('op', 1000, 1, true).message).toBe(
+      'op did not respond within 1000ms. The server may be down or overloaded. ' +
+        'The change may already have been applied. Check the current state before retrying.',
     );
   });
 });

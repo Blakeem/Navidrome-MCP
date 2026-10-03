@@ -22,7 +22,7 @@ import { logger } from './logger.js';
 /**
  * Best-effort open `url` in the user's default browser.
  *
- * This is a convenience only — the URL is always surfaced separately (printed /
+ * This is a convenience only. The URL is always surfaced separately (printed /
  * returned) because there is no reliable way to open a browser on a headless or
  * SSH session (no `DISPLAY`, no `xdg-open`). Failures are swallowed: a spawn
  * error just means "no GUI here," not an error condition for the caller.

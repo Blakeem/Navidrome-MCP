@@ -12,8 +12,13 @@ const hint = byId('network-info-hint');
 export function bindNetworkInfo() {
   openBtn.addEventListener('click', async () => {
     const info = await getJson('/api/network-info');
-    if (info === null) return;
-    renderNetworkInfo(info);
+    if (info === null) {
+      list.replaceChildren();
+      hint.textContent = '';
+      help.textContent = 'Could not load network info.';
+    } else {
+      renderNetworkInfo(info);
+    }
     dialog.showModal();
   });
 }
@@ -44,9 +49,9 @@ function buildAddressRow(entry) {
 
 function networkHint(info, interfaceCount) {
   if (!info.lanReachable && info.expose) {
-    return 'The bind host setting is a loopback address, which overrides network exposure. Clear it in navidrome-config, then restart the server.';
+    return 'The Web UI bind host is a loopback address, which overrides Expose on LAN. Clear Bind host in the Web UI (mpv remote) section of navidrome-config, then restart the server.';
   }
-  if (!info.lanReachable) return 'Tip: run navidrome-config and enable network exposure under Settings, then restart the server.';
+  if (!info.lanReachable) return 'Tip: run navidrome-config, check Expose on LAN in the Web UI (mpv remote) section, then restart the server.';
   if (interfaceCount === 0) return 'No LAN interfaces detected (only localhost is reachable).';
   return '';
 }

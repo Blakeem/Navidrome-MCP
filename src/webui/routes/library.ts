@@ -18,7 +18,6 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
-import type { Config } from '../../config.js';
 import { IdSchema, LibraryPlayRequestSchema, LibrarySearchQuerySchema } from '../../schemas/index.js';
 import { EmptyLibrarySourceError, playLibrarySource } from '../../tools/playback.js';
 import { searchAll } from '../../tools/search/index.js';
@@ -27,7 +26,7 @@ import {
   transformArtistsToDTO,
   transformSongsToDTO,
 } from '../../transformers/index.js';
-import { readJsonBody, runAction, writeError, writeJson } from '../http-helpers.js';
+import { readValidBody, runAction, writeError, writeJson } from '../http-helpers.js';
 
 const LIBRARY_RECENT_LIMIT = 5;
 const LIBRARY_SEARCH_LIMIT = 10;
@@ -63,7 +62,7 @@ export function handleLibraryRecent(res: ServerResponse, client: NavidromeClient
     return {
       artists: transformArtistsToDTO(keepPlayedRows(rawArtists)),
       albums: transformAlbumsToDTO(keepPlayedRows(rawAlbums)),
-      songs: transformSongsToDTO(keepPlayedRows(rawSongs)),
+      songs: transformSongsToDTO(keepPlayedRows(rawSongs), { keep: ['duration'] }),
     };
   });
 }
@@ -84,7 +83,6 @@ export function handleLibraryFavorites(res: ServerResponse, client: NavidromeCli
 export async function handleLibrarySearch(
   res: ServerResponse,
   client: NavidromeClient,
-  config: Config,
   rawQuery: string | null,
 ): Promise<void> {
   const parsedQuery = LibrarySearchQuerySchema.safeParse(rawQuery);
@@ -95,20 +93,24 @@ export async function handleLibrarySearch(
   const query = parsedQuery.data;
 
   return runAction(res, async () => {
-    const result = await searchAll(client, config, {
-      query,
-      artistCount: LIBRARY_SEARCH_LIMIT,
-      albumCount: LIBRARY_SEARCH_LIMIT,
-      songCount: LIBRARY_SEARCH_LIMIT,
-      sort: 'playCount',
-      order: 'DESC',
-    });
+    const result = await searchAll(
+      client,
+      {
+        query,
+        artistCount: LIBRARY_SEARCH_LIMIT,
+        albumCount: LIBRARY_SEARCH_LIMIT,
+        songCount: LIBRARY_SEARCH_LIMIT,
+        sort: 'playCount',
+        order: 'DESC',
+      },
+      { keep: ['duration'] },
+    );
     return { artists: result.artists, albums: result.albums, songs: result.songs };
   });
 }
 
 // `artist_id` also matches albums the artist only features on, which the browse view lists.
-export async function handleArtistAlbums(
+export async function handleLibraryArtistAlbums(
   res: ServerResponse,
   client: NavidromeClient,
   rawId: string | null,
@@ -128,7 +130,7 @@ export async function handleArtistAlbums(
 }
 
 // `_sort=album` yields disc and track order, matching the album playback path.
-export async function handleAlbumSongs(
+export async function handleLibraryAlbumSongs(
   res: ServerResponse,
   client: NavidromeClient,
   rawId: string | null,
@@ -143,34 +145,21 @@ export async function handleAlbumSongs(
     const rawSongs = await client.requestWithLibraryFilter<unknown>(
       `/song?album_id=${encodeURIComponent(id)}&_sort=album&_order=ASC&_start=0&_end=${LIBRARY_LIST_CAP}`,
     );
-    return { songs: transformSongsToDTO(rawSongs) };
+    return { songs: transformSongsToDTO(rawSongs, { keep: ['duration'] }) };
   });
 }
 
-// Invalid input returns 400 here because runAction maps every thrown error, the impls' own ZodErrors included, to 500.
 export async function handleLibraryPlay(
   req: IncomingMessage,
   res: ServerResponse,
   client: NavidromeClient,
 ): Promise<void> {
-  let body: unknown;
-  try {
-    body = await readJsonBody(req);
-  } catch (err) {
-    writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
-    return;
-  }
-
-  const validation = LibraryPlayRequestSchema.safeParse(body);
-  if (!validation.success) {
-    const message = validation.error.issues.map((issue) => issue.message).join('; ');
-    writeError(res, 400, message !== '' ? message : 'invalid request body');
-    return;
-  }
+  const body = await readValidBody(req, res, LibraryPlayRequestSchema);
+  if (body === null) return;
 
   // An empty source is 409 with a code, so the remote branches on the code instead of the message text.
   try {
-    const result = await playLibrarySource(client, validation.data);
+    const result = await playLibrarySource(client, body);
     writeJson(res, 200, result);
   } catch (err) {
     if (err instanceof EmptyLibrarySourceError) {

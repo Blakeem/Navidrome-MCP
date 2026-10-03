@@ -8,12 +8,12 @@ import { bindPlayToolbar } from './play-toolbar.js';
 import { loadPlaylistsPane } from './playlists-pane.js';
 import { bindSearchPane, resetSearchPane } from './search-pane.js';
 
-const dialog = byId('playlists-dialog');
-const openButton = byId('open-playlists');
+const dialog = byId('play-dialog');
+const openButton = byId('open-play-dialog');
 const TABS = {
-  search: { tab: byId('pl-tab-search'), pane: byId('pl-pane-search') },
-  playlists: { tab: byId('pl-tab-playlists'), pane: byId('pl-pane-playlists') },
-  favorites: { tab: byId('pl-tab-favorites'), pane: byId('pl-pane-favorites') },
+  search: { tab: byId('play-tab-search'), pane: byId('play-pane-search') },
+  playlists: { tab: byId('play-tab-playlists'), pane: byId('play-pane-playlists') },
+  favorites: { tab: byId('play-tab-favorites'), pane: byId('play-pane-favorites') },
 };
 
 export function bindPlayDialog() {

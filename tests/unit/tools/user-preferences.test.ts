@@ -592,14 +592,24 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
       expect(result.items).toEqual([]);
       expect(result.count).toBe(0);
-      expect(result.hasMore).toBe(false);
+      expect(result.total).toBe(0);
     });
 
-    // total===null fallback: when Navidrome omits or garbles X-Total-Count the
-    // client resolves `total: null` (navidrome-client `Number.isFinite ? … : null`),
-    // so `hasMore` falls back to `items.length === limit`. This is the sole
-    // paging signal the LLM uses, so pin BOTH outcomes of that branch.
-    it('derives hasMore=true from a full page when total is null', async () => {
+    it('reports the X-Total-Count starred total beyond the page', async () => {
+      mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
+        data: [{ id: 'song-1', title: 'One' }],
+        total: 37,
+      });
+
+      const result = await listStarredItems(mockClient, { type: 'songs', limit: 1 });
+
+      expect(result.count).toBe(1);
+      expect(result.total).toBe(37);
+      expect(result).not.toHaveProperty('hasMore');
+    });
+
+    // Navidrome can omit or garble X-Total-Count, which the client resolves to null.
+    it('falls back to the page length for total when the header is missing', async () => {
       mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
         data: [
           { id: 'song-1', title: 'One' },
@@ -608,24 +618,10 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         total: null,
       });
 
-      // limit matches the returned row count → items.length === limit → hasMore.
-      const result = await listStarredItems(mockClient, { type: 'songs', limit: 2 });
+      const result = await listStarredItems(mockClient, { type: 'songs', limit: 5 });
 
       expect(result.count).toBe(2);
-      expect(result.hasMore).toBe(true);
-    });
-
-    it('derives hasMore=false from a short page when total is null', async () => {
-      mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
-        data: [{ id: 'song-1', title: 'One' }],
-        total: null,
-      });
-
-      // Fewer rows than the requested limit → items.length !== limit → no more.
-      const result = await listStarredItems(mockClient, { type: 'songs', limit: 2 });
-
-      expect(result.count).toBe(1);
-      expect(result.hasMore).toBe(false);
+      expect(result.total).toBe(2);
     });
 
     it('should handle empty top-rated items list gracefully', async () => {
@@ -637,158 +633,72 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       expect(result.count).toBe(0);
     });
 
-    // Pagination-honesty regression: minRating is applied client-side AFTER the
-    // fetch, so the server must NOT pre-skip with _start=offset (that would
-    // permanently drop qualifying high-rated rows in global positions
-    // 0..offset-1). Fetch from _start=0 and apply the offset in memory after
-    // filtering. NOTE: Navidrome ignores rating_gt/rating_gte, so a server-side
-    // range filter is not available — this keeps the offset honest.
-    it('listTopRated fetches from _start=0 and over-fetches (offset+limit)*3', async () => {
+    // The fetch sorts on rating, the field minRating tests, so the server offset is exact.
+    it('listTopRated requests exactly the offset..offset+limit window', async () => {
       mockClient.requestWithLibraryFilter.mockResolvedValue([]);
 
       await listTopRated(mockClient, { type: 'songs', minRating: 4, limit: 10, offset: 20 });
 
       const [endpoint] = mockClient.requestWithLibraryFilter.mock.calls[0]!;
-      expect(endpoint).toContain('_start=0');
-      expect(endpoint).not.toContain('_start=20');
-      // _end = (20 + 10) * 3 = 90
-      expect(endpoint).toContain('_end=90');
-      // Server-side rating range filters are no-ops; we never send them.
+      expect(endpoint).toContain('_sort=rating&_order=DESC');
+      expect(endpoint).toContain('_start=20');
+      expect(endpoint).toContain('_end=30');
       expect(endpoint).not.toContain('rating_gt');
       expect(endpoint).not.toContain('rating_gte');
     });
 
-    it('listTopRated applies offset to the FILTERED set so page 2 continues past page 1', async () => {
-      // 6 albums all at/above the threshold, sorted rating DESC.
-      const albums = Array.from({ length: 6 }, (_, i) => ({
-        id: `al${i}`, name: `Album ${i}`, artist: 'A', rating: 5,
-      }));
-      mockClient.requestWithLibraryFilter.mockResolvedValue(albums);
-
-      const page0 = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 0 });
-      const page1 = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 2 });
-
-      expect(page0.items.map(i => i.id)).toEqual(['al0', 'al1']);
-      expect(page1.items.map(i => i.id)).toEqual(['al2', 'al3']);
-    });
-
-    it('listTopRated offset skips within the post-filter set, not the raw rows', async () => {
-      // al0 is below minRating and must not consume an offset slot.
+    it('listTopRated drops rows below minRating from the page', async () => {
       mockClient.requestWithLibraryFilter.mockResolvedValue([
-        { id: 'al0', name: 'Low', artist: 'A', rating: 1 },   // filtered out by minRating: 4
-        { id: 'al1', name: 'High1', artist: 'A', rating: 5 },
-        { id: 'al2', name: 'High2', artist: 'A', rating: 4 },
-        { id: 'al3', name: 'High3', artist: 'A', rating: 4 },
+        { id: 'al0', name: 'High', artist: 'A', songCount: 1, rating: 5 },
+        { id: 'al1', name: 'Low', artist: 'A', songCount: 1, rating: 2 },
       ]);
 
-      const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 1, offset: 1 });
+      const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 0 });
 
-      // Filtered set is [al1, al2, al3]; offset 1 -> al2.
-      expect(result.items.map(i => i.id)).toEqual(['al2']);
+      expect(result.items.map(i => i.id)).toEqual(['al0']);
+      expect(result.hasMore).toBe(false);
     });
 
-    // Item 3 (FOLLOWUP) — honest under-delivery signal. minRating is a
-    // client-side cutoff over a bounded, capped over-fetch window, so the tool
-    // surfaces hasMore/partial rather than silently under-delivering.
-    describe('listTopRated hasMore/partial signal', () => {
-      it('a fully-served page within an unsaturated window reports hasMore=false, partial=false', async () => {
-        // 3 raw rows; fetchLimit for limit=2/offset=0 is (0+2)*3=6, so 3 < 6:
-        // window is NOT saturated. All qualify; page fills exactly its slice.
-        mockClient.requestWithLibraryFilter.mockResolvedValue([
-          { id: 'al0', name: 'A0', artist: 'A', rating: 5 },
-          { id: 'al1', name: 'A1', artist: 'A', rating: 5 },
-          { id: 'al2', name: 'A2', artist: 'A', rating: 5 },
-        ]);
+    it('listTopRated reports hasMore when every row of a full page qualifies', async () => {
+      mockClient.requestWithLibraryFilter.mockResolvedValue([
+        { id: 'al0', name: 'A0', artist: 'A', songCount: 1, rating: 5 },
+        { id: 'al1', name: 'A1', artist: 'A', songCount: 1, rating: 5 },
+      ]);
 
-        const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 0 });
+      const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 0 });
 
-        expect(result.items.map(i => i.id)).toEqual(['al0', 'al1']);
-        // 3 qualifying > offset+limit (2) -> more exist past this page...
-        expect(result.hasMore).toBe(true);
-        // ...but the page was full and the window wasn't saturated -> not partial.
-        expect(result.partial).toBe(false);
+      expect(result.count).toBe(2);
+      expect(result.hasMore).toBe(true);
+      expect(result).not.toHaveProperty('partial');
+    });
+
+    it('listTopRated returns compact shared DTOs that keep the rating and the chaining ids', async () => {
+      mockClient.requestWithLibraryFilter.mockResolvedValue([
+        {
+          id: 's1', title: 'Song', artist: 'Artist', artistId: 'ar1', album: 'Album', albumId: 'al1',
+          duration: 200, rating: 5, year: 1999, path: '/m/s1.mp3',
+        },
+      ]);
+
+      const result = await listTopRated(mockClient, { type: 'songs', minRating: 4 });
+
+      expect(result.items[0]).toEqual({
+        id: 's1', title: 'Song', artist: 'Artist', artistId: 'ar1', album: 'Album', albumId: 'al1',
+        durationFormatted: '3:20', rating: 5,
       });
+    });
 
-      it('last page with no further qualifying rows reports hasMore=false, partial=false', async () => {
-        mockClient.requestWithLibraryFilter.mockResolvedValue([
-          { id: 'al0', name: 'A0', artist: 'A', rating: 5 },
-          { id: 'al1', name: 'A1', artist: 'A', rating: 5 },
-        ]);
+    it('listTopRated returns full metadata with verbose=true', async () => {
+      mockClient.requestWithLibraryFilter.mockResolvedValue([
+        {
+          id: 's1', title: 'Song', artist: 'Artist', artistId: 'ar1', album: 'Album', albumId: 'al1',
+          duration: 200, rating: 5, year: 1999, path: '/m/s1.mp3',
+        },
+      ]);
 
-        // filtered.length (2) == offset+limit (2), window unsaturated (2 < 6).
-        const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 0 });
+      const result = await listTopRated(mockClient, { type: 'songs', minRating: 4, verbose: true });
 
-        expect(result.items.map(i => i.id)).toEqual(['al0', 'al1']);
-        expect(result.hasMore).toBe(false);
-        expect(result.partial).toBe(false);
-      });
-
-      it('a saturated window with a visible rating cutoff is COMPLETE (hasMore=false, partial=false)', async () => {
-        // Regression for Issue #2. limit=2/offset=0 -> fetchLimit=6. Return exactly
-        // 6 raw rows (saturated), but only 1 qualifies; the other 5 are below
-        // minRating. Because the window is fetched sorted by rating DESC, seeing
-        // rows below the cutoff proves every unfetched row is also below it — the
-        // qualifying set is fully contained here. Previously this falsely reported
-        // hasMore=true/partial=true, making clients paginate forever.
-        const rows = [
-          { id: 'al0', name: 'A0', artist: 'A', rating: 5 }, // qualifies
-          ...Array.from({ length: 5 }, (_, i) => ({
-            id: `lo${i}`, name: `Lo${i}`, artist: 'A', rating: 1, // below minRating
-          })),
-        ];
-        mockClient.requestWithLibraryFilter.mockResolvedValue(rows);
-
-        const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 0 });
-
-        expect(result.count).toBe(1);
-        expect(result.items.map(i => i.id)).toEqual(['al0']);
-        expect(result.hasMore).toBe(false);
-        expect(result.partial).toBe(false);
-      });
-
-      it('an under-filled page over a saturated all-qualifying window reports hasMore=true, partial=true', async () => {
-        // The only way the window can hide qualifying rows: it saturates the 500
-        // fetch cap with EVERY fetched row still qualifying (no rating cutoff seen).
-        // limit=2/offset=499 -> fetchLimit=min(501*3,500)=500. 500 qualifying rows,
-        // sliced at offset 499 -> 1 returned (< limit), and rows past 500 were
-        // never examined -> genuinely partial, more may exist.
-        const rows = Array.from({ length: 500 }, (_, i) => ({
-          id: `al${i}`, name: `A${i}`, artist: 'A', rating: 5,
-        }));
-        mockClient.requestWithLibraryFilter.mockResolvedValue(rows);
-
-        const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 499 });
-
-        expect(result.count).toBe(1);
-        expect(result.items.map(i => i.id)).toEqual(['al499']);
-        expect(result.partial).toBe(true);
-        expect(result.hasMore).toBe(true);
-      });
-
-      it('a full page over a SATURATED window reports hasMore=true but partial=false', async () => {
-        // 6 raw rows (saturated), all qualify; the page fills its full limit, so
-        // it is NOT partial even though more may lie beyond the window.
-        const rows = Array.from({ length: 6 }, (_, i) => ({
-          id: `al${i}`, name: `A${i}`, artist: 'A', rating: 5,
-        }));
-        mockClient.requestWithLibraryFilter.mockResolvedValue(rows);
-
-        const result = await listTopRated(mockClient, { type: 'albums', minRating: 4, limit: 2, offset: 0 });
-
-        expect(result.count).toBe(2);
-        expect(result.hasMore).toBe(true);
-        expect(result.partial).toBe(false);
-      });
-
-      it('an empty result reports hasMore=false, partial=false', async () => {
-        mockClient.requestWithLibraryFilter.mockResolvedValue([]);
-
-        const result = await listTopRated(mockClient, { type: 'albums', minRating: 5, limit: 2, offset: 0 });
-
-        expect(result.count).toBe(0);
-        expect(result.hasMore).toBe(false);
-        expect(result.partial).toBe(false);
-      });
+      expect(result.items[0]).toMatchObject({ year: 1999, path: '/m/s1.mp3', rating: 5 });
     });
 
     it('should call subsonicRequest /star and return success for starItem', async () => {

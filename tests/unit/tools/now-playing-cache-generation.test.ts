@@ -25,7 +25,7 @@
  *    repair state and its VBR duration was never reconciled. Folding the engine's
  *    queue-generation counter into the key fixes the collision.
  *  - src-tools-playback-ts-2: `needsRadioFallback` was unconditionally true for
- *    all non-radio playback, forcing a getPlaylist() IPC on every poll even once
+ *    all non-radio playback, forcing a getQueue() IPC on every poll even once
  *    duration + metadata were fully resolved. Confirming "not radio" once per
  *    (generation, position) lets the poll skip the IPC.
  */
@@ -37,7 +37,7 @@ const getStatusMock = vi.fn();
 const getCachedPropertyMock = vi.fn();
 const getCurrentRadioStationMock = vi.fn();
 const getQueueGenerationMock = vi.fn();
-const getPlaylistMock = vi.fn();
+const getQueueMock = vi.fn();
 const ingestQueueMetadataMock = vi.fn();
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
@@ -47,7 +47,7 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     getCachedProperty: getCachedPropertyMock,
     getCurrentRadioStation: getCurrentRadioStationMock,
     getQueueGeneration: getQueueGenerationMock,
-    getPlaylist: getPlaylistMock,
+    getQueue: getQueueMock,
     ingestQueueMetadata: ingestQueueMetadataMock,
   },
 }));
@@ -66,10 +66,10 @@ describe('now_playing per-position cache keying', () => {
     getCurrentRadioStationMock.mockReturnValue(null);
   });
 
-  it('re-repairs duration after a replace reload lands a new track at index 0, and skips getPlaylist once resolved', async () => {
+  it('re-repairs duration after a replace reload lands a new track at index 0, and skips getQueue once resolved', async () => {
     // ---- Poll 1: generation 10, index 0. mpv under-reports VBR duration (100),
     // Navidrome's authoritative value is 300. Title/artist are already present
-    // so the only reason to call getPlaylist is the duration repair.
+    // so the only reason to call getQueue is the duration repair.
     getQueueGenerationMock.mockReturnValue(10);
     getCachedPropertyMock.mockImplementation(
       cachedProps({
@@ -83,26 +83,26 @@ describe('now_playing per-position cache keying', () => {
         path: 'http://nd.local/rest/stream?id=A',
       }),
     );
-    getPlaylistMock.mockResolvedValueOnce([
+    getQueueMock.mockResolvedValueOnce([
       { index: 0, songId: 'A', isCurrent: true, isPlaying: true, title: 'Track A', artist: 'Artist A', album: 'Album A', duration: 300 },
     ]);
 
     const poll1 = await nowPlaying({});
     expect(poll1.duration).toBe(300);
-    expect(getPlaylistMock).toHaveBeenCalledTimes(1);
+    expect(getQueueMock).toHaveBeenCalledTimes(1);
 
     // ---- Poll 2: same generation + index. Duration already repaired and the
-    // position is confirmed not-radio, so getPlaylist must NOT fire again
+    // position is confirmed not-radio, so getQueue must NOT fire again
     // (pins src-tools-playback-ts-2 — needsRadioFallback no longer forces it).
     const poll2 = await nowPlaying({});
-    expect(getPlaylistMock).toHaveBeenCalledTimes(1);
+    expect(getQueueMock).toHaveBeenCalledTimes(1);
     expect(poll2.isRadio).toBeUndefined();
     expect(poll2.duration).toBe(300);
 
     // ---- Poll 3: a mode:'replace' reload bumps the generation to 11. Track B
     // now occupies index 0 and mpv again under-reports its VBR duration (100).
     // Because the key folds the generation, B does NOT inherit A's cached repair
-    // state, so getPlaylist fires and B's duration is reconciled to 280.
+    // state, so getQueue fires and B's duration is reconciled to 280.
     getQueueGenerationMock.mockReturnValue(11);
     getCachedPropertyMock.mockImplementation(
       cachedProps({
@@ -116,13 +116,13 @@ describe('now_playing per-position cache keying', () => {
         path: 'http://nd.local/rest/stream?id=B',
       }),
     );
-    getPlaylistMock.mockResolvedValueOnce([
+    getQueueMock.mockResolvedValueOnce([
       { index: 0, songId: 'B', isCurrent: true, isPlaying: true, title: 'Track B', artist: 'Artist B', album: 'Album B', duration: 280 },
     ]);
 
     const poll3 = await nowPlaying({});
     expect(poll3.duration).toBe(280);
-    expect(getPlaylistMock).toHaveBeenCalledTimes(2);
+    expect(getQueueMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not reapply a cached duration when a new file loads at the same generation and index', async () => {
@@ -139,7 +139,7 @@ describe('now_playing per-position cache keying', () => {
         path: 'http://nd.local/rest/stream?id=C',
       }),
     );
-    getPlaylistMock.mockResolvedValueOnce([
+    getQueueMock.mockResolvedValueOnce([
       { index: 0, songId: 'C', isCurrent: true, isPlaying: true, title: 'Track C', artist: 'Artist C', duration: 400 },
     ]);
     const poll1 = await nowPlaying({});
@@ -155,12 +155,12 @@ describe('now_playing per-position cache keying', () => {
         path: 'http://nd.local/rest/stream?id=D',
       }),
     );
-    getPlaylistMock.mockResolvedValueOnce([
+    getQueueMock.mockResolvedValueOnce([
       { index: 0, songId: 'D', isCurrent: true, isPlaying: true, title: 'Track D', artist: 'Artist D', duration: 200 },
     ]);
     const poll2 = await nowPlaying({});
     expect(poll2.duration).toBe(200);
-    expect(getPlaylistMock).toHaveBeenCalledTimes(2);
+    expect(getQueueMock).toHaveBeenCalledTimes(2);
 
     // A radio stream loaded the same way reports no duration and must not inherit one.
     getCachedPropertyMock.mockImplementation(
@@ -171,12 +171,12 @@ describe('now_playing per-position cache keying', () => {
         path: 'http://radio.example/stream',
       }),
     );
-    getPlaylistMock.mockResolvedValueOnce([
+    getQueueMock.mockResolvedValueOnce([
       { index: 0, songId: null, isCurrent: true, isPlaying: true, title: 'Some Station' },
     ]);
     const poll3 = await nowPlaying({});
     expect(poll3.duration).toBeUndefined();
     expect(poll3.isRadio).toBe(true);
-    expect(getPlaylistMock).toHaveBeenCalledTimes(3);
+    expect(getQueueMock).toHaveBeenCalledTimes(3);
   });
 });

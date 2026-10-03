@@ -29,7 +29,7 @@
           <path fill="currentColor" d="M160-320v-480 480ZM80-80v-720q0-33 23.5-56.5T160-880h440q33 0 56.5 23.5T680-800v17q-24 11-44 27t-36 36v-80H160v480h440v-160q16 20 36 36t44 27v97q0 33-23.5 56.5T600-240H240L80-80Zm160-320h160v-80H240v80Zm520-80q-50 0-85-35t-35-85q0-50 35-85t85-35q11 0 21 2t19 5v-207h160v80h-80v240q0 50-35 85t-85 35Zm-520-40h280v-80H240v80Zm0-120h280v-80H240v80Z"/>
         </svg>
       </button>
-      <button type="button" class="ghost-btn" id="open-playlists" aria-label="Browse and play music" data-tip="Play music">
+      <button type="button" class="ghost-btn" id="open-play-dialog" aria-label="Browse and play music" data-tip="Play music">
         <svg viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M480-120q-66 0-113-47t-47-113q0-66 47-113t113-47q23 0 42.5 5.5T560-418v-422h240v160H640v400q0 66-47 113t-113 47ZM280-520v-120H160v-80h120v-120h80v120h120v80H360v120h-80Z"/>
         </svg>
@@ -213,7 +213,7 @@
     </div>
 
     <div class="lyrics-scroll" id="lyrics-scroll">
-      <p class="lyrics-status" id="lyrics-status"></p>
+      <p class="lyrics-status" id="lyrics-status" aria-live="polite"></p>
       <ol class="lyrics-lines" id="lyrics-lines"></ol>
     </div>
 
@@ -246,10 +246,10 @@
     </footer>
   </section>
 
-  <dialog id="lyrics-settings-dialog" class="modal">
+  <dialog id="lyrics-settings-dialog" class="modal" aria-labelledby="lyrics-settings-title">
     <form method="dialog" class="modal-content">
       <header class="modal-header">
-        <h2>Lyrics Settings</h2>
+        <h2 id="lyrics-settings-title">Lyrics Settings</h2>
         <button type="submit" class="modal-close" aria-label="Close">
           <svg viewBox="0 -960 960 960" aria-hidden="true">
             <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
@@ -258,18 +258,18 @@
       </header>
       <p class="modal-help">The sync offset applies to this device, for every song.</p>
       <div class="lyrics-offset-row">
-        <button type="button" class="btn-secondary" id="lyrics-offset-down" aria-label="Decrease the lyrics sync offset">&minus;100 ms</button>
-        <span class="lyrics-offset-value" id="lyrics-offset-value">0.0 s</span>
-        <button type="button" class="btn-secondary" id="lyrics-offset-up" aria-label="Increase the lyrics sync offset">+100 ms</button>
+        <button type="button" class="btn-secondary" id="lyrics-offset-down" aria-label="Decrease sync offset by 100 ms">&minus;100 ms</button>
+        <span class="lyrics-offset-value" id="lyrics-offset-value" role="status">0.0 s</span>
+        <button type="button" class="btn-secondary" id="lyrics-offset-up" aria-label="Increase sync offset by 100 ms">+100 ms</button>
       </div>
       <p class="modal-hint">A positive offset runs the words ahead of the audio.</p>
     </form>
   </dialog>
 
-  <dialog id="settings-dialog" class="modal">
+  <dialog id="settings-dialog" class="modal" aria-labelledby="settings-title">
     <form method="dialog" class="modal-content">
       <header class="modal-header">
-        <h2>Settings</h2>
+        <h2 id="settings-title">Settings</h2>
         <button type="submit" class="modal-close" aria-label="Close">
           <svg viewBox="0 -960 960 960" aria-hidden="true">
             <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
@@ -290,7 +290,7 @@
         <legend class="settings-heading">Player</legend>
         <label class="check">
           <input type="checkbox" id="set-persist" />
-          <span>Keep playing after the MCP server closes <span class="modal-hint">the player + mpv survive when you close the AI; otherwise they stop with it</span></span>
+          <span>Keep playing after the MCP server closes <span class="modal-hint">the player and mpv survive when you close the AI. Unchecked, they stop with it.</span></span>
         </label>
         <label class="check">
           <input type="checkbox" id="set-autoopen" />
@@ -301,10 +301,10 @@
     </form>
   </dialog>
 
-  <dialog id="playlists-dialog" class="modal modal-full">
+  <dialog id="play-dialog" class="modal modal-full" aria-labelledby="play-dialog-title">
     <form method="dialog" class="modal-content">
       <header class="modal-header">
-        <h2>Play Music</h2>
+        <h2 id="play-dialog-title">Play Music</h2>
         <button type="submit" class="modal-close" aria-label="Close">
           <svg viewBox="0 -960 960 960" aria-hidden="true">
             <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
@@ -312,9 +312,9 @@
         </button>
       </header>
       <div class="modal-tabs" role="tablist">
-        <button type="button" class="modal-tab is-active" id="pl-tab-search" data-tab="search" role="tab" aria-selected="true" aria-controls="pl-pane-search">Search</button>
-        <button type="button" class="modal-tab" id="pl-tab-playlists" data-tab="playlists" role="tab" aria-selected="false" aria-controls="pl-pane-playlists">Playlists</button>
-        <button type="button" class="modal-tab" id="pl-tab-favorites" data-tab="favorites" role="tab" aria-selected="false" aria-controls="pl-pane-favorites">Favorites</button>
+        <button type="button" class="modal-tab is-active" id="play-tab-search" data-tab="search" role="tab" aria-selected="true" aria-controls="play-pane-search">Search</button>
+        <button type="button" class="modal-tab" id="play-tab-playlists" data-tab="playlists" role="tab" aria-selected="false" aria-controls="play-pane-playlists">Playlists</button>
+        <button type="button" class="modal-tab" id="play-tab-favorites" data-tab="favorites" role="tab" aria-selected="false" aria-controls="play-pane-favorites">Favorites</button>
       </div>
       <div class="play-toolbar">
         <fieldset class="mode-toggle">
@@ -345,30 +345,30 @@
           </svg>
         </button>
       </div>
-      <div class="modal-pane" id="pl-pane-search" role="tabpanel" aria-labelledby="pl-tab-search">
+      <div class="modal-pane" id="play-pane-search" role="tabpanel" aria-labelledby="play-tab-search">
         <div class="lib-search">
           <input type="search" id="lib-query" placeholder="Search artists, albums and songs" aria-label="Search artists, albums and songs" autocomplete="off" enterkeyhint="search" />
           <button type="button" class="primary-btn" id="lib-search-btn">Search</button>
         </div>
-        <p class="modal-hint" id="lib-caption"></p>
+        <p class="modal-hint" id="lib-caption" aria-live="polite"></p>
         <p class="modal-hint" id="lib-status" aria-live="polite"></p>
         <div id="lib-results"></div>
       </div>
-      <div class="modal-pane" id="pl-pane-playlists" role="tabpanel" aria-labelledby="pl-tab-playlists" hidden>
+      <div class="modal-pane" id="play-pane-playlists" role="tabpanel" aria-labelledby="play-tab-playlists" hidden>
         <p class="modal-hint" id="playlists-status" aria-live="polite"></p>
         <ul class="lib-list" id="playlists-list"></ul>
       </div>
-      <div class="modal-pane" id="pl-pane-favorites" role="tabpanel" aria-labelledby="pl-tab-favorites" hidden>
+      <div class="modal-pane" id="play-pane-favorites" role="tabpanel" aria-labelledby="play-tab-favorites" hidden>
         <p class="modal-hint" id="favorites-status" aria-live="polite"></p>
         <ul class="lib-list" id="favorites-list"></ul>
       </div>
     </form>
   </dialog>
 
-  <dialog id="network-info-dialog" class="modal">
+  <dialog id="network-info-dialog" class="modal" aria-labelledby="network-info-title">
     <form method="dialog" class="modal-content">
       <header class="modal-header">
-        <h2>Network Info</h2>
+        <h2 id="network-info-title">Network Info</h2>
         <button type="submit" class="modal-close" aria-label="Close">
           <svg viewBox="0 -960 960 960" aria-hidden="true">
             <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>

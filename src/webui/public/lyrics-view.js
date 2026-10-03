@@ -3,10 +3,11 @@
 import { mountCover } from './cover.js';
 import { byId, setHidden } from './dom.js';
 import { clearLyricsSlew, rebaseLyricsClock, snapLyricsClock } from './lyrics-clock.js';
-import { showLyricsFor } from './lyrics-content.js';
+import { retryFailedLyrics, showLyricsFor } from './lyrics-content.js';
 import { lyricsFor } from './lyrics-data.js';
 import {
   bindFollow,
+  isFollowing,
   recenterActiveLine,
   resetFollowFrame,
   resumeFollow,
@@ -24,6 +25,8 @@ import { currentNowPlaying, playingIndex, queueSongId } from './snapshot.js';
 import { acquireWakeHold, bindWakeHold, releaseWakeHold } from './wake-hold.js';
 
 const VIEW_KEY = 'navidrome-mcp.lyrics-view';
+// Keys that scroll a focused overflow box, so pressing one is the reader moving the view.
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 
 const view = byId('lyrics-view');
 const backdrop = byId('lyrics-backdrop');
@@ -48,6 +51,8 @@ let windowed = prefRead(VIEW_KEY) === 'window';
 // Starts undefined rather than null, so the first snapshot paints an initial state even with nothing playing.
 let shownSongId = undefined;
 let raf = null;
+// Whether follow was on when the current gesture's pointerdown suspended it.
+let followedAtPointerDown = true;
 
 export function bindLyricsView() {
   openBtn.addEventListener('click', openLyrics);
@@ -56,12 +61,18 @@ export function bindLyricsView() {
   viewToggle.addEventListener('click', toggleViewMode);
   scrollBox.addEventListener('click', () => {
     view.classList.toggle('is-immersive');
-    // A gesture that ends in a click was a tap, so the suspend its pointerdown armed is taken back.
-    resumeFollow();
+    // A gesture that ends in a click was a tap, so it takes back only the suspend its own pointerdown armed.
+    if (followedAtPointerDown) resumeFollow();
   });
-  scrollBox.addEventListener('pointerdown', suspendFollow);
+  scrollBox.addEventListener('pointerdown', () => {
+    followedAtPointerDown = isFollowing();
+    suspendFollow();
+  });
   scrollBox.addEventListener('touchstart', suspendFollow, { passive: true });
   scrollBox.addEventListener('wheel', suspendFollow, { passive: true });
+  scrollBox.addEventListener('keydown', (ev) => {
+    if (SCROLL_KEYS.has(ev.key)) suspendFollow();
+  });
   lines.addEventListener('click', seekToTappedLine);
   window.addEventListener('resize', () => {
     if (open && windowed) placeBelowTopbar(view);
@@ -95,6 +106,7 @@ function openLyrics() {
   setHidden(view, false);
   applyViewMode();
   renderHeader(currentNowPlaying());
+  retryFailedLyrics();
   renderLyricsProgress();
   // The loop was down with the overlay, so the frame clock and any outstanding correction are stale.
   resetFollowFrame();
@@ -152,9 +164,9 @@ function tick() {
 }
 
 function renderHeader(np) {
-  const running = np?.engineRunning === true;
-  title.textContent = running ? (np.title ?? 'Unknown title') : 'No track loaded';
-  artist.textContent = running ? (np.artist ?? '') : '';
+  const hasTrack = playingIndex(np) !== null;
+  title.textContent = hasTrack ? (np.title ?? 'Unknown title') : 'No track loaded';
+  artist.textContent = hasTrack ? (np.artist ?? '') : '';
 }
 
 // Repaints the overlay for a new song and warms the next queue entry. A radio stream carries
@@ -184,10 +196,8 @@ function syncTrack(np) {
   if (nextSongId !== null) void lyricsFor(nextSongId);
 }
 
-// An idle mpv reports paused:false with queueIndex -1, so `paused` alone would keep
-// the screen awake after the last queue entry has played out.
 function syncWakeHold(np) {
-  const playing = np?.engineRunning === true && (np.queueIndex ?? -1) >= 0 && !isPaused();
+  const playing = playingIndex(np) !== null && !isPaused();
   if (open && playing) acquireWakeHold();
   else releaseWakeHold();
 }

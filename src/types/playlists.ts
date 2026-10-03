@@ -32,6 +32,8 @@ export interface PlaylistDTO {
   songCount: number;
   /** Total duration in human-readable format */
   durationFormatted: string;
+  /** Total duration in seconds. `keep` only, since `durationFormatted` carries the same information. */
+  duration?: number;
   /** Owner username */
   owner: string;
   /** Owner user ID */
@@ -46,11 +48,11 @@ export interface PlaylistDTO {
  * DTO for individual tracks within a playlist
  */
 export interface PlaylistTrackDTO {
-  /** Track position ID in playlist (1-based position, stringified) */
-  id: string;
+  /** 1-based position in the playlist, stringified. Shifts after any add, remove or reorder. */
+  position: string;
   /** Song ID */
-  mediaFileId: string;
-  /** Playlist ID. Verbose-only — it is identical on every row (the caller
+  songId: string;
+  /** Playlist ID. Verbose-only, since it is identical on every row (the caller
       supplied it), so compact responses omit it to save context. */
   playlistId?: string;
   /** Song title */
@@ -61,7 +63,7 @@ export interface PlaylistTrackDTO {
   artist: string;
   /** Album artist */
   albumArtist?: string;
-  /** Duration in seconds. Verbose-only — `durationFormatted` carries the same
+  /** Duration in seconds. Verbose-only, since `durationFormatted` carries the same
       information in compact responses. */
   duration?: number;
   /** Duration in human-readable format */
@@ -112,10 +114,11 @@ export interface AddTracksToPlaylistRequest {
   albumIds?: string[];
   /** Artist IDs to add (all tracks) */
   artistIds?: string[];
-  /** Specific discs to add */
+  /** Specific discs to add. Navidrome matches album, release date and disc number together. */
   discs?: Array<{
     albumId: string;
     discNumber: number;
+    releaseDate: string;
   }>;
 }
 
@@ -135,8 +138,8 @@ export interface AddTracksToPlaylistResponse {
  * Response DTO for removing tracks from a playlist
  */
 export interface RemoveTracksFromPlaylistResponse {
-  /** IDs of removed tracks */
-  ids: string[];
+  /** Positions of the removed tracks, as Navidrome echoes them */
+  positions: string[];
   /** Human-readable message */
   message: string;
   /** Whether the operation was successful */
@@ -147,26 +150,17 @@ export interface RemoveTracksFromPlaylistResponse {
  * Request DTO for reordering a track in a playlist
  */
 export interface ReorderPlaylistTrackRequest {
-  /** New 1-based position (as string): the track is inserted before the row at this position. Use 1 for the first slot; N+1 to append. Passing 0 returns HTTP 500. */
+  /** Final 1-based position (as string) Navidrome moves the row to. Passing 0 returns HTTP 500. */
   insert_before: string;
 }
 
 /**
- * Response DTO for reordering a track. The Navidrome API echoes back only the
- * trackId that was moved (`{"id":"4"}`) — it does not return the new position
- * or any track metadata. To avoid an extra round-trip just to enrich the
- * response (per Batch 2 #29), we synthesize a confirmation from the request
- * parameters: `previousPosition` = the trackId the caller asked to move,
- * `newPosition` = the `insert_before` value the caller asked for.
+ * Response DTO for reordering a track, built from the request since Navidrome echoes only the input position.
  */
 export interface ReorderPlaylistTrackResponse {
-  /** Playlist that was reordered */
-  playlistId: string;
-  /** Track position ID (echoed from the API; matches the input trackId) */
-  id: number;
-  /** Original 1-based position the track was moved FROM (= input trackId) */
+  /** Original 1-based position the track was moved FROM (= input position) */
   previousPosition: number;
-  /** New 1-based position the track was moved TO (= input insert_before) */
+  /** Final 1-based position of the track after the move. A downward move lands at insertBefore - 1. */
   newPosition: number;
   /** Human-readable confirmation message */
   message: string;

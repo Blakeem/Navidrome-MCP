@@ -17,7 +17,6 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { z } from 'zod';
 import { PlayQueueIndexSchema, SeekSchema, SetVolumeSchema } from '../../schemas/index.js';
 import {
   clearPlayQueue,
@@ -30,17 +29,15 @@ import {
   setVolume,
   shuffleQueueFromTop,
 } from '../../tools/playback.js';
-import { readJsonBody, runAction, writeError } from '../http-helpers.js';
+import { readValidBody, runAction } from '../http-helpers.js';
 
 export function handlePause(res: ServerResponse): Promise<void> {
   return runAction(res, () => pause({}));
 }
 
 /**
- * POST /api/controls/clear — empty the live queue and stop audio (mpv `stop`).
- * The UI's "clear queue" affordance; a normal control (LAN-allowed). There is
- * deliberately no separate "stop" — mpv has no stop-but-keep-queue, so stop and
- * clear are the same operation; we expose it once, as clear.
+ * POST /api/controls/clear empties the live queue and stops audio (mpv `stop`).
+ * mpv has no stop-but-keep-queue, so stop and clear are one operation, exposed once as clear.
  */
 export function handleClear(res: ServerResponse): Promise<void> {
   return runAction(res, () => clearPlayQueue({}));
@@ -66,28 +63,6 @@ export function handlePrevious(res: ServerResponse): Promise<void> {
   return runAction(res, () => previous({}));
 }
 
-/**
- * Invalid input returns 400 here because runAction maps every thrown error, the impls' own ZodErrors included, to 500.
- * Resolves to null once the 400 response is written.
- */
-async function readValidBody<T>(req: IncomingMessage, res: ServerResponse, schema: z.ZodType<T>): Promise<T | null> {
-  let body: unknown;
-  try {
-    body = await readJsonBody(req);
-  } catch (err) {
-    writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
-    return null;
-  }
-
-  const validation = schema.safeParse(body);
-  if (!validation.success) {
-    const message = validation.error.issues.map((issue) => issue.message).join('; ');
-    writeError(res, 400, message !== '' ? message : 'invalid request body');
-    return null;
-  }
-  return validation.data;
-}
-
 // POST /api/controls/seek. Body `{seconds: number, mode?: 'absolute'|'relative'}`.
 export async function handleSeek(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readValidBody(req, res, SeekSchema);
@@ -107,9 +82,8 @@ export async function handleVolume(req: IncomingMessage, res: ServerResponse): P
 
 /**
  * POST /api/controls/play-index. Body `{index: number}`. Jumps the play
- * head to that queue entry without mutating queue contents. The frontend's
- * "click a queue row to play it" affordance is the only caller today;
- * keeping the route generic so curl/clients can drive it too.
+ * head to that queue entry without mutating queue contents. The route stays
+ * generic so curl and other clients can drive it too.
  */
 export async function handlePlayQueueIndex(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readValidBody(req, res, PlayQueueIndexSchema);

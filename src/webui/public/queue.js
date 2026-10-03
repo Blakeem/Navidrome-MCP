@@ -1,7 +1,7 @@
 // The live queue list with its count, shuffle and clear controls.
 
 import { postJson } from './api.js';
-import { byId } from './dom.js';
+import { buildIcon, byId, ICON_PLAY } from './dom.js';
 import { currentQueue, playingIndex } from './snapshot.js';
 import { formatTime } from './time-format.js';
 
@@ -9,7 +9,6 @@ const queueList = byId('queue-list');
 const queueCount = byId('queue-count');
 const shuffleQueue = byId('shuffle-queue');
 const clearQueue = byId('clear-queue');
-const ROW_ICON = '<svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
 
 // The queue identity in the DOM. A rebuild at the 1 Hz snapshot rate would recreate
 // the row under the pointer between press and release, and the click would be lost.
@@ -34,7 +33,10 @@ export function renderQueue(queue) {
   shuffleQueue.disabled = queueLength === 0;
   if (items.length === 0) {
     if (renderedSignature !== '') {
-      queueList.innerHTML = '<li class="empty">Queue is empty</li>';
+      const empty = document.createElement('li');
+      empty.className = 'empty';
+      empty.textContent = 'Queue is empty';
+      queueList.replaceChildren(empty);
       renderedSignature = '';
     }
     return;
@@ -73,46 +75,41 @@ function refreshRows(items) {
     const li = rows[i];
     const item = items[i];
     li.classList.toggle('current', item.isCurrent === true);
-    li.setAttribute('aria-label', queueAriaLabel(item));
+    li.querySelector('.qrow').setAttribute('aria-label', queueAriaLabel(item));
     fillQueueRowText(li, item);
   }
 }
 
 function buildQueueRow(item) {
   const li = document.createElement('li');
+  const row = document.createElement('button');
   const icon = document.createElement('span');
   const num = document.createElement('span');
-  const main = document.createElement('div');
+  const main = document.createElement('span');
   const title = document.createElement('span');
   const artist = document.createElement('span');
   const dur = document.createElement('span');
 
   if (item.isCurrent) li.classList.add('current');
-  // A native <button> would fight the row's flex layout, so the row takes the button role.
-  li.tabIndex = 0;
-  li.setAttribute('role', 'button');
-  li.setAttribute('aria-label', queueAriaLabel(item));
+  row.type = 'button';
+  row.className = 'qrow';
+  row.setAttribute('aria-label', queueAriaLabel(item));
   icon.className = 'qicon';
-  icon.innerHTML = ROW_ICON;
+  icon.appendChild(buildIcon('qicon-glyph', ICON_PLAY));
   num.className = 'qnum';
   main.className = 'qmain';
   title.className = 'qtitle';
   artist.className = 'qartist';
   dur.className = 'qdur';
   main.append(title, artist);
-  li.append(icon, num, main, dur);
+  row.append(icon, num, main, dur);
+  li.appendChild(row);
   fillQueueRowText(li, item);
 
   // The live class is read at click time, since a kept row only flips it and `item` can be stale.
-  const onActivate = () => {
+  row.addEventListener('click', () => {
     if (li.classList.contains('current')) return;
     void postJson('/api/controls/play-index', { index: item.index });
-  };
-  li.addEventListener('click', onActivate);
-  li.addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    ev.preventDefault();
-    onActivate();
   });
   return li;
 }

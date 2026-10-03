@@ -26,59 +26,24 @@ import { getPlayQueue, nowPlaying, playbackStatus } from '../tools/playback.js';
 import { getTheme } from '../web/player-runtime.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * Minimum gap between consecutive broadcasts triggered by mpv property
- * changes. mpv emits property events at high frequency in two cases:
- *   - `time-pos` ticks ~every 250ms during playback.
- *   - `playlist-count` / `playlist-pos` / `metadata` burst-fire during a bulk
- *     `loadfile` sequence (one event per loaded track — hundreds, for a
- *     "play 500 starred albums" stress test).
- *
- * Coalescing keeps `buildSnapshot` from re-reading a growing queue over mpv
- * IPC on every event of a bulk load.
- *
- * 1000ms (1Hz) is fine for the progress bar (the UI interpolates between
- * server values), and is the right ceiling for bulk-load coalescing too.
- *
- * `kind: 'queue'` events (the explicit post-enqueue emit) are NOT throttled.
- * They mark "the user-facing operation is done, the UI should reflect it now."
- */
+// mpv fires time-pos every 250 ms and a bulk loadfile fires one queue event per track, so property events are throttled.
 const BROADCAST_THROTTLE_MS = 1000;
 
-/**
- * EventSource reconnect interval the server advertises on connect. Browsers
- * respect this verbatim, so a value here is what determines how often a phone
- * laid down on a desk silently re-tries after the server restarts or the
- * Wi-Fi drops. 10s reconnects soon without polling the server hard.
- */
+// Browsers retry at this interval verbatim, so it sets how soon an idle phone reconnects without polling the server hard.
 const SSE_RETRY_MS = 10_000;
 
 // Stays under common reverse-proxy idle timeouts (nginx proxy_read_timeout is 60s) and bounds dead-client reaping latency.
 const SSE_HEARTBEAT_MS = 10_000;
 
 /**
- * Broadcasts engine state snapshots to a set of SSE clients.
- *
- * Lifecycle:
- *   - `start()` subscribes to the playback engine's onStateChange events.
- *   - `addClient(res)` registers a new SSE response, sends the retry directive,
- *     and pushes an initial snapshot so the UI never sits on a blank frame.
- *   - On disconnect, the response is removed from the active set.
- *   - `stop()` unsubscribes and ends every active SSE response cleanly.
- *
- * Throttling: all property-change events are debounced (leading + trailing)
- * to at most one broadcast per `BROADCAST_THROTTLE_MS`. `kind: 'queue'` events
- * (the post-enqueue emit) flush immediately so user-actioned
- * boundaries land in the UI within one frame.
- *
- * Snapshot construction reuses the existing `nowPlaying`, `getPlayQueue`,
- * and `playbackStatus` tool impl functions so the web UI sees byte-identical
- * shapes to what an MCP client would see. Each read is independently
- * resilient via `Promise.allSettled` — one failed read leaves a `null` field
- * on the wire rather than blanking the whole snapshot.
+ * Pushes engine snapshots to every SSE remote. Property events are throttled to one broadcast per
+ * BROADCAST_THROTTLE_MS, and queue events flush at once so a user action shows within one frame.
  */
 export class SseBroadcaster {
   private readonly clients = new Set<ServerResponse>();
+  // A snapshot carries the full state, so a client still flushing its last write keeps only the newest one for its 'drain'.
+  private readonly heldSnapshots = new WeakMap<ServerResponse, string>();
+  private readonly backloggedAtHeartbeat = new WeakSet<ServerResponse>();
   private lastBroadcastMs = 0;
   private pendingBroadcastTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -89,17 +54,6 @@ export class SseBroadcaster {
   start(): void {
     if (this.unsubscribe !== null) return;
     this.unsubscribe = playbackEngine.onStateChange((evt) => this.handleEvent(evt));
-    // Liveness reaping. A peer that vanishes without a clean TCP FIN/RST
-    // (phone sleep, Wi-Fi handoff, NAT timeout — routine for a media-control
-    // UI used from a phone) never fires the 'close' handler, so its
-    // ServerResponse would sit in `clients` for the process lifetime. On each
-    // tick `sendHeartbeat` drops any response Node has locally marked dead
-    // (`res.destroyed`/`res.writableEnded` — a peer RST flips `destroyed`) and
-    // writes a comment ping to the rest to keep proxies from idling the stream
-    // out. A truly silent NAT timeout only becomes reapable once the OS TCP
-    // stack gives up and destroys the socket — a TCP-level heartbeat can't beat
-    // that without an app-level ack. Unref'd so it never keeps the process
-    // alive on its own.
     this.heartbeatTimer = setInterval(() => { this.sendHeartbeat(); }, SSE_HEARTBEAT_MS);
     this.heartbeatTimer.unref();
   }
@@ -123,18 +77,10 @@ export class SseBroadcaster {
     this.clients.clear();
   }
 
-  /**
-   * Reap dead clients and ping the live ones. `res.write()` does NOT throw
-   * synchronously when a peer's socket is gone — Node reports that by flipping
-   * `res.destroyed` (peer RST / local destroy) or `res.writableEnded` (local
-   * end), so liveness is read from those flags, not inferred from a caught
-   * exception. Runs even while playback is idle, so it's the reaper for peers
-   * that never fire a 'close' event; the try/catch only guards against exotic
-   * synchronous write errors (e.g. a non-string chunk).
-   */
+  // Also the reaper for peers that vanish without a 'close' event, since it runs while playback is idle.
   private sendHeartbeat(): void {
     for (const res of this.clients) {
-      if (res.destroyed || res.writableEnded) {
+      if (isClosed(res) || this.reapIfStalled(res)) {
         this.clients.delete(res);
         continue;
       }
@@ -149,12 +95,7 @@ export class SseBroadcaster {
     }
   }
 
-  /**
-   * Register an SSE response. Writes the retry directive immediately so the
-   * browser learns the reconnect interval even if the connection drops
-   * before the first snapshot arrives, then attempts an initial snapshot
-   * push so the UI has data the moment it connects.
-   */
+  // The retry directive goes first, so the browser learns the reconnect interval even if the stream drops before a snapshot.
   async addClient(res: ServerResponse): Promise<void> {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -168,27 +109,14 @@ export class SseBroadcaster {
 
     this.clients.add(res);
     res.on('close', () => { this.clients.delete(res); });
+    res.on('drain', () => { this.handleDrain(res); });
 
     const snapshot = await this.buildSnapshot();
-    // Re-check membership: the client may have disconnected during the await
-    // (the 'close' handler above already removed it). Writing to a socket
-    // that's gone is harmless but pointless; gating on `clients.has(res)`
-    // also avoids racing a concurrent broadcast() that snapshotted the set
-    // while this client was half-closed.
+    // The client may have closed during the await, and its 'close' handler already removed it.
     if (snapshot !== null && this.clients.has(res)) this.writeToClient(res, snapshot);
   }
 
-  /** Number of currently-connected SSE clients. Used for diagnostics. */
-  clientCount(): number {
-    return this.clients.size;
-  }
-
   private handleEvent(evt: StateChangeEvent): void {
-    // All property-change events go through the throttle (leading +
-    // trailing edge). This covers high-frequency time-pos ticks AND the
-    // burst of playlist-count/metadata events that fires during a bulk
-    // loadfile sequence — without coalescing, both would trigger a full
-    // buildSnapshot per event.
     if (evt.kind === 'property') {
       const now = Date.now();
       const elapsed = now - this.lastBroadcastMs;
@@ -207,12 +135,9 @@ export class SseBroadcaster {
       }
       return;
     }
+    // The engine is not yet usable at the attach event, and the snapshot burst after it broadcasts.
+    if (evt.kind === 'attach') return;
 
-    // `kind: 'queue'` events (the post-enqueue emit):
-    // immediate fan-out — these mark user-facing operation boundaries and
-    // the UI should reflect them within one frame. Also reset the
-    // trailing-edge timer's deadline since the snapshot we're about to
-    // send is fresher than any queued throttled broadcast.
     this.broadcastNow();
   }
 
@@ -235,21 +160,40 @@ export class SseBroadcaster {
     }
   }
 
-  /** Returns false if the write failed (dead pipe) so the caller can reap it. */
+  // A peer that stops reading never errors, so a backlog with no 'drain' across a whole heartbeat interval marks it stalled.
+  private reapIfStalled(res: ServerResponse): boolean {
+    if (!res.writableNeedDrain) {
+      this.backloggedAtHeartbeat.delete(res);
+      return false;
+    }
+    if (!this.backloggedAtHeartbeat.has(res)) {
+      this.backloggedAtHeartbeat.add(res);
+      return false;
+    }
+    logger.debug('webui: SSE client drained nothing for a heartbeat interval, dropping it');
+    res.destroy();
+    return true;
+  }
+
+  private handleDrain(res: ServerResponse): void {
+    this.backloggedAtHeartbeat.delete(res);
+    const held = this.heldSnapshots.get(res);
+    if (held === undefined || !this.clients.has(res)) return;
+    this.heldSnapshots.delete(res);
+    if (!this.writeToClient(res, held)) this.clients.delete(res);
+  }
+
+  /** Returns false if the client is closed or the write failed, so the caller can reap it. */
   private writeToClient(res: ServerResponse, snapshotJson: string): boolean {
-    // A peer that reset its socket doesn't make res.write() throw — Node
-    // flips res.destroyed / res.writableEnded instead. Check before (skip a
-    // known-dead pipe) and after (a mid-write reset) the write so a broken
-    // pipe is reaped this pass rather than waiting on a 'close' that may
-    // never fire for a silently-dead peer.
-    if (res.destroyed || res.writableEnded) return false;
+    if (isClosed(res)) return false;
+    if (res.writableNeedDrain) {
+      this.heldSnapshots.set(res, snapshotJson);
+      return true;
+    }
     try {
       res.write(`event: snapshot\ndata: ${snapshotJson}\n\n`);
       return !res.destroyed;
     } catch (err) {
-      // Pipe broken or client gone. Report failure so the broadcast loop
-      // drops the entry from the active set immediately rather than waiting
-      // on a 'close' event that may never fire for a silently-dead peer.
       logger.debug(
         `webui: SSE write failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -257,21 +201,10 @@ export class SseBroadcaster {
     }
   }
 
+  // allSettled, so one failed read ships a null field instead of blanking the whole snapshot.
   private async buildSnapshot(): Promise<string | null> {
-    // Status carries volume + engine running flag; the now-playing and
-    // queue shapes don't include volume so the web UI has no other path
-    // to seed the slider. Three reads are kept parallel for latency on
-    // first-paint; they all hit local caches after the first sample.
-    //
-    // allSettled (not all) so a single failed read doesn't blank the
-    // entire snapshot. The web UI already tolerates null for any of the
-    // three fields — better to ship "engine alive but queue temporarily
-    // unavailable" than to fall silent and leave the user wondering if
-    // the MCP server has died.
     const [npResult, queueResult, statusResult] = await Promise.allSettled([
-      // Pass the client so now_playing can resolve title/artist/album by songId
-      // after an MCP restart (empty engine cache) — same enrichment the MCP
-      // tool path gets — instead of leaving the web UI's card blank.
+      // The client lets now_playing resolve title, artist and album by songId after an MCP restart empties the engine cache.
       nowPlaying({}, this.client),
       getPlayQueue(this.client, {}),
       playbackStatus({}),
@@ -281,9 +214,7 @@ export class SseBroadcaster {
     const queue = settled(queueResult, 'queue');
     const status = settled(statusResult, 'status');
 
-    // If every read failed, there's nothing useful to broadcast.
-    // Returning null skips the SSE write — clients keep their last
-    // snapshot rather than seeing a triple-null frame.
+    // Clients keep their last snapshot rather than receive a frame of three nulls.
     if (np === null && queue === null && status === null) {
       return null;
     }
@@ -294,12 +225,12 @@ export class SseBroadcaster {
   }
 }
 
-/**
- * Unwrap a settled promise result, logging at debug on rejection and
- * returning null so the caller can ship a partial snapshot. The `field`
- * label is included in the log so a recurring failure is identifiable
- * without ambiguity about which read broke.
- */
+// A dead peer does not make res.write() throw, so liveness is read from the stream flags.
+function isClosed(res: ServerResponse): boolean {
+  return res.destroyed || res.writableEnded;
+}
+
+/** The `field` label names which read broke, so a recurring failure is identifiable in the log. */
 function settled<T>(result: PromiseSettledResult<T>, field: string): T | null {
   if (result.status === 'fulfilled') return result.value;
   const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);

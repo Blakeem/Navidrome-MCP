@@ -19,27 +19,38 @@ describe('getSavedQueue', () => {
     mockClient = createMockClient();
   });
 
-  it('returns empty-queue shape when server returns null', async () => {
+  const EMPTY_QUEUE = { current: 0, position: 0, trackCount: 0, tracks: [], updatedAt: null };
+
+  it('returns the empty-queue shape when server returns null', async () => {
     mockClient.request.mockResolvedValue(null);
 
     const result = await getSavedQueue(mockClient as unknown as NavidromeClient, {});
 
-    expect(result.trackCount).toBe(0);
-    expect(result.tracks).toEqual([]);
-    expect(result.current).toBe(0);
-    expect(result.position).toBe(0);
-    expect(result.message).toBeDefined();
-    expect(typeof result.message).toBe('string');
-    expect(result.queue).toBeNull();
+    expect(result).toEqual(EMPTY_QUEUE);
   });
 
-  it('returns empty-queue shape when server returns empty object', async () => {
+  it('returns the empty-queue shape when server returns empty object', async () => {
     mockClient.request.mockResolvedValue({});
 
     const result = await getSavedQueue(mockClient as unknown as NavidromeClient, {});
 
-    expect(result.trackCount).toBe(0);
-    expect(result.tracks).toHaveLength(0);
+    expect(result).toEqual(EMPTY_QUEUE);
+  });
+
+  it('returns the same empty-queue shape for the zero-valued record a live server sends', async () => {
+    mockClient.request.mockResolvedValue({
+      id: '',
+      userId: 'user-1',
+      current: 0,
+      position: 0,
+      changedBy: '',
+      createdAt: '0001-01-01T00:00:00Z',
+      updatedAt: '0001-01-01T00:00:00Z',
+    });
+
+    const result = await getSavedQueue(mockClient as unknown as NavidromeClient, {});
+
+    expect(result).toEqual(EMPTY_QUEUE);
   });
 
   it('maps server items to the DTO shape', async () => {
@@ -48,8 +59,8 @@ describe('getSavedQueue', () => {
       position: 42000,
       updatedAt: '2026-05-10T10:00:00Z',
       items: [
-        { id: 'track-1', title: 'Song A', artist: 'Artist A', album: 'Album A', duration: 240 },
-        { id: 'track-2', title: 'Song B', artist: 'Artist B', album: 'Album B', duration: 180 },
+        { id: 'track-1', title: 'Song A', artist: 'Artist A', artistId: 'artist-a', album: 'Album A', albumId: 'album-a', duration: 240 },
+        { id: 'track-2', title: 'Song B', artist: 'Artist B', artistId: 'artist-b', album: 'Album B', albumId: 'album-b', duration: 180 },
       ],
     });
 
@@ -64,9 +75,9 @@ describe('getSavedQueue', () => {
     expect(result.tracks[0]).toHaveProperty('title');
     expect(result.tracks[0]).toHaveProperty('artist');
     expect(result.tracks[0]).toHaveProperty('album');
-    expect(result.tracks[0]).toHaveProperty('duration');
-    // Issue #24: surface a human-readable duration alongside raw seconds so
-    // queue items match the convention used by every other song-bearing tool.
+    // Queue items use the compact song DTO, which carries lookup ids and no raw duration.
+    expect(result.tracks[0]).toMatchObject({ artistId: 'artist-a', albumId: 'album-a' });
+    expect(result.tracks[0]).not.toHaveProperty('duration');
     expect(result.tracks[0]).toHaveProperty('durationFormatted');
     expect(result.tracks[0]?.durationFormatted).toBe('4:00');
     expect(result.tracks[1]?.durationFormatted).toBe('3:00');

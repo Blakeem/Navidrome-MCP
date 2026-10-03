@@ -183,7 +183,8 @@ describe('deleteRadioStation', () => {
     expect(result.success).toBe(true);
     expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
       '/deleteInternetRadioStation',
-      { id: 'st-1' }
+      { id: 'st-1' },
+      { retryPolicy: 'never' }
     );
   });
 

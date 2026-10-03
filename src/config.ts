@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import { ErrorFormatter } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { ConfigSchema, type Config } from './config/schema.js';
@@ -28,22 +27,23 @@ import { buildEnvRuntimeSettings } from './config/seed.js';
 export type { Config } from './config/schema.js';
 
 /**
- * Resolve the runtime configuration from the canonical `settings.json` store.
- *
- * `settings.json` is the single source of truth (no env layering): config is
- * collected once through the settings GUI and persisted to disk. Throws when
- * the store is absent or incomplete — callers that need to branch into a
- * first-run/degraded flow should use {@link resolveConfigState} instead.
- *
- * @param settings - Optional already-read settings snapshot. When provided, it
- *   is parsed directly instead of re-reading from disk; this lets a caller that
- *   has already performed a presence check (e.g. {@link resolveConfigState})
- *   parse the SAME snapshot, closing the TOCTOU window where a concurrent
- *   settings save between two independent `readSettings()` disk reads could make
- *   the guard and the parse disagree. When omitted, behaves exactly as before
- *   (reads from disk).
+ * Validate a store snapshot against the runtime schema. Shared by startup and the settings
+ * Save and Test routes, so each reports the same `path: message` issue list.
  */
-// eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function; body is intentionally sync (ConfigSchema.parse + readSettings are synchronous)
+export function validateMappedSettings(
+  settings: SettingsFile,
+): { ok: true; config: Config } | { ok: false; messages: string[] } {
+  const result = ConfigSchema.safeParse(mapStoreToConfig(settings));
+  if (result.success) return { ok: true, config: result.data };
+  const messages = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+  return { ok: false, messages };
+}
+
+/**
+ * Validate a settings snapshot into the runtime config. A caller that already read the store
+ * passes that snapshot, so its guard and this parse see the same file.
+ */
+// eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function. The body is synchronous.
 export async function loadConfig(settings?: SettingsFile): Promise<Config> {
   settings ??= readSettings() ?? undefined;
   if (settings === undefined) {
@@ -55,15 +55,11 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
     );
   }
 
-  try {
-    return ConfigSchema.parse(mapStoreToConfig(settings));
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      const messages = error.issues.map((e) => `${e.path.join('.')}: ${e.message}`);
-      throw new Error(ErrorFormatter.configValidation(messages));
-    }
-    throw error;
+  const result = validateMappedSettings(settings);
+  if (!result.ok) {
+    throw new Error(ErrorFormatter.configValidation(result.messages));
   }
+  return result.config;
 }
 
 /**
@@ -71,9 +67,8 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
  * first-run/degraded operation WITHOUT poisoning the `Config` type with a union
  * (every `config.navidromeUrl` site stays non-optional under ultra-strict TS).
  *
- * "configured" requires a present, non-empty Navidrome URL AND a fully valid
- * mapped config. A corrupt or incomplete `settings.json` resolves to
- * `configured: false` (open the GUI to fix) rather than throwing at startup.
+ * Env applies when the store is absent, unparseable, schema-invalid or has a blank URL.
+ * A store with a URL but an invalid config resolves to `configured: false`.
  */
 type ConfigState =
   | { configured: true; config: Config }
@@ -86,13 +81,13 @@ export async function resolveConfigState(): Promise<ConfigState> {
     // No usable store → try the environment fallback before giving up. This is
     // the headless/container path (Docker `-e`, compose `environment`, an MCP
     // client's `env` block), where the settings GUI is unreachable and env vars
-    // are the only practical channel. The store, once created, always wins.
+    // are the only practical channel.
     return await resolveEnvFallbackState();
   }
 
   try {
     // Reuse the single `settings` snapshot already read above for the URL guard
-    // instead of letting loadConfig re-read from disk — a second independent
+    // instead of letting loadConfig re-read from disk. A second independent
     // read could observe a concurrent settings save and disagree with the guard.
     return { configured: true, config: await loadConfig(settings) };
   } catch (err) {
@@ -106,8 +101,8 @@ export async function resolveConfigState(): Promise<ConfigState> {
 
 /**
  * Environment-variable fallback for a missing/unusable store. Configured IFF
- * `NAVIDROME_URL` is set and the env-derived config passes `ConfigSchema` —
- * a present-but-broken env config logs WHY it was rejected (the reported
+ * `NAVIDROME_URL` is set and the env-derived config passes `ConfigSchema`.
+ * A present-but-broken env config logs WHY it was rejected (the reported
  * container failure mode was env vars being silently ignored) and then falls
  * through to setup mode.
  */
@@ -121,8 +116,8 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
   try {
     const config = await loadConfig(envSettings);
     logger.info(
-      `No settings.json at ${getSettingsStorePath()} — running from environment variables ` +
-      '(NAVIDROME_URL et al.). A settings.json created later takes precedence.'
+      `No usable settings.json at ${getSettingsStorePath()}. Running from environment variables ` +
+      '(NAVIDROME_URL et al.). A usable settings.json takes precedence.'
     );
     return { configured: true, config };
   } catch (err) {

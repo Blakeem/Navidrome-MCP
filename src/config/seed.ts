@@ -20,23 +20,21 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readSettings, type SettingsFile } from './store.js';
-import { DEFAULT_USER_AGENT, DEFAULT_MUSICBRAINZ_USER_AGENT, DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
+import {
+  DEFAULT_CACHE_TTL_SECONDS,
+  DEFAULT_LRCLIB_BASE,
+  DEFAULT_MCP_HTTP_PORT,
+  DEFAULT_MUSICBRAINZ_USER_AGENT,
+  DEFAULT_TOKEN_EXPIRY_SECONDS,
+  DEFAULT_TRANSCODE_BITRATE,
+  DEFAULT_TRANSCODE_FORMAT,
+  DEFAULT_USER_AGENT,
+  DEFAULT_WEBUI_PORT,
+} from '../constants/defaults.js';
 
 /**
- * Recommended values for the optional radio/lyrics fields that gate a feature
- * on. Single source for two behaviours, keyed by the form's dotted field path
- * (see `app.js` FIELDS):
- *
- *   - First run (no settings.json): `importFromLegacyEnv` pre-fills these into
- *     the seed, so a fresh install gets working radio + lyrics without the user
- *     hunting for what to type.
- *   - Later runs (settings.json exists): the file is returned verbatim, and the
- *     form surfaces these as non-intrusive "suggested" hints *beside* any field
- *     the user left blank — never auto-filling, so a deliberate blank (e.g.
- *     radio turned off) is preserved.
- *
- * `features.radioBrowserBase` is intentionally absent: blank there means
- * SRV-based auto mirror selection, which is more robust than pinning a mirror.
+ * Recommended radio and lyrics values, keyed by form field path. A first run pre-fills them, and later runs only
+ * hint them beside blank fields so a deliberate blank survives. `radioBrowserBase` is absent: blank selects a mirror by SRV.
  */
 export const FORM_SUGGESTIONS = {
   'features.musicBrainzUserAgent': DEFAULT_MUSICBRAINZ_USER_AGENT,
@@ -47,20 +45,8 @@ export const FORM_SUGGESTIONS = {
 } as const;
 
 /**
- * Compute the seed used to pre-fill the settings form.
- *
- * - If a `settings.json` already exists, it IS the seed (pre-fill from the file
- *   so the user edits what they have).
- * - Otherwise, import a partial config from legacy sources so existing users
- *   only have to verify + submit rather than re-type: `process.env` (covers the
- *   MCP-client JSON env and the shell) merged with a legacy project-root `.env`
- *   (covers dev installs). Optional radio/lyrics fields that gate a feature on
- *   are pre-filled with working defaults (see `importFromLegacyEnv`) so a
- *   fresh install gets functional features without hunting for values.
- *
- * This is import-only and never on the normal runtime path — `loadConfig()`
- * reads `settings.json` exclusively. Returns REAL values (including secrets);
- * masking for display happens at the HTTP layer.
+ * Settings form seed: an existing settings.json verbatim, else an import from `process.env` and a legacy `.env`,
+ * so an upgrading user verifies instead of retyping. It returns real secrets. The HTTP layer masks them.
  */
 export function buildFormSeed(): SettingsFile {
   const existing = readSettings();
@@ -71,20 +57,8 @@ export function buildFormSeed(): SettingsFile {
 }
 
 /**
- * Build a settings snapshot from `process.env` ONLY — the runtime fallback for
- * headless/container deployments where the settings GUI is unreachable and env
- * vars are the natural configuration channel (Docker `-e`, compose `environment`,
- * an MCP client's `env` block).
- *
- * Used by `resolveConfigState()` when no usable `settings.json` exists. Deliberately
- * narrower than {@link buildFormSeed}: it does NOT read legacy `.env` files, so the
- * on-disk config story stays two-source (settings.json, else live env) rather than
- * resurrecting file-based env drift. A `settings.json`, once created, always wins.
- *
- * Passes `applySuggestions: false`: this unattended path has no review-and-Save
- * step, so radio/lyrics enable ONLY when the operator explicitly sets their env
- * vars — never from the `FORM_SUGGESTIONS` first-run convenience defaults — keeping
- * headless deployments faithful to the documented feature-gated env opt-in model.
+ * Headless runtime fallback built from `process.env` only. It skips `.env` files and FORM_SUGGESTIONS, so radio
+ * and lyrics enable only on an explicit env opt-in, and a usable settings.json wins over it.
  */
 export function buildEnvRuntimeSettings(): SettingsFile {
   return settingsFromEnvSource((key) => {
@@ -106,14 +80,8 @@ function importFromLegacyEnv(): SettingsFile {
 }
 
 /**
- * Map env-style keys (via `get`) into the nested settings shape.
- *
- * `applySuggestions` controls whether the feature-gating radio/lyrics fields fall
- * back to the recommended `FORM_SUGGESTIONS` defaults when the operator left the
- * env var unset. `true` for the review-gated GUI form-seed (first-run convenience);
- * `false` for the unattended env-runtime path so those third-party features stay
- * strictly opt-in. `musicBrainzUserAgent` is exempt — MusicBrainz is unconditionally
- * on (no feature gate), so it keeps its default either way.
+ * `applySuggestions` fills the feature-gating fields from FORM_SUGGESTIONS for the review-gated form seed only.
+ * MusicBrainz keeps its default either way because it has no feature gate.
  */
 function settingsFromEnvSource(
   get: (key: string) => string | undefined,
@@ -127,12 +95,12 @@ function settingsFromEnvSource(
     ? libsRaw.split(',').map(t => parseInt(t.trim(), 10)).filter(n => !Number.isNaN(n))
     : [];
 
-  const port = toInt(get('WEBUI_PORT'), 8808);
-  const cacheTtl = toInt(get('CACHE_TTL'), 300);
-  const tokenExpiry = toInt(get('TOKEN_EXPIRY'), 86400);
+  const port = toInt(get('WEBUI_PORT'), DEFAULT_WEBUI_PORT);
+  const cacheTtl = toInt(get('CACHE_TTL'), DEFAULT_CACHE_TTL_SECONDS);
+  const tokenExpiry = toInt(get('TOKEN_EXPIRY'), DEFAULT_TOKEN_EXPIRY_SECONDS);
 
   const transportType = get('MCP_TRANSPORT') === 'http' ? 'http' : 'stdio';
-  const transportPort = toInt(get('MCP_HTTP_PORT'), 3000);
+  const transportPort = toInt(get('MCP_HTTP_PORT'), DEFAULT_MCP_HTTP_PORT);
 
   return {
     navidrome: {
@@ -171,8 +139,8 @@ function settingsFromEnvSource(
     },
     playback: {
       mpvPath: get('MPV_PATH') ?? null,
-      transcodeFormat: get('PLAYBACK_TRANSCODE_FORMAT') ?? 'raw',
-      transcodeBitrate: get('PLAYBACK_TRANSCODE_BITRATE') ?? '192',
+      transcodeFormat: get('PLAYBACK_TRANSCODE_FORMAT') ?? DEFAULT_TRANSCODE_FORMAT,
+      transcodeBitrate: get('PLAYBACK_TRANSCODE_BITRATE') ?? DEFAULT_TRANSCODE_BITRATE,
     },
     webui: {
       enabled: get('WEBUI_ENABLED') !== 'false',
@@ -205,7 +173,7 @@ function toList(value: string | undefined): string[] | null {
 
 /**
  * Parse a legacy `.env` (project root or cwd), import-only. A plain KEY=VALUE
- * line parser — NOT a shell sourcer — so values with shell-special characters
+ * line parser, NOT a shell sourcer, so values with shell-special characters
  * (e.g. parens in `RADIO_BROWSER_USER_AGENT`) are read verbatim. Returns an
  * empty map when no `.env` is found.
  */
@@ -228,7 +196,7 @@ function legacyEnvCandidates(): string[] {
     const here = dirname(fileURLToPath(import.meta.url));
     candidates.push(join(here, '..', '..', '.env'));
   } catch {
-    /* import.meta unavailable — skip */
+    /* import.meta unavailable, so skip */
   }
   candidates.push(join(process.cwd(), '.env'));
   return candidates;

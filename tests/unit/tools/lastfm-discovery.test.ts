@@ -54,10 +54,10 @@ function makeFetch(status: number, body: unknown): typeof fetch {
 describe('getArtistInfo', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
-  it('throws when LASTFM_API_KEY is missing', async () => {
+  it('throws naming features.lastFmApiKey when the key is missing', async () => {
     const { getArtistInfo } = await import('../../../src/tools/lastfm-discovery.js');
     const config = makeConfig({ lastFmApiKey: '' });
-    await expect(getArtistInfo(config, { artist: 'Radiohead' })).rejects.toThrow(/LASTFM_API_KEY/);
+    await expect(getArtistInfo(config, { artist: 'Radiohead' })).rejects.toThrow(/features\.lastFmApiKey/);
   });
 
   it('returns artist info DTO shape from happy-path response', async () => {
@@ -112,6 +112,18 @@ describe('getArtistInfo', () => {
     const { getArtistInfo } = await import('../../../src/tools/lastfm-discovery.js');
     await expect(getArtistInfo(makeConfig(), { artist: 'Test' })).rejects.toThrow();
   });
+
+  it("surfaces Last.fm's own message from a non-2xx JSON error body", async () => {
+    global.fetch = makeFetch(403, { error: 10, message: 'Invalid API key - You must be granted a valid key by last.fm' });
+    const { getArtistInfo } = await import('../../../src/tools/lastfm-discovery.js');
+    await expect(getArtistInfo(makeConfig(), { artist: 'Test' })).rejects.toThrow(/Last\.fm API error: Invalid API key/);
+  });
+
+  it('falls back to the status line when the error body is not Last.fm JSON', async () => {
+    global.fetch = makeFetch(503, null);
+    const { getArtistInfo } = await import('../../../src/tools/lastfm-discovery.js');
+    await expect(getArtistInfo(makeConfig(), { artist: 'Test' })).rejects.toThrow(/Last\.fm API error: 503 Error/);
+  });
 });
 
 // ---- getTopTracksByArtist ---------------------------------------------------
@@ -119,9 +131,9 @@ describe('getArtistInfo', () => {
 describe('getTopTracksByArtist', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
-  it('throws when LASTFM_API_KEY is missing', async () => {
+  it('throws naming features.lastFmApiKey when the key is missing', async () => {
     const { getTopTracksByArtist } = await import('../../../src/tools/lastfm-discovery.js');
-    await expect(getTopTracksByArtist(makeConfig({ lastFmApiKey: '' }), { artist: 'Test' })).rejects.toThrow(/LASTFM_API_KEY/);
+    await expect(getTopTracksByArtist(makeConfig({ lastFmApiKey: '' }), { artist: 'Test' })).rejects.toThrow(/features\.lastFmApiKey/);
   });
 
   it('returns count + tracks array with expected fields', async () => {
@@ -168,9 +180,9 @@ describe('getTopTracksByArtist', () => {
 describe('getTrendingMusic — artists', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
-  it('throws when LASTFM_API_KEY is missing', async () => {
+  it('throws naming features.lastFmApiKey when the key is missing', async () => {
     const { getTrendingMusic } = await import('../../../src/tools/lastfm-discovery.js');
-    await expect(getTrendingMusic(makeConfig({ lastFmApiKey: '' }), { type: 'artists' })).rejects.toThrow(/LASTFM_API_KEY/);
+    await expect(getTrendingMusic(makeConfig({ lastFmApiKey: '' }), { type: 'artists' })).rejects.toThrow(/features\.lastFmApiKey/);
   });
 
   it('returns trending artists with rank, name, playcount, listeners', async () => {
@@ -275,13 +287,13 @@ describe('getTrendingMusic — tags', () => {
 describe('getSimilarArtists and getSimilarTracks — missing API key guard', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
-  it('getSimilarArtists throws when LASTFM_API_KEY is missing', async () => {
+  it('getSimilarArtists throws naming features.lastFmApiKey when the key is missing', async () => {
     const { getSimilarArtists } = await import('../../../src/tools/lastfm-discovery.js');
-    await expect(getSimilarArtists(makeConfig({ lastFmApiKey: '' }), { artist: 'Test' })).rejects.toThrow(/LASTFM_API_KEY/);
+    await expect(getSimilarArtists(makeConfig({ lastFmApiKey: '' }), { artist: 'Test' })).rejects.toThrow(/features\.lastFmApiKey/);
   });
 
-  it('getSimilarTracks throws when LASTFM_API_KEY is missing', async () => {
+  it('getSimilarTracks throws naming features.lastFmApiKey when the key is missing', async () => {
     const { getSimilarTracks } = await import('../../../src/tools/lastfm-discovery.js');
-    await expect(getSimilarTracks(makeConfig({ lastFmApiKey: '' }), { artist: 'Test', track: 'Song' })).rejects.toThrow(/LASTFM_API_KEY/);
+    await expect(getSimilarTracks(makeConfig({ lastFmApiKey: '' }), { artist: 'Test', track: 'Song' })).rejects.toThrow(/features\.lastFmApiKey/);
   });
 });

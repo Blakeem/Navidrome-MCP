@@ -18,7 +18,7 @@ import { resetMusicBrainzThrottleForTests } from '../../../src/utils/musicbrainz
 import {
   getArtistAlbums,
   clearArtistAlbumsCachesForTests,
-} from '../../../src/tools/lastfm-discovery.js';
+} from '../../../src/tools/artist-discography.js';
 
 // ---- fetch routing ----------------------------------------------------------
 
@@ -158,10 +158,10 @@ afterEach(() => {
 });
 
 describe('getArtistAlbums — happy path (GUNSHIP fixture)', () => {
-  it('throws when LASTFM_API_KEY is missing', async () => {
+  it('throws naming features.lastFmApiKey when the Last.fm key is missing', async () => {
     const config = makeTestConfig();
     await expect(getArtistAlbums(asClient(client), config, { artist: 'GUNSHIP' }))
-      .rejects.toThrow(/LASTFM_API_KEY/);
+      .rejects.toThrow(/features\.lastFmApiKey/);
   });
 
   it('merges the three sources: counts, ranks, genres, library flags', async () => {
@@ -294,6 +294,8 @@ describe('getArtistAlbums — unverified bucket (Waveshaper fixture)', () => {
     expect(single?.typeUnverified).toBe(true);
     expect(single?.primaryType).toBe('Unknown');
     expect(single?.source).toBe('lastfm-only');
+    // Last.fm's mbid is a release MBID that get_album_info's release-group lookup rejects.
+    expect(single?.mbid).toBeNull();
     // Ranks span the whole merged set, by playcount.
     expect(result.albums.map(a => a.title)).toEqual(['66 MHz', 'Maniac', 'Velocity']);
     expect(result.albums.map(a => a.popularityRank)).toEqual([1, 2, 3]);
@@ -433,6 +435,27 @@ describe('getArtistAlbums — degradation', () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
     await expect(getArtistAlbums(asClient(client), config, {}))
       .rejects.toThrow(/artist.*mbid|mbid.*artist/i);
+  });
+});
+
+describe('getArtistAlbums — fallback album probe', () => {
+  it('a rejected album-name probe degrades that row to inLibrary: false instead of failing the tool', async () => {
+    installFetch({
+      mbArtistSearch: () => mbArtist('mb-qotsa', 'Queens of the Stone Age'),
+      mbBrowse: () => mbBrowseBody([mbRg('rg-clockwork', '...Like Clockwork', '2013-06-03')]),
+      lastFm: () => lastFmBody([lastFmAlbum('...Like Clockwork', 900000)]),
+    });
+    client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
+      if (endpoint.startsWith('/artist?')) return Promise.resolve({ data: [], total: 0 });
+      return Promise.reject(new Error('Endpoint must not contain path-traversal segments'));
+    });
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    const result = await getArtistAlbums(asClient(client), config, { artist: 'Queens of the Stone Age' });
+
+    expect(result.albums).toHaveLength(1);
+    expect(result.albums[0]?.inLibrary).toBe(false);
+    expect(result.albums[0]?.libraryAlbumId).toBeNull();
   });
 });
 

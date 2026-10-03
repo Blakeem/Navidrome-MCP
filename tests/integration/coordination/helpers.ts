@@ -13,7 +13,7 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -68,6 +68,9 @@ export function randomPort(): number {
   return port;
 }
 
+// Each store copies the real credentials, so teardown removes every one.
+const tempStoreDirs: string[] = [];
+
 /**
  * Write a throwaway settings.json cloned from the test's seeded store (so
  * credentials work) but with an isolated webui port. Children read it via
@@ -84,6 +87,7 @@ export function makeTempStore(port: number, webuiOverrides: Record<string, unkno
     ...webuiOverrides,
   };
   const dir = mkdtempSync(join(tmpdir(), 'ndmcp-coord-'));
+  tempStoreDirs.push(dir);
   const path = join(dir, 'settings.json');
   writeFileSync(path, JSON.stringify(base));
   return path;
@@ -138,6 +142,13 @@ export async function killAllChildren(): Promise<void> {
   if (await mpvAlive()) {
     await quitMpvForTests();
     await delay(200);
+  }
+  for (const dir of tempStoreDirs.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+      // Best-effort: a child still holding the file must not fail the teardown.
+    }
   }
   // Space tests out so child auth logins don't burst (Navidrome rate-limits
   // logins) and OS ports fully release before the next test spawns.

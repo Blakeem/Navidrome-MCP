@@ -65,19 +65,7 @@ interface IpcResponse {
 }
 
 /**
- * Hard cap for partial-frame buffering on the IPC socket. mpv responses are
- * newline-delimited JSON; most responses fit in a few KB, but `get_property
- * 'playlist'` (and similar queue-scaled reads) serialize the full playlist
- * as a single JSON array on one line — ~400 bytes per entry × queue length.
- * A 583-track stress test landed at ~150–250 KB on a single frame, so the
- * cap has to comfortably exceed that.
- *
- * 16 MB covers ~40,000-track queues at typical entry size — well past any
- * realistic music-server scenario. The buffer is allocation-on-demand
- * (Node string growth) so the only cost of the higher cap is the worst-case
- * RAM ceiling if a frame ever runs away. mpv IPC is a local-only trust
- * boundary (Unix socket / named pipe), so framing DoS is not a real threat;
- * the cap remains as a sanity guard against true corruption.
+ * Caps a runaway partial frame. A 583-track playlist frame reached ~250 KB, so 16 MB leaves wide headroom.
  */
 const MAX_IPC_BUFFER_BYTES = 16 * 1024 * 1024;
 
@@ -89,7 +77,7 @@ const MAX_IPC_BUFFER_BYTES = 16 * 1024 * 1024;
  * responses by `request_id`, and dispatches unsolicited events to listener
  * callbacks.
  *
- * On Linux/macOS the path is a Unix domain socket; on Windows it is a named
+ * On Linux/macOS the path is a Unix domain socket. On Windows it is a named
  * pipe (`\\.\pipe\...`). Node's `net` module handles both transparently.
  */
 export class MpvIpc {
@@ -164,10 +152,7 @@ export class MpvIpc {
 
       this.pending.set(id, { resolve: safeResolve, reject: safeReject });
 
-      // Per-command timeout. On fire we reject this command AND tear down the
-      // socket — a stalled mpv will hang every subsequent command too, so the
-      // single recovery path is to disconnect and let the next caller's
-      // ensureRunning() re-attach.
+      // A stalled mpv hangs every later command, so a timeout drops the socket and the next call re-attaches.
       timer = setTimeout(() => {
         if (settled) return;
         const err = new Error(
@@ -216,9 +201,7 @@ export class MpvIpc {
   }
 
   /**
-   * Register a handler invoked exactly once when the socket disconnects
-   * (whether closed by us or by mpv). Useful for the engine to clear its
-   * own references and trigger reconnection logic on the next operation.
+   * Register a handler that fires once when the peer closes the socket, a command times out, or a frame overflows. close() does not fire it.
    */
   onDisconnect(handler: () => void): void {
     this.disconnectHandlers.push(handler);
@@ -226,8 +209,7 @@ export class MpvIpc {
 
   /**
    * Close the IPC socket. Any pending requests are rejected. Idempotent.
-   * Disconnect handlers are NOT fired here (they fire only on unexpected
-   * disconnects from the peer side); this lets the engine distinguish a
+   * Disconnect handlers are NOT fired here, so the engine can tell a
    * deliberate teardown from a hangup it should react to.
    */
   close(): void {
@@ -238,7 +220,7 @@ export class MpvIpc {
       this.socket?.end();
       this.socket?.destroy();
     } catch {
-      // ignore; we're tearing down anyway
+      // Ignore. The socket is being torn down.
     }
     this.socket = null;
   }
@@ -279,12 +261,7 @@ export class MpvIpc {
         resolve();
       };
 
-      // Per-attempt connect timeout. Without it a connect that neither fires
-      // 'connect' nor 'error' (exotic hung connect on the IPC path) would leave
-      // this promise unsettled forever, stalling connect()'s awaited retry loop
-      // and defeating its documented throw-within-budget contract. On fire we
-      // detach both handlers, tear down the socket, and reject so the loop
-      // treats it as a failed attempt and advances/throws as documented.
+      // Bounds a connect that fires neither connect nor error, so connect() keeps its retry budget.
       timer = setTimeout(() => {
         sock.removeListener('connect', onConnect);
         sock.removeListener('error', onError);
@@ -307,11 +284,7 @@ export class MpvIpc {
       if (line === '') continue;
       this.handleLine(line);
     }
-    // Cap residual partial frame. mpv IPC framing is newline-delimited JSON;
-    // anything still in the buffer with no trailing newline is a partial
-    // response that's grown larger than any legitimate response we expect.
-    // Drop it and tear down: a malformed unbounded frame from mpv means the
-    // stream is corrupted; the next ensureRunning() call re-attaches.
+    // A frame this large without a newline means a corrupt stream, so drop the connection.
     if (this.buffer.length > MAX_IPC_BUFFER_BYTES) {
       const reason = `mpv IPC frame exceeded ${MAX_IPC_BUFFER_BYTES} bytes without a newline; dropping connection`;
       logger.warn(reason);
@@ -347,7 +320,7 @@ export class MpvIpc {
         }
         return;
       }
-      // request_id 0 with no pending entry can occur for unsolicited replies; ignore
+      // request_id 0 with no pending entry can occur for unsolicited replies. Ignore it.
       return;
     }
 
@@ -379,14 +352,7 @@ export class MpvIpc {
   }
 
   /**
-   * Shared teardown path for unexpected disconnects: peer-initiated socket
-   * close and command-timeout (mpv stalled) both route through here. Marks
-   * the IPC closed, drops the socket reference, rejects all in-flight
-   * commands, and fires `disconnectHandlers` so the engine can null its
-   * `this.ipc` reference and re-attach on the next call.
-   *
-   * Idempotent — second calls are no-ops, so a timeout that races a peer
-   * close (or vice-versa) doesn't double-fire handlers.
+   * Shared teardown for peer close, command timeout and frame overflow. Idempotent, so racing triggers fire handlers once.
    */
   private handleUnexpectedDisconnect(reason: string): void {
     if (this.closed) return;
@@ -395,7 +361,7 @@ export class MpvIpc {
     try {
       this.socket?.destroy();
     } catch {
-      // socket already destroyed; ignore
+      // The socket is already destroyed. Ignore.
     }
     this.socket = null;
     this.rejectAllPending(new Error(reason));

@@ -26,14 +26,15 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { SseBroadcaster } from './broadcaster.js';
-import { writeError } from './http-helpers.js';
+import { isJsonContentType, writeError } from './http-helpers.js';
+import { isLoopbackHostHeader } from './loopback.js';
 import { isLanReachable } from './network.js';
 import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
 import { handleHealth } from './routes/health.js';
 import {
-  handleAlbumSongs,
-  handleArtistAlbums,
+  handleLibraryAlbumSongs,
+  handleLibraryArtistAlbums,
   handleLibraryFavorites,
   handleLibraryPlay,
   handleLibraryRecent,
@@ -61,26 +62,21 @@ import {
 } from './routes/player.js';
 import { handleStatic } from './routes/static-files.js';
 
-const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
-
 interface ServerDeps {
   config: Config;
   client: NavidromeClient;
   broadcaster: SseBroadcaster;
-  /** Tear down the player (stop mpv + exit) — invoked by POST /api/shutdown. */
+  /** Tear down the player (stop mpv + exit). POST /api/shutdown invokes it. */
   shutdown: () => void;
 }
 
 /**
- * Build the underlying HTTP server. Listen/close lifecycle is owned by the
- * caller (`acquireOrAttach` in `src/web/acquire.ts`, driven by the standalone
- * `navidrome-web` entry) — this factory returns an unstarted instance so the
- * acquire/port-as-lock logic can bind it (or discard it) as needed.
+ * Build the underlying HTTP server. The caller (`acquireOrAttach` in `src/web/acquire.ts`)
+ * owns the listen and close lifecycle, so this factory returns an unstarted instance the
+ * port-as-lock logic can bind or discard.
  *
- * The dispatcher is a flat if-chain rather than a route table: ten endpoints
- * is below the threshold where pattern abstraction pays for itself, and a
- * linear read of the chain is the most reviewable form for security-sensitive
- * code (every accepted path is in plain sight).
+ * The dispatcher is a flat if-chain rather than a route table, because a linear read is
+ * the most reviewable form for security-sensitive code (every accepted path is in plain sight).
  */
 export function createServer(deps: ServerDeps): Server {
   return createHttpServer((req, res) => {
@@ -99,6 +95,15 @@ export function createServer(deps: ServerDeps): Server {
   });
 }
 
+// A malformed percent sequence (e.g. %GG) is a client error, not a 500, so a URIError maps to null.
+function decodePathParam(path: string, prefix: string): string | null {
+  try {
+    return decodeURIComponent(path.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -109,8 +114,7 @@ async function handleRequest(
     return;
   }
 
-  // The base is irrelevant — we only consume pathname + searchParams. Use a
-  // placeholder hostname so the URL parser doesn't reject relative inputs.
+  // Only pathname and searchParams are read, so a placeholder base lets the URL parser accept a relative input.
   let parsed: URL;
   try {
     parsed = new URL(req.url, 'http://localhost');
@@ -166,9 +170,9 @@ async function handleRequest(
 
   // --- API: library browse ---
   if (method === 'GET' && path === '/api/library/recent')        return handleLibraryRecent(res, deps.client);
-  if (method === 'GET' && path === '/api/library/search')        return handleLibrarySearch(res, deps.client, deps.config, parsed.searchParams.get('q'));
-  if (method === 'GET' && path === '/api/library/artist-albums') return handleArtistAlbums(res, deps.client, parsed.searchParams.get('id'));
-  if (method === 'GET' && path === '/api/library/album-songs')   return handleAlbumSongs(res, deps.client, parsed.searchParams.get('id'));
+  if (method === 'GET' && path === '/api/library/search')        return handleLibrarySearch(res, deps.client, parsed.searchParams.get('q'));
+  if (method === 'GET' && path === '/api/library/artist-albums') return handleLibraryArtistAlbums(res, deps.client, parsed.searchParams.get('id'));
+  if (method === 'GET' && path === '/api/library/album-songs')   return handleLibraryAlbumSongs(res, deps.client, parsed.searchParams.get('id'));
   if (method === 'GET' && path === '/api/library/favorites')     return handleLibraryFavorites(res, deps.client);
   if (method === 'POST' && path === '/api/library/play')         return handleLibraryPlay(req, res, deps.client);
 
@@ -180,12 +184,8 @@ async function handleRequest(
 
   // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {
-    // A malformed percent-sequence (e.g. /api/cover/%GG) makes
-    // decodeURIComponent throw a URIError; that's a client error, not a 500.
-    let id: string;
-    try {
-      id = decodeURIComponent(path.slice('/api/cover/'.length));
-    } catch {
+    const id = decodePathParam(path, '/api/cover/');
+    if (id === null) {
       writeError(res, 400, 'Malformed cover id');
       return;
     }
@@ -194,12 +194,8 @@ async function handleRequest(
 
   // --- API: lyrics for one live-queue entry ---
   if (method === 'GET' && path.startsWith('/api/lyrics/')) {
-    // A malformed percent-sequence makes decodeURIComponent throw a URIError;
-    // that's a client error, not a 500.
-    let songId: string;
-    try {
-      songId = decodeURIComponent(path.slice('/api/lyrics/'.length));
-    } catch {
+    const songId = decodePathParam(path, '/api/lyrics/');
+    if (songId === null) {
       writeError(res, 400, 'Malformed lyrics id');
       return;
     }
@@ -212,16 +208,4 @@ async function handleRequest(
   }
 
   writeError(res, 404, 'Not found');
-}
-
-// Port is ignored: a client omits a default port such as 80, and DNS rebinding controls only the hostname.
-function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
-  if (hostHeader === undefined) return false;
-  const hostname = hostHeader.toLowerCase().replace(/:\d+$/, '');
-  return LOOPBACK_HOSTNAMES.has(hostname);
-}
-
-function isJsonContentType(contentType: string | undefined): boolean {
-  const baseType = contentType?.split(';')[0]?.trim().toLowerCase();
-  return baseType === 'application/json';
 }

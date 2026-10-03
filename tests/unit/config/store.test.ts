@@ -35,9 +35,19 @@ describe('settings store read/write', () => {
     });
 
     it('returns null when the schema is violated', () => {
-      // webui.port must be an integer in range; a string fails validation.
+      // webui.port must be a number, so a string fails validation.
       writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { port: 'nope' } }));
       expect(readSettings()).toBeNull();
+    });
+
+    it('keeps the store when webui.theme is null', () => {
+      writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { theme: null } }));
+      expect(readSettings()).not.toBeNull();
+    });
+
+    it('keeps the store when a port is out of range, leaving the range to the runtime schema', () => {
+      writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { port: 70000 } }));
+      expect(readSettings()).not.toBeNull();
     });
 
     it('parses a valid (partial) store', () => {

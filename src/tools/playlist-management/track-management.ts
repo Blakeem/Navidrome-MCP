@@ -32,6 +32,43 @@ import {
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 
+type DiscEntry = NonNullable<AddTracksToPlaylistRequest['discs']>[number];
+
+// One song read per album. An album with more songs than this resolves only the discs among its first rows.
+const DISC_LOOKUP_SONG_CAP = 1000;
+
+/**
+ * Navidrome matches a disc on album, release date and disc number, so each requested disc expands to one
+ * entry per release date its songs carry. A disc with no songs is omitted.
+ */
+async function resolveDiscReleaseDates(
+  client: NavidromeClient,
+  discs: ReadonlyArray<{ albumId: string; discNumber: number }>,
+): Promise<DiscEntry[]> {
+  const resolved: DiscEntry[] = [];
+  const albumIds = [...new Set(discs.map((disc) => disc.albumId))];
+  for (const albumId of albumIds) {
+    const endpoint = `/song?album_id=${encodeURIComponent(albumId)}&_start=0&_end=${DISC_LOOKUP_SONG_CAP}`;
+    const songs = await client.request<unknown>(endpoint);
+    if (!Array.isArray(songs)) {
+      throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
+    }
+    for (const disc of discs.filter((entry) => entry.albumId === albumId)) {
+      const releaseDates = new Set<string>();
+      for (const song of songs) {
+        if (typeof song !== 'object' || song === null) continue;
+        const record = song as Record<string, unknown>;
+        if (record['discNumber'] !== disc.discNumber) continue;
+        releaseDates.add(typeof record['releaseDate'] === 'string' ? record['releaseDate'] : '');
+      }
+      for (const releaseDate of releaseDates) {
+        resolved.push({ albumId, discNumber: disc.discNumber, releaseDate });
+      }
+    }
+  }
+  return resolved;
+}
+
 /**
  * Add tracks to a playlist
  */
@@ -44,7 +81,10 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
     if (params.songIds !== undefined) requestBody.ids = params.songIds;
     if (params.albumIds !== undefined) requestBody.albumIds = params.albumIds;
     if (params.artistIds !== undefined) requestBody.artistIds = params.artistIds;
-    if (params.discs !== undefined) requestBody.discs = params.discs;
+    if (params.discs !== undefined) {
+      const discs = await resolveDiscReleaseDates(client, params.discs);
+      if (discs.length > 0) requestBody.discs = discs;
+    }
 
     const response = await client.request<{ added?: number }>(
       `/playlist/${encodeURIComponent(params.playlistId)}/tracks`,
@@ -55,18 +95,14 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
       },
     );
 
-    // The response is typed `{ added: number }`, but Navidrome may omit the
-    // field on some responses — guard it. Reaching here means the HTTP call
-    // was acknowledged, so the operation succeeded regardless of count; a
-    // zero count is a no-op (every requested track was already present),
-    // conveyed via the message rather than `success: false`.
+    // Navidrome does not dedupe, so added=0 means no requested ID matched a track.
     const addedCount = response.added ?? 0;
     return {
       added: addedCount,
       message:
         addedCount > 0
           ? `Added ${addedCount} track${addedCount !== 1 ? 's' : ''} to playlist`
-          : 'No new tracks added — all requested tracks are already in the playlist',
+          : 'No tracks added. None of the given song, album, artist or disc IDs matched a track. Artist IDs match album-artist credits only.',
       success: true,
     };
   } catch (error) {
@@ -84,23 +120,17 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
     logger.debug('Tool removeTracksFromPlaylist called with args:', params);
 
     const queryParams = new URLSearchParams();
-    params.trackIds.forEach(id => queryParams.append('id', id));
+    params.positions.forEach(position => queryParams.append('id', position));
 
-    const response = await client.request<{ ids?: string[] | null }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
+    const response = await client.request<{ id?: string; ids?: string[] | null }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks?${queryParams.toString()}`, {
       method: 'DELETE',
     });
 
-    // Reaching here means the DELETE was acknowledged, so the operation
-    // succeeded regardless of how many tracks actually matched; a zero count
-    // is a no-op (none of the specified tracks were in the playlist),
-    // conveyed via the message rather than `success: false`.
-    const removedIds = response.ids ?? [];
+    // Navidrome echoes `{id}` for one id and `{ids}` for several, and answers a miss with 404/500.
+    const removedPositions = response.ids ?? (response.id !== undefined ? [response.id] : params.positions);
     return {
-      ids: removedIds,
-      message:
-        removedIds.length > 0
-          ? `Removed ${removedIds.length} track${removedIds.length !== 1 ? 's' : ''} from playlist`
-          : 'No tracks removed — none of the specified tracks were in the playlist',
+      positions: removedPositions,
+      message: `Removed ${removedPositions.length} track${removedPositions.length !== 1 ? 's' : ''} from playlist`,
       success: true,
     };
   } catch (error) {
@@ -109,27 +139,41 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
 }
 
 /**
- * Reorder a track in the playlist.
- *
- * Navidrome's reorder endpoint uses 1-based position IDs. Calling with
- * `insert_before=0` returns HTTP 500 (Batch 2 #1) — the schema now blocks that
- * at parse time. The API response itself is sparse — just `{"id":"<trackId>"}`
- * (string), so we synthesize a confirmation from the request parameters
- * (Batch 2 #29) instead of issuing another round-trip just to enrich it.
+ * Reorder a track in the playlist. `insertBefore` names the slot the track lands before, while Navidrome
+ * moves the row to a final position and does not bounds-check it, so this converts and validates first.
  */
 export async function reorderPlaylistTrack(client: NavidromeClient, args: unknown): Promise<ReorderPlaylistTrackResponse> {
   try {
     const params = ReorderPlaylistTrackSchema.parse(args);
     logger.debug('Tool reorderPlaylistTrack called with args:', params);
 
-    const requestBody: ReorderPlaylistTrackRequest = {
-      insert_before: params.insert_before.toString(),
-    };
+    const trackPosition = Number.parseInt(params.position, 10);
 
-    // Navidrome returns `{"id":"4"}` (string) with Content-Type: text/plain.
-    // The client transparently sniffs the body so we can read `response.id`
-    // directly. The id echoed back is the input trackId, not the new position.
-    const response = await client.request<{ id?: number | string }>(`/playlist/${encodeURIComponent(params.playlistId)}/tracks/${encodeURIComponent(params.trackId)}`, {
+    const tracksPath = `/playlist/${encodeURIComponent(params.playlistId)}/tracks`;
+    const { total } = await client.requestWithMeta<unknown>(`${tracksPath}?_start=0&_end=1`);
+    if (total === null) {
+      throw new Error('Navidrome did not report the playlist size (no X-Total-Count header), so the move cannot be checked');
+    }
+    if (trackPosition > total || params.insertBefore > total + 1) {
+      throw new Error(
+        `Position out of range for a playlist of ${total} tracks. position must be 1 to ${total} and insertBefore must be 1 to ${total + 1}. Re-read get_playlist_tracks for the current positions.`,
+      );
+    }
+
+    const finalPosition = params.insertBefore > trackPosition ? params.insertBefore - 1 : params.insertBefore;
+    if (finalPosition === trackPosition) {
+      return {
+        previousPosition: trackPosition,
+        newPosition: trackPosition,
+        message: `Track is already at position ${trackPosition}. Nothing moved.`,
+        success: true,
+      };
+    }
+
+    const requestBody: ReorderPlaylistTrackRequest = {
+      insert_before: finalPosition.toString(),
+    };
+    await client.request<unknown>(`${tracksPath}/${encodeURIComponent(params.position)}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -137,20 +181,10 @@ export async function reorderPlaylistTrack(client: NavidromeClient, args: unknow
       body: JSON.stringify(requestBody),
     });
 
-    const previousPosition = parseInt(params.trackId, 10);
-    const newPosition = params.insert_before;
-    const echoedId = typeof response.id === 'number'
-      ? response.id
-      : typeof response.id === 'string'
-        ? parseInt(response.id, 10) || previousPosition
-        : previousPosition;
-
     return {
-      playlistId: params.playlistId,
-      id: echoedId,
-      previousPosition,
-      newPosition,
-      message: `Moved track from position ${previousPosition} to position ${newPosition}`,
+      previousPosition: trackPosition,
+      newPosition: finalPosition,
+      message: `Moved track from position ${trackPosition} to position ${finalPosition}`,
       success: true,
     };
   } catch (error) {

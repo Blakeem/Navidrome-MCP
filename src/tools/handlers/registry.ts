@@ -72,19 +72,20 @@ function createToolResponse(result: unknown): { content: { type: 'text'; text: s
     content: [
       {
         type: 'text' as const,
-        text: JSON.stringify(result, null, 2),
+        text: JSON.stringify(result),
       },
     ],
   };
 }
 
 // Import category factory functions
-import { createTestToolCategory } from '../test.js';
-import { createLibraryToolCategory } from '../library.js';
+import { createTestToolCategory } from './test-handlers.js';
+import { createLibraryToolCategory } from './library-handlers.js';
 import { createPlaylistToolCategory } from './playlist-handlers.js';
 import { createSearchToolCategory } from './search-handlers.js';
 import { createUserPreferencesToolCategory } from './user-preferences-handlers.js';
 import { createQueueToolCategory } from './queue-handlers.js';
+import { createListeningHistoryToolCategory } from './listening-history-handlers.js';
 import { createRadioToolCategory } from './radio-handlers.js';
 import { createLastFmToolCategory } from './lastfm-handlers.js';
 import { createLyricsToolCategory } from './lyrics-handlers.js';
@@ -106,6 +107,7 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
   registry.register('search', createSearchToolCategory(client, config));
   registry.register('user-preferences', createUserPreferencesToolCategory(client, config));
   registry.register('queue-management', createQueueToolCategory(client, config));
+  registry.register('listening-history', createListeningHistoryToolCategory(client, config));
   registry.register('radio', createRadioToolCategory(client, config));
   registry.register('tags', createTagsToolCategory(client, config));
   // Unconditional: the category serves the lyrics stored in the audio files

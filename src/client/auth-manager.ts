@@ -91,8 +91,18 @@ export class AuthManager {
       },
     );
 
+    // Only 401 and 403 mean bad credentials. Any other status points at the URL or a down server.
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(ErrorFormatter.authentication(
+        `Navidrome rejected the username or password (${response.status} ${response.statusText})`,
+      ));
+    }
     if (!response.ok) {
-      throw new Error(ErrorFormatter.authentication(`${response.status} ${response.statusText}`));
+      throw new Error(ErrorFormatter.httpRequest(
+        'Navidrome /auth/login',
+        response,
+        'check navidrome.url and that Navidrome is running',
+      ));
     }
 
     let data: unknown;

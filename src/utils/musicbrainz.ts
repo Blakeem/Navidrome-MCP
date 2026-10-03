@@ -85,6 +85,9 @@ export function resetMusicBrainzThrottleForTests(): void {
 
 // --- Fetch ----------------------------------------------------------------
 
+// MB answers an unknown MBID with 404, which lookups report as "not found" rather than "unreachable".
+class MbNotFoundError extends Error {}
+
 async function mbFetch(
   path: string,
   params: Record<string, string>,
@@ -101,7 +104,7 @@ async function mbFetch(
   return throttled(async () => {
     logger.debug(`Calling MusicBrainz API: ${path}`, params);
 
-    // Reads only — safe to retry on timeout. fetchWithTimeout retries solely
+    // Reads only, so safe to retry on timeout. fetchWithTimeout retries solely
     // on AbortError (never on HTTP 503), so MB rate-limit responses are not
     // hammered, and a timeout-retry is already spaced past MIN_INTERVAL_MS by
     // the elapsed timeout itself.
@@ -121,6 +124,9 @@ async function mbFetch(
       },
     );
 
+    if (response.status === 404) {
+      throw new MbNotFoundError(ErrorFormatter.httpRequest(`MusicBrainz ${path}`, response));
+    }
     if (!response.ok) {
       throw new Error(ErrorFormatter.httpRequest(`MusicBrainz ${path}`, response));
     }
@@ -133,6 +139,11 @@ async function mbFetch(
 
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
+}
+
+// MB sends a missing release date or country as "", which must not sort or read as a value.
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null;
 }
 
 function asArray(value: unknown): unknown[] {
@@ -167,8 +178,8 @@ function parseArtistRow(row: Record<string, unknown>, score: number): MbArtistMa
 /**
  * Resolve an artist name to a MusicBrainz artist. Picks, in score order:
  * the first case-insensitive exact name match, else the top hit when its
- * relevance score clears ARTIST_SEARCH_MIN_SCORE, else `null` (the caller
- * degrades rather than guessing at a wrong artist's discography).
+ * relevance score clears SEARCH_MIN_SCORE (shared with searchMbReleaseGroup),
+ * else `null` (the caller degrades rather than guessing at a wrong artist's discography).
  */
 export async function searchMbArtist(name: string, config: Config): Promise<MbArtistMatch | null> {
   const data = await mbFetch('/artist', { query: `artist:${luceneQuote(name)}`, limit: '5' }, config);
@@ -197,13 +208,18 @@ export async function searchMbArtist(name: string, config: Config): Promise<MbAr
 }
 
 /**
- * Look up an artist by MBID — used when the caller supplies only an MBID, to
+ * Look up an artist by MBID. Used when the caller supplies only an MBID, to
  * recover the canonical name for the Last.fm and Navidrome branches (Last.fm's
  * own mbid= lookup is unreliable: stale index, verified live).
  */
 export async function lookupMbArtist(mbid: string, config: Config): Promise<MbArtistMatch | null> {
-  const data = await mbFetch(`/artist/${encodeURIComponent(mbid)}`, {}, config);
-  return parseArtistRow(data, 100);
+  try {
+    const data = await mbFetch(`/artist/${encodeURIComponent(mbid)}`, {}, config);
+    return parseArtistRow(data, 100);
+  } catch (error) {
+    if (error instanceof MbNotFoundError) return null;
+    throw error;
+  }
 }
 
 // --- Release-group browse ---------------------------------------------------
@@ -213,7 +229,7 @@ export interface MbReleaseGroup {
   title: string;
   /** First release year, or null when MB has no date. */
   year: number | null;
-  /** e.g. "Album", "EP", "Single" — capitalization as MB returns it. */
+  /** e.g. "Album", "EP", "Single", capitalized as MB returns it. */
   primaryType: string | null;
   /** Lowercased (MB returns "Remix"/"Live"; the exclude filter compares lowercase). */
   secondaryTypes: string[];
@@ -239,7 +255,7 @@ function parseReleaseGroup(raw: unknown): MbReleaseGroup | null {
     }))
     .filter((g): g is { name: string; count: number } => g.name !== null)
     .sort((a, b) => b.count - a.count)
-    // Lowercase so `genres` is uniform with the Last.fm tag fallback — MB does
+    // Lowercase so `genres` is uniform with the Last.fm tag fallback. MB does
     // not guarantee casing on genre submissions.
     .map(g => g.name.toLowerCase());
 
@@ -259,8 +275,8 @@ function parseReleaseGroup(raw: unknown): MbReleaseGroup | null {
 
 /**
  * Browse all release groups for an artist, filtered server-side by primary
- * type(s), with per-group genres riding the same request (`inc=genres` —
- * this is what makes per-album Last.fm getInfo calls unnecessary).
+ * type(s), with per-group genres riding the same request (`inc=genres`).
+ * This is what makes per-album Last.fm getInfo calls unnecessary.
  */
 export async function browseMbReleaseGroups(
   artistMbid: string,
@@ -326,7 +342,7 @@ function parseReleaseGroupDetail(raw: unknown): MbReleaseGroupDetail | null {
 }
 
 /**
- * Look up a release group by MBID with genres and artist credits — used when
+ * Look up a release group by MBID with genres and artist credits. Used when
  * get_album_info receives an mbid (as emitted by get_artist_albums) and must
  * recover the canonical title/artist for the Last.fm and Navidrome branches.
  */
@@ -334,13 +350,18 @@ export async function lookupMbReleaseGroup(
   mbid: string,
   config: Config,
 ): Promise<MbReleaseGroupDetail | null> {
-  // URLSearchParams serializes the space as '+', MB's inc separator.
-  const data = await mbFetch(
-    `/release-group/${encodeURIComponent(mbid)}`,
-    { inc: 'genres artist-credits' },
-    config,
-  );
-  return parseReleaseGroupDetail(data);
+  try {
+    // URLSearchParams serializes the space as '+', MB's inc separator.
+    const data = await mbFetch(
+      `/release-group/${encodeURIComponent(mbid)}`,
+      { inc: 'genres artist-credits' },
+      config,
+    );
+    return parseReleaseGroupDetail(data);
+  } catch (error) {
+    if (error instanceof MbNotFoundError) return null;
+    throw error;
+  }
 }
 
 /**
@@ -372,7 +393,7 @@ export async function searchMbReleaseGroup(
   const picked = exact ?? (top !== undefined && top.score >= SEARCH_MIN_SCORE ? top : null);
 
   if (picked === null) {
-    logger.debug(`MusicBrainz release-group search found no acceptable match for "${artistName}" — "${albumTitle}"`);
+    logger.debug(`MusicBrainz release-group search found no acceptable match for "${artistName}": "${albumTitle}"`);
     return null;
   }
   logger.debug(`MusicBrainz resolved "${albumTitle}" → ${picked.detail.mbid} (score ${picked.score})`);
@@ -432,7 +453,7 @@ function parseReleaseTracks(row: Record<string, unknown>): MbTrack[] {
 /**
  * Fetch the tracklist for a release group by browsing its releases with
  * recordings + media riding the same request (verified live: `inc=recordings`
- * works on a browse). MB is the PRIMARY tracklist source — Last.fm durations
+ * works on a browse). MB is the PRIMARY tracklist source. Last.fm durations
  * are mostly null and its titles carry feat-suffix noise (spec §9.1).
  * Returns null when the release group has no usable release.
  */
@@ -456,8 +477,8 @@ export async function browseMbReleaseTracklist(
     releases.push({
       mbid,
       status: asString(row['status']),
-      date: asString(row['date']),
-      country: asString(row['country']),
+      date: asNonEmptyString(row['date']),
+      country: asNonEmptyString(row['country']),
       tracks,
     });
   }
@@ -468,7 +489,7 @@ export async function browseMbReleaseTracklist(
 
   // Prefer Official releases; within the pool, earliest date wins (the
   // canonical original, matching first-release-date semantics). Partial dates
-  // ("2023") sort before full ones lexicographically — acceptable. Undated last.
+  // ("2023") sort before full ones lexicographically, which is acceptable. Undated last.
   const officials = releases.filter(r => r.status === 'Official');
   const pool = officials.length > 0 ? officials : releases;
   pool.sort((a, b) => {

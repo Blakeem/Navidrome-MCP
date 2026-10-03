@@ -16,13 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Re-export all transformer functions and types for backward compatibility
-
-// Shared utilities
-export { formatDuration } from './shared-transformers.js';
-// extractGenre, extractAllGenres, and RawEntityWithGenres are internal utilities.
-// parseDuration is imported directly from './shared-transformers.js' where needed
-// (currently only playback.ts) — keeping the re-export here would be dead code.
+// Shared utilities (formatDuration, parseDuration, extractGenre and the rest) are imported from
+// './shared-transformers.js' directly where needed, since a re-export here would be dead code.
 
 // Song transformers
 export { transformToSongDTO, transformSongsToDTO } from './song-transformer.js';
@@ -37,5 +32,10 @@ export { transformToArtistDTO, transformArtistsToDTO } from './artist-transforme
 export type { RawArtist } from './artist-transformer.js';
 
 // Playlist transformers
-export { transformToPlaylistDTO, transformPlaylistsToDTO } from './playlist-transformer.js';
+export {
+  transformToPlaylistDTO,
+  transformPlaylistsToDTO,
+  transformToPlaylistTrackDTO,
+  transformPlaylistTracksToDTO,
+} from './playlist-transformer.js';
 export type { RawPlaylist } from './playlist-transformer.js';

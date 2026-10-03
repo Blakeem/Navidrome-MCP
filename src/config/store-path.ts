@@ -32,8 +32,8 @@ const STORE_FILE = 'settings.json';
  *
  * `NAVIDROME_CONFIG_PATH` overrides the location entirely (it points at the
  * **file**, not the directory). This is a *location* override used by tests
- * (isolated temp file per run), portable installs, and multi-profile setups —
- * it is NOT a config-value override.
+ * (isolated temp file per run), portable installs, and multi-profile setups.
+ * It is NOT a config-value override.
  */
 export function getSettingsStorePath(): string {
   const override = process.env['NAVIDROME_CONFIG_PATH'];

@@ -1,5 +1,5 @@
 /*
- * Navidrome MCP — Settings form logic (vanilla, no build step).
+ * Navidrome MCP Settings form logic (vanilla, no build step).
  *
  * Symmetric mapping between the nested settings.json shape and the flat form:
  * each field declares its dotted path, DOM id, and value kind, so seed→form and
@@ -96,7 +96,7 @@ function collect() {
         value = el.value.trim();
         break;
       case 'secret':
-        // Secrets (e.g. password) are persisted verbatim — trimming could
+        // Secrets (e.g. password) are persisted verbatim. Trimming could
         // silently corrupt a credential that legitimately carries leading or
         // trailing whitespace, producing hard-to-diagnose auth failures.
         value = el.value;
@@ -129,6 +129,18 @@ function collect() {
     setPath(out, path, value);
   }
   return out;
+}
+
+// Mirrors the server's webui.host rule, so a bad value is flagged before a round trip.
+const WEBUI_BIND_HOSTS = ['127.0.0.1', '0.0.0.0', '::'];
+
+// Returns null after showing the problem, so the caller skips the request.
+function collectChecked() {
+  const payload = collect();
+  const host = payload.webui ? payload.webui.host : null;
+  if (host == null || WEBUI_BIND_HOSTS.includes(host)) return payload;
+  showStatus(`Web UI bind host "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`, 'err');
+  return null;
 }
 
 function isEmptyField(el) {
@@ -200,10 +212,12 @@ async function postJson(path, body) {
 }
 
 async function onTest() {
+  const payload = collectChecked();
+  if (payload === null) return;
   setBusy(true);
   showStatus('Testing connection…', 'info');
   try {
-    const { data } = await postJson('/api/settings/test', collect());
+    const { data } = await postJson('/api/settings/test', payload);
     if (data.ok) showStatus(data.message || 'Connected.', 'ok');
     else showStatus(data.error || 'Connection failed.', 'err');
   } catch (err) {
@@ -215,10 +229,12 @@ async function onTest() {
 
 async function onSave(event) {
   event.preventDefault();
+  const payload = collectChecked();
+  if (payload === null) return;
   setBusy(true);
   showStatus('Saving…', 'info');
   try {
-    const { ok, data } = await postJson('/api/settings', collect());
+    const { ok, data } = await postJson('/api/settings', payload);
     if (ok && data.ok) showStatus(data.message || 'Saved.', 'ok');
     else showStatus(data.error || 'Save failed.', 'err');
   } catch (err) {
@@ -241,7 +257,7 @@ async function init() {
     const res = await fetch('/api/settings/suggestions');
     if (res.ok) renderSuggestions(await res.json());
   } catch (_) {
-    /* no suggestions — the form still works */
+    /* No suggestions. The form still works. */
   }
   document.getElementById('test-btn').addEventListener('click', onTest);
   document.getElementById('settings-form').addEventListener('submit', onSave);

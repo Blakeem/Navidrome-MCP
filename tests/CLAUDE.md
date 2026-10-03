@@ -57,6 +57,7 @@ tests/
 ├── unit/tools/                  # Tool-specific tests (135 tests total)
 ├── unit/utils/                  # Utility function tests
 ├── integration/playback/        # Live-mpv playback integration tests (run via `pnpm test:playback`)
+├── integration/coordination/    # Multi-process tests against dist/ (run via `pnpm test:playback`)
 ├── factories/                   # Mock client & data factories
 └── CLAUDE.md                    # This file
 ```
@@ -64,15 +65,19 @@ tests/
 ### Playback Integration Tests (separate suite)
 
 Live-mpv playback tests live in `tests/integration/playback/` and are
-**excluded from `pnpm test:run`**. Run them on demand via:
+**excluded from `pnpm test:run`**. The suite also runs the multi-process tests in
+`tests/integration/coordination/`. The user runs it on demand, since it clears
+the live mpv queue:
 
 ```bash
-pnpm test:playback   # Runs vitest with vitest.playback.config.ts
+pnpm test:playback   # pnpm build, then vitest with vitest.playback.config.ts
 ```
 
 They require:
 - A real mpv binary on PATH (or `playback.mpvPath` in the store / `MPV_PATH`)
 - A reachable Navidrome instance (per the seeded `settings.json` store)
+- A current `dist/`, which the script builds first. The coordination tests spawn
+  `dist/web/main.js`, so a direct vitest run against a stale `dist/` tests old code.
 
 Tests skip cleanly when either is missing. Use `describePlayback` /
 `itPlayback` from `tests/integration/playback/helpers.ts` instead of

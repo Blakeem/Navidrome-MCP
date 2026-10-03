@@ -116,7 +116,7 @@ And, decisively for this project:
 
 **Blast radius: 24 tools.** State at `library-manager.ts:66`, written only by `set_active_libraries` (`library.ts:126`), read via `navidrome-client.ts:146-150` which appends `library_id=N` to every filtered request.
 
-`search_songs`, `search_albums`, `search_artists`, `search_all`, `get_song`, `get_album`, `get_artist`, `get_song_playlists`, `list_recently_played`, `list_most_played`, `list_starred_items`, `list_top_rated`, `search_by_tags`, `get_tag_distribution`, `list_playlists` (only when `onlyWithPlayableTracks=true`, `playlist-crud.ts:74`), `play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `play_playlist`, `get_play_queue`, `now_playing`, `get_artist_albums`, `get_user_details`.
+`search_songs`, `search_albums`, `search_artists`, `search_all`, `get_song`, `get_album`, `get_artist`, `get_song_playlists`, `list_recently_played`, `list_most_played`, `list_starred_items`, `list_top_rated`, `list_tag_values`, `get_tag_distribution`, `list_playlists` (only when `onlyWithPlayableTracks=true`, `playlist-crud.ts:74`), `play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `play_playlist`, `get_play_queue`, `now_playing`, `get_artist_albums`, `get_user_details`.
 
 **The spec's prescribed replacement** (`spec-2026-07-28/server/tools.md` §Stateful Tools — flagged non-normative): a creation tool returns an explicit handle; subsequent calls take it as an ordinary argument. *"The model is responsible for carrying `basket_id` forward."*
 
@@ -128,7 +128,7 @@ And, decisively for this project:
 | A2 | Opaque `scope` handle, minted by a creation tool (the spec's own pattern) | Medium; handle is opaque, model must carry it | Conformant; adds a concept for a feature most users don't need |
 | A7 | **Delete the tool; config-only via `library.defaultLibraryIds`** | Lowest — removes 1 tool | Conformant by removal |
 
-**Recommendation: A7 + a narrow A1.** Delete `set_active_libraries`. Add optional `libraryIds` to the **5 tools where multi-library users actually need per-call scope** — `search_songs`, `search_albums`, `search_artists`, `search_all`, `search_by_tags`. The other 19 readers use the config default (`applyDefaultConfiguration`, `library-manager.ts:255-271`, already "all libraries" when unset). Keep `get_user_details` as read-only discovery of what's available.
+**Recommendation: A7 + a narrow A1.** Delete `set_active_libraries`. Add optional `libraryIds` to the **5 tools where multi-library users actually need per-call scope** — `search_songs`, `search_albums`, `search_artists`, `search_all`, `list_tag_values`. The other 19 readers use the config default (`applyDefaultConfiguration`, `library-manager.ts:255-271`, already "all libraries" when unset). Keep `get_user_details` as read-only discovery of what's available.
 
 **Rationale:** threading an array through 24 schemas spends context on every single call to serve a minority configuration. A2 is the spec's blessed pattern but introduces a handle lifecycle for something that is, for most deployments, a static config value.
 

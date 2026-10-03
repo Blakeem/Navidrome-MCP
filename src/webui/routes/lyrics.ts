@@ -20,7 +20,7 @@ import type { ServerResponse } from 'node:http';
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import { IdSchema } from '../../schemas/index.js';
-import { getLyrics } from '../../tools/lyrics.js';
+import { buildLyricsLookup, resolveLyricsByMetadata } from '../../tools/lyrics.js';
 import { getPlayQueue } from '../../tools/playback.js';
 import type { LyricsDTO } from '../../types/index.js';
 import { Cache } from '../../utils/cache.js';
@@ -28,14 +28,6 @@ import { logger } from '../../utils/logger.js';
 import { writeError, writeJson } from '../http-helpers.js';
 
 type QueueItem = Awaited<ReturnType<typeof getPlayQueue>>['items'][number];
-
-/** Metadata the resolver needs. `title` and `artist` are required by GetLyricsSchema. */
-interface TrackMetadata {
-  title: string;
-  artist: string;
-  album?: string;
-  durationMs?: number;
-}
 
 /** A track's lyrics do not change, so an answered lookup is held for a long while. */
 const HIT_TTL_SECONDS = 3600;
@@ -50,30 +42,8 @@ const MISS_TTL_SECONDS = 60;
 const hitCache = new Cache<LyricsDTO>(HIT_TTL_SECONDS);
 const missCache = new Cache<LyricsDTO>(MISS_TTL_SECONDS);
 
-/** GetLyricsSchema rejects an empty title or artist, which mpv may not have supplied yet. */
-const UNKNOWN_TRACK_FIELD = 'Unknown';
-
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function readText(value: string | undefined): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function buildMetadata(entry: QueueItem, title: string, artist: string): TrackMetadata {
-  const album = readText(entry.album);
-  const durationMs =
-    entry.duration !== undefined && Number.isFinite(entry.duration) && entry.duration > 0
-      ? Math.round(entry.duration * 1000)
-      : undefined;
-
-  return {
-    title: title !== '' ? title : UNKNOWN_TRACK_FIELD,
-    artist: artist !== '' ? artist : UNKNOWN_TRACK_FIELD,
-    ...(album !== '' ? { album } : {}),
-    ...(durationMs !== undefined ? { durationMs } : {}),
-  };
 }
 
 /** A DTO carrying no text at all is a miss worth retrying, not an answer worth holding. */
@@ -82,7 +52,7 @@ function isAnswered(dto: LyricsDTO): boolean {
 }
 
 /**
- * GET /api/lyrics/:songId — resolve lyrics for one entry of the live play queue.
+ * GET /api/lyrics/:songId resolves lyrics for one entry of the live play queue.
  *
  * Track metadata comes from the queue rather than from the caller, so the
  * browser cannot steer an LRCLIB query. `songId` is validated against the
@@ -127,16 +97,18 @@ export async function handleLyrics(
   }
 
   // PROCESS
-  const title = readText(entry.title);
-  const artist = readText(entry.artist);
-  const metadata = buildMetadata(entry, title, artist);
-  // An untagged title or artist matches nothing in LRCLIB, so the placeholders
-  // above must never reach a query. Local file lyrics need neither.
-  const allowLrclib = config.features.lyrics && title !== '' && artist !== '';
+  const lookup = buildLyricsLookup({
+    title: entry.title,
+    artist: entry.artist,
+    album: entry.album,
+    duration: entry.duration,
+  });
+  // Local file lyrics need neither a title nor an artist, so only the LRCLIB query is gated.
+  const allowLrclib = config.features.lyrics && lookup.searchable;
 
   let dto: LyricsDTO;
   try {
-    dto = await getLyrics(config, metadata, { client, songId, allowLrclib });
+    dto = await resolveLyricsByMetadata(config, lookup.metadata, { client, songId, allowLrclib });
   } catch (err) {
     logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorText(err)}`);
     writeError(res, 502, 'Lyrics lookup failed');

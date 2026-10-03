@@ -160,7 +160,7 @@ describe('redact()', () => {
       // (s=) and salted-MD5 token (t=) — the actual replay-credential pair
       // we send. Now `[upst]=` covers all four. This case feeds a string
       // fragment NOT parseable as a URL (e.g., embedded in JSON or stderr
-      // mpv forwarding), so sanitizeFilename can't help — only the regex.
+      // mpv forwarding), so stripSubsonicAuthParams can't help. Only the regex can.
       const input = 'mpv stderr: requesting ?id=abc&u=user&t=hashtoken99&s=randomsalt&v=1.16.1 fragment';
       const result = redact(input) as string;
       expect(result).not.toContain('t=hashtoken99');
@@ -171,7 +171,7 @@ describe('redact()', () => {
       expect(result).toContain('id=abc');
     });
 
-    it('sanitizeFilename strips s=/t= Subsonic params from well-formed URL strings', () => {
+    it('stripSubsonicAuthParams strips s=/t= Subsonic params from well-formed URL strings', () => {
       const input = 'http://host:4533/rest/stream?id=abc&u=user&t=hashtoken&s=salt&v=1.16.1';
       const result = redact(input) as string;
       expect(result).not.toContain('t=hashtoken');

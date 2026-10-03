@@ -17,7 +17,7 @@
  */
 
 import type { ArtistDTO } from '../types/index.js';
-import { shouldEmit, type TransformOptions } from './shared-transformers.js';
+import { shouldEmit, starredFields, transformObjectRows, type TransformOptions } from './shared-transformers.js';
 
 /**
  * Raw artist data from Navidrome API
@@ -44,7 +44,7 @@ export interface RawArtist {
  * @returns Clean artist DTO for LLM consumption
  */
 export function transformToArtistDTO(rawArtist: RawArtist, options?: TransformOptions): ArtistDTO {
-  // Identity block — always emitted.
+  // Identity block, always emitted.
   const dto: ArtistDTO = {
     id: rawArtist.id,
     name: rawArtist.name || '',
@@ -77,20 +77,7 @@ export function transformToArtistDTO(rawArtist: RawArtist, options?: TransformOp
     dto.rating = rawArtist.rating;
   }
 
-  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
-  // as a "last starred at" history field even after unstarring, so a
-  // populated timestamp alone does NOT mean the item is currently starred.
-  // Only echo `starredAt` when the boolean confirms the starred state.
-  if (shouldEmit('starred', options)) {
-    if (rawArtist.starred === true) {
-      dto.starred = true;
-      if (rawArtist.starredAt !== undefined) {
-        dto.starredAt = rawArtist.starredAt;
-      }
-    } else if (rawArtist.starred === false) {
-      dto.starred = false;
-    }
-  }
+  Object.assign(dto, starredFields(rawArtist, options));
 
   return dto;
 }
@@ -102,15 +89,5 @@ export function transformToArtistDTO(rawArtist: RawArtist, options?: TransformOp
  * @returns Array of clean artist DTOs
  */
 export function transformArtistsToDTO(rawArtists: unknown, options?: TransformOptions): ArtistDTO[] {
-  if (!Array.isArray(rawArtists)) {
-    return [];
-  }
-
-  // Guard each element: Navidrome can return null / non-object entries on
-  // certain API errors. The `as RawArtist` cast would pass TS but crash the
-  // single-item transformer at runtime, aborting the whole batch. Drop the
-  // bad rows instead so one malformed entry doesn't lose every good one.
-  return rawArtists
-    .filter((artist): artist is RawArtist => typeof artist === 'object' && artist !== null)
-    .map((artist) => transformToArtistDTO(artist, options));
+  return transformObjectRows(rawArtists, (artist: RawArtist) => transformToArtistDTO(artist, options));
 }

@@ -8,7 +8,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
-import { getSharedLiveClient } from '../../factories/mock-client.js';
+import { createMockClient, getSharedLiveClient } from '../../factories/mock-client.js';
+import { makeTestConfig } from '../../helpers/test-config.js';
 import { testConnection } from '../../../src/tools/test.js';
 import { loadConfig } from '../../../src/config.js';
 import { shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
@@ -170,5 +171,31 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(basicResult.serverInfo).toBeUndefined();
       expect(detailedResult.serverInfo).toBeDefined();
     });
+  });
+});
+
+describe('Test Connection Tool - feature inventory', () => {
+  it('lists every tool each enabled feature registers', async () => {
+    const client = createMockClient();
+    client.request.mockResolvedValue([]);
+    const config = makeTestConfig({ features: { lastfm: true, radioBrowser: true, lyrics: true, playback: true } });
+
+    const result = await testConnection(client as unknown as NavidromeClient, config, { includeServerInfo: true });
+    const features = result.serverInfo?.features;
+
+    expect(features?.lastfm.tools).toEqual(expect.arrayContaining(['get_artist_albums', 'get_album_info']));
+    expect(features?.radioBrowser.tools).toContain('discover_radio_stations');
+    expect(features?.lyrics.tools).toEqual(['search_lyrics']);
+    expect(features?.playback.enabled).toBe(true);
+    expect(features?.playback.tools).toEqual(expect.arrayContaining(['play_songs', 'play_radio_station']));
+  });
+
+  it('reports playback disabled with no tools when mpv is absent', async () => {
+    const client = createMockClient();
+    client.request.mockResolvedValue([]);
+
+    const result = await testConnection(client as unknown as NavidromeClient, makeTestConfig(), { includeServerInfo: true });
+
+    expect(result.serverInfo?.features?.playback).toMatchObject({ enabled: false, tools: [] });
   });
 });

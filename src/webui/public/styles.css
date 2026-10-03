@@ -1,10 +1,8 @@
-/* Navidrome MCP — Web UI styles. Mobile-first, system fonts only, no deps. */
+/* Navidrome MCP web UI styles. Mobile-first, system fonts only, no deps. */
 
 :root {
-  /* Dark theme defaults — the panel sits on a music-listening surface most of
-     the time and the user shouldn't be flash-bombed when opening it on a
-     phone in a dim room. The light theme follows prefers-color-scheme unless
-     the Settings theme choice sets data-theme on the root. */
+  /* Dark is the default so a phone in a dim room is not flashed. Light follows
+     prefers-color-scheme unless data-theme forces it. */
   --bg: #0b0f17;
   --surface: #131927;
   --surface-2: #1a2235;
@@ -65,10 +63,7 @@
 
 * { box-sizing: border-box; }
 
-/* Inline SVG icons don't reliably honor the HTML `hidden` attribute across
-   browsers — the [hidden] { display: none } UA rule is keyed to the HTML
-   namespace. Explicitly hide SVGs marked hidden so el.hidden = true works
-   on every <svg> in this UI (volume/mute and play/pause toggles rely on it). */
+/* The UA [hidden] rule only matches the HTML namespace, so inline SVGs need their own. */
 svg[hidden] { display: none; }
 
 /* Hidden from sight but still read by screen readers and still focusable. */
@@ -82,6 +77,17 @@ svg[hidden] { display: none; }
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* The wake-lock fallback video. Laid out but invisible, since a video the layout drops stops counting as playing video. */
+.wake-video {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 html, body {
@@ -554,35 +560,41 @@ main {
   overflow-y: auto;
 }
 
-.queue-list li {
+.queue-list li { border-top: 1px solid var(--border); }
+
+.queue-list li:first-child { border-top: 0; }
+
+.queue-list .qrow {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 8px 14px;
-  border-top: 1px solid var(--border);
+  border: 0;
+  background: transparent;
+  font: inherit;
   font-size: 0.92rem;
   color: var(--text-muted);
+  text-align: left;
   cursor: pointer;
   transition: background 120ms, color 120ms;
 }
 
-.queue-list li:first-child { border-top: 0; }
+.queue-list .qrow:hover { background: var(--surface-2); color: var(--text); }
 
-.queue-list li:hover { background: var(--surface-2); color: var(--text); }
-
-.queue-list li:focus-visible {
+.queue-list .qrow:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
-.queue-list li.current {
+.queue-list li.current .qrow {
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent);
   color: var(--text);
-  /* Clicking the current row is a no-op — signal that with a default cursor. */
+  /* The current row does nothing on click, so it keeps the default cursor. */
   cursor: default;
 }
 
-.queue-list li.current:hover {
+.queue-list li.current .qrow:hover {
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent);
 }
 
@@ -630,6 +642,7 @@ main {
   color: var(--accent);
   visibility: hidden;
 }
+.queue-list .qicon svg { display: block; width: 100%; height: 100%; }
 .queue-list li.current .qicon { visibility: visible; }
 
 .queue-list .empty {
@@ -835,9 +848,8 @@ body.player-stopped::after {
 .modal-pane[hidden] { display: none; }
 
 /* ---------- full-screen modal ---------- */
-/* Long result lists need the whole height below the top bar. --modal-top is set
-   from modal-placement.js. Sized in dvh, never vh, so a collapsing URL bar keeps the bottom on screen.
-   The 760px cap matches the player column so a wide screen does not stretch the list. */
+/* Long lists take the full height below the top bar (--modal-top), in dvh so a collapsing URL bar
+   keeps the bottom on screen. The 760px cap matches the player column. */
 .modal.modal-full,
 .lyrics-view.is-window {
   --modal-gutter: 16px;
@@ -869,9 +881,9 @@ body.player-stopped::after {
 
 /* ---------- library search tab ---------- */
 /* :not([hidden]) keeps `.modal-pane[hidden]` in charge of hiding the pane. */
-#pl-pane-search:not([hidden]),
-#pl-pane-playlists:not([hidden]),
-#pl-pane-favorites:not([hidden]) {
+#play-pane-search:not([hidden]),
+#play-pane-playlists:not([hidden]),
+#play-pane-favorites:not([hidden]) {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1048,8 +1060,8 @@ body.player-stopped::after {
 .lib-toggle svg { width: 22px; height: 22px; }
 /* The dialog's data-mode follows the queue-mode radios, so every row in every pane swaps icon at once. */
 .lib-icon-play { display: none; }
-#playlists-dialog[data-mode="replace"] .lib-icon-add { display: none; }
-#playlists-dialog[data-mode="replace"] .lib-icon-play { display: block; }
+#play-dialog[data-mode="replace"] .lib-icon-add { display: none; }
+#play-dialog[data-mode="replace"] .lib-icon-play { display: block; }
 
 .lib-toggle svg { transition: transform 150ms ease; }
 .lib-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
@@ -1101,8 +1113,6 @@ body.player-stopped::after {
 /* Full-viewport surface over the remote. Sized in dvh, never vh, so the mobile
    URL bar collapsing does not leave the transport off-screen. */
 .lyrics-view {
-  /* Overwritten inline by the font stepper. This is the step it starts at. */
-  --lyric-size: 1.25rem;
   position: fixed;
   inset: 0 0 auto 0;
   height: 100dvh;
@@ -1211,6 +1221,7 @@ body.player-stopped::after {
   list-style: none;
   margin: 0 auto;
   padding: 0;
+  font-size: var(--lyric-size);
   max-width: 42ch;
   display: flex;
   flex-direction: column;
@@ -1224,7 +1235,7 @@ body.player-stopped::after {
   font-weight: 600;
   color: var(--text-muted);
 }
-/* LRC blank lines carry the pacing of a verse break, so keep their height. */
+/* Blank lines in plain lyrics mark stanza breaks, so they keep a line of height. */
 .lyric-line:empty { min-height: 0.9em; }
 
 .lyrics-transport {
@@ -1341,11 +1352,12 @@ body.player-stopped::after {
   50% { opacity: 1; }
 }
 
-/* Over the words and clear of the transport, up only while following is off. */
+/* Anchored to the words area so it stays clear of the transport. Up only while following is off. */
 .lyrics-follow-pill {
+  grid-area: lyrics-body;
   position: absolute;
   left: 50%;
-  bottom: calc(112px + env(safe-area-inset-bottom));
+  bottom: 16px;
   transform: translateX(-50%);
   z-index: 2;
   padding: 9px 18px;
@@ -1377,9 +1389,8 @@ body.player-stopped::after {
   }
   .lyrics-view:not(.is-window) .lyrics-aside { display: flex; }
   .lyrics-view:not(.is-window) .lyrics-scroll { padding: 40px 48px 56px; border-left: 1px solid var(--border); }
-  /* ch resolves against this element's font size, so match --lyric-size to keep the 48ch cap in step with the text.
-     The cap gives margin: 0 auto something to centre, matching the narrow layout. */
-  .lyrics-lines { font-size: var(--lyric-size); max-width: 48ch; }
+  /* ch resolves against the lines' own font size, so the cap scales with the text stepper. */
+  .lyrics-view:not(.is-window) .lyrics-lines { max-width: 48ch; }
   .lyrics-view:not(.is-window) .lyrics-transport { background: transparent; border-top: 0; }
   .lyrics-view:not(.is-window) .lyrics-follow-pill { left: auto; right: 32px; bottom: 32px; transform: none; }
 }

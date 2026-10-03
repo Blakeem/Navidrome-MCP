@@ -11,9 +11,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createRadioStation, resetRadioStationCacheForTesting } from '../../../src/tools/radio.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
-import type { Config } from '../../../src/config.js';
-
-const stubConfig = {} as Config;
 
 /**
  * Build a synthetic Navidrome REST `/radio` response (array of rows). Defaults
@@ -47,7 +44,7 @@ describe('createRadioStation real-id resolution', () => {
       makeRestList([{ id: 'real-uuid-001', name: 'Test Station', streamUrl: 'http://stream.test/audio' }])
     );
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Test Station', streamUrl: 'http://stream.test/audio' }],
     });
 
@@ -57,6 +54,12 @@ describe('createRadioStation real-id resolution', () => {
     expect(created.station?.id).toBe('real-uuid-001');
     expect(created.station?.id).not.toBe('created');
     expect(created.station?.id).not.toBe('');
+    // A resent create would insert a duplicate station.
+    expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
+      '/createInternetRadioStation',
+      expect.any(Object),
+      { retryPolicy: 'never' },
+    );
   });
 
   it('only issues ONE REST list call regardless of batch size', async () => {
@@ -73,7 +76,7 @@ describe('createRadioStation real-id resolution', () => {
       ])
     );
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [
         { name: 'A', streamUrl: 'http://a.test/' },
         { name: 'B', streamUrl: 'http://b.test/' },
@@ -92,7 +95,7 @@ describe('createRadioStation real-id resolution', () => {
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' }); // create succeeded
     mockClient.request.mockRejectedValueOnce(new Error('list failed'));  // REST list failed
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Orphan', streamUrl: 'http://orphan.test/' }],
     });
 
@@ -108,7 +111,7 @@ describe('createRadioStation real-id resolution', () => {
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });        // create succeeded
     mockClient.request.mockResolvedValueOnce(makeRestList([]));                // listing returned empty
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Phantom', streamUrl: 'http://phantom.test/' }],
     });
 
@@ -131,7 +134,7 @@ describe('createRadioStation real-id resolution', () => {
       ])
     );
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [
         { name: 'WBEZ', streamUrl: 'http://wbez.test/' },
         { name: 'WBEZ', streamUrl: 'http://wbez.test/' },
@@ -156,7 +159,7 @@ describe('createRadioStation real-id resolution', () => {
       ])
     );
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Dup', streamUrl: 'http://dup.test/' }],
     });
     expect(result.results[0]?.station?.id).toBe('zzz');
@@ -165,7 +168,7 @@ describe('createRadioStation real-id resolution', () => {
   it('skips lookup entirely when no creates succeeded', async () => {
     mockClient.subsonicRequest.mockRejectedValueOnce(new Error('Subsonic create failed'));
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Bad', streamUrl: 'http://bad.test/' }],
     });
 
@@ -187,25 +190,25 @@ describe('createRadioStation Zod input validation', () => {
 
   it('throws when args is null', async () => {
     await expect(
-      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, null)
+      createRadioStation(mockClient as unknown as NavidromeClient, null)
     ).rejects.toThrow();
   });
 
   it('throws when stations array is missing', async () => {
     await expect(
-      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, { validateBeforeAdd: false })
+      createRadioStation(mockClient as unknown as NavidromeClient, { validateBeforeAdd: false })
     ).rejects.toThrow();
   });
 
   it('throws when stations is empty array', async () => {
     await expect(
-      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, { stations: [] })
+      createRadioStation(mockClient as unknown as NavidromeClient, { stations: [] })
     ).rejects.toThrow();
   });
 
   it('throws when stations is not an array', async () => {
     await expect(
-      createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, { stations: 'bad' })
+      createRadioStation(mockClient as unknown as NavidromeClient, { stations: 'bad' })
     ).rejects.toThrow();
   });
 
@@ -213,7 +216,7 @@ describe('createRadioStation Zod input validation', () => {
     // Per-item validation stays in the loop so a batch with one bad entry
     // still processes the rest — Zod validates array structure but not min(1)
     // on individual name/url (those are checked per-item in the loop).
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: '', streamUrl: 'http://stream.test/' }],
     });
 
@@ -235,7 +238,7 @@ describe('createRadioStation URL validation', () => {
   // The WHATWG URL parser strips tab/LF/CR, so these parse to a clean http:
   // URL while the RAW string is what gets stored and later handed to mpv.
   it('rejects a stream URL carrying a newline, before any network call', async () => {
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Injected', streamUrl: 'http://stream.test/live\nHost: internal.local' }],
     });
 
@@ -245,7 +248,7 @@ describe('createRadioStation URL validation', () => {
   });
 
   it('rejects a non-http home page URL', async () => {
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{
         name: 'Bad Homepage',
         streamUrl: 'http://stream.test/audio',
@@ -259,7 +262,7 @@ describe('createRadioStation URL validation', () => {
   });
 
   it('rejects a home page URL carrying a newline', async () => {
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{
         name: 'Injected Homepage',
         streamUrl: 'http://stream.test/audio',
@@ -278,7 +281,7 @@ describe('createRadioStation URL validation', () => {
       makeRestList([{ id: 'ok-1', name: 'Good', streamUrl: 'http://stream.test/audio' }])
     );
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{
         name: 'Good',
         streamUrl: 'http://stream.test/audio',
@@ -297,7 +300,7 @@ describe('createRadioStation URL validation', () => {
       makeRestList([{ id: 'ok-2', name: 'Fine', streamUrl: 'http://stream.test/ok' }])
     );
 
-    const result = await createRadioStation(mockClient as unknown as NavidromeClient, stubConfig, {
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [
         { name: 'Broken', streamUrl: 'http://stream.test/x\nHost: evil' },
         { name: 'Fine', streamUrl: 'http://stream.test/ok' },

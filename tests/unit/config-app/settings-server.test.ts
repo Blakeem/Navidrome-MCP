@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConfigServer } from '../../../src/config-app/server.js';
@@ -93,6 +94,17 @@ describe('settings server seed/save', () => {
     expect(readSettings()?.webui).toMatchObject({ expose: true, theme: 'dark' });
   });
 
+  it('rejects an unsupported web host and writes nothing', async () => {
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      webui: { host: '192.168.1.20' },
+    });
+    expect(res.status).toBe(400);
+    expect((await getJson(res)).error).toMatch(/webui\.host: "192\.168\.1\.20" is not supported/);
+    expect(readSettings()).toBeNull();
+  });
+
   it('drops a legacy stored theme on save', async () => {
     writeFileSync(file, JSON.stringify({
       navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
@@ -131,6 +143,46 @@ describe('settings server seed/save', () => {
     expect(res.status).toBe(400);
   });
 
+  it('reports every validation issue on Test connection, in the Save format', async () => {
+    const base = await start();
+    const res = await fetch(`${base}/api/settings/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navidrome: { url: '', username: '', password: 'p' } }),
+    });
+    const body = await getJson(res);
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain('Configuration validation failed');
+    expect(body.error).toContain('navidromeUrl: Navidrome URL must be a valid URL');
+    expect(body.error).toContain('navidromeUsername: Navidrome username is required');
+  });
+
+  it('rejects a text/plain POST with 415 and leaves the store unchanged', async () => {
+    const stored = { navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } };
+    writeFileSync(file, JSON.stringify(stored));
+    const base = await start();
+    const res = await fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ navidrome: { url: 'http://attacker.example', username: 'u', password: MASK } }),
+    });
+    expect(res.status).toBe(415);
+    expect(readSettings()).toEqual(stored);
+  });
+
+  it('rejects a non-loopback Host header with 403', async () => {
+    const base = await start();
+    const status = await new Promise<number | undefined>((resolve, reject) => {
+      const req = request(`${base}/api/settings/seed`, { headers: { Host: 'attacker.example' } }, (res) => {
+        res.resume();
+        resolve(res.statusCode);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(status).toBe(403);
+  });
+
   // The no-orphan reaper: setup-mode hosts (the standalone web player launched
   // before configuration) pass idleTimeoutMs to self-terminate after inactivity.
   it('self-reaps after the idle timeout when there is no activity', async () => {
@@ -165,6 +217,12 @@ describe('settings server seed/save', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
     expect(await res.text()).toContain('<form');
+  });
+
+  it('sends the shared Content-Security-Policy with the settings page', async () => {
+    const base = await start();
+    const res = await fetch(`${base}/`);
+    expect(res.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
   });
 
   it('serves static assets and 404s unknown paths', async () => {

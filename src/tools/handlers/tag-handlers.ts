@@ -24,27 +24,28 @@ import { ErrorFormatter } from '../../utils/error-formatter.js';
 
 // Import tool functions
 import {
-  searchByTags,
+  listTagValues,
   getTagDistribution,
+  getFilterOptions,
 } from '../tags.js';
-import { filterCacheManager } from '../../services/filter-cache-manager.js';
+import { FilterOptionsSchema } from '../../schemas/index.js';
 
 // Tool definitions for tags category
 const tools: Tool[] = [
   {
-    name: 'search_by_tags',
-    description: 'Search for tags by type (e.g., list all genres, find release types, etc.). Defaults to genre if no tagName specified. Use this to explore metadata categories like genres, release types, media formats, and more.',
+    name: 'list_tag_values',
+    description: 'List the values of one tag name (every genre, release type, media format and so on) with their album and song counts. Returns tag values, not music. To find songs or albums by tag value, use search_songs or search_albums. Defaults to genre if no tagName is specified.',
     inputSchema: {
       type: 'object',
       properties: {
         tagName: {
           type: 'string',
-          description: 'Tag name to search by. Common working examples: "genre" (Rock, Jazz, Classical), "releasetype" (Album, EP, Single), "media" (CD, Vinyl, Digital), "releasecountry" (US, UK, Germany), "recordlabel" (Columbia Records, Sony Music), "mood" (Energetic, Melancholy), "composer", "producer", "year"',
+          description: 'Tag name whose values to list. Examples: "genre" (Rock, Jazz), "releasetype" (album, ep, single), "media" (CD, Vinyl, Digital Media), "releasecountry" (ISO codes such as US, GB, DE), "recordlabel" (Columbia Records), "mood". Composer, producer and year are not tags and return no results.',
           default: 'genre',
         },
         tagValue: {
           type: 'string',
-          description: 'Optional tag value filter. Matches as a case-insensitive PREFIX (starts-with), not an exact or substring match — e.g. "Alternative" also matches "Alternative Rock", "Alternative & Punk", "Alternative Metal", while "Rock" matches only "Rock" (not "Alternative Rock"). Pass the fullest leading value you can to narrow results (e.g. "Rock" for genre, "Album" for releasetype).',
+          description: 'Optional tag value filter. Matches as a case-insensitive prefix (starts-with), not an exact or substring match. "Alternative" matches "Alternative Rock" and "Alternative Metal". "Rock" matches "Rock" and "Rock & Roll" but not "Alternative Rock". Pass the fullest leading value you can to narrow results.',
         },
         limit: {
           type: 'number',
@@ -64,7 +65,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_tag_distribution',
-    description: 'Analyze tag usage patterns and distribution across the music library. Shows statistics for metadata categories with their usage counts. Supports: "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood".',
+    description: 'Analyze tag usage counts per tag name. Supports "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood". For genre, distribution is the top distributionLimit values by song count. Other tag names have no server-side counts, so distribution is the first distributionLimit values in alphabetical order, the result carries sampled: true, and mostCommon, totalSongs and totalAlbums cover only that slice. uniqueValues is the library-wide count of distinct values.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -92,13 +93,13 @@ const tools: Tool[] = [
   },
   {
     name: 'get_filter_options',
-    description: 'Discover available filter values for search operations. Use this FIRST to see what genres, media types, countries, etc. are available in your library before using filters in search functions. Returns dynamic values from your actual music collection.\n\nExample workflow:\n1. Call get_filter_options(filterType=\'genres\') to see available genres\n2. Use discovered genres like \'Rock\' or \'R&B\' in search_all, search_songs, etc.\n3. Repeat for other filter types (mediaTypes, countries, releaseTypes, recordLabels, moods)',
+    description: 'Discover available filter values for search operations. Use this FIRST to see what genres, media types, countries, etc. are available in your library before using filters in search functions. Returns dynamic values from your actual music collection.\n\nExample workflow:\n1. Call get_filter_options(filterType=\'genres\') to see available genres\n2. Use discovered genres like \'Rock\' or \'R&B\' in search_all, search_songs, etc.\n3. Repeat for other filter types (mediaTypes, countries, releaseTypes, recordLabels, moods)\n\nReturns at most limit values in sorted order. total is the full count. Page with offset.',
     inputSchema: {
       type: 'object',
       properties: {
         filterType: {
           type: 'string',
-          enum: ['genres', 'mediaTypes', 'countries', 'releaseTypes', 'recordLabels', 'moods'],
+          enum: [...FilterOptionsSchema.shape.filterType.options],
           description: 'Type of metadata filter to discover options for. Valid values: "genres" (Rock, Jazz, etc.), "mediaTypes" (CD, Vinyl, etc.), "countries" (ISO 3166-1 alpha-2 codes — "US", "GB", "DE", etc.), "releaseTypes" (lowercase MusicBrainz values — "album", "ep", "single", etc.), "recordLabels" (Sony Music, etc.), "moods" (Energetic, etc.)'
         },
         limit: {
@@ -107,6 +108,12 @@ const tools: Tool[] = [
           minimum: 1,
           maximum: 200,
           default: 50,
+        },
+        offset: {
+          type: 'integer',
+          description: 'Pagination offset (0-based)',
+          minimum: 0,
+          default: 0,
         },
       },
       required: ['filterType'],
@@ -120,12 +127,12 @@ export function createTagsToolCategory(client: NavidromeClient, _config: Config)
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
-        case 'search_by_tags':
-          return await searchByTags(client, args);
+        case 'list_tag_values':
+          return await listTagValues(client, args);
         case 'get_tag_distribution':
           return await getTagDistribution(client, args);
         case 'get_filter_options':
-          return await filterCacheManager.getFilterOptions(args);
+          return await getFilterOptions(args);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }

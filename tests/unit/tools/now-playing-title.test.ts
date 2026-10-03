@@ -36,7 +36,7 @@ const getStatusMock = vi.fn();
 const getCachedPropertyMock = vi.fn();
 const getCurrentRadioStationMock = vi.fn();
 const getQueueGenerationMock = vi.fn();
-const getPlaylistMock = vi.fn();
+const getQueueMock = vi.fn();
 const ingestQueueMetadataMock = vi.fn();
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
@@ -46,7 +46,7 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     getCachedProperty: getCachedPropertyMock,
     getCurrentRadioStation: getCurrentRadioStationMock,
     getQueueGeneration: getQueueGenerationMock,
-    getPlaylist: getPlaylistMock,
+    getQueue: getQueueMock,
     ingestQueueMetadata: ingestQueueMetadataMock,
   },
 }));
@@ -80,7 +80,7 @@ describe('now_playing title reconciliation (Issue #3)', () => {
         metadata: null,
       }),
     );
-    getPlaylistMock.mockResolvedValue([
+    getQueueMock.mockResolvedValue([
       {
         index: 0,
         songId: 'song-123',
@@ -119,7 +119,7 @@ describe('now_playing title reconciliation (Issue #3)', () => {
         metadata: null,
       }),
     );
-    getPlaylistMock.mockResolvedValue([
+    getQueueMock.mockResolvedValue([
       { index: 0, songId: 'song-123', isCurrent: true, isPlaying: true },
     ]);
 
@@ -142,7 +142,7 @@ describe('now_playing title reconciliation (Issue #3)', () => {
       }),
     );
     // Engine cache lost on restart: current entry has no title/artist/album.
-    getPlaylistMock.mockResolvedValue([
+    getQueueMock.mockResolvedValue([
       { index: 0, songId: 'song-123', isCurrent: true, isPlaying: true },
     ]);
     // Mock client returns the song row for the Navidrome fallback.
@@ -172,7 +172,7 @@ describe('now_playing title reconciliation (Issue #3)', () => {
         metadata: { artist: 'Some Artist', album: 'Some Album' },
       }),
     );
-    getPlaylistMock.mockResolvedValue([
+    getQueueMock.mockResolvedValue([
       {
         index: 0,
         songId: 'song-9',
@@ -211,7 +211,7 @@ describe('now_playing title reconciliation (Issue #3)', () => {
     expect(result.title).toBe('Galimatias - Purple Rain');
     expect(result.isRadio).toBe(true);
     expect(result.radioStation).toEqual({ name: 'SomaFM Groove Salad' });
-    // Radio path should not call getPlaylist (station known, no album to repair).
-    expect(getPlaylistMock).not.toHaveBeenCalled();
+    // Radio path should not call getQueue (station known, no album to repair).
+    expect(getQueueMock).not.toHaveBeenCalled();
   });
 });

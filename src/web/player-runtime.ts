@@ -21,7 +21,7 @@
  * lifecycle state is unit-testable without a running HTTP server or mpv.
  *
  * The persist flag governs whether a player spawned by the MCP server keeps
- * running after the MCP server exits (spec: webui.persistAfterMcpExit). It's
+ * running after the MCP server exits (webui.persistAfterMcpExit). It's
  * initialized from config at startup and can be toggled live from the player's
  * loopback-only settings modal. The theme follows the same seed-then-toggle path,
  * and null leaves each device on its own light or dark setting.

@@ -18,10 +18,12 @@
 
 import type { IncomingMessage } from 'node:http';
 
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
 /**
  * Loopback guard (defense-in-depth on top of any bind address). Accepts the
  * IPv4-mapped form `::ffff:127.0.0.1` too, which is what a dual-stack Linux host
- * presents for a local connection — a naive exact match would reject the user's
+ * presents for a local connection, so a naive exact match would reject the user's
  * own browser. Used to keep sensitive surfaces (settings, shutdown, /healthz
  * when exposed) local even when the player is bound on the LAN.
  */
@@ -35,4 +37,11 @@ export function isLoopbackPeer(req: IncomingMessage): boolean {
     addr.startsWith('127.') ||
     addr.startsWith('::ffff:127.')
   );
+}
+
+// Port is ignored: a client omits a default port such as 80, and DNS rebinding controls only the hostname.
+export function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
+  if (hostHeader === undefined) return false;
+  const hostname = hostHeader.toLowerCase().replace(/:\d+$/, '');
+  return LOOPBACK_HOSTNAMES.has(hostname);
 }

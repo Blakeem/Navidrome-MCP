@@ -31,12 +31,10 @@ import {
   SongIdSchema,
   AlbumIdSchema,
   ArtistIdSchema,
-  GetSongPlaylistsSchema,
 } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 
-// Get Song by ID
 export async function getSong(client: NavidromeClient, args: unknown): Promise<SongDTO> {
   try {
     const params = SongIdSchema.parse(args);
@@ -51,42 +49,37 @@ export async function getSong(client: NavidromeClient, args: unknown): Promise<S
   }
 }
 
-// Get Album by ID
 export async function getAlbum(client: NavidromeClient, args: unknown): Promise<AlbumDTO> {
   try {
     const params = AlbumIdSchema.parse(args);
     logger.debug('Tool getAlbum called with args:', params);
 
     const rawAlbum = await client.requestWithLibraryFilter<unknown>(`/album/${encodeURIComponent(params.albumId)}`);
-    // Single-item detail lookup — always verbose (see getSong).
+    // Single-item detail lookup, always verbose (see getSong).
     return transformToAlbumDTO(rawAlbum as RawAlbum, { verbose: true });
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_album', error));
   }
 }
 
-// Get Artist by ID
 export async function getArtist(client: NavidromeClient, args: unknown): Promise<ArtistDTO> {
   try {
     const params = ArtistIdSchema.parse(args);
     logger.debug('Tool getArtist called with args:', params);
 
     const rawArtist = await client.requestWithLibraryFilter<unknown>(`/artist/${encodeURIComponent(params.artistId)}`);
-    // Single-item detail lookup — always verbose (see getSong).
+    // Single-item detail lookup, always verbose (see getSong).
     return transformToArtistDTO(rawArtist as RawArtist, { verbose: true });
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_artist', error));
   }
 }
 
-// Get Playlists containing a song. `songId` is intentionally NOT echoed back —
-// the LLM just sent it; returning a single string field would only waste
-// context. The DEBUG log captures it for diagnostics.
 export async function getSongPlaylists(client: NavidromeClient, args: unknown): Promise<{
   playlists: PlaylistDTO[];
 }> {
   try {
-    const params = GetSongPlaylistsSchema.parse(args);
+    const params = SongIdSchema.parse(args);
     logger.debug('Tool getSongPlaylists called with args:', params);
 
     const rawPlaylists = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.songId)}/playlists`);

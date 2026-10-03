@@ -22,11 +22,11 @@ import { isLanReachable, listLanInterfaces } from '../network.js';
 import { writeJson } from '../http-helpers.js';
 
 /**
- * GET /api/network-info — Reports the addresses the user can use to reach
- * this web UI, plus the current bind/expose configuration so the panel can
- * explain WHY only localhost is listed when expose is off.
+ * GET /api/network-info reports the addresses the user can use to reach this
+ * web UI, plus the bind and expose configuration, so the panel can explain WHY
+ * only localhost is listed unless the resolved bind host is LAN-reachable.
  *
- * Always-included localhost URL gives the user a known-working entry even
+ * The always-included localhost URL gives the user a known-working entry even
  * when no LAN interfaces are discovered (single-NIC laptop on cellular,
  * loopback-only container, etc.).
  */

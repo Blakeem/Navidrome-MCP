@@ -2,7 +2,7 @@
  * Navidrome MCP Server - library tool function tests
  * Copyright (C) 2025
  *
- * Covers getUserDetails and setActiveLibraries from src/tools/library.ts.
+ * Covers getUserDetails and setActiveLibraries through the library tool category.
  * Both functions depend on the libraryManager singleton; we seed it
  * using libraryManager.initialize() with a mocked client, the same
  * pattern used in tests/unit/services/library-manager.test.ts.
@@ -13,8 +13,9 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createLibraryToolCategory } from '../../../src/tools/library.js';
+import { createLibraryToolCategory } from '../../../src/tools/handlers/library-handlers.js';
 import { libraryManager } from '../../../src/services/library-manager.js';
+import { filterCacheManager } from '../../../src/services/filter-cache-manager.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
@@ -99,14 +100,19 @@ let mockClient: MockNavidromeClient;
 
 beforeEach(async () => {
   libraryManager.reset();
+  filterCacheManager.reset();
   mockClient = createMockClient();
   await seedLibraryManager(mockClient);
-  // Reset the mock after seeding so subsequent assertions are fresh
+  mockClient.requestWithLibraryFilter.mockResolvedValue([]);
+  await filterCacheManager.initialize(mockClient as unknown as NavidromeClient, makeConfig());
+  // Reset the mocks after seeding so subsequent assertions are fresh
   mockClient.request.mockReset();
+  mockClient.requestWithLibraryFilter.mockClear();
 });
 
 afterEach(() => {
   libraryManager.reset();
+  filterCacheManager.reset();
 });
 
 // ---- getUserDetails ---------------------------------------------------------
@@ -184,6 +190,14 @@ describe('setActiveLibraries', () => {
 
     // Verify the singleton state was actually updated
     expect(libraryManager.getActiveLibraryIds()).toEqual([1]);
+  });
+
+  it('reloads the filter cache so tag filters resolve against the new libraries', async () => {
+    const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
+    await category.handleToolCall('set_active_libraries', { libraryIds: [2] });
+
+    expect(mockClient.requestWithLibraryFilter).toHaveBeenCalledWith('/genre');
+    expect(mockClient.requestWithLibraryFilter).toHaveBeenCalledWith(expect.stringContaining('/tag?tag_name=mood'));
   });
 
   it('activates all provided valid library IDs', async () => {

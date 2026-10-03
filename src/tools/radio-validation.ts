@@ -16,5 +16,4 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Re-export all functionality from the new modular structure
 export * from './radio-validation/index.js';

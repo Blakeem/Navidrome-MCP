@@ -18,6 +18,7 @@
 
 import { logger } from '../../utils/logger.js';
 import type { StateChangeEvent } from './playback-engine.js';
+import type { RetryPolicy } from '../../utils/fetch-with-timeout.js';
 
 // Last.fm scrobble rules: track must be at least 30s long, and counts as
 // played after the user has listened to half the duration OR 4 minutes,
@@ -25,13 +26,22 @@ import type { StateChangeEvent } from './playback-engine.js';
 const MIN_DURATION_SECONDS = 30;
 const MAX_THRESHOLD_SECONDS = 240;
 
+/** One live queue entry as the tracker reads it. `entryId` and `isCurrent` come from mpv. */
+interface ScrobbleQueueEntry {
+  index: number;
+  songId: string | null;
+  entryId?: number;
+  isCurrent?: boolean;
+  duration?: number;
+}
+
 /**
  * Subset of the playback engine the tracker depends on. Defined here so
  * tests can pass a minimal fake without constructing the full engine.
  */
 export interface ScrobbleEngine {
   onStateChange(handler: (event: StateChangeEvent) => void): () => void;
-  getPlaylist(): Promise<Array<{ index: number; songId: string | null; duration?: number }>>;
+  getQueue(): Promise<ScrobbleQueueEntry[]>;
   getCachedProperty(name: string): unknown;
 }
 
@@ -42,7 +52,7 @@ export interface ScrobbleClient {
   subsonicRequest(
     endpoint: string,
     params?: Record<string, string>,
-    options?: { method?: 'GET' | 'POST' },
+    options?: { retryPolicy?: RetryPolicy },
   ): Promise<unknown>;
 }
 
@@ -68,6 +78,8 @@ export interface ScrobbleClient {
  * event after attach is therefore treated as initial state — it hydrates
  * a sentinel but does NOT trigger now-playing or scrobble tracking. Only
  * subsequent events that actually change the value are real transitions.
+ * The engine's `attach` event marks every later attach, so a re-attach to a
+ * new mpv instance starts from the same sentinel.
  */
 export class ScrobbleTracker {
   private readonly client: ScrobbleClient;
@@ -76,6 +88,7 @@ export class ScrobbleTracker {
   private unsubscribe: (() => void) | null = null;
 
   private currentSongId: string | null = null;
+  private currentEntryId: number | null = null;
   private currentDuration: number | null = null;
   private startedAtMs: number | null = null;
   private submitted = false;
@@ -93,6 +106,10 @@ export class ScrobbleTracker {
   // play's threshold check during the brief window between a playlist-pos
   // change and the first time-pos event for the new file.
   private lastTimePos: number | null = null;
+  // Set when playlist-pos moves, until the playlist read shows whether the entry
+  // at the new index is the same play. A queue edit can shift the playing entry's
+  // index, so submissions wait rather than count that play twice.
+  private transitionPending = false;
 
   // Sentinel 'unknown' until the first playlist-pos event after attach.
   // That first event is mpv's observe-emitted snapshot of current state —
@@ -111,8 +128,7 @@ export class ScrobbleTracker {
    * @param shouldSubmit Resolves to whether THIS process should count the play
    *   it is about to start tracking. Called once per track (at track start).
    *   Defaults to always-true: the web port owner is the unconditional submitter
-   *   (`web/main.ts`), and unit tests that don't exercise the election keep the
-   *   original behavior. MCP injects a live web-port probe so it defers to a
+   *   (`web/main.ts`). MCP injects a live web-port probe so it defers to a
    *   running navidrome-web.
    */
   constructor(
@@ -152,6 +168,10 @@ export class ScrobbleTracker {
   }
 
   private handleEvent(event: StateChangeEvent): void {
+    if (event.kind === 'attach') {
+      this.onEngineAttach();
+      return;
+    }
     if (event.kind === 'queue') {
       this.onQueueMutation();
       return;
@@ -171,6 +191,17 @@ export class ScrobbleTracker {
     }
   }
 
+  /**
+   * A new mpv instance restarts entry ids and replays its state as fresh emits,
+   * so the previous instance's play ends here and is not counted by this process.
+   */
+  private onEngineAttach(): void {
+    this.reset();
+    this.lastPlaylistPos = 'unknown';
+    // Orphans playlist reads and ownership checks begun against the previous instance.
+    this.generation++;
+  }
+
   private onPlaylistPos(data: unknown): void {
     const next = typeof data === 'number' ? data : null;
     const prev = this.lastPlaylistPos;
@@ -178,12 +209,15 @@ export class ScrobbleTracker {
     // First event since attach is mpv's observe-emitted current state —
     // hydrate the sentinel but do nothing else.
     if (prev === 'unknown') return;
-    // mpv re-emit at the same value (or jumpToPlaylistEntry to current
+    // mpv re-emit at the same value (or jumpToQueueEntry to current
     // index): not a real track change. Last.fm wouldn't accept a
     // re-scrobble within minutes anyway, so silently ignore.
     if (prev === next) return;
-    this.reset();
-    if (next === null || next < 0) return;
+    if (next === null || next < 0) {
+      this.reset();
+      return;
+    }
+    this.transitionPending = true;
     void this.hydrateAndStart(next, ++this.generation);
   }
 
@@ -193,7 +227,7 @@ export class ScrobbleTracker {
     // playlist-pos change event when the index stays the same (e.g.
     // enqueue('replace') while at index 0 — the most common case for
     // play_songs called on an attached mpv that's already playing).
-    // Force a re-hydration; the songId comparison inside the async path
+    // Force a re-hydration. The same-play check inside the async path
     // makes this a no-op when the current track wasn't actually displaced
     // (shuffle that left index 0 alone), and the generation token makes
     // concurrent transitions safe.
@@ -208,52 +242,74 @@ export class ScrobbleTracker {
       this.lastPlaylistPos = typeof cachedPos === 'number' ? cachedPos : null;
       return;
     }
-    let entry: { songId: string | null; duration?: number } | undefined;
+    let entry: ScrobbleQueueEntry | undefined;
     try {
-      const playlist = await this.engine.getPlaylist();
+      const playlist = await this.engine.getQueue();
       if (gen !== this.generation) return; // superseded by a newer transition
-      entry = playlist.find((e) => e.index === cachedPos);
+      // The playlist-pos cache can lag the mutation that just finished, so mpv's
+      // current flag from this same read names the playing entry when present.
+      entry = playlist.find((e) => e.isCurrent === true) ?? playlist.find((e) => e.index === cachedPos);
     } catch (err) {
       logger.warn(`scrobble: failed to read playlist after queue mutation: ${String(err)}`);
       return;
     }
     if (entry === undefined) return;
-    // Already tracking this exact song — either a concurrent property-change
-    // handler hydrated, or the queue mutation didn't displace the current
-    // track. No-op in either case.
-    //
-    // Accepted edge (intentionally NOT corrected): replaying the EXACT
-    // currently-playing song after it has already scrobbled this cycle will
-    // not start a fresh scrobble cycle — this early-return treats it as a
-    // no-op. This is a known, accepted limitation: first-play tracking and
-    // switch-away-then-back both behave correctly, and returning here leaves
-    // tracker state uncorrupted, so the only effect is the rare "scrobble the
-    // same song twice in a row" case isn't counted again.
-    if (entry.songId !== null && entry.songId === this.currentSongId) return;
+    // The same entry means the current play was not displaced, so tracking continues.
+    // Without an mpv entry id, a back-to-back replay of the same song is not counted again.
+    if (this.isSamePlay(entry)) {
+      this.confirmSamePlay();
+      return;
+    }
     this.reset();
-    this.lastPlaylistPos = cachedPos;
+    this.lastPlaylistPos = entry.index;
     if (entry.songId === null) return; // radio
-    this.startTrackingTrack(entry.songId, entry.duration);
+    this.startTrackingTrack(entry.songId, entry.entryId, entry.duration);
   }
 
   private async hydrateAndStart(pos: number, gen: number): Promise<void> {
-    let entry: { songId: string | null; duration?: number } | undefined;
+    let entry: ScrobbleQueueEntry | undefined;
     try {
-      const playlist = await this.engine.getPlaylist();
+      const playlist = await this.engine.getQueue();
       if (gen !== this.generation) return; // superseded by a newer transition
       entry = playlist.find((e) => e.index === pos);
     } catch (err) {
       logger.warn(`scrobble: failed to read playlist for pos=${pos}: ${String(err)}`);
+      if (gen === this.generation) this.reset();
       return;
     }
+    if (entry !== undefined && this.isSamePlay(entry)) {
+      this.confirmSamePlay();
+      return;
+    }
+    this.reset();
     if (entry === undefined) return;
     if (entry.songId === null) return; // radio stream
-    if (gen !== this.generation) return; // defensive after the find
-    this.startTrackingTrack(entry.songId, entry.duration);
+    this.startTrackingTrack(entry.songId, entry.entryId, entry.duration);
   }
 
-  private startTrackingTrack(songId: string, duration: number | undefined): void {
+  /** mpv's entry id survives an index shift. Without one, the songId is the only identity. */
+  private isSamePlay(entry: ScrobbleQueueEntry): boolean {
+    if (this.currentSongId === null) return false;
+    if (entry.entryId !== undefined && this.currentEntryId !== null) {
+      return entry.entryId === this.currentEntryId;
+    }
+    return entry.songId === this.currentSongId;
+  }
+
+  /**
+   * The playing entry only moved, so its play continues. The transition that
+   * got here bumped `generation`, which orphans an in-flight verdict, so an
+   * undecided verdict is resolved again.
+   */
+  private confirmSamePlay(): void {
+    this.transitionPending = false;
+    if (this.submitVerdict === 'undecided') void this.resolveOwnership(this.generation);
+    this.maybeSubmit(this.lastTimePos);
+  }
+
+  private startTrackingTrack(songId: string, entryId: number | undefined, duration: number | undefined): void {
     this.currentSongId = songId;
+    this.currentEntryId = entryId ?? null;
     this.startedAtMs = Date.now();
     this.submitted = false;
     this.lastTimePos = null;
@@ -324,6 +380,7 @@ export class ScrobbleTracker {
 
   private maybeSubmit(timePos: unknown): void {
     if (this.submitted) return;
+    if (this.transitionPending) return;
     if (this.currentSongId === null) return;
     if (this.startedAtMs === null) return;
     if (this.currentDuration === null || this.currentDuration < MIN_DURATION_SECONDS) return;
@@ -349,6 +406,8 @@ export class ScrobbleTracker {
 
   private reset(): void {
     this.currentSongId = null;
+    this.currentEntryId = null;
+    this.transitionPending = false;
     this.currentDuration = null;
     this.startedAtMs = null;
     this.submitted = false;
@@ -360,7 +419,7 @@ export class ScrobbleTracker {
 
   private sendNowPlaying(songId: string): void {
     this.client
-      .subsonicRequest('/scrobble', { id: songId, submission: 'false' }, { method: 'POST' })
+      .subsonicRequest('/scrobble', { id: songId, submission: 'false' })
       .then(() => {
         logger.debug(`scrobble: now-playing sent for ${songId}`);
       })
@@ -374,7 +433,7 @@ export class ScrobbleTracker {
       .subsonicRequest(
         '/scrobble',
         { id: songId, submission: 'true', time: String(startedAtMs) },
-        { method: 'POST' },
+        { retryPolicy: 'never' },
       )
       .then(() => {
         logger.debug(`scrobble: submission sent for ${songId} (started ${startedAtMs})`);

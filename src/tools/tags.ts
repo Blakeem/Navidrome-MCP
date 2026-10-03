@@ -23,32 +23,28 @@ import type {
   TagDistribution
 } from '../types/index.js';
 import {
-  SearchByTagsSchema,
+  FilterOptionsSchema,
+  ListTagValuesSchema,
   TagDistributionSchema,
 } from '../schemas/index.js';
+import { filterCacheManager, type FilterType } from '../services/filter-cache-manager.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
-import { TAG_DISTRIBUTION_FETCH_CAP } from '../constants/defaults.js';
 
-interface SearchByTagsResult {
+interface ListTagValuesResult {
   matches: TagDTO[];
+  total: number;
+}
+
+interface GetFilterOptionsResult {
+  filterType: FilterType;
+  available: string[];
   total: number;
 }
 
 type GetTagDistributionResult = TagDistributionResponse;
 
-/**
- * Result of transforming a raw tag, plus a flag indicating whether the
- * API supplied the count fields. The Navidrome `/api/tag` endpoint only
- * returns `albumCount`/`songCount` for `genre` tags — for every other tag
- * name (releasetype, media, releasecountry, recordlabel, mood, ...) the
- * counts are missing, which earlier code turned into a misleading `0`.
- *
- * We track which tags need enrichment so the caller can backfill counts
- * via per-tag-value `/api/album?{tagName}=...` + `/api/song?{tagName}=...`
- * lookups (reading `X-Total-Count` from the headers). The fallback path is
- * N×2 requests so we only run it when truly needed.
- */
+/** /api/tag returns albumCount and songCount only for genre, so other tag names need a backfill. */
 interface TagWithMeta {
   tag: TagDTO;
   countsProvided: boolean;
@@ -97,31 +93,10 @@ function transformTagsToMeta(rawTags: unknown): TagWithMeta[] {
   return rawTags.map(transformTagToMeta);
 }
 
-/**
- * Max tag-value entries backfilled simultaneously. Each entry issues 2 requests
- * (`/album` + `/song`), so this caps outbound concurrency at ~2× per chunk.
- * Without it, `getTagDistribution` (many tag names × up to `distributionLimit`
- * values, both fanned out via `Promise.all`) could open thousands of
- * simultaneous connections to Navidrome from a single tool call.
- */
+/** Bounds outbound connections to Navidrome, since each backfilled entry issues two requests. */
 const BACKFILL_CONCURRENCY = 8;
 
-/**
- * Backfill `albumCount` / `songCount` for tag values whose `/api/tag` row
- * didn't include them (everything except `genre`). For each missing entry
- * we issue parallel `_end=1` queries to `/api/album` and `/api/song`
- * filtered by the tag value and read `X-Total-Count` from the response
- * headers via `requestWithLibraryFilterAndMeta`. Failures default the
- * affected counts to 0 so a single broken sub-query doesn't sink the
- * whole response.
- *
- * Processed in fixed-size chunks (`BACKFILL_CONCURRENCY`) so a large entry
- * set doesn't fan every request out at once.
- *
- * NOTE: filter parameter names are lowercased tag names (e.g.
- * `releasetype=ep`, `media=CD`, `recordlabel=Sony`). This matches what
- * Navidrome's frontend sends and what we verified live during testing.
- */
+/** Filter keys are lowercased tag names (releasetype=ep), the form Navidrome's frontend sends. */
 async function backfillTagCounts(
   client: NavidromeClient,
   entries: TagWithMeta[],
@@ -167,22 +142,19 @@ async function backfillTagCounts(
 }
 
 
-/**
- * Search for tags by tag name and optionally tag value
- * Uses server-side filtering with tag_name parameter for optimal performance
- */
-export async function searchByTags(client: NavidromeClient, args: unknown): Promise<SearchByTagsResult> {
-  const params = SearchByTagsSchema.parse(args);
-  logger.debug('Tool searchByTags called with args:', params);
+export async function listTagValues(client: NavidromeClient, args: unknown): Promise<ListTagValuesResult> {
+  const params = ListTagValuesSchema.parse(args);
+  logger.debug('listTagValues called with args:', params);
 
   try {
-    // Build query parameters for server-side filtering
+    // Only genre rows carry server-side counts to sort by.
+    const isGenre = params.tagName === 'genre';
     const queryParams = new URLSearchParams({
       _start: params.offset.toString(),
       _end: (params.offset + params.limit).toString(),
-      _sort: 'tagValue', // Sort by tag value for consistent ordering
-      _order: 'ASC',
-      tag_name: params.tagName, // Server-side filter by tag name
+      _sort: isGenre ? 'songCount' : 'tagValue',
+      _order: isGenre ? 'DESC' : 'ASC',
+      tag_name: params.tagName,
     });
 
     // Add tag_value filter if specified
@@ -204,15 +176,12 @@ export async function searchByTags(client: NavidromeClient, args: unknown): Prom
 
     const allTags = tagMeta.map((entry) => entry.tag);
 
-    // Sort by song count descending for most relevant results (after getting from server)
-    allTags.sort((a, b) => b.songCount - a.songCount);
-
     return {
       matches: allTags,
       total: total ?? allTags.length,
     };
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('search_by_tags', error));
+    throw new Error(ErrorFormatter.toolExecution('list_tag_values', error));
   }
 }
 
@@ -237,97 +206,53 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
 
     const tagResults = await Promise.all(
       tagNamesToFetch.map(async (tagName): Promise<TagDistribution | null> => {
-        // Only `genre` rows carry server-provided counts (see transformTagToMeta),
-        // so only for `genre` can we ask Navidrome for the true top-N by count.
-        // Every other tag name has no server-side counts to sort by, so its
-        // fetch is an alphabetical sample and is flagged `sampled` below.
+        // Only genre rows carry server-side counts, so every other tag name is an alphabetical sample.
         const isGenre = tagName === 'genre';
-        // Only the top `distributionLimit` values are ever surfaced (and only
-        // that slice gets count-enriched below), so fetching more rows than
-        // that is wasted work. Derive `_end` from `distributionLimit`, clamped
-        // to a sane ceiling so a pathological limit can't request a huge page.
-        const fetchEnd = Math.min(params.distributionLimit, TAG_DISTRIBUTION_FETCH_CAP);
         const queryParams = new URLSearchParams({
           _start: '0',
-          _end: String(fetchEnd),
+          _end: String(params.distributionLimit),
           _sort: isGenre ? 'songCount' : 'tagValue',
           _order: isGenre ? 'DESC' : 'ASC',
           tag_name: tagName,
         });
 
-        try {
-          // Use ...AndMeta so X-Total-Count gives the library-wide cardinality
-          // for this tag name even though we only fetch `fetchEnd` rows — that
-          // lets `uniqueValues` stay truthful without an unbounded fetch.
-          const { data: rawTags, total } = await client.requestWithLibraryFilterAndMeta<unknown>(
-            `/tag?${queryParams.toString()}`,
-          );
-          const tagMeta = transformTagsToMeta(rawTags);
+        // X-Total-Count gives the library-wide distinct count without fetching every value.
+        const { data: rawTags, total } = await client.requestWithLibraryFilterAndMeta<unknown>(
+          `/tag?${queryParams.toString()}`,
+        );
+        const tagMeta = transformTagsToMeta(rawTags);
 
-          if (tagMeta.length === 0) {
-            return null;
-          }
-
-          // Cap the backfill window to `distributionLimit` so per-tag-value
-          // count enrichment doesn't explode for tag names with many values
-          // (e.g. 100+ record labels). The distribution surfaced to the LLM
-          // is already capped at this same value below, so anything past
-          // the cap would be invisible anyway.
-          //
-          // Sort first so the "kept" slice is the highest-songCount tags as
-          // reported by the API (relevant for `genre` which has counts;
-          // for the others all entries arrive with `songCount: 0` and the
-          // initial slice is arbitrary — backfill will reorder later).
-          tagMeta.sort((a, b) => b.tag.songCount - a.tag.songCount);
-          const toEnrich = tagMeta.slice(0, params.distributionLimit);
-          await backfillTagCounts(client, toEnrich);
-
-          // Only the enriched slice carries real counts: for non-genre tag
-          // names the entries past `distributionLimit` were never backfilled
-          // (songCount/albumCount stay 0), so reducing totals over the full
-          // set would undercount. Compute totals over exactly the surfaced
-          // slice instead, so `totalSongs`/`totalAlbums` honestly describe the
-          // tags we report in `distribution` below. For `genre` (API-provided
-          // counts) the slice is the top-N genres, so the totals describe the
-          // surfaced genres rather than the entire genre set — consistent and
-          // truthful for every tag type.
-          const surfacedTags = toEnrich.map((entry) => entry.tag);
-
-          // Sort by usage for most relevant results
-          const sortedTags = surfacedTags.sort((a, b) => b.songCount - a.songCount);
-          const mostCommon = sortedTags[0];
-
-          if (!mostCommon) {
-            return null;
-          }
-
-          const dist: TagDistribution = {
-            tagName,
-            // Library-wide distinct count from X-Total-Count (recovered from the
-            // same narrowed fetch); falls back to the surfaced count if the
-            // header is absent. The `distribution`/`totals` below still describe
-            // only the surfaced top-`distributionLimit` slice.
-            uniqueValues: total ?? surfacedTags.length,
-            // Totals cover only the surfaced tags (see note above).
-            totalSongs: surfacedTags.reduce((sum, tag) => sum + tag.songCount, 0),
-            totalAlbums: surfacedTags.reduce((sum, tag) => sum + tag.albumCount, 0),
-            mostCommon,
-            distribution: sortedTags,
-          };
-          // For non-genre names the fetched slice is an alphabetical sample, not
-          // the true top-N by count (no server-side counts to sort by). Flag it
-          // so callers don't treat an arbitrary slice as the definitive
-          // distribution. `genre` is sorted by songCount server-side, so it's a
-          // true top-N and stays unflagged.
-          if (!isGenre) {
-            dist.sampled = true;
-          }
-          return dist;
-        } catch (error) {
-          // Skip tag types that don't exist in this library (e.g. 404), but log for observability
-          logger.debug(`getTagDistribution: skipping tag name "${tagName}" due to error:`, error);
+        if (tagMeta.length === 0) {
           return null;
         }
+
+        await backfillTagCounts(client, tagMeta);
+
+        const surfacedTags = tagMeta.map((entry) => entry.tag);
+        const sortedTags = surfacedTags.sort((a, b) => b.songCount - a.songCount);
+        const mostCommon = sortedTags[0];
+
+        if (!mostCommon) {
+          return null;
+        }
+
+        const dist: TagDistribution = {
+          tagName,
+          uniqueValues: total ?? surfacedTags.length,
+          totalSongs: surfacedTags.reduce((sum, tag) => sum + tag.songCount, 0),
+          totalAlbums: surfacedTags.reduce((sum, tag) => sum + tag.albumCount, 0),
+          mostCommon,
+          distribution: sortedTags,
+        };
+        // For non-genre names the fetched slice is an alphabetical sample, not
+        // the true top-N by count (no server-side counts to sort by). Flag it
+        // so callers don't treat an arbitrary slice as the definitive
+        // distribution. `genre` is sorted by songCount server-side, so it's a
+        // true top-N and stays unflagged.
+        if (!isGenre) {
+          dist.sampled = true;
+        }
+        return dist;
       })
     );
 
@@ -345,5 +270,33 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_tag_distribution', error));
+  }
+}
+
+/**
+ * List the cached values of one search filter type, so agents can pick exact filter values.
+ */
+export async function getFilterOptions(args: unknown): Promise<GetFilterOptionsResult> {
+  try {
+    const { filterType, limit, offset } = FilterOptionsSchema.parse(args);
+
+    if (!filterCacheManager.isInitialized()) {
+      throw new Error('Filter cache manager not initialized. Please wait for server startup to complete.');
+    }
+
+    await filterCacheManager.ensureFresh();
+
+    const allOptions = filterCacheManager.getAvailableOptions(filterType);
+    const available = allOptions.slice(offset, offset + limit);
+
+    logger.debug(`Retrieved ${available.length} ${filterType} options (of ${allOptions.length} total) from offset ${offset}`);
+
+    return {
+      filterType,
+      available,
+      total: allOptions.length,
+    };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('get_filter_options', error));
   }
 }

@@ -19,10 +19,9 @@
 
 /**
  * The standalone web player. This is BOTH the binary a user runs directly
- * (`navidrome-web`) AND the artifact the MCP server spawns as an IPC child
- * (spec §6 / lifecycle §B.1). It owns the web server's full lifecycle: shared
- * bootstrap → port-as-lock acquire → serve UI/API/SSE → scrobble (as the
- * playback owner) → shutdown.
+ * (`navidrome-web`) AND the artifact the MCP server spawns as an IPC child. It
+ * owns the web server's full lifecycle: shared bootstrap → port-as-lock acquire
+ * → serve UI/API/SSE → scrobble (as the playback owner) → shutdown.
  *
  * The web server OWNS mpv: whenever it shuts down it quits mpv. It shuts down on
  * a direct signal, the in-UI power button, or — if spawned by MCP and
@@ -40,6 +39,7 @@ import { createRuntime } from '../bootstrap.js';
 import { resolveConfigState } from '../config.js';
 import { startConfigServer } from '../config-app/server.js';
 import { getSettingsStorePath } from '../config/store-path.js';
+import { WEB_OWNER_ATTACH_INTERVAL_MS } from '../constants/timeouts.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
 import { logger, type LogLevel } from '../utils/logger.js';
@@ -108,31 +108,37 @@ function setupFileLogging(): string {
   return logPath;
 }
 
+const logPath = setupFileLogging();
+
 /** loopback player URL (never the LAN IP — 0.0.0.0 still serves loopback). */
 function loopbackUrl(port: number): string {
   return `http://127.0.0.1:${port}`;
 }
 
 /**
- * Auto-open the browser. Direct runs (`navidrome-web`) always open — the user
- * launched it to use it. MCP-spawned runs honor `webui.autoOpenBrowser`, which
- * the parent passes through as `NAVIDROME_WEB_AUTO_OPEN=1|0`. Opened here (not
- * in the parent) because only the owner knows the bind succeeded.
+ * Auto-open the browser. Opened here (not in the parent) because only this
+ * process knows the bind succeeded. An MCP-spawned run (it has an IPC parent)
+ * honors `webui.autoOpenBrowser` from its own settings read. A direct run always
+ * opens, since the user launched it to use it. `NAVIDROME_WEB_AUTO_OPEN=0` keeps
+ * test runs from opening a browser.
  */
-function maybeOpenBrowser(port: number): void {
-  const flag = process.env['NAVIDROME_WEB_AUTO_OPEN'];
-  const launchedByMcp = flag !== undefined;
-  const shouldOpen = launchedByMcp ? flag === '1' : true;
+function maybeOpenBrowser(port: number, autoOpenBrowser: boolean): void {
+  if (process.env['NAVIDROME_WEB_AUTO_OPEN'] === '0') return;
+  const launchedByMcp = process.send !== undefined;
+  const shouldOpen = launchedByMcp ? autoOpenBrowser : true;
   if (shouldOpen) openBrowser(loopbackUrl(port));
 }
 
+/** Also printed to stdout, since a direct terminal run sees nothing the file logger writes. */
 function logBanner(port: number, host: string): void {
-  logger.info(`navidrome-web listening on ${loopbackUrl(port)}`);
+  const lines = [`navidrome-web listening on ${loopbackUrl(port)}`];
   if (isLanReachable(host)) {
     for (const iface of listLanInterfaces(port)) {
-      logger.info(`  LAN: ${iface.url} (${iface.iface})`);
+      lines.push(`  LAN: ${iface.url} (${iface.iface})`);
     }
   }
+  for (const line of lines) logger.info(line);
+  process.stdout.write(`\n  ${lines.join('\n  ')}\n\n`);
 }
 
 // Live references set once we own the port, so the single shutdown path can
@@ -143,11 +149,10 @@ let broadcasterRef: SseBroadcaster | null = null;
 let shuttingDown = false;
 
 /**
- * The single owner-shutdown path. The web server OWNS mpv, so it ALWAYS quits
- * mpv as it goes (no keep-if-playing nuance — that only mattered for the
- * since-removed reaper / survive-restart model). Stops the HTTP server +
- * broadcaster, quits mpv, then exits, with a hard backstop so a wedged mpv
- * `quit` IPC can't prevent exit on a signal. Idempotent.
+ * The single owner-shutdown path. The web server owns mpv, so shutdown always
+ * quits it. Stops the HTTP server + broadcaster, quits mpv, then exits, with a
+ * hard backstop so a wedged mpv `quit` IPC can't prevent exit on a signal.
+ * Idempotent.
  */
 function shutdownPlayer(reason: string): void {
   if (shuttingDown) return;
@@ -170,22 +175,42 @@ function shutdownPlayer(reason: string): void {
 }
 
 /**
- * Wire the shutdown triggers (spec lifecycle §B.1):
+ * Wire the shutdown triggers:
  * - SIGINT/SIGTERM: a direct kill of this process.
- * - IPC `disconnect`: the MCP that spawned us exited. Honor the persist flag —
- *   stop with MCP by default, or stay running (now independent) if persist is
- *   on. `disconnect` never fires for a standalone launch (no IPC parent).
+ * - SIGHUP: the terminal of a direct run closed. Without it Node exits without
+ *   quitting the detached mpv.
+ * - IPC `disconnect`: the MCP that spawned us exited. Stop with it by default,
+ *   or stay running as an independent player if persist is on. `disconnect`
+ *   never fires for a standalone launch (no IPC parent).
  */
 function installShutdownTriggers(): void {
   process.once('SIGINT', (): void => shutdownPlayer('SIGINT'));
   process.once('SIGTERM', (): void => shutdownPlayer('SIGTERM'));
-  process.on('disconnect', (): void => {
+  process.once('SIGHUP', (): void => shutdownPlayer('SIGHUP'));
+  const onMcpDisconnect = (): void => {
     if (getPersist()) {
-      logger.info('MCP parent exited; persisting — now an independent player.');
+      logger.info('MCP parent exited; persisting as an independent player.');
     } else {
       shutdownPlayer('mcp-exit');
     }
-  });
+  };
+  process.on('disconnect', onMcpDisconnect);
+  // A parent that exited during startup emitted 'disconnect' before this listener existed.
+  if (process.send !== undefined && !process.connected) onMcpDisconnect();
+}
+
+/**
+ * The MCP engine can spawn mpv after this owner starts, and the owner's tracker
+ * sees track changes only while attached, so an unattached owner keeps retrying.
+ */
+function keepPlaybackAttached(): void {
+  const timer = setInterval(() => {
+    if (shuttingDown || playbackEngine.isRunning()) return;
+    playbackEngine.ensureAttached().catch((err: unknown) => {
+      logger.debug('periodic mpv attach failed:', err);
+    });
+  }, WEB_OWNER_ATTACH_INTERVAL_MS);
+  timer.unref();
 }
 
 /**
@@ -244,7 +269,6 @@ async function runSetupMode(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  setupFileLogging();
   logger.info('navidrome-web starting');
 
   const state = await resolveConfigState();
@@ -271,16 +295,12 @@ async function main(): Promise<void> {
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
-    // Another navidrome-web already owns the port, so we don't serve. But a user
-    // who just launched us — double-clicked the desktop shortcut, or ran the bin
-    // directly — still expects the player to appear, so open the browser to the
-    // existing owner before standing down. This is the "if it's already running,
-    // just open the browser" path. MCP-spawned attaches (a cold-start race) honor
-    // autoOpenBrowser via the same gate as the owner path, so this stays quiet
-    // when the parent asked it to. Then exit cleanly (the MCP spawner must treat
-    // this exit(0) as success, not an error).
-    logger.info(`navidrome-web already running at ${result.url}; opening browser and standing down.`);
-    maybeOpenBrowser(config.webui.port);
+    // A user who launched a second copy still expects the player, so point them at the running one.
+    // The MCP spawner treats this clean return as success.
+    const runningMessage = `navidrome-web already running at ${result.url}`;
+    logger.info(`${runningMessage}; opening browser and standing down.`);
+    process.stdout.write(`\n  ${runningMessage}\n\n`);
+    maybeOpenBrowser(config.webui.port, config.webui.autoOpenBrowser);
     return;
   }
 
@@ -290,32 +310,41 @@ async function main(): Promise<void> {
   broadcasterRef = broadcaster;
   broadcaster.start();
 
-  // The web port owner is the elected scrobble submitter (spec §6.4): it keeps
-  // the default `shouldSubmit` (always true) and counts every play. MCP runs its
-  // own tracker but defers to us via a live web-port probe, so exactly one of us
-  // submits each play. Subscribe BEFORE adopting mpv so the tracker catches the
-  // initial state emit (it hydrates without re-scrobbling the in-flight track).
+  // The web port owner is the elected scrobble submitter: it keeps the default
+  // `shouldSubmit` (always true) and counts every play it sees. MCP runs its own
+  // tracker but defers to us while /healthz reports us attached to mpv, so
+  // exactly one of us submits each play. Subscribe BEFORE adopting mpv so the
+  // tracker catches the initial state emit (it hydrates without re-scrobbling
+  // the in-flight track).
   if (config.features.playback) {
     new ScrobbleTracker(client, playbackEngine).attach();
-    // Adopt an already-playing mpv left by a since-closed session (spec §8.6
-    // adopt-on-startup). Best-effort; ensureAttached never spawns mpv.
+    // Adopt an already-playing mpv left by a since-closed session, so the
+    // player controls it at once. Best-effort, and ensureAttached never spawns mpv.
     try {
       await playbackEngine.ensureAttached();
     } catch (err) {
       logger.debug('ensureAttached at startup failed (no mpv yet?):', err);
     }
+    keepPlaybackAttached();
   }
 
   logBanner(config.webui.port, config.webui.host);
-  maybeOpenBrowser(config.webui.port);
+  maybeOpenBrowser(config.webui.port, config.webui.autoOpenBrowser);
   installShutdownTriggers();
 
   logger.info('navidrome-web started successfully (port owner)');
 }
 
-main().catch((error) => {
-  // The file sink is installed first thing, so this reaches the logfile even
+main().catch((error: unknown) => {
+  // The file sink is installed at module load, so this reaches the logfile even
   // when MCP spawned us with stdio ignored (stderr → /dev/null).
   logger.error('navidrome-web failed to start:', error);
+  // A direct terminal run would otherwise exit with no visible reason.
+  const message = error instanceof Error ? error.message : String(error);
+  try {
+    process.stderr.write(`navidrome-web failed to start: ${message} (log: ${logPath})\n`);
+  } catch {
+    /* best-effort */
+  }
   process.exit(1);
 });

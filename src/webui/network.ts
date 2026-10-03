@@ -39,9 +39,9 @@ export function isLanReachable(host: string): boolean {
  * don't expose phones on IPv6, and the URL form `http://[::1]:8808` is more
  * confusing than useful in the network-info panel).
  *
- * Returns an empty array when the only interfaces present are internal —
- * the caller renders that as "no LAN interfaces detected" and points the
- * user at the localhost URL as the only option.
+ * Returns an empty array when the only interfaces present are internal. The
+ * caller renders that as "no LAN interfaces detected" and points the user at
+ * the localhost URL as the only option.
  */
 export function listLanInterfaces(port: number): NetworkInterfaceDescriptor[] {
   const out: NetworkInterfaceDescriptor[] = [];

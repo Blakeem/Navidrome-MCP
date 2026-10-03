@@ -13,7 +13,6 @@ const iconMute = byId('icon-vol-mute');
 
 // A debounced `input` feels immediate on touch without sending a request per drag step.
 const VOLUME_DEBOUNCE_MS = 120;
-const UNMUTE_FALLBACK_VOLUME = 60;
 
 let volumeDragging = false;
 let preMuteVolume = 80;
@@ -60,7 +59,7 @@ export function bindVolume() {
 function toggleMute() {
   const level = Number(volume.value);
   if (level > 0) preMuteVolume = level;
-  const next = level > 0 ? 0 : (preMuteVolume > 0 ? preMuteVolume : UNMUTE_FALLBACK_VOLUME);
+  const next = level > 0 ? 0 : preMuteVolume;
   volume.value = String(next);
   showLocalLevel(next);
   sendVolume(next);

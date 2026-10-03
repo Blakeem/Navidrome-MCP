@@ -65,18 +65,7 @@ export function getDefaultIpcPath(): string {
   return `/tmp/navidrome-mcp-mpv-${uid}.sock`;
 }
 
-/**
- * Detect an mpv binary on the host.
- *
- * Resolution order:
- *   1. `which mpv` (POSIX) / `where mpv` (Windows) — first line of output
- *
- * Returns `null` if no usable binary is found.
- *
- * Note: `MPV_PATH` is NOT read here at runtime — it is consumed only once at
- * first-run seeding (`src/config/seed.ts`) to pre-fill `playback.mpvPath` in
- * the settings store, which is the canonical config source.
- */
+/** Find mpv on PATH with `command -v` (POSIX) or `where` (Windows), returning null when none is found. */
 export function detectMpvBinary(): string | null {
   // PATH lookup
   try {
@@ -94,15 +83,13 @@ export function detectMpvBinary(): string | null {
 }
 
 /**
- * Resolve the mpv binary from a store-provided value.
+ * Resolve the mpv binary from the configured value.
  *
- * The `settings.json` store is the source of truth for `playback.mpvPath`:
- *   - An explicit path wins — validated for executability; a stale/non-executable
- *     path returns `null` (and warns) so playback is disabled with a clear reason
- *     rather than silently failing on first play.
- *   - `null`/empty means "auto-detect" — falls back to `detectMpvBinary()`
- *     (a PATH lookup). `MPV_PATH` is consumed only at first-run seeding into the
- *     store, never read here at runtime.
+ * `explicitPath` is playback.mpvPath, supplied by settings.json or, on the env fallback, by MPV_PATH.
+ *   - An explicit path wins. A stale or non-executable path returns `null` (and
+ *     warns) so playback is disabled with a clear reason rather than silently
+ *     failing on first play.
+ *   - `null`/empty means auto-detect through `detectMpvBinary()`.
  */
 export function resolveMpvBinary(explicitPath: string | null | undefined): string | null {
   if (explicitPath !== undefined && explicitPath !== null && explicitPath.trim() !== '') {
@@ -130,10 +117,6 @@ function isExecutable(path: string): boolean {
   }
 }
 
-/**
- * Build the mpv launch arguments. Centralized so both spawn and tests can
- * inspect the exact flag list.
- */
 function buildMpvArgs(ipcPath: string): string[] {
   return [
     '--idle=yes',
@@ -191,9 +174,9 @@ export function spawnMpv(binaryPath: string, ipcPath: string): ChildProcess {
   // Unref the piped debug-log streams. child.unref() above only unrefs the
   // ChildProcess handle; the stdout/stderr pipes are separate libuv handles
   // that a 'data' listener puts into flowing/ref'd mode, which would hold the
-  // event loop open at shutdown (defeating registerSignalHandlers' no-exit
-  // drain). Data still flows to the attached listeners while the loop stays
-  // alive for other reasons (the MCP stdin hold), so debug logging is intact.
+  // event loop open at shutdown. Data still flows to the attached listeners
+  // while the loop stays alive for other reasons (the MCP stdin hold), so
+  // debug logging is intact.
   // The piped streams are libuv pipe handles that expose unref() at runtime,
   // but the ChildProcess types only surface them as Readable — narrow to the
   // unref-bearing shape.

@@ -7,7 +7,7 @@ const PLAY_MODE_KEY = 'navidrome-mcp.play-mode';
 const PLAY_SHUFFLE_SONGS_KEY = 'navidrome-mcp.play-shuffle-songs';
 const PLAY_SHUFFLE_ALBUMS_KEY = 'navidrome-mcp.play-shuffle-albums';
 
-const dialog = byId('playlists-dialog');
+const dialog = byId('play-dialog');
 const shuffleSongsToggle = byId('shuffle-songs-toggle');
 const shuffleAlbumsToggle = byId('shuffle-albums-toggle');
 

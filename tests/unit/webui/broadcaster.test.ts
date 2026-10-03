@@ -11,22 +11,52 @@ import { describe, expect, it } from 'vitest';
 import type { ServerResponse } from 'node:http';
 import { SseBroadcaster } from '../../../src/webui/broadcaster.js';
 
+interface FakeResOptions {
+  destroyed?: boolean;
+  writableEnded?: boolean;
+  writableNeedDrain?: boolean;
+  writableLength?: number;
+}
+
+type FakeRes = ServerResponse & {
+  destroyCalls: number;
+  writes: string[];
+  writableNeedDrain: boolean;
+};
+
 /** Minimal ServerResponse stand-in: only the fields the reaper touches. */
-function fakeRes(opts: { destroyed?: boolean; writableEnded?: boolean } = {}): ServerResponse {
-  return {
+function fakeRes(opts: FakeResOptions = {}): FakeRes {
+  const writes: string[] = [];
+  const res = {
     destroyed: opts.destroyed ?? false,
     writableEnded: opts.writableEnded ?? false,
-    // res.write() returning false is backpressure, NOT death — the reaper must
-    // not treat it as a dead pipe. Return false here to pin that distinction.
-    write: (): boolean => false,
-  } as unknown as ServerResponse;
+    writableNeedDrain: opts.writableNeedDrain ?? false,
+    writableLength: opts.writableLength ?? 0,
+    destroyCalls: 0,
+    writes,
+    // res.write() returning false is backpressure, not death, so the reaper must
+    // not treat it as a dead pipe. Returning false here pins that distinction.
+    write(chunk: string): boolean {
+      writes.push(chunk);
+      return false;
+    },
+    destroy(): void {
+      res.destroyCalls += 1;
+      res.destroyed = true;
+    },
+  };
+  return res as unknown as FakeRes;
 }
+
+// writableLength measured right after res.write() of a 10,000-track queue snapshot to a peer that reads normally.
+const IN_FLIGHT_SNAPSHOT_BYTES = 1_779_012;
 
 /** Reach the private members the reaping logic operates on. */
 interface BroadcasterInternals {
   clients: Set<ServerResponse>;
   sendHeartbeat: () => void;
   writeToClient: (res: ServerResponse, json: string) => boolean;
+  handleDrain: (res: ServerResponse) => void;
 }
 
 function internals(b: SseBroadcaster): BroadcasterInternals {
@@ -88,5 +118,70 @@ describe('SseBroadcaster dead-peer reaping', () => {
   it('writeToClient reports success for a live socket (backpressure is not death)', () => {
     const b = newBroadcaster();
     expect(internals(b).writeToClient(fakeRes(), '{}')).toBe(true);
+  });
+});
+
+describe('SseBroadcaster backlogged peers', () => {
+  it('writeToClient holds a snapshot while one above 1 MiB is still in flight, and keeps the client', () => {
+    const b = newBroadcaster();
+    const inFlight = fakeRes({ writableNeedDrain: true, writableLength: IN_FLIGHT_SNAPSHOT_BYTES });
+
+    expect(internals(b).writeToClient(inFlight, '{}')).toBe(true);
+    expect(inFlight.writes).toEqual([]);
+    expect(inFlight.destroyCalls).toBe(0);
+  });
+
+  it('sendHeartbeat keeps a client whose one snapshot above 1 MiB is still in flight', () => {
+    const b = newBroadcaster();
+    const inner = internals(b);
+    const inFlight = fakeRes({ writableNeedDrain: true, writableLength: IN_FLIGHT_SNAPSHOT_BYTES });
+    inner.clients.add(inFlight);
+
+    inner.sendHeartbeat();
+
+    expect(inner.clients.has(inFlight)).toBe(true);
+    expect(inFlight.destroyCalls).toBe(0);
+  });
+
+  it('a drain sends only the newest held snapshot, once', () => {
+    const b = newBroadcaster();
+    const inner = internals(b);
+    const res = fakeRes({ writableNeedDrain: true });
+    inner.clients.add(res);
+    inner.writeToClient(res, '{"v":1}');
+    inner.writeToClient(res, '{"v":2}');
+
+    res.writableNeedDrain = false;
+    inner.handleDrain(res);
+    inner.handleDrain(res);
+
+    expect(res.writes).toEqual(['event: snapshot\ndata: {"v":2}\n\n']);
+  });
+
+  it('sendHeartbeat destroys and drops a client still backlogged with no drain since the previous heartbeat', () => {
+    const b = newBroadcaster();
+    const inner = internals(b);
+    const stalled = fakeRes({ writableNeedDrain: true });
+    inner.clients.add(stalled);
+
+    inner.sendHeartbeat();
+    inner.sendHeartbeat();
+
+    expect(inner.clients.has(stalled)).toBe(false);
+    expect(stalled.destroyCalls).toBe(1);
+  });
+
+  it('sendHeartbeat keeps a backlogged client that drained between heartbeats', () => {
+    const b = newBroadcaster();
+    const inner = internals(b);
+    const slow = fakeRes({ writableNeedDrain: true });
+    inner.clients.add(slow);
+
+    inner.sendHeartbeat();
+    inner.handleDrain(slow);
+    inner.sendHeartbeat();
+
+    expect(inner.clients.has(slow)).toBe(true);
+    expect(slow.destroyCalls).toBe(0);
   });
 });

@@ -45,7 +45,7 @@ async function loadLibrary(rawQuery) {
   const text = rawQuery.trim();
   const isSearch = text !== '';
   const url = isSearch ? `/api/library/search?q=${encodeURIComponent(text)}` : '/api/library/recent';
-  const shownCaption = isSearch ? `Results for “${text}”` : 'Your 5 most recently played artists, albums and songs.';
+  const shownCaption = isSearch ? `Results for “${text}”` : 'Your most recently played artists, albums and songs.';
   const emptyCaption = isSearch ? `Nothing matched “${text}”.` : 'Nothing played yet.';
   const mine = generation + 1;
   let data = null;

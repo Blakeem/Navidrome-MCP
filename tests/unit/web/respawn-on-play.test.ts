@@ -17,10 +17,9 @@
  */
 
 /**
- * Covers `ensureWebForPlayback` — the respawn-on-play path. The whole point of
- * this function (vs. the startup `ensureWebServerRunning`) is that it must probe
- * `/healthz` FRESH every call and ignore the stale module-level `spawned` latch,
- * so a player powered off mid-session is brought back on the next play. Tests
+ * Covers `ensureWebForPlayback`, which runs at MCP startup and on every play.
+ * It must probe `/healthz` FRESH every call, so a player powered off
+ * mid-session is brought back on the next play. Tests
  * drive the probe/spawn decision through the injected `RespawnDeps` seam, so no
  * real sockets or child processes are touched.
  */
@@ -51,7 +50,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
     const deps = makeDeps('refused');
     const status = await ensureWebForPlayback(playbackEnabled, deps);
 
-    expect(deps.probe).toHaveBeenCalledWith(playbackEnabled.webui.port);
+    expect(deps.probe).toHaveBeenCalledWith(playbackEnabled.webui.port, playbackEnabled.webui.host);
     expect(deps.spawn).toHaveBeenCalledTimes(1);
     expect(status).toBe('spawned');
   });

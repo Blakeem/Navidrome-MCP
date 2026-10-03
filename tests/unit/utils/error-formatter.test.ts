@@ -30,16 +30,13 @@ describe('ErrorFormatter.toolExecution', () => {
     expect(msg).toContain('Unknown error');
   });
 
-  // Regression for src-tools-3-1: nested impls (e.g. listRadioStations ->
-  // getRadioStation -> playRadioStation) each rewrap with their own tool name.
-  // toolExecution must NOT stack a second prefix onto an already-wrapped message.
-  it('does not double-prefix an already-wrapped message', () => {
+  // Nested impls (e.g. listRadioStations -> getRadioStation -> playRadioStation)
+  // each rewrap, and the agent called only the outermost tool.
+  it('replaces an inner tool prefix with the outermost tool name', () => {
     const inner = ErrorFormatter.toolExecution('list_radio_stations', new Error('network down'));
     const outer = ErrorFormatter.toolExecution('play_radio_station', new Error(inner));
-    // Exactly one prefix survives, preserving the innermost meaningful message.
-    expect(outer).toBe(inner);
+    expect(outer).toBe("Tool 'play_radio_station' failed: network down");
     expect(outer.match(/Tool '[^']*' failed: /g)).toHaveLength(1);
-    expect(outer).toContain('network down');
   });
 
   it('still adds exactly one prefix to a bare error', () => {
@@ -92,10 +89,9 @@ describe('ErrorFormatter.toolUnknown', () => {
 // ---- subsonicApi ------------------------------------------------------------
 
 describe('ErrorFormatter.subsonicApi', () => {
-  it('includes the HTTP status and statusText', () => {
-    const msg = ErrorFormatter.subsonicApi(makeResponse(401, 'Unauthorized'));
-    expect(msg).toContain('401');
-    expect(msg).toContain('Unauthorized');
+  it('names the endpoint and includes the HTTP status and statusText', () => {
+    const msg = ErrorFormatter.subsonicApi('/getAlbum', makeResponse(401, 'Unauthorized'));
+    expect(msg).toBe('Subsonic API request failed: /getAlbum - 401 Unauthorized');
   });
 });
 

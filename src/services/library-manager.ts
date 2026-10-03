@@ -85,9 +85,8 @@ class LibraryManager {
    *
    * Failure modes are split deliberately:
    *   - JWT decode / `uid` extraction failure: SOFT FAIL. The manager stays
-   *     `initialized = false`; the client falls back to "no library scoping"
-   *     and the rest of the server keeps running. This was the historical
-   *     single point of startup failure flagged in `03-core-infra-deep-review`.
+   *     `initialized = false`. The client falls back to "no library scoping"
+   *     and the rest of the server keeps running.
    *   - `/user/{uid}` HTTP failure: HARD FAIL (rethrown). If we can decode
    *     `uid` but Navidrome rejects the lookup, something is genuinely wrong
    *     and surfacing it is more useful than silently proceeding unscoped.
@@ -98,14 +97,11 @@ class LibraryManager {
       return;
     }
 
-    // Coalesce concurrent callers onto one in-flight init so the network
-    // round-trips don't race and overwrite each other's state. Cleared on
-    // settle so a failed attempt can be retried by a later call.
     this.initPromise ??= (async (): Promise<void> => {
       try {
         const loaded = await this.loadUserLibraries(client);
         if (!loaded) {
-          // JWT decode failed — already logged with diagnostic detail. Stay
+          // JWT decode failed and was already logged with diagnostic detail. Stay
           // uninitialized; library_id filtering is simply absent for this
           // session. Tools that depend on it (e.g. `set_active_libraries`)
           // will throw their own clear "not initialized" error if invoked.
@@ -137,12 +133,6 @@ class LibraryManager {
    * Load user libraries from Navidrome API. Returns true on success, false
    * when the JWT couldn't be decoded into a usable `uid`.
    *
-   * Token + claims access goes through `client.getCurrentToken()` (public
-   * method) and `decodeJwtPayload` (Buffer-base64url + guarded JSON.parse +
-   * shape check). The previous implementation reached into `client.authManager`
-   * via `as unknown as`, used `atob` (mishandles base64url), and called
-   * `JSON.parse` outside any try/catch — three compounding fragility bugs.
-   *
    * After the user payload arrives we make a second call to `/api/library`
    * and merge the per-library stats (`totalSongs`/`totalAlbums`/...) and
    * timestamps (`createdAt`/`updatedAt`/`lastScanAt`) into the user's library
@@ -163,7 +153,7 @@ class LibraryManager {
         `/user/${encodeURIComponent(claims.uid)}`,
       );
     } catch (error) {
-      // /user/{uid} failure is genuinely abnormal — uid was valid in the
+      // /user/{uid} failure is genuinely abnormal. The uid was valid in the
       // JWT but the API rejected it. Bubble up so initialize() can wrap it.
       throw new Error(ErrorFormatter.toolExecution('loadUserLibraries', error));
     }
@@ -191,7 +181,7 @@ class LibraryManager {
   /**
    * Best-effort enrichment of library stats from `/api/library`. The user
    * endpoint returns stat fields as zero / Go zero-time; this endpoint
-   * returns the real values. We log + swallow errors here — the rest of the
+   * returns the real values. We log + swallow errors here, since the rest of the
    * server can keep running with the unenriched user payload (stats just
    * show as zero, the existing observed behaviour).
    */
@@ -211,7 +201,6 @@ class LibraryManager {
         }
       }
 
-      // Mutate in place so any downstream snapshots stay consistent.
       this.userInfo.libraries = this.userInfo.libraries.map((userLib) => {
         const stats = byId.get(userLib.id);
         if (stats === undefined) {
@@ -365,7 +354,7 @@ class LibraryManager {
     this.initialized = false;
     // Clear any in-flight init promise so a fresh initialize() can run after
     // reset instead of awaiting the stale (pre-reset) one. Note: a reset that
-    // races an unsettled initialize() should still await it first — this only
+    // races an unsettled initialize() should still await it first. This only
     // prevents the next initialize() from short-circuiting on the old promise.
     this.initPromise = null;
   }

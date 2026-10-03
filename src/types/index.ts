@@ -46,7 +46,8 @@ export type {
   DiscoverRadioStationsResponse,
   RadioFiltersResponse,
   ClickRadioStationResponse,
-  VoteRadioStationResponse
+  VoteRadioStationResponse,
+  StreamValidationResult
 } from './radio.js';
 
 // Export all tag DTOs

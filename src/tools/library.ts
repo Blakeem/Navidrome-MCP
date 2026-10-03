@@ -16,19 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { NavidromeClient } from '../client/navidrome-client.js';
-import type { Config } from '../config.js';
 import type { UserDetailsDTO, LibraryDTO, LibraryManagementResponse } from '../types/index.js';
 import { SetActiveLibrariesSchema } from '../schemas/index.js';
-import type { ToolCategory } from './handlers/registry.js';
-import {
-  getSong,
-  getAlbum,
-  getArtist,
-  getSongPlaylists,
-} from './media-library.js';
 import { libraryManager } from '../services/library-manager.js';
+import { filterCacheManager } from '../services/filter-cache-manager.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
@@ -36,7 +27,7 @@ import { nullIfGoZeroTime } from '../utils/go-time.js';
 /**
  * Get user details including library information with active status
  */
-function getUserDetails(): UserDetailsDTO {
+export function getUserDetails(): UserDetailsDTO {
   try {
     if (!libraryManager.isInitialized()) {
       throw new Error('LibraryManager not initialized');
@@ -50,12 +41,7 @@ function getUserDetails(): UserDetailsDTO {
     const librariesWithStatus = libraryManager.getLibrariesWithActiveStatus();
     const activeLibraries = librariesWithStatus.filter(lib => lib.isActive);
 
-    // Transform to clean DTO format. Map Go's zero-time sentinel (the
-    // server's "never set" value) to null across every timestamp field, not
-    // just `scanInfo` — when the user endpoint never populated createdAt /
-    // updatedAt and the /library enrichment couldn't reach it either, the
-    // sentinel should not be surfaced to LLM consumers as if it were a real
-    // 1-Jan-0001 timestamp.
+    // Go's zero time is the server's "never set" value, so every timestamp maps it to null.
     const libraryDTOs: LibraryDTO[] = librariesWithStatus.map(lib => ({
       id: lib.id,
       name: lib.name,
@@ -77,7 +63,6 @@ function getUserDetails(): UserDetailsDTO {
       updatedAt: nullIfGoZeroTime(lib.updatedAt),
     }));
 
-    // Calculate summary statistics
     const totalSongs = activeLibraries.reduce((sum, lib) => sum + lib.totalSongs, 0);
     const totalAlbums = activeLibraries.reduce((sum, lib) => sum + lib.totalAlbums, 0);
     const totalArtists = activeLibraries.reduce((sum, lib) => sum + lib.totalArtists, 0);
@@ -109,23 +94,23 @@ function getUserDetails(): UserDetailsDTO {
     logger.debug(`Retrieved user details for ${userInfo.userName} with ${activeLibraries.length}/${librariesWithStatus.length} active libraries`);
     return result;
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('getUserDetails', error));
+    throw new Error(ErrorFormatter.toolExecution('get_user_details', error));
   }
 }
 
 /**
  * Set active libraries for the user session
  */
-function setActiveLibraries(args: unknown): LibraryManagementResponse {
+export async function setActiveLibraries(args: unknown): Promise<LibraryManagementResponse> {
   try {
     const params = SetActiveLibrariesSchema.parse(args);
 
     logger.debug('Tool setActiveLibraries called with args:', params);
 
-    // Set active libraries via LibraryManager
     libraryManager.setActiveLibraries(params.libraryIds);
-    
-    // Get updated active libraries for response
+    // The filter maps hold only the tag values of the libraries active when they loaded.
+    await filterCacheManager.reload();
+
     const availableLibraries = libraryManager.getAvailableLibraries();
     const activeLibraryIds = libraryManager.getActiveLibraryIds();
     const activeLibraries = availableLibraries
@@ -142,121 +127,8 @@ function setActiveLibraries(args: unknown): LibraryManagementResponse {
     logger.info(`Set active libraries: ${activeLibraries.map(lib => `${lib.name} (${lib.id})`).join(', ')}`);
     return result;
   } catch (error) {
-    // Re-throw rather than returning a {success:false} payload: an MCP-200
-    // body with success:false reads as a successful call to the LLM. Throwing
-    // surfaces the failure as a tool error, matching getUserDetails above.
+    // A success:false payload in an MCP 200 body reads as a successful call to the LLM, so the failure is thrown.
     logger.error('Error setting active libraries:', error);
     throw new Error(ErrorFormatter.toolExecution('set_active_libraries', error));
   }
-}
-
-// Tool definitions for library category
-const tools: Tool[] = [
-  {
-    name: 'get_song',
-    description: 'Returns the full record for a single song by ID. Same fields as search_songs results — use this when you already have the song ID and want the canonical SongDTO without searching. To list a song\'s containing playlists, use get_song_playlists.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        songId: {
-          type: 'string',
-          description: 'The song ID, as returned by search_songs or list_* tools.',
-        },
-      },
-      required: ['songId'],
-    },
-  },
-  {
-    name: 'get_album',
-    description: 'Returns the full record for a single album by ID. Same fields as search_albums results — use this when you already have the album ID. Does NOT include the album\'s tracks; call search_songs with the album ID (or list_recently_played / playlist tools) to enumerate tracks.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        albumId: {
-          type: 'string',
-          description: 'The album ID, as returned by search_albums or list_* tools.',
-        },
-      },
-      required: ['albumId'],
-    },
-  },
-  {
-    name: 'get_artist',
-    description: 'Returns the full record for a single artist by ID. Same fields as search_artists results (id, name, albumCount, songCount, plus optional playCount/rating/starred). For biography, similar artists, and top tracks, use the Last.fm tools (get_artist_info, get_similar_artists, get_top_tracks_by_artist).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        artistId: {
-          type: 'string',
-          description: 'The artist ID, as returned by search_artists or list_* tools.',
-        },
-      },
-      required: ['artistId'],
-    },
-  },
-  {
-    name: 'get_song_playlists',
-    description: 'Get all playlists that contain a specific song',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        songId: {
-          type: 'string',
-          description: 'The unique ID of the song',
-        },
-      },
-      required: ['songId'],
-    },
-  },
-  {
-    name: 'get_user_details',
-    description: 'Get user information including available libraries with active status flags. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so the active-library selection is process-global — under the HTTP transport it is shared across ALL connected sessions.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-    },
-  },
-  {
-    name: 'set_active_libraries',
-    description: 'Set which libraries are active for filtering music content. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so this selection is process-global — under the HTTP transport a set_active_libraries call changes the active-library filter for ALL connected sessions, not just the caller.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        libraryIds: {
-          type: 'array',
-          items: {
-            type: 'number',
-          },
-          description: 'Array of library IDs to set as active',
-          minItems: 1,
-        },
-      },
-      required: ['libraryIds'],
-    },
-  },
-];
-
-// Factory function for creating library tool category with dependencies  
-export function createLibraryToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
-  return {
-    tools,
-    async handleToolCall(name: string, args: unknown): Promise<unknown> {
-      switch (name) {
-        case 'get_song':
-          return await getSong(client, args);
-        case 'get_album':
-          return await getAlbum(client, args);
-        case 'get_artist':
-          return await getArtist(client, args);
-        case 'get_song_playlists':
-          return await getSongPlaylists(client, args);
-        case 'get_user_details':
-          return getUserDetails();
-        case 'set_active_libraries':
-          return setActiveLibraries(args);
-        default:
-          throw new Error(ErrorFormatter.toolUnknown(name));
-      }
-    }
-  };
 }

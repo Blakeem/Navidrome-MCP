@@ -59,10 +59,8 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 6000 });
   });
 
-  // Regression for the shutdown race: the engine installs its OWN
-  // release-on-signal handler on first play (which closes its IPC without
-  // killing mpv). A direct SIGTERM to the web owner must still quit mpv — the
-  // owner-quits-mpv invariant — which `quitMpv`'s one-shot socket guarantees.
+  // A direct SIGTERM to the web owner after playback must quit mpv. The web
+  // entry point's shutdown calls quitMpv(), which quits mpv over a one-shot socket.
   it.skipIf(NO_MPV)('a direct SIGTERM to the web owner quits mpv (after playback)', async () => {
     const port = randomPort();
     const owner = spawnWeb(makeTempStore(port));
@@ -87,9 +85,7 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     expect(await waitFor(() => mpvAlive(), { timeoutMs: 10000 })).toBe(true);
 
     owner.kill('SIGTERM');
-    // Exit code is incidental (0 via process.exit, 143/null when signal-terminated
-    // after playback registered the engine's own handler). The invariant we assert
-    // is that mpv was quit on the way out.
+    // The invariant is that mpv quits on the way out, so the exit code is not asserted.
     await waitForExit(owner);
     expect(await waitFor(async () => !(await mpvAlive()), { timeoutMs: 15000 })).toBe(true);
   });

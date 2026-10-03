@@ -7,20 +7,24 @@ Navidrome music server (plus optional Last.fm, LRCLIB, Radio Browser, mpv).
 
 ---
 
-## Quality gates (CI-enforced)
+## Quality gates
 
 Run after every change. Must all be zero issues:
 
 ```bash
 pnpm check:all      # lint + typecheck + dead-code (the usual one)
 pnpm test:run       # unit tests
-pnpm test:playback  # live-mpv integration suite (separate; needs mpv + Navidrome)
 pnpm build          # production bundle
 ```
 
-Dead-code (`ts-unused-exports`) blocks PRs — when you delete or refactor
+CI runs all three, with `test:ci` in place of `test:run`.
+
+Dead-code (`ts-unused-exports`) blocks PRs. When you delete or refactor
 a function, remove its exports too. Tests under `tests/` are part of the
 analysis, so tests importing a symbol keep it alive.
+
+`pnpm test:playback` is the live integration suite, and only the user runs it.
+It builds `dist/` first, needs mpv and Navidrome, and clears the live mpv queue.
 
 `pnpm test` is watch-mode for development; use `pnpm test:run` for one-shot.
 
@@ -54,13 +58,13 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 | Path | Purpose |
 |---|---|
 | `src/client/` | `NavidromeClient` (REST + Subsonic, single-flight auth, retry-on-401, JSON-sniff for `text/plain` bodies), `AuthManager` (JWT) |
-| `src/tools/` | Tool implementations grouped by surface (`media-library.ts`, `playlist-management/`, `radio.ts`, `radio-validation/`, `user-preferences.ts`, `lastfm-discovery.ts`, `lyrics.ts`, `tags.ts`, `library.ts`, `search/`, `test.ts`) |
+| `src/tools/` | Tool implementations grouped by surface (`media-library.ts`, `playlist-management/`, `radio.ts`, `radio-discovery.ts`, `radio-validation/`, `user-preferences.ts`, `listening-history.ts`, `lastfm-discovery.ts`, `artist-discography.ts`, `lyrics.ts`, `tags.ts`, `library.ts`, `search/`, `playback.ts` with `queue-sources.ts` and `queue-order.ts`, `queue-management.ts`, `test.ts`) |
 | `src/tools/handlers/` | MCP tool category factories — wire impl functions into `name` + `inputSchema` + `handleToolCall`. `registry.ts` composes all categories. |
 | `src/schemas/` | `common.ts` (reusable patterns + `IdSchema`/`createIdSchema` with `[A-Za-z0-9_-]+` regex), `pagination.ts`, `validation.ts` (input schemas, e.g. `SetActiveLibrariesSchema`, `StarItemSchema`) |
-| `src/transformers/` | Raw Navidrome API rows → DTOs (`song`, `album`, `artist`, `playlist`, `shared-transformers`) |
+| `src/transformers/` | Raw Navidrome API rows → DTOs (`song`, `album`, `artist`, `playlist`, `shared-transformers`), plus `lyrics-tag` (parses lyrics stored in file tags) |
 | `src/types/` | DTO + request/response interfaces (`core.ts` for `SongDTO`/`AlbumDTO`/`ArtistDTO`, others by surface) |
 | `src/services/` | `playback/` (mpv IPC + engine), `library-manager.ts`, `filter-cache-manager.ts` |
-| `src/utils/` | `error-formatter`, `logger`, `subsonic-auth` (salted-MD5), `sanitize-url` (strips creds before LLM exposure), `network-safety` (private-IP block for redirect targets), `cache`, `version` |
+| `src/utils/` | `error-formatter`, `logger`, `subsonic-auth` (salted-MD5), `sanitize-url` (strips creds before LLM exposure), `network-safety` (private-IP block for redirect targets), `lastfm` and `musicbrainz` (API clients), `cache`, `version` |
 | `src/constants/` | `defaults.ts`, `timeouts.ts` |
 | `src/resources/` | MCP resource handlers |
 
@@ -73,7 +77,7 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 - **Logging:** `import { logger }` from `utils/logger.js`. **Never `console.log`** — it breaks MCP stdio.
 - **Path-segment IDs:** wrap with `encodeURIComponent` at every URL interpolation site. The `IdSchema` regex catches obvious abuse, but the encode is defense-in-depth.
 - **Subsonic auth:** `client.subsonicRequest()` — POST + salted-MD5 by default. Don't hand-roll Subsonic fetches.
-- **Stream URLs to mpv:** `buildSubsonicAuthParams()` from `utils/subsonic-auth.ts`. Anything user-facing that may contain a URL goes through `sanitizeFilename()` first.
+- **Stream URLs to mpv:** `buildSubsonicAuthParams()` from `utils/subsonic-auth.ts`. Anything user-facing that may contain a URL goes through `stripSubsonicAuthParams()` first.
 - **Raw responses with `text/plain`:** the client now JSON-sniffs the body, so callers can `await client.request<T>(...)` and just read `response.field` directly. No per-call workarounds needed.
 
 ---
@@ -129,8 +133,8 @@ so the suite never touches the real store.
 
 - **Navidrome server:** running, reachable at `$NAVIDROME_URL`. Use curl
   freely for verifying API behavior, schema assumptions, sort orders, etc.
-- **mpv:** installed and reachable. Use `pnpm test:playback` for the live
-  integration suite when you've changed playback subsystem code.
+- **mpv:** installed and reachable. When you change playback subsystem code,
+  ask the user to run `pnpm test:playback`, since it clears the live mpv queue.
 - **The MCP server itself (`mcp__navidrome__*` tools in your tool list):** is
   whatever build the user's client started with. **It does NOT auto-reload
   when you change source files.** Treat the live `mcp__navidrome__*` tool
@@ -149,7 +153,12 @@ header (NOT `Authorization`).
 Pull credentials from the `settings.json` store via `jq`:
 
 ```bash
-STORE="${NAVIDROME_CONFIG_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/navidrome-mcp/settings.json}"
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) DEFAULT_STORE="$APPDATA/navidrome-mcp/settings.json" ;;
+  Darwin) DEFAULT_STORE="$HOME/Library/Application Support/navidrome-mcp/settings.json" ;;
+  *) DEFAULT_STORE="${XDG_CONFIG_HOME:-$HOME/.config}/navidrome-mcp/settings.json" ;;
+esac
+STORE="${NAVIDROME_CONFIG_PATH:-$DEFAULT_STORE}"
 export NAVIDROME_URL=$(jq -r '.navidrome.url' "$STORE")
 export NAVIDROME_USERNAME=$(jq -r '.navidrome.username' "$STORE")
 export NAVIDROME_PASSWORD=$(jq -r '.navidrome.password' "$STORE")
@@ -162,7 +171,8 @@ TOKEN=$(curl -s -X POST "$NAVIDROME_URL/auth/login" \
 curl -si "$NAVIDROME_URL/api/album?_start=0&_end=5&library_id=1" \
   -H "X-ND-Authorization: Bearer $TOKEN" | head -20
 
-# Filter by tag UUID (use {tag_name}_id, e.g. genre_id, mood_id)
+# Filter by tag UUID. Genre takes genre_id. Other tags take the bare tag name
+# (mood=UUID, releasetype=UUID), since Navidrome ignores mood_id and the like.
 curl -s "$NAVIDROME_URL/api/album?genre_id=UUID&library_id=1" \
   -H "X-ND-Authorization: Bearer $TOKEN" | jq '.'
 

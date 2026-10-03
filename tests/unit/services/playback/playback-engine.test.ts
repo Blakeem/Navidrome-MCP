@@ -5,7 +5,7 @@
  * Covers behavioral changes from docs/review/02 batch C:
  *   - H3: installObservers ordering — prime cache BEFORE registering the
  *     property-change handler and BEFORE subscribing.
- *   - H4: getPlaylist filename → songId parsing is cached per session, with
+ *   - H4: getQueue filename → songId parsing is cached per session, with
  *     a cheap startsWith() prefilter to avoid `new URL()` for non-HTTP
  *     filenames.
  *   - M3: enqueue('replace') recovers to a clean idle state on partial
@@ -160,19 +160,32 @@ describe('installObservers ordering (H3)', () => {
     const lastGetProp = sequence.lastIndexOf('get_property');
     expect(lastGetProp).toBeLessThan(onPropChange);
   });
+
+  it('emits the attach event before observing, so it precedes the new mpv snapshot', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    playbackEngine.onStateChange((event) => {
+      if (event.kind === 'attach') ipc.callOrder.push({ kind: 'attach-event' });
+    });
+
+    await playbackEngine.ensureRunning();
+
+    const sequence = ipc.callOrder.map((c) => c.kind);
+    expect(sequence.filter((k) => k === 'attach-event')).toHaveLength(1);
+    expect(sequence.indexOf('attach-event')).toBeLessThan(sequence.indexOf('observe'));
+  });
 });
 
 // ---------- H4: filename cache + cheap prefilter ----------
 
-describe('getPlaylist filename caching (H4)', () => {
+describe('getQueue filename caching (H4)', () => {
   it('caches the songId-from-filename parse across calls', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
 
     const stableUrl = 'http://navidrome.test/rest/stream?id=song-123&u=x&s=y&t=z';
 
-    // get_property for 'playlist' is what getPlaylist calls. Make it return
-    // the same entry twice across two getPlaylist invocations.
+    // get_property for 'playlist' is what getQueue calls. Make it return
+    // the same entry twice across two getQueue invocations.
     // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
@@ -182,8 +195,8 @@ describe('getPlaylist filename caching (H4)', () => {
       return null;
     });
 
-    const r1 = await playbackEngine.getPlaylist();
-    const r2 = await playbackEngine.getPlaylist();
+    const r1 = await playbackEngine.getQueue();
+    const r2 = await playbackEngine.getQueue();
 
     expect(r1[0]?.songId).toBe('song-123');
     expect(r2[0]?.songId).toBe('song-123');
@@ -193,7 +206,7 @@ describe('getPlaylist filename caching (H4)', () => {
     expect(r1[0]?.songId).toBe(r2[0]?.songId);
   });
 
-  it('does not re-parse identical filenames across distinct getPlaylist calls', async () => {
+  it('does not re-parse identical filenames across distinct getQueue calls', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
 
@@ -220,19 +233,14 @@ describe('getPlaylist filename caching (H4)', () => {
         return null;
       });
 
-      await playbackEngine.getPlaylist();
+      await playbackEngine.getQueue();
       const parseCountAfterFirst = parseCount;
-      await playbackEngine.getPlaylist();
-      await playbackEngine.getPlaylist();
+      await playbackEngine.getQueue();
+      await playbackEngine.getQueue();
 
-      expect(callCount).toBe(3); // 3 IPC reads — getPlaylist isn't itself cached
-      // First call may parse (sanitizeFilename + cache miss). Subsequent
-      // getPlaylist calls reuse the songId via the engine's filename cache;
-      // sanitizeFilename does still parse, so the parse count grows. The
-      // invariant we care about: the songId-parse path does not parse
-      // again on the cache-hit branch. We verify by confirming parseCount
-      // does NOT triple (which it would if the engine parse fired every call).
-      expect(parseCount).toBeLessThan(parseCountAfterFirst * 3);
+      expect(callCount).toBe(3); // 3 IPC reads, since getQueue itself is not cached
+      // Only the first call parses. Later calls reuse the songId from the filename cache.
+      expect(parseCount).toBe(parseCountAfterFirst);
     } finally {
       (globalThis as unknown as { URL: typeof URL }).URL = realUrl;
     }
@@ -257,24 +265,16 @@ describe('getPlaylist filename caching (H4)', () => {
     const urlSpy = vi.spyOn(globalThis, 'URL');
     urlSpy.mockClear();
 
-    const result = await playbackEngine.getPlaylist();
+    const result = await playbackEngine.getQueue();
 
     expect(result).toHaveLength(2);
     expect(result[0]?.songId).toBeNull();
     expect(result[1]?.songId).toBeNull();
 
-    // Neither filename is HTTP, so the engine should NOT invoke `new URL()`.
-    // URL() may be invoked elsewhere (sanitizeFilename) but our parse path
-    // is gated on the http(s) prefix.
-    // We can't strictly assert 0 parses here because sanitizeFilename also
-    // tries to parse the filename. Instead, confirm the result is correct
-    // and the SAME entries on a re-call hit the cache (no extra IPC fetch
-    // for parse).
-    urlSpy.mockClear();
-    await playbackEngine.getPlaylist();
-    // Second call: cache should serve, sanitizeFilename may still parse.
-    // We just confirm no exception.
-    expect(result).toHaveLength(2);
+    // Neither filename is HTTP, so the prefilter skips `new URL()`.
+    expect(urlSpy).not.toHaveBeenCalled();
+    await playbackEngine.getQueue();
+    expect(urlSpy).not.toHaveBeenCalled();
 
     urlSpy.mockRestore();
   });
@@ -292,11 +292,11 @@ describe('getPlaylist filename caching (H4)', () => {
       return null;
     });
 
-    const result = await playbackEngine.getPlaylist();
+    const result = await playbackEngine.getQueue();
     expect(result[0]?.songId).toBeNull();
 
     // Second call hits cache and stays null
-    const result2 = await playbackEngine.getPlaylist();
+    const result2 = await playbackEngine.getQueue();
     expect(result2[0]?.songId).toBeNull();
   });
 });
@@ -436,15 +436,15 @@ describe("enqueue('append') radio demotion", () => {
   });
 });
 
-// ---------- Issue #4: movePlaylistEntry never hijacks the play head ----------
+// ---------- Issue #4: moveQueueEntry never hijacks the play head ----------
 
-describe('movePlaylistEntry play-head preservation (Issue #4)', () => {
+describe('moveQueueEntry play-head preservation (Issue #4)', () => {
   it('issues only playlist-move — never set_property playlist-pos — for a from:0 move', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
     ipc.command.mockClear();
 
-    await playbackEngine.movePlaylistEntry(0, 4);
+    await playbackEngine.moveQueueEntry(0, 4);
 
     const moveCalls = ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move');
     expect(moveCalls).toEqual([['playlist-move', 0, 4]]);
@@ -463,7 +463,7 @@ describe('movePlaylistEntry play-head preservation (Issue #4)', () => {
     await playbackEngine.ensureRunning();
     ipc.command.mockClear();
 
-    await playbackEngine.movePlaylistEntry(3, 0);
+    await playbackEngine.moveQueueEntry(3, 0);
 
     expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toEqual([
       ['playlist-move', 3, 0],
@@ -475,9 +475,9 @@ describe('movePlaylistEntry play-head preservation (Issue #4)', () => {
   });
 });
 
-// ---------- Issue #5: shufflePlaylist keeps the current track playing ----------
+// ---------- Issue #5: shuffleQueue keeps the current track playing ----------
 
-describe('shufflePlaylist play-head preservation (Issue #5)', () => {
+describe('shuffleQueue play-head preservation (Issue #5)', () => {
   it('lifts the post-shuffle current track to index 0 via playlist-move, not a playlist-pos reset', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
@@ -488,7 +488,7 @@ describe('shufflePlaylist play-head preservation (Issue #5)', () => {
       return null;
     });
 
-    await playbackEngine.shufflePlaylist();
+    await playbackEngine.shuffleQueue();
 
     const kinds = ipc.command.mock.calls.map((c) => c[0]);
     expect(kinds).toContain('playlist-shuffle');
@@ -512,7 +512,7 @@ describe('shufflePlaylist play-head preservation (Issue #5)', () => {
       return null;
     });
 
-    await playbackEngine.shufflePlaylist();
+    await playbackEngine.shuffleQueue();
 
     expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toHaveLength(0);
   });
@@ -622,14 +622,14 @@ describe('shuffleQueueFromTop', () => {
   });
 });
 
-describe('clearPlaylist', () => {
+describe('clearQueue', () => {
   it('stops playback and raises the queue generation by one', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
     answerProperties(ipc, {});
     const generationBefore = playbackEngine.getQueueGeneration();
 
-    await playbackEngine.clearPlaylist();
+    await playbackEngine.clearQueue();
 
     expect(mutatingCommands(ipc)).toEqual(['stop']);
     expect(playbackEngine.getQueueGeneration()).toBe(generationBefore + 1);
@@ -701,5 +701,117 @@ describe('ensureRunning reconnect after unexpected disconnect (mpv-reconnect)', 
     // clears startPromise unconditionally), the first call reconnects.
     await expect(playbackEngine.pause()).resolves.toBeUndefined();
     expect(playbackEngine.isRunning()).toBe(true);
+  });
+});
+
+// ---------- previous() on the first entry restarts instead of stopping ----------
+
+describe('previous', () => {
+  it('restarts the current track with an absolute seek on the first entry', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': 0 });
+
+    await playbackEngine.previous();
+
+    expect(mutatingCommands(ipc)).toEqual(['seek']);
+    expect(ipc.command.mock.calls).toContainEqual(['seek', 0, 'absolute']);
+  });
+
+  it('sends playlist-prev without force past the first entry', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': 2 });
+
+    await playbackEngine.previous();
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-prev')).toEqual([['playlist-prev']]);
+  });
+
+  it('sends nothing when no entry is current', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': -1 });
+
+    await playbackEngine.previous();
+
+    expect(mutatingCommands(ipc)).toEqual([]);
+  });
+});
+
+// ---------- radio station name clears when something else replaces the radio ----------
+
+describe('currentRadioStation', () => {
+  const stationUrl = 'http://radio.example/listen.pls';
+
+  async function loadStation(): Promise<(evt: { id: number; name: string; data: unknown }) => void> {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    await playbackEngine.enqueueRadio(stationUrl, 'Station');
+    const propertyHandler = ipc.propertyHandlers[0];
+    if (propertyHandler === undefined) throw new Error('no property handler installed');
+    return propertyHandler;
+  }
+
+  it('keeps the name while mpv plays the stream expanded from the station playlist', async () => {
+    const propertyHandler = await loadStation();
+    expect(playbackEngine.getCurrentRadioStation()).toEqual({ name: 'Station' });
+
+    propertyHandler({ id: 12, name: 'playlist-path', data: stationUrl });
+    propertyHandler({ id: 11, name: 'path', data: 'http://radio.example/listen.mp3' });
+    expect(playbackEngine.getCurrentRadioStation()).toEqual({ name: 'Station' });
+  });
+
+  it('clears when the loaded path changes to a Navidrome song stream', async () => {
+    const propertyHandler = await loadStation();
+
+    propertyHandler({ id: 11, name: 'path', data: 'http://navidrome.test/rest/stream?id=x&u=a&s=b&t=c' });
+    expect(playbackEngine.getCurrentRadioStation()).toBeNull();
+  });
+
+  it('clears when mpv goes idle, as after a clear from another process', async () => {
+    const propertyHandler = await loadStation();
+
+    propertyHandler({ id: 8, name: 'idle-active', data: true });
+    expect(playbackEngine.getCurrentRadioStation()).toBeNull();
+  });
+
+  it('returns null when another process loads a different station', async () => {
+    const propertyHandler = await loadStation();
+
+    propertyHandler({ id: 12, name: 'playlist-path', data: undefined });
+    propertyHandler({ id: 11, name: 'path', data: 'http://other-radio.example/stream' });
+    expect(playbackEngine.getCurrentRadioStation()).toBeNull();
+  });
+});
+
+// ---------- concurrent attaches share one connection ----------
+
+describe('ensureAttached coalescing', () => {
+  it('opens one connection for two concurrent ensureAttached calls', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+
+    await Promise.all([playbackEngine.ensureAttached(), playbackEngine.ensureAttached()]);
+
+    expect(playbackEngine.isRunning()).toBe(true);
+    expect(ipc.connect).toHaveBeenCalledTimes(1);
+    expect(ipc.onPropertyChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------- song ids come only from Subsonic stream URLs ----------
+
+describe('getQueue song-id parsing', () => {
+  it('yields songId null for a non-stream URL that carries an id parameter', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {
+      playlist: [{ filename: 'http://radio.example/listen?id=42', current: true, playing: true }],
+    });
+
+    const entries = await playbackEngine.getQueue();
+
+    expect(entries[0]?.songId).toBeNull();
+    expect(entries[0]).not.toHaveProperty('filename');
   });
 });

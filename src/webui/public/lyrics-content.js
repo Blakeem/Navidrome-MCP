@@ -14,6 +14,8 @@ const status = byId('lyrics-status');
 let lrclibEnabled = true;
 // Bumped on every track change, so a response for an older track is discarded.
 let generation = 0;
+// The song whose lookup failed, so reopening the overlay can ask again.
+let failedSongId = null;
 
 export function setLrclibEnabled(enabled) {
   lrclibEnabled = enabled;
@@ -23,6 +25,7 @@ export function setLrclibEnabled(enabled) {
 // since /api/lyrics/:songId answers 404 for an id not in the queue.
 export function showLyricsFor(songId) {
   generation += 1;
+  failedSongId = null;
   if (songId === null) {
     setLyricsStatus('Nothing is playing.');
     return;
@@ -35,10 +38,16 @@ async function loadLyrics(songId, mine) {
   const dto = await lyricsFor(songId);
   if (mine !== generation) return;
   if (dto === null) {
-    setLyricsStatus('Could not load lyrics.');
+    failedSongId = songId;
+    setLyricsStatus('The lyrics lookup failed. Reopen the lyrics view to try again.');
     return;
   }
+  failedSongId = null;
   renderLyricsLines(dto);
+}
+
+export function retryFailedLyrics() {
+  if (failedSongId !== null) showLyricsFor(failedSongId);
 }
 
 function clearLyricsBody() {
@@ -89,7 +98,8 @@ function lrclibPublishUrl(dto) {
 
 // Without the second sentence, a disabled LRCLIB looks like a library that has no lyrics.
 function renderNoLyrics(dto) {
-  const publishUrl = lrclibEnabled ? lrclibPublishUrl(dto) : null;
+  // A provider other than lrclib means LRCLIB was never asked about this track.
+  const publishUrl = lrclibEnabled && dto.provider === 'lrclib' ? lrclibPublishUrl(dto) : null;
   const note = lrclibEnabled
     ? 'The file carries none, and LRCLIB has no match for this track.'
     : 'The file carries none, and LRCLIB lookup is disabled.';

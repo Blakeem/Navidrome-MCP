@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Search Tools
+ * Navidrome MCP Server - Respawn-on-play
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,11 +16,18 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Re-export all functions from the modular search structure
-// This maintains API compatibility while using the new organized modules
-export {
-  searchAll,
-  searchSongs,
-  searchAlbums,
-  searchArtists,
-} from './search/index.js';
+import type { Config } from '../../config.js';
+import { logger } from '../../utils/logger.js';
+import { ensureWebForPlayback } from '../../web/spawn.js';
+
+/**
+ * Bring the web player back up before a play so it owns and scrobbles the new content.
+ * A respawn failure never blocks playback.
+ */
+export async function respawnWebForPlay(config: Config): Promise<void> {
+  try {
+    await ensureWebForPlayback(config);
+  } catch (err) {
+    logger.warn('respawn-on-play: ensureWebForPlayback failed, continuing with playback:', err);
+  }
+}

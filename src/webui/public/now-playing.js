@@ -19,7 +19,7 @@ export function renderNowPlaying(np) {
 }
 
 function renderTrackInfo(np) {
-  if (np === null || !np.engineRunning) {
+  if (playingIndex(np) === null) {
     title.textContent = 'No track loaded';
     artist.textContent = '';
     album.textContent = '';

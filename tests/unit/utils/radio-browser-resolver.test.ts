@@ -41,6 +41,12 @@ describe('getRadioBrowserBase', () => {
     expect(mockedResolveSrv).not.toHaveBeenCalled();
   });
 
+  it('strips trailing slashes from the override so `${base}/json/...` never doubles the slash', async () => {
+    expect(await getRadioBrowserBase('https://x.example/')).toBe('https://x.example');
+    expect(await getRadioBrowserBase('https://x.example//')).toBe('https://x.example');
+    expect(mockedResolveSrv).not.toHaveBeenCalled();
+  });
+
   it('treats empty-string override as "no override" and falls through to SRV', async () => {
     mockedResolveSrv.mockResolvedValue([
       { name: 'de1.api.radio-browser.info', port: 443, priority: 1, weight: 1 },

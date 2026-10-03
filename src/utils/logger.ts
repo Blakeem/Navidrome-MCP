@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { sanitizeFilename } from './sanitize-url.js';
+import { stripSubsonicAuthParams } from './sanitize-url.js';
 
 // Strings larger than this are truncated BEFORE the regex passes run, which
 // bounds the regex work on megabyte-scale blobs. The passes still run on the
@@ -54,30 +54,22 @@ const RE_URL_USERINFO = /(https?:\/\/)[^/\s@]*:[^/\s@]*@/gi;
 
 // 4. JWT-shaped tokens — three base64url segments (≥20 chars each).
 // Deliberately loose to catch raw tokens not labelled as Authorization.
-// The negative lookbehind anchors match attempts to the START of a base64url
-// run: interior positions fail in O(1), where the unanchored pattern re-scanned
-// the rest of the run from every offset — quadratic (~5s at 50KB) on long
-// dot-free blobs (base64 bodies, hex dumps). Matching is unchanged: any match
-// starting mid-run implies one at the run's start, which leftmost-first
-// matching already preferred.
+// The lookbehind anchors each match at a run start, so long dot-free blobs stay linear.
 const RE_JWT =
   /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g;
 
 // 5. API key / token / secret in env-var or JSON style:
 //    api_key=abc123   api-key: "abc123"   secret: 'xyz'   apiToken=...
 //    Also handles JSON-quoted key form: "apiKey":"value".
-//    The value capture is bounded — `\S+` was greedy and on serialized JSON
-//    like `{"apiKey":"abc","other":"x"}` it would gobble past the comma and
-//    redact unrelated context. Stop at quote, comma, semicolon, brace, or
-//    whitespace so we redact ONLY the value.
+//    The value capture stops at a quote, comma, semicolon, brace, or whitespace, so only the value is redacted.
 const RE_API_KEY =
   /"?(api[_-]?key|api[_-]?token|apiKey|apiToken|secret)"?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi;
 
 // 6. Subsonic query-param auth on GET URLs — [?&][upst]=value
 //    Covers all four Subsonic auth params: u (username), p (plaintext
-//    password — legacy), s (salt), t (salted-MD5 token). Salt+token are
-//    replay-credential-grade, so missing them was a real leak.
-//    (sanitizeFilename handles well-formed URLs; this regex catches fragments
+//    password, legacy), s (salt), t (salted-MD5 token).
+//    Salt and token are replay-grade credentials.
+//    (stripSubsonicAuthParams handles well-formed URLs. This regex catches fragments
 //    that appear inside log strings where the URL isn't parseable in isolation)
 const RE_SUBSONIC_PARAMS = /([?&])[upst]=[^&\s]*/gi;
 
@@ -90,11 +82,9 @@ const RE_SENSITIVE_KEY =
 
 /**
  * Apply all credential-redaction regex passes to a single string.
- * Strings exceeding MAX_REDACT_STRING_BYTES are truncated FIRST and the
- * passes then run on the retained slice — the early-return that skipped
- * redaction for oversized strings leaked any secret in the retained prefix.
- * The [TRUNCATED_BY_LOGGER] tag is appended after redaction so callers still
- * know the string was cut.
+ * Strings exceeding MAX_REDACT_STRING_BYTES are truncated first, so the
+ * retained prefix is still redacted. The [TRUNCATED_BY_LOGGER] tag is
+ * appended after redaction so callers still know the string was cut.
  */
 function redactString(s: string): string {
   const truncated = s.length > MAX_REDACT_STRING_BYTES;
@@ -141,8 +131,8 @@ function redactString(s: string): string {
 
   // Subsonic auth params in well-formed URLs (strips u/p/s/t params)
   if (out.includes('://')) {
-    // sanitizeFilename is a no-op on non-parseable strings
-    out = sanitizeFilename(out);
+    // stripSubsonicAuthParams is a no-op on non-parseable strings
+    out = stripSubsonicAuthParams(out);
   }
 
   return truncated ? `${out} [TRUNCATED_BY_LOGGER]` : out;
@@ -180,7 +170,7 @@ export function redact(value: unknown, depth: number = 0): unknown {
     }
     if ('cause' in value && value.cause !== undefined) {
       // Bound the cause-chain recursion: the Error branch sits above the
-      // depth guard at line 183, so without this an unbounded or circular
+      // MAX_REDACT_DEPTH guard below, so without this an unbounded or circular
       // `.cause` chain would recurse until the V8 stack overflows.
       Object.defineProperty(redacted, 'cause', {
         value: depth + 1 < MAX_REDACT_DEPTH ? redact(value.cause, depth + 1) : value.cause,

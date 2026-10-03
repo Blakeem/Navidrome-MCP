@@ -31,7 +31,7 @@ vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
 // behavior is covered by the lyrics tool tests.
 vi.mock('../../../src/tools/lyrics.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/tools/lyrics.js')>();
-  return { ...actual, getLyrics: vi.fn() };
+  return { ...actual, resolveLyricsByMetadata: vi.fn() };
 });
 
 // Belt and braces: nothing in this file may reach an external API.
@@ -45,7 +45,7 @@ vi.mock('../../../src/utils/fetch-with-timeout.js', async (importOriginal) => {
   };
 });
 
-import { getLyrics } from '../../../src/tools/lyrics.js';
+import { resolveLyricsByMetadata } from '../../../src/tools/lyrics.js';
 import { getPlayQueue } from '../../../src/tools/playback.js';
 import { fetchWithTimeout } from '../../../src/utils/fetch-with-timeout.js';
 import { handleLyrics } from '../../../src/webui/routes/lyrics.js';
@@ -206,7 +206,7 @@ describe('handleLyrics id validation', () => {
 
     expect(cap.status()).toBe(400);
     expect(getPlayQueue).not.toHaveBeenCalled();
-    expect(getLyrics).not.toHaveBeenCalled();
+    expect(resolveLyricsByMetadata).not.toHaveBeenCalled();
   });
 
   it('rejects a raw percent-sequence id with 400 rather than 500', async () => {
@@ -214,14 +214,14 @@ describe('handleLyrics id validation', () => {
     await handleLyrics(cap.res, LYRICS_ON, testClient(), '%GG');
 
     expect(cap.status()).toBe(400);
-    expect(getLyrics).not.toHaveBeenCalled();
+    expect(resolveLyricsByMetadata).not.toHaveBeenCalled();
   });
 });
 
 describe('handleLyrics queue resolution', () => {
   it('returns 200 with endMs and hasSynced for a queued song that has lyrics', async () => {
     queueOf(entry('songSynced1'));
-    vi.mocked(getLyrics).mockResolvedValue(syncedDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(syncedDto());
 
     const cap = fakeRes();
     await handleLyrics(cap.res, LYRICS_ON, testClient(), 'songSynced1');
@@ -239,12 +239,12 @@ describe('handleLyrics queue resolution', () => {
     await handleLyrics(cap.res, LYRICS_ON, testClient(), 'songMissing1');
 
     expect(cap.status()).toBe(404);
-    expect(getLyrics).not.toHaveBeenCalled();
+    expect(resolveLyricsByMetadata).not.toHaveBeenCalled();
   });
 
   it('returns 200 with an empty DTO when nothing has lyrics', async () => {
     queueOf(entry('songEmpty1'));
-    vi.mocked(getLyrics).mockResolvedValue(emptyDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(emptyDto());
 
     const cap = fakeRes();
     await handleLyrics(cap.res, LYRICS_ON, testClient(), 'songEmpty1');
@@ -258,7 +258,7 @@ describe('handleLyrics queue resolution', () => {
 
   it('returns 502 rather than 500 when the resolver throws', async () => {
     queueOf(entry('songBroken1'));
-    vi.mocked(getLyrics).mockRejectedValue(new Error('LRCLIB is down'));
+    vi.mocked(resolveLyricsByMetadata).mockRejectedValue(new Error('LRCLIB is down'));
 
     const cap = fakeRes();
     await handleLyrics(cap.res, LYRICS_ON, testClient(), 'songBroken1');
@@ -270,35 +270,35 @@ describe('handleLyrics queue resolution', () => {
 describe('handleLyrics missing queue metadata', () => {
   it('answers 200 local-only for an entry with no artist instead of throwing a schema error', async () => {
     queueOf(entry('songNoArtist1', { artist: undefined }));
-    vi.mocked(getLyrics).mockResolvedValue(emptyDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(emptyDto());
 
     const cap = fakeRes();
     await handleLyrics(cap.res, LYRICS_ON, testClient(), 'songNoArtist1');
 
     expect(cap.status()).toBe(200);
-    expect(getLyrics).toHaveBeenCalledTimes(1);
-    const call = vi.mocked(getLyrics).mock.calls[0];
-    // The placeholder keeps GetLyricsSchema satisfied but must never be searched.
+    expect(resolveLyricsByMetadata).toHaveBeenCalledTimes(1);
+    const call = vi.mocked(resolveLyricsByMetadata).mock.calls[0];
+    // The placeholder keeps LyricsMetadataSchema satisfied but must never be searched.
     expect(call?.[1]).toMatchObject({ artist: 'Unknown', title: 'Hollaback Girl' });
     expect(call?.[2]).toMatchObject({ songId: 'songNoArtist1', allowLrclib: false });
   });
 
   it('answers 200 local-only for an entry with no title', async () => {
     queueOf(entry('songNoTitle1', { title: undefined }));
-    vi.mocked(getLyrics).mockResolvedValue(emptyDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(emptyDto());
 
     const cap = fakeRes();
     await handleLyrics(cap.res, LYRICS_ON, testClient(), 'songNoTitle1');
 
     expect(cap.status()).toBe(200);
-    expect(vi.mocked(getLyrics).mock.calls[0]?.[2]).toMatchObject({ allowLrclib: false });
+    expect(vi.mocked(resolveLyricsByMetadata).mock.calls[0]?.[2]).toMatchObject({ allowLrclib: false });
   });
 });
 
 describe('handleLyrics caching', () => {
   it('serves a repeat request from cache without re-resolving', async () => {
     queueOf(entry('songCacheHit1'));
-    vi.mocked(getLyrics).mockResolvedValue(syncedDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(syncedDto());
 
     const first = fakeRes();
     await handleLyrics(first.res, LYRICS_ON, testClient(), 'songCacheHit1');
@@ -308,13 +308,13 @@ describe('handleLyrics caching', () => {
     expect(first.status()).toBe(200);
     expect(second.status()).toBe(200);
     expect(second.json()).toEqual(first.json());
-    expect(getLyrics).toHaveBeenCalledTimes(1);
+    expect(resolveLyricsByMetadata).toHaveBeenCalledTimes(1);
     expect(getPlayQueue).toHaveBeenCalledTimes(1);
   });
 
   it('serves a cached miss without re-resolving', async () => {
     queueOf(entry('songCacheMiss1'));
-    vi.mocked(getLyrics).mockResolvedValue(emptyDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(emptyDto());
 
     const first = fakeRes();
     await handleLyrics(first.res, LYRICS_ON, testClient(), 'songCacheMiss1');
@@ -323,32 +323,32 @@ describe('handleLyrics caching', () => {
 
     expect(second.status()).toBe(200);
     expect((second.json() as LyricsDTO).hasSynced).toBe(false);
-    expect(getLyrics).toHaveBeenCalledTimes(1);
+    expect(resolveLyricsByMetadata).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('handleLyrics LRCLIB feature gate', () => {
   it('passes allowLrclib false and issues no outbound request when features.lyrics is off', async () => {
     queueOf(entry('songGated1'));
-    vi.mocked(getLyrics).mockResolvedValue(emptyDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(emptyDto());
 
     const cap = fakeRes();
     await handleLyrics(cap.res, LYRICS_OFF, testClient(), 'songGated1');
 
     expect(cap.status()).toBe(200);
-    expect(vi.mocked(getLyrics).mock.calls[0]?.[2]).toMatchObject({ allowLrclib: false });
+    expect(vi.mocked(resolveLyricsByMetadata).mock.calls[0]?.[2]).toMatchObject({ allowLrclib: false });
     expect(fetchWithTimeout).not.toHaveBeenCalled();
   });
 
   it('passes allowLrclib true when features.lyrics is on and the entry is fully tagged', async () => {
     queueOf(entry('songGated2'));
-    vi.mocked(getLyrics).mockResolvedValue(syncedDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(syncedDto());
 
     const cap = fakeRes();
     await handleLyrics(cap.res, LYRICS_ON, testClient(), 'songGated2');
 
     expect(cap.status()).toBe(200);
-    expect(vi.mocked(getLyrics).mock.calls[0]?.[2]).toMatchObject({ allowLrclib: true });
+    expect(vi.mocked(resolveLyricsByMetadata).mock.calls[0]?.[2]).toMatchObject({ allowLrclib: true });
   });
 });
 
@@ -379,7 +379,7 @@ describe('handlePlayerState lyrics flag', () => {
 describe('lyrics route wiring', () => {
   it('dispatches GET /api/lyrics/:songId to the handler', async () => {
     queueOf(entry('songWired1'));
-    vi.mocked(getLyrics).mockResolvedValue(syncedDto());
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValue(syncedDto());
 
     await withServer(LYRICS_ON, async (port) => {
       const res = await httpGet(port, '/api/lyrics/songWired1');
