@@ -12,6 +12,7 @@ import {
   getTheme,
   setPersist,
   setTheme,
+  shouldStopForMcpExit,
 } from '../../../src/web/player-runtime.js';
 
 describe('persist flag', () => {
@@ -20,6 +21,23 @@ describe('persist flag', () => {
     expect(getPersist()).toBe(true);
     setPersist(false);
     expect(getPersist()).toBe(false);
+  });
+});
+
+describe('shouldStopForMcpExit', () => {
+  const lastMcpGone = { launchedByMcp: true, parentConnected: false, openLeases: 0, persist: false };
+
+  it('stops an MCP-launched player once its spawner is gone and no lease is open', () => {
+    expect(shouldStopForMcpExit(lastMcpGone)).toBe(true);
+  });
+
+  it.each([
+    ['a standalone launch', { launchedByMcp: false }],
+    ['a connected spawner', { parentConnected: true }],
+    ['an open lease', { openLeases: 1 }],
+    ['persist on', { persist: true }],
+  ])('keeps running with %s', (_label, change) => {
+    expect(shouldStopForMcpExit({ ...lastMcpGone, ...change })).toBe(false);
   });
 });
 

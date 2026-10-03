@@ -37,9 +37,10 @@ import { logger } from '../utils/logger.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { SseBroadcaster } from '../webui/broadcaster.js';
 import { isLanReachable, listLanInterfaces } from '../webui/network.js';
+import type { McpLeaseCounter } from '../webui/routes/player.js';
 import { createServer } from '../webui/server.js';
 import { acquireOrAttach, loopbackUrl } from './acquire.js';
-import { getPersist, setPersist, setTheme } from './player-runtime.js';
+import { getPersist, setPersist, setTheme, shouldStopForMcpExit } from './player-runtime.js';
 
 // Node 20+ exits on an unhandled rejection, and an MCP-spawned child's stderr is ignored, so it goes to the file sink.
 process.on('unhandledRejection', (reason) => {
@@ -78,6 +79,8 @@ function logBanner(port: number, host: string): void {
 let serverRef: Server | null = null;
 let broadcasterRef: SseBroadcaster | null = null;
 let shuttingDown = false;
+// MCP processes other than the spawner that use this player, each through a kept-open lease.
+let openMcpLeases = 0;
 
 /** The owner quits mpv on every shutdown, and a hard exit backstops a wedged mpv `quit` IPC. */
 function shutdownPlayer(reason: string): void {
@@ -108,14 +111,36 @@ function installShutdownTriggers(): void {
   const onMcpDisconnect = (): void => {
     if (getPersist()) {
       logger.info('MCP parent exited; persisting as an independent player.');
-    } else {
-      shutdownPlayer('mcp-exit');
+    } else if (openMcpLeases > 0) {
+      logger.info(`MCP parent exited; ${String(openMcpLeases)} other MCP process(es) still use this player.`);
     }
+    stopIfNoMcpRemains();
   };
   process.on('disconnect', onMcpDisconnect);
   // A parent that exited during startup emitted 'disconnect' before this listener existed.
   if (launchedByMcp && !process.connected) onMcpDisconnect();
 }
+
+/** Runs on the spawner's exit and on every lease close, so the player stops with the last MCP using it. */
+function stopIfNoMcpRemains(): void {
+  const stop = shouldStopForMcpExit({
+    launchedByMcp,
+    parentConnected: process.connected,
+    openLeases: openMcpLeases,
+    persist: getPersist(),
+  });
+  if (stop) shutdownPlayer('mcp-exit');
+}
+
+const mcpLeases: McpLeaseCounter = {
+  open: (): void => {
+    openMcpLeases++;
+  },
+  close: (): void => {
+    openMcpLeases--;
+    stopIfNoMcpRemains();
+  },
+};
 
 /**
  * The MCP engine can spawn mpv after this owner starts, and the owner's tracker
@@ -192,7 +217,7 @@ async function main(): Promise<void> {
 
   const broadcaster = new SseBroadcaster(client);
   const makeServer = (): Server =>
-    createServer({ config, client, broadcaster, shutdown: () => shutdownPlayer('power-button') });
+    createServer({ config, client, broadcaster, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases });
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
@@ -209,7 +234,7 @@ async function main(): Promise<void> {
   broadcasterRef = broadcaster;
   broadcaster.start();
 
-  // The port owner is the elected scrobble submitter, and MCP defers while /healthz reports it attached.
+  // The owner claims plays through mpv like every attached MCP, and the first claim submits.
   // Subscribe BEFORE adopting mpv so the tracker hydrates from the initial emit without re-scrobbling.
   if (config.features.playback) {
     new ScrobbleTracker(client, playbackEngine).attach();

@@ -244,6 +244,15 @@ describe('SseBroadcaster event throttle', () => {
 
     expect(broadcast).not.toHaveBeenCalled();
   });
+
+  it('broadcasts nothing for an mpv client message', () => {
+    const b = newBroadcaster();
+    const broadcast = spyBroadcast(b);
+
+    internals(b).handleEvent({ kind: 'message', args: ['navidrome-mcp-scrobble-claim', '1:song', 'id'] });
+
+    expect(broadcast).not.toHaveBeenCalled();
+  });
 });
 
 describe('SseBroadcaster snapshot reads', () => {

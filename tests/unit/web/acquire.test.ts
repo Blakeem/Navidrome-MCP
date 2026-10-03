@@ -18,9 +18,9 @@ import {
   type WebEndpoint,
   acquireOrAttach,
   probeHealthz,
+  legacyOwnerScrobbles,
   probeWebOwner,
   webOwnerPresent,
-  webOwnerScrobbling,
 } from '../../../src/web/acquire.js';
 import { HEALTH_APP_ID } from '../../../src/webui/routes/health.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
@@ -142,29 +142,32 @@ describe('/healthz probe verdicts', () => {
     });
   }
 
-  it('reports a scrobbling owner when its engine is attached', async () => {
-    const port = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: true });
+  async function legacyScrobbles(body: unknown): Promise<boolean> {
+    const port = await serveHealthz(body);
+    return legacyOwnerScrobbles(await probeWebOwner(loopback(port), noSavedEndpoint));
+  }
 
-    expect(await webOwnerScrobbling(loopback(port), noSavedEndpoint)).toBe(true);
+  it('does not defer to an attached owner that claims scrobbles', async () => {
+    expect(await legacyScrobbles({ app: HEALTH_APP_ID, playbackAttached: true, scrobbleClaims: true })).toBe(false);
   });
 
-  it('reports a present but non-scrobbling owner when its engine is not attached', async () => {
+  it('defers to an attached owner older than scrobble claims', async () => {
+    expect(await legacyScrobbles({ app: HEALTH_APP_ID, playbackAttached: true })).toBe(true);
+  });
+
+  it('defers to an owner older than the playbackAttached field', async () => {
+    expect(await legacyScrobbles({ app: HEALTH_APP_ID })).toBe(true);
+  });
+
+  it('does not defer to an older owner whose engine is not attached', async () => {
     const port = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: false });
 
-    expect(await webOwnerScrobbling(loopback(port), noSavedEndpoint)).toBe(false);
+    expect(legacyOwnerScrobbles(await probeWebOwner(loopback(port), noSavedEndpoint))).toBe(false);
     expect(await webOwnerPresent(loopback(port), noSavedEndpoint)).toBe(true);
   });
 
-  it('reports an owner without the playbackAttached field as scrobbling', async () => {
-    const port = await serveHealthz({ app: HEALTH_APP_ID });
-
-    expect(await webOwnerScrobbling(loopback(port), noSavedEndpoint)).toBe(true);
-  });
-
-  it('never reports a foreign signature as scrobbling', async () => {
-    const port = await serveHealthz({ app: 'something-else', playbackAttached: true });
-
-    expect(await webOwnerScrobbling(loopback(port), noSavedEndpoint)).toBe(false);
+  it('never defers to a foreign signature', async () => {
+    expect(await legacyScrobbles({ app: 'something-else', playbackAttached: true })).toBe(false);
   });
 
   it.each(['0.0.0.0', '::'])('probes a wildcard bind host %s at loopback', async (bindHost) => {
@@ -232,10 +235,10 @@ describe('startup and saved endpoint owner probe', () => {
     expect(await probeWebOwner(loopback(startupPort), readSaved)).toEqual({
       outcome: 'ours',
       playbackAttached: false,
+      scrobbleClaims: false,
       port: savedPort,
     });
     expect(await webOwnerPresent(loopback(startupPort), readSaved)).toBe(true);
-    expect(await webOwnerScrobbling(loopback(startupPort), readSaved)).toBe(false);
   });
 
   it('does not read the saved endpoint when the startup endpoint answers as ours', async () => {
@@ -260,6 +263,7 @@ describe('startup and saved endpoint owner probe', () => {
     expect(await probeWebOwner(loopback(startupPort), noSavedEndpoint)).toEqual({
       outcome: 'refused',
       playbackAttached: false,
+      scrobbleClaims: false,
       port: startupPort,
     });
   });

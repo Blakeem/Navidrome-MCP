@@ -180,6 +180,7 @@ async function withServer(config: Config, run: (port: number) => Promise<void>):
     client: testClient(),
     broadcaster: {} as unknown as SseBroadcaster,
     shutdown: () => undefined,
+    leases: { open: () => undefined, close: () => undefined },
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {

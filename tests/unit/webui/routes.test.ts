@@ -77,9 +77,11 @@ import { fetchWithTimeout } from '../../../src/utils/fetch-with-timeout.js';
 import { HEALTH_APP_ID, handleHealth } from '../../../src/webui/routes/health.js';
 import {
   handleGetPlayerSettings,
+  handleMcpLease,
   handlePlayerState,
   handleSetPlayerSettings,
   handleShutdown,
+  MCP_LEASE_PATH,
 } from '../../../src/webui/routes/player.js';
 import { handleCover } from '../../../src/webui/routes/cover.js';
 import { handlePlayQueueIndex, handleSeek, handleVolume } from '../../../src/webui/routes/controls.js';
@@ -211,6 +213,12 @@ describe('handleHealth loopback gate (resolved bind host matrix)', () => {
     isRunning.mockRestore();
     expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID, playbackAttached: attached });
   });
+
+  it('reports that this owner claims scrobbles', () => {
+    const cap = fakeRes();
+    handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: false, host: '127.0.0.1' }));
+    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID, scrobbleClaims: true });
+  });
 });
 
 describe('LAN reachability follows the resolved bind host', () => {
@@ -278,6 +286,14 @@ describe('player routes reject non-loopback peers', () => {
     vi.advanceTimersByTime(50);
     expect(shutdown).toHaveBeenCalledTimes(1);
   });
+
+  it('handleMcpLease returns 404 to a LAN peer and opens no lease', () => {
+    const cap = fakeRes();
+    const leases = { open: vi.fn(), close: vi.fn() };
+    handleMcpLease(fakeReq(LAN_PEER), cap.res, leases);
+    expect(cap.status()).toBe(404);
+    expect(leases.open).not.toHaveBeenCalled();
+  });
 });
 
 describe('local-only routes reject a loopback peer with a foreign Host (DNS rebinding)', () => {
@@ -289,6 +305,14 @@ describe('local-only routes reject a loopback peer with a foreign Host (DNS rebi
     handleShutdown(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, shutdown);
     expect(cap.status()).toBe(404);
     expect(shutdown).not.toHaveBeenCalled();
+  });
+
+  it('handleMcpLease returns 404 and opens no lease', () => {
+    const cap = fakeRes();
+    const leases = { open: vi.fn(), close: vi.fn() };
+    handleMcpLease(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, leases);
+    expect(cap.status()).toBe(404);
+    expect(leases.open).not.toHaveBeenCalled();
   });
 
   it('handleGetPlayerSettings returns 404 without reading the store', () => {
@@ -644,6 +668,7 @@ async function requestServer(method: string, path: string, options: ServerReques
     client: {} as never,
     broadcaster: {} as never,
     shutdown: () => undefined,
+    leases: { open: () => undefined, close: () => undefined },
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -779,5 +804,43 @@ describe('GET /api/cover stream failure', () => {
     expect(reply.status).toBe(200);
     // An aborted chunked body never completes, so the browser does not cache a truncated image.
     expect(reply.complete).toBe(false);
+  });
+});
+
+describe('MCP lease route over a live dispatcher', () => {
+  it('counts a lease while its connection is open and releases it on close', async () => {
+    vi.useRealTimers();
+    const leases = { open: vi.fn(), close: vi.fn() };
+    const server = createServer({
+      config: configWith({ expose: false, host: '127.0.0.1' }),
+      client: {} as never,
+      broadcaster: {} as never,
+      shutdown: () => undefined,
+      leases,
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const req = httpRequest({ host: '127.0.0.1', port, path: MCP_LEASE_PATH, method: 'POST', headers: JSON_HEADERS });
+      req.on('error', () => undefined);
+      const status = await new Promise<number>((resolve) => {
+        req.on('response', (res) => {
+          res.on('error', () => undefined);
+          resolve(res.statusCode ?? 0);
+        });
+        req.end('{}');
+      });
+      expect(status).toBe(200);
+      expect(leases.open).toHaveBeenCalledTimes(1);
+      expect(leases.close).not.toHaveBeenCalled();
+
+      req.destroy();
+      await vi.waitFor(() => expect(leases.close).toHaveBeenCalledTimes(1));
+    } finally {
+      await new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      });
+    }
   });
 });

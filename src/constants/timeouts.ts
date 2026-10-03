@@ -62,6 +62,10 @@ export const MPV_STALE_SOCKET_PROBE_MS = 100;
  *  an mpv the MCP process spawned goes without the owner tracking its plays. */
 export const WEB_OWNER_ATTACH_INTERVAL_MS = 5000;
 
+/** How long a scrobble claim waits for mpv to echo it back before the tracker submits anyway.
+ *  A local IPC round trip takes milliseconds, so only a wedged or gone mpv reaches it. */
+export const SCROBBLE_CLAIM_ECHO_TIMEOUT_MS = 5000;
+
 export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
   'loadfile',
   'loadlist',

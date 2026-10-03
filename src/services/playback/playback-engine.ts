@@ -131,11 +131,15 @@ export interface QueueTrackMetadata {
  *
  * `kind === 'attach'` fires when the engine connects to an mpv instance, before
  * that instance's observe-emitted snapshot, so subscribers can drop state from a previous instance.
+ *
+ * `kind === 'message'` forwards mpv's `client-message`, which mpv delivers to every IPC client
+ * (the sender included) in one order. Processes sharing mpv use it as a broadcast channel.
  */
 export type StateChangeEvent =
   | { kind: 'property'; name: string; data: unknown }
   | { kind: 'queue' }
-  | { kind: 'attach' };
+  | { kind: 'attach' }
+  | { kind: 'message'; args: string[] };
 
 type StateChangeHandler = (event: StateChangeEvent) => void;
 
@@ -797,6 +801,11 @@ class PlaybackEngine {
     return null;
   }
 
+  /** Sends a `script-message` that every client attached to this mpv receives. Never spawns mpv. */
+  async broadcastMessage(args: string[]): Promise<void> {
+    await this.requireIpc().command('script-message', ...args);
+  }
+
   private requireIpc(): MpvIpc {
     if (this.ipc?.isConnected() !== true) {
       throw new Error('mpv IPC is not connected');
@@ -977,6 +986,11 @@ class PlaybackEngine {
   private async installObservers(ipc: MpvIpc): Promise<void> {
     // Registered first so no event during the prime and observe sequence is missed.
     ipc.onEvent((evt) => {
+      const args = evt['args'];
+      if (evt.event === 'client-message' && Array.isArray(args)) {
+        this.emitStateChange({ kind: 'message', args: args.filter((a): a is string => typeof a === 'string') });
+        return;
+      }
       const reason = typeof evt['reason'] === 'string' ? ` (${evt['reason']})` : '';
       logger.debug(`mpv event: ${evt.event}${reason}`);
     });

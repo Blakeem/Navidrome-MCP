@@ -22,6 +22,7 @@ import {
   PLAYER_STARTUP_TIMEOUT_MS,
   randomPort,
   spawnIpcParent,
+  spawnLeaseHolder,
   spawnWeb,
   waitFor,
   waitForExit,
@@ -57,6 +58,22 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     );
     expect(stopped).toBe(true);
     expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 5000 })).toBe(true);
+  });
+
+  it('persist OFF: the player keeps running while another MCP holds a lease, then stops with it', async () => {
+    const port = randomPort();
+    const storePath = makeTempStore(port, { persistAfterMcpExit: false });
+    const parent = spawnIpcParent(storePath);
+    expect(await waitFor(async () => (await healthz(port))?.app === 'navidrome-mcp-web')).toBe(true);
+
+    const holder = await spawnLeaseHolder(storePath);
+    expect(holder).not.toBeNull();
+
+    parent.kill('SIGTERM');
+    expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 4000 })).toBe(false);
+
+    holder?.kill('SIGKILL');
+    expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 20000 })).toBe(true);
   });
 
   it('persist ON: the spawned player survives its MCP exiting', async () => {

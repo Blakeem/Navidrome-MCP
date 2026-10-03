@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { readSavedWebuiEndpoint, type Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { probeWebOwner, type WebEndpoint, type WebOwnerProbe } from './acquire.js';
+import { holdOwnerLease } from './lease.js';
 
 /**
  * Outcome of trying to bring the web player up:
@@ -90,11 +91,13 @@ function spawnWebChild(): WebServerStatus {
 export interface RespawnDeps {
   probe: (startup: WebEndpoint) => Promise<WebOwnerProbe>;
   spawn: () => WebServerStatus;
+  lease: (port: number) => Promise<void>;
 }
 
 const DEFAULT_RESPAWN_DEPS: RespawnDeps = {
   probe: (startup) => probeWebOwner(startup, readSavedWebuiEndpoint),
   spawn: spawnWebChild,
+  lease: holdOwnerLease,
 };
 
 /**
@@ -116,7 +119,11 @@ export async function ensureWebForPlayback(
 
   respawnInFlight = (async (): Promise<WebServerStatus> => {
     const probe = await deps.probe(config.webui);
-    if (probe.outcome === 'ours') return 'running';
+    if (probe.outcome === 'ours') {
+      // Counted before the play's mpv commands run, so the spawner's exit cannot stop this play.
+      await deps.lease(probe.port);
+      return 'running';
+    }
     if (probe.outcome === 'foreign') {
       logger.warn(
         `Web UI port ${probe.port} is in use by another application; not starting the player. ` +

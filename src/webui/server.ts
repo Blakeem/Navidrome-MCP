@@ -56,9 +56,12 @@ import {
 } from './routes/controls.js';
 import {
   handleGetPlayerSettings,
+  handleMcpLease,
   handlePlayerState,
   handleSetPlayerSettings,
   handleShutdown,
+  MCP_LEASE_PATH,
+  type McpLeaseCounter,
 } from './routes/player.js';
 import { handleStatic } from './routes/static-files.js';
 
@@ -68,6 +71,7 @@ interface ServerDeps {
   broadcaster: SseBroadcaster;
   /** Tear down the player (stop mpv + exit). POST /api/shutdown invokes it. */
   shutdown: () => void;
+  leases: McpLeaseCounter;
 }
 
 /**
@@ -181,6 +185,7 @@ async function handleRequest(
   if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res, deps.config); return; }
   if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res, deps.config, deps.broadcaster);
   if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
+  if (method === 'POST' && path === MCP_LEASE_PATH)          { handleMcpLease(req, res, deps.leases); return; }
 
   // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {

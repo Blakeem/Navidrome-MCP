@@ -741,6 +741,7 @@ async function reconcileWithQueue(
   client: NavidromeClient | undefined,
   polled: Readonly<NowPlayingResult>,
   needs: { radio: boolean; duration: boolean },
+  loadedPath: string | null,
   stationUrls: readonly unknown[] | null,
 ): Promise<QueueRepair | null> {
   const fields: RepairFields = {};
@@ -751,6 +752,9 @@ async function reconcileWithQueue(
   const current = playlist.find((e) => e.isCurrent);
   if (current === undefined) return null;
   if (polled.queueIndex !== undefined && current.index !== polled.queueIndex) return null;
+  // The path cache can lag a queue replace at the same index. A song stream path, which carries Subsonic auth
+  // params, on a radio entry is the replaced song's, so it would name no station and key the wrong file.
+  if (current.songId === null && loadedPath !== null && hasSubsonicAuthParams(loadedPath)) return null;
 
   if (current.songId !== null) facts.notRadio = true;
   if (current.songId === null && needs.radio) {
@@ -875,7 +879,8 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
     ) {
       try {
         const stationUrls = repairKey === null ? null : [loadedPath, playbackEngine.getCachedProperty('playlist-path')];
-        const repair = await reconcileWithQueue(client, result, needs, stationUrls);
+        const polledPath = typeof loadedPath === 'string' ? loadedPath : null;
+        const repair = await reconcileWithQueue(client, result, needs, polledPath, stationUrls);
         if (repair !== null) {
           Object.assign(result, repair.fields);
           if (repairKey !== null) recordRepairFacts(repairKey, repair.facts);

@@ -32,16 +32,18 @@ import { makeTestConfig } from '../../helpers/test-config.js';
 const playbackEnabled = makeTestConfig({ features: { playback: true } });
 
 function ownerProbe(outcome: ProbeOutcome): WebOwnerProbe {
-  return { outcome, playbackAttached: true, port: playbackEnabled.webui.port };
+  return { outcome, playbackAttached: true, scrobbleClaims: true, port: playbackEnabled.webui.port };
 }
 
 function makeDeps(probeOutcome: ProbeOutcome): RespawnDeps & {
   probe: ReturnType<typeof vi.fn>;
   spawn: ReturnType<typeof vi.fn>;
+  lease: ReturnType<typeof vi.fn>;
 } {
   return {
     probe: vi.fn().mockResolvedValue(ownerProbe(probeOutcome)),
     spawn: vi.fn().mockReturnValue('spawned'),
+    lease: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -65,7 +67,15 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
 
     expect(deps.probe).toHaveBeenCalledTimes(1);
     expect(deps.spawn).not.toHaveBeenCalled();
+    expect(deps.lease).toHaveBeenCalledWith(playbackEnabled.webui.port);
     expect(status).toBe('running');
+  });
+
+  it.each(['refused', 'foreign'] as const)('holds no lease when the probe is %s', async (outcome) => {
+    const deps = makeDeps(outcome);
+    await ensureWebForPlayback(playbackEnabled, deps);
+
+    expect(deps.lease).not.toHaveBeenCalled();
   });
 
   it('does NOT spawn when the port is held by a foreign process', async () => {
@@ -104,6 +114,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
     const deps: RespawnDeps = {
       probe: vi.fn().mockReturnValue(new Promise<WebOwnerProbe>((r) => { resolveProbe = r; })),
       spawn: vi.fn().mockReturnValue('spawned'),
+      lease: vi.fn().mockResolvedValue(undefined),
     };
 
     const p1 = ensureWebForPlayback(playbackEnabled, deps);
@@ -124,6 +135,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
     const boom: RespawnDeps = {
       probe: vi.fn().mockRejectedValueOnce(new Error('probe boom')).mockResolvedValue(ownerProbe('refused')),
       spawn: vi.fn().mockReturnValue('spawned'),
+      lease: vi.fn().mockResolvedValue(undefined),
     };
 
     await expect(ensureWebForPlayback(playbackEnabled, boom)).rejects.toThrow('probe boom');

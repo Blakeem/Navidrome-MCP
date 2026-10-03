@@ -16,6 +16,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { randomUUID } from 'node:crypto';
+
+import { SCROBBLE_CLAIM_ECHO_TIMEOUT_MS } from '../../constants/timeouts.js';
 import { logger } from '../../utils/logger.js';
 import type { StateChangeEvent } from './playback-engine.js';
 import type { RetryPolicy } from '../../utils/fetch-with-timeout.js';
@@ -25,6 +28,9 @@ import type { RetryPolicy } from '../../utils/fetch-with-timeout.js';
 // whichever comes first.
 const MIN_DURATION_SECONDS = 30;
 const MAX_THRESHOLD_SECONDS = 240;
+
+/** The script-message topic for a claim. Its args are the play key and the claimant id. */
+const SCROBBLE_CLAIM_TOPIC = 'navidrome-mcp-scrobble-claim';
 
 /** One live queue entry as the tracker reads it. `entryId` and `isCurrent` come from mpv. */
 interface ScrobbleQueueEntry {
@@ -43,6 +49,7 @@ export interface ScrobbleEngine {
   onStateChange(handler: (event: StateChangeEvent) => void): () => void;
   getQueue(): Promise<ScrobbleQueueEntry[]>;
   getCachedProperty(name: string): unknown;
+  broadcastMessage(args: string[]): Promise<void>;
 }
 
 /**
@@ -80,11 +87,17 @@ export interface ScrobbleClient {
  * subsequent events that actually change the value are real transitions.
  * The engine's `attach` event marks every later attach, so a re-attach to a
  * new mpv instance starts from the same sentinel.
+ *
+ * Every process attached to one mpv runs a tracker. At the threshold, a tracker
+ * that counted the play broadcasts a claim through mpv, which delivers every
+ * claim to every client in one order. The first claim for a play wins, so exactly
+ * one process submits it. An adopted play never claims.
  */
 export class ScrobbleTracker {
   private readonly client: ScrobbleClient;
   private readonly engine: ScrobbleEngine;
   private readonly shouldSubmit: () => Promise<boolean>;
+  private readonly claimantId = randomUUID();
   private unsubscribe: (() => void) | null = null;
 
   private currentSongId: string | null = null;
@@ -92,14 +105,15 @@ export class ScrobbleTracker {
   private currentDuration: number | null = null;
   private startedAtMs: number | null = null;
   private submitted = false;
-  // Per-play scrobble-ownership verdict, decided once at track start via the
-  // injected `shouldSubmit` check (a live web-port probe in the MCP process).
-  // Exactly one process counts each play: the web port owner always submits;
-  // MCP submits only when no web owner exists at this track's start. 'undecided'
-  // while the async check is in flight — maybeSubmit DEFERS rather than guessing,
-  // and resolveOwnership re-drives it once the verdict lands. Per-play, so
-  // reset() clears it (unlike the attach-lifetime `generation`/`lastPlaylistPos`).
+  // Per-play verdict from the injected `shouldSubmit` check, decided once at track start.
+  // 'notMine' defers to an older web owner that submits without claiming. 'undecided'
+  // while the check is in flight, so maybeSubmit waits and resolveOwnership re-drives it.
   private submitVerdict: 'undecided' | 'mine' | 'notMine' = 'undecided';
+  // The first claimant seen for the current play, this process included.
+  private firstClaimant: string | null = null;
+  private claimSent = false;
+  // Fails the claim open when mpv never echoes it, since a lost scrobble is worse than a rare double.
+  private claimTimer: ReturnType<typeof setTimeout> | null = null;
   // Latest mpv time-pos value observed for the current play, in seconds.
   // Tracked here (rather than read from the engine cache) so a stale
   // time-pos belonging to the previous track can't leak into the new
@@ -129,11 +143,10 @@ export class ScrobbleTracker {
   private generation = 0;
 
   /**
-   * @param shouldSubmit Resolves to whether THIS process should count the play
-   *   it is about to start tracking. Called once per track (at track start).
-   *   Defaults to always-true: the web port owner is the unconditional submitter
-   *   (`web/main.ts`). MCP injects a live web-port probe so it defers to a
-   *   running navidrome-web.
+   * @param shouldSubmit Resolves to whether THIS process may claim the play it
+   *   is about to start tracking. Called once per track (at track start).
+   *   Defaults to always-true. MCP injects a web-port probe so it defers to an
+   *   older navidrome-web that submits without claiming.
    */
   constructor(
     client: ScrobbleClient,
@@ -180,6 +193,10 @@ export class ScrobbleTracker {
     }
     if (event.kind === 'queue') {
       this.onQueueMutation();
+      return;
+    }
+    if (event.kind === 'message') {
+      this.onMessage(event.args);
       return;
     }
     switch (event.name) {
@@ -461,10 +478,55 @@ export class ScrobbleTracker {
     }
     if (this.submitVerdict === 'undecided') return;
 
-    // Set the flag BEFORE dispatching to prevent re-entry from a subsequent
-    // time-pos tick before the async call resolves.
+    // Another process claimed this play first.
+    if (this.firstClaimant !== null) {
+      this.submitted = true;
+      return;
+    }
+    if (!this.claimSent) this.sendClaim();
+  }
+
+  /** Identifies one play across processes, since every client of one mpv reads the same entry ids. */
+  private playKey(): string | null {
+    if (this.currentSongId === null) return null;
+    return `${this.currentEntryId ?? '-'}:${this.currentSongId}`;
+  }
+
+  private sendClaim(): void {
+    const key = this.playKey();
+    if (key === null) return;
+    this.claimSent = true;
+    this.claimTimer = setTimeout(() => {
+      logger.warn(`scrobble: claim for ${key} got no echo from mpv, submitting`);
+      this.settleClaim(key, true);
+    }, SCROBBLE_CLAIM_ECHO_TIMEOUT_MS);
+    this.claimTimer.unref();
+    this.engine.broadcastMessage([SCROBBLE_CLAIM_TOPIC, key, this.claimantId]).catch((err: unknown) => {
+      logger.warn(`scrobble: claim broadcast failed for ${key}, submitting: ${String(err)}`);
+      this.settleClaim(key, true);
+    });
+  }
+
+  private onMessage(args: string[]): void {
+    const [topic, key, claimant] = args;
+    if (topic !== SCROBBLE_CLAIM_TOPIC || claimant === undefined) return;
+    if (key !== this.playKey()) return;
+    this.firstClaimant ??= claimant;
+    if (claimant === this.claimantId) this.settleClaim(key, this.firstClaimant === this.claimantId);
+  }
+
+  /** The key check keeps a late settle for a skipped play off the next one. */
+  private settleClaim(key: string, won: boolean): void {
+    if (key !== this.playKey() || this.submitted || this.startedAtMs === null) return;
+    this.clearClaimTimer();
     this.submitted = true;
-    this.sendSubmission(this.currentSongId, this.startedAtMs);
+    if (won && this.currentSongId !== null) this.sendSubmission(this.currentSongId, this.startedAtMs);
+  }
+
+  private clearClaimTimer(): void {
+    if (this.claimTimer === null) return;
+    clearTimeout(this.claimTimer);
+    this.claimTimer = null;
   }
 
   private reset(): void {
@@ -477,6 +539,9 @@ export class ScrobbleTracker {
     this.submitted = false;
     this.lastTimePos = null;
     this.submitVerdict = 'undecided';
+    this.firstClaimant = null;
+    this.claimSent = false;
+    this.clearClaimTimer();
     // lastPlaylistPos and generation are intentionally preserved across
     // reset() — they track attach-lifetime state, not per-play state.
   }

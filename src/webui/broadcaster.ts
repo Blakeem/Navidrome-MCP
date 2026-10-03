@@ -136,7 +136,8 @@ export class SseBroadcaster {
       return;
     }
     // The engine is not yet usable at the attach event, and the snapshot burst after it broadcasts.
-    if (evt.kind === 'attach') return;
+    // A message carries no player state.
+    if (evt.kind === 'attach' || evt.kind === 'message') return;
 
     this.broadcastNow();
   }

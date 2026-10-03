@@ -37,6 +37,7 @@ const IPC_PARENT_HARNESS = join(
   'fixtures',
   'ipc-parent.mjs',
 );
+const LEASE_HOLDER_HARNESS = join(process.cwd(), 'tests', 'integration', 'coordination', 'fixtures', 'lease-holder.mjs');
 
 function buildMissing(): boolean {
   return !existsSync(DIST_WEB_MAIN);
@@ -113,6 +114,23 @@ export function spawnIpcParent(
   const child = spawn(process.execPath, args, { stdio: 'ignore' });
   children.push(child);
   return child;
+}
+
+/**
+ * Spawn the lease-holder harness (mimics a second MCP that finds the running player). Resolves once
+ * it holds a lease, or null when it exits first.
+ */
+export function spawnLeaseHolder(storePath: string): Promise<ChildProcess | null> {
+  const child = spawn(process.execPath, [LEASE_HOLDER_HARNESS, DIST_WEB_MAIN, storePath], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  children.push(child);
+  return new Promise((resolve) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('lease-held')) resolve(child);
+    });
+    child.once('exit', () => resolve(null));
+  });
 }
 
 const children: ChildProcess[] = [];

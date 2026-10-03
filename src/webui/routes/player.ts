@@ -137,6 +137,31 @@ export async function handleSetPlayerSettings(
   broadcaster.broadcastNow();
 }
 
+/** The kept-open route an MCP holds while it uses this player. src/web/lease.ts posts to it. */
+export const MCP_LEASE_PATH = '/api/mcp-lease';
+
+/** Counts the MCP processes holding a lease. The entry point decides what a close means. */
+export interface McpLeaseCounter {
+  open(): void;
+  close(): void;
+}
+
+/**
+ * POST /api/mcp-lease (loopback-only) keeps its response open while the MCP lives. The OS closes
+ * the socket when that MCP dies, so the player counts every MCP using it, not only its spawner.
+ */
+export function handleMcpLease(req: IncomingMessage, res: ServerResponse, leases: McpLeaseCounter): void {
+  if (!isLocalRequest(req)) {
+    writeError(res, 404, 'Not found');
+    return;
+  }
+  req.resume();
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.flushHeaders();
+  leases.open();
+  res.once('close', () => leases.close());
+}
+
 /**
  * POST /api/shutdown is the power button (loopback-only). Stops mpv and exits the
  * web server via the injected shutdown callback. Responds 200 first so the

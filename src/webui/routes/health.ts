@@ -33,7 +33,9 @@ export const HEALTH_APP_ID = 'navidrome-mcp-web';
 
 /**
  * GET /healthz is a small JSON signature used for port-as-lock coexistence.
- * `playbackAttached` tells the MCP tracker whether this owner sees track changes.
+ * `scrobbleClaims` says this owner submits only the plays it wins in the mpv claim
+ * channel, so an MCP tracker claims alongside it. `playbackAttached` serves MCPs
+ * older than that flag, which defer to an attached owner.
  *
  * When the resolved bind host is LAN-reachable, /healthz would leak a version
  * fingerprint, so it is gated to loopback peers (returning 404 to hide its
@@ -49,5 +51,6 @@ export function handleHealth(req: IncomingMessage, res: ServerResponse, config: 
     app: HEALTH_APP_ID,
     version: getPackageVersion(),
     playbackAttached: playbackEngine.isRunning(),
+    scrobbleClaims: true,
   });
 }

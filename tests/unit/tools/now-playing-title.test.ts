@@ -232,6 +232,21 @@ describe('now_playing title reconciliation (Issue #3)', () => {
     expect(getQueueMock).toHaveBeenCalledTimes(1);
   });
 
+  it('names no station while the cached path still holds the replaced song', async () => {
+    const streamUrl = 'http://ice.somafm.com/groovesalad';
+    const songPath = 'http://navidrome.test/rest/stream?id=song-1&u=user&t=token&s=salt';
+    getCachedPropertyMock.mockImplementation(radioProps(songPath));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const client = radioClient([{ id: 'r1', name: 'SomaFM Groove Salad', streamUrl }]);
+
+    const stale = await nowPlaying({}, client);
+    getCachedPropertyMock.mockImplementation(radioProps(streamUrl));
+    const settled = await nowPlaying({}, client);
+
+    expect(stale.radioStation).toBeUndefined();
+    expect(settled.radioStation).toEqual({ name: 'SomaFM Groove Salad' });
+  });
+
   it('labels a radio stream that matches no saved station "Unknown station"', async () => {
     getCachedPropertyMock.mockImplementation(radioProps('http://unsaved.example/stream'));
     getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);

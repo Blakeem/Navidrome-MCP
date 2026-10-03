@@ -47,6 +47,7 @@ export type WebEndpoint = Pick<Config['webui'], 'port' | 'host'>;
 export interface WebOwnerProbe {
   outcome: ProbeOutcome;
   playbackAttached: boolean;
+  scrobbleClaims: boolean;
   port: number;
 }
 
@@ -55,10 +56,11 @@ export interface AcquireDeps {
   bind: (server: Server, port: number, host: string) => Promise<'ok' | 'eaddrinuse'>;
 }
 
-/** A probe outcome plus whether the owner's playback engine is attached to mpv. */
+/** A probe outcome plus the owner's scrobble fields from /healthz. */
 interface HealthzProbe {
   outcome: ProbeOutcome;
   playbackAttached: boolean;
+  scrobbleClaims: boolean;
 }
 
 const PROBE_TIMEOUT_MS = 500;
@@ -73,10 +75,10 @@ function probeHost(bindHost: string): string {
 function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProbe> {
   return new Promise<HealthzProbe>((resolve) => {
     let settled = false;
-    const done = (outcome: ProbeOutcome, playbackAttached = false): void => {
+    const done = (outcome: ProbeOutcome, playbackAttached = false, scrobbleClaims = false): void => {
       if (settled) return;
       settled = true;
-      resolve({ outcome, playbackAttached });
+      resolve({ outcome, playbackAttached, scrobbleClaims });
     };
 
     const req = httpGet(
@@ -99,13 +101,13 @@ function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProb
         });
         res.on('end', () => {
           try {
-            const json = JSON.parse(body) as { app?: unknown; playbackAttached?: unknown };
+            const json = JSON.parse(body) as { app?: unknown; playbackAttached?: unknown; scrobbleClaims?: unknown };
             if (json.app !== HEALTH_APP_ID) {
               done('foreign');
               return;
             }
             // An owner older than the playbackAttached field always scrobbled, so a missing field counts as attached.
-            done('ours', json.playbackAttached !== false);
+            done('ours', json.playbackAttached !== false, json.scrobbleClaims === true);
           } catch {
             done('foreign');
           }
@@ -162,15 +164,11 @@ export async function webOwnerPresent(
 }
 
 /**
- * A navidrome-web owns the web port and its engine is attached to mpv. Only an
- * attached owner sees track changes, so the MCP tracker submits unless this holds.
+ * An owner older than the scrobble claim channel submits every play it sees without claiming,
+ * so the MCP tracker defers to it while it is attached to mpv. Compat for one release.
  */
-export async function webOwnerScrobbling(
-  startup: WebEndpoint,
-  readSaved: () => WebEndpoint | null,
-): Promise<boolean> {
-  const probe = await probeWebOwner(startup, readSaved);
-  return probe.outcome === 'ours' && probe.playbackAttached;
+export function legacyOwnerScrobbles(probe: WebOwnerProbe): boolean {
+  return probe.outcome === 'ours' && !probe.scrobbleClaims && probe.playbackAttached;
 }
 
 /** Bind an unstarted HTTP server, resolving `eaddrinuse` instead of throwing on

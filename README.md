@@ -357,7 +357,7 @@ The server starts the panel as a separate `navidrome-web` process. The port bind
 
 Whether playback survives closing your AI client:
 
-- **Default (off):** the MCP-launched player and mpv stop when the MCP server closes or restarts.
+- **Default (off):** the MCP-launched player and mpv stop when the last MCP server using them closes or restarts.
 - **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the gear modal): the player keeps running. Stop it with the power button.
 - **Launched yourself** (`navidrome-web`, below): always runs independently. The MCP server attaches to it and never shuts it down.
 
@@ -406,7 +406,7 @@ All settings are optional and are keyed below by their `settings.json` paths. Ev
 | `webui.host` | `127.0.0.1` | Bind address, one of `127.0.0.1`, `0.0.0.0`, or `::`. Any other value falls back to `127.0.0.1`. A value set here overrides `webui.expose`. |
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel, unless `webui.host` is set. |
 | `webui.autoOpenBrowser` | `false` | Open the player in your browser when the MCP server starts. Running `navidrome-web` directly always opens a browser. |
-| `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player running after the MCP server closes. |
+| `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player running after the last MCP server using it closes. |
 | `webui.theme` | unset | Forces `light` or `dark` on every device viewing the player. Unset, each device follows its own setting. The in-player gear modal sets it. Its **System** option clears it. |
 
 #### Phone and Tablet Remote

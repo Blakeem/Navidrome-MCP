@@ -82,7 +82,7 @@ export const ConfigSchema = z.object({
     expose: z.boolean(),
     // Off by default so a headless MCP client launch never pops a browser tab.
     autoOpenBrowser: z.boolean(),
-    // Off by default so a player the MCP server spawned stops with it and nothing lingers.
+    // Off by default so an MCP-launched player stops with the last MCP server using it and nothing lingers.
     persistAfterMcpExit: z.boolean(),
     // Every device viewing the player uses this theme. Null leaves each device on its own setting.
     theme: z.enum(WEBUI_THEMES).nullable(),

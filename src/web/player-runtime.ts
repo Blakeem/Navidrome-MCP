@@ -48,3 +48,13 @@ export function setTheme(value: WebuiTheme | null): void {
 export function getTheme(): WebuiTheme | null {
   return theme;
 }
+
+/** An MCP-launched player stops once no MCP uses it: its spawner is gone and no lease is open. */
+export function shouldStopForMcpExit(state: {
+  launchedByMcp: boolean;
+  parentConnected: boolean;
+  openLeases: number;
+  persist: boolean;
+}): boolean {
+  return state.launchedByMcp && !state.parentConnected && state.openLeases === 0 && !state.persist;
+}

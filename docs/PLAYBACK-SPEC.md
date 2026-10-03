@@ -15,10 +15,10 @@ Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-
 | Queue source of truth | **mpv's playlist** (in-memory only) | No SQLite, no Navidrome-queue mirror, no persistence across MCP restarts |
 | Navidrome `/api/queue` sync | **Not implemented** | Bidirectional sync is a bug factory; revisit if real demand emerges |
 | Engine startup | **Lazy** — mpv spawns on first playback tool call | No cost when feature is unused |
-| mpv lifecycle | **Quit on MCP exit by default** | The web player keeps mpv alive across an MCP exit when `webui.persistAfterMcpExit` is on or when it was launched standalone. A new MCP server then attaches over the stable per-uid IPC path |
+| mpv lifecycle | **Quit when the last MCP exits, by default** | The web player counts its spawning MCP plus one kept-open `POST /api/mcp-lease` per other MCP, and quits mpv when the last one closes. It keeps mpv alive across an MCP exit when `webui.persistAfterMcpExit` is on or when it was launched standalone. A new MCP server then attaches over the stable per-uid IPC path |
 | Volume control | **mpv internal volume only** (0–100), exposed as a tool | System mixer is OS-specific; mpv's own volume is sufficient |
 | Failure mode | **Fail fast, surface to AI** | Not fault-tolerant; resilience can be added once the happy path is proven |
-| Scrobbling | Subsonic `/scrobble` from `ScrobbleTracker` (`src/services/playback/scrobble-tracker.ts`), driven by playback-engine state changes | Now-playing on track start. One submission per play after half the duration or 240 s, whichever comes first. Tracks under 30 s never submit. |
+| Scrobbling | Subsonic `/scrobble` from `ScrobbleTracker` (`src/services/playback/scrobble-tracker.ts`), driven by playback-engine state changes | Now-playing on track start. One submission per play after half the duration or 240 s, whichever comes first. Tracks under 30 s never submit. Every process attached to mpv tracks plays. At the threshold, a process that counted the play broadcasts a claim with mpv `script-message`, and the first claim mpv delivers submits. |
 
 ## Architecture
 
@@ -266,6 +266,7 @@ No retry loops, no auto-recovery beyond re-attach.
 ## Out of Scope
 
 - SQLite / queue persistence across MCP restart. mpv itself outlives an MCP exit only through a persisting web player.
+- Shared mpv lifetime with `webui.enabled` false. No web player holds the MCP leases, so an exiting MCP that played music quits mpv even while another MCP plays through it.
 - Navidrome `/api/queue` bidirectional sync
 - Crossfade / replay gain
 - Multiple simultaneous playback engines

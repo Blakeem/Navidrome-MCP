@@ -33,7 +33,8 @@ import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES, SETUP_CAPABILITIES } from './capabilities.js';
 import { ensureWebForPlayback } from './web/spawn.js';
-import { webOwnerPresent, webOwnerScrobbling } from './web/acquire.js';
+import { holdOwnerLease } from './web/lease.js';
+import { legacyOwnerScrobbles, probeWebOwner, webOwnerPresent } from './web/acquire.js';
 import { startConfigServer } from './config-app/server.js';
 import { buildSetupNotice, registerDegradedTools, type StartupFailure } from './config-app/degraded-tools.js';
 import { openBrowser } from './utils/open-browser.js';
@@ -155,13 +156,15 @@ async function main(): Promise<void> {
   // so a player failure never stops MCP.
   await ensureWebForPlayback(config);
 
-  // Exactly one process submits each play. MCP submits a track unless a
-  // navidrome-web owns the port and is attached to mpv at that track's start.
+  // Every process attached to mpv tracks plays, and the mpv claim channel picks one submitter per play.
   if (config.features.playback) {
     // Subscribe BEFORE adopting mpv so the tracker catches the initial state
     // emit (it hydrates without re-scrobbling the in-flight track).
     const tracker = new ScrobbleTracker(client, playbackEngine, async () => {
-      return !(await webOwnerScrobbling(config.webui, readSavedWebuiEndpoint));
+      const owner = await probeWebOwner(config.webui, readSavedWebuiEndpoint);
+      // A player respawned by another MCP has no lease from this one until a probe finds it.
+      if (owner.outcome === 'ours') void holdOwnerLease(owner.port);
+      return !legacyOwnerScrobbles(owner);
     });
     tracker.attach();
     // Adopt an already-playing mpv (e.g. left by a prior session) so the

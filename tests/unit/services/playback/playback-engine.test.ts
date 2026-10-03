@@ -33,6 +33,8 @@ interface FakeIpc extends EventEmitter {
   close: ReturnType<typeof vi.fn>;
   /** Internal: list of registered onPropertyChange handlers, in install order */
   propertyHandlers: Array<(evt: { id: number; name: string; data: unknown }) => void>;
+  /** Internal: list of registered onEvent handlers, in install order */
+  eventHandlers: Array<(evt: { event: string; [key: string]: unknown }) => void>;
   /** Internal: chronological log of (call_kind, name) tuples for ordering tests */
   callOrder: Array<{ kind: string; name?: string }>;
 }
@@ -40,6 +42,7 @@ interface FakeIpc extends EventEmitter {
 function makeFakeIpc(): FakeIpc {
   const ipc = new EventEmitter() as FakeIpc;
   ipc.propertyHandlers = [];
+  ipc.eventHandlers = [];
   ipc.callOrder = [];
   ipc.connect = vi.fn().mockResolvedValue(undefined);
   ipc.isConnected = vi.fn().mockReturnValue(true);
@@ -62,7 +65,8 @@ function makeFakeIpc(): FakeIpc {
     ipc.propertyHandlers.push(handler);
     ipc.callOrder.push({ kind: 'onPropertyChange' });
   });
-  ipc.onEvent = vi.fn(() => {
+  ipc.onEvent = vi.fn((handler: (evt: { event: string; [key: string]: unknown }) => void) => {
+    ipc.eventHandlers.push(handler);
     ipc.callOrder.push({ kind: 'onEvent' });
   });
   ipc.onDisconnect = vi.fn(() => {
@@ -193,6 +197,39 @@ describe('installObservers ordering (H3)', () => {
     const sequence = ipc.callOrder.map((c) => c.kind);
     expect(sequence.filter((k) => k === 'attach-event')).toHaveLength(1);
     expect(sequence.indexOf('attach-event')).toBeLessThan(sequence.indexOf('observe'));
+  });
+});
+
+// ---------- client-message broadcast channel ----------
+
+describe('client-message channel', () => {
+  it('forwards an mpv client-message as a message state change', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    const events: StateChangeEvent[] = [];
+    const unsubscribe = playbackEngine.onStateChange((event) => events.push(event));
+    await playbackEngine.ensureRunning();
+    events.length = 0;
+
+    for (const handler of ipc.eventHandlers) {
+      handler({ event: 'client-message', args: ['topic', 'key', 'claimant'] });
+    }
+    unsubscribe();
+
+    expect(events).toEqual([{ kind: 'message', args: ['topic', 'key', 'claimant'] }]);
+  });
+
+  it('sends a broadcast as script-message', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+
+    await playbackEngine.broadcastMessage(['topic', 'key', 'claimant']);
+
+    expect(ipc.command).toHaveBeenCalledWith('script-message', 'topic', 'key', 'claimant');
+  });
+
+  it('rejects a broadcast without spawning mpv when none is attached', async () => {
+    await expect(playbackEngine.broadcastMessage(['topic'])).rejects.toThrow('mpv IPC is not connected');
+    expect(spawnMpv).not.toHaveBeenCalled();
   });
 });
 

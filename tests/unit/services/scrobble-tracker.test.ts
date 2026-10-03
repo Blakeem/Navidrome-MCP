@@ -35,13 +35,24 @@ interface FakeEngine extends ScrobbleEngine {
   fire(event: StateChangeEvent): void;
   setPlaylist(entries: FakeEntry[]): void;
   setCached(name: string, value: unknown): void;
+  /** Every claim broadcast, in send order. */
+  broadcasts: string[][];
+  /** mpv echoes a broadcast to its sender. Off lets a test order the echoes itself. */
+  autoEcho: boolean;
 }
 
 function createFakeEngine(): FakeEngine {
   let handler: ((event: StateChangeEvent) => void) | null = null;
   let playlist: FakeEntry[] = [];
   const cache = new Map<string, unknown>();
-  return {
+  const engine: FakeEngine = {
+    broadcasts: [],
+    autoEcho: true,
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async ScrobbleEngine.broadcastMessage interface
+    async broadcastMessage(args): Promise<void> {
+      engine.broadcasts.push(args);
+      if (engine.autoEcho) queueMicrotask(() => handler?.({ kind: 'message', args }));
+    },
     onStateChange(h): () => void {
       handler = h;
       return () => {
@@ -65,6 +76,7 @@ function createFakeEngine(): FakeEngine {
       cache.set(name, value);
     },
   };
+  return engine;
 }
 
 function createFakeClient(): ScrobbleClient & {
@@ -822,11 +834,10 @@ describe('ScrobbleTracker', () => {
 });
 
 /**
- * Per-track scrobble-ownership election. The injected `shouldSubmit` decides,
- * once at each track's start, whether THIS process counts the play. In MCP this
- * is a live web-port probe (submit iff no navidrome-web owns the port); the web
- * owner uses the default always-true. These tests pin the latch + deferral +
- * race-guard behavior without real sockets.
+ * Per-track ownership verdict. The injected `shouldSubmit` decides, once at each
+ * track's start, whether THIS process may claim the play. In MCP it defers to an
+ * older web owner that submits without claiming. These tests pin the latch,
+ * deferral and race-guard behavior without real sockets.
  */
 describe('ScrobbleTracker ownership election', () => {
   let engine: FakeEngine;
@@ -1037,5 +1048,258 @@ describe('ScrobbleTracker ownership election', () => {
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
     expect(submittedIds()).toEqual(['song-A']);
+  });
+});
+
+/**
+ * The claim channel. mpv echoes every script-message to every client in one
+ * order, so the first claim for a play wins and exactly one process submits it.
+ */
+describe('ScrobbleTracker claim channel', () => {
+  const CLAIM = 'navidrome-mcp-scrobble-claim';
+  let engine: FakeEngine;
+  let client: ReturnType<typeof createFakeClient>;
+  let tracker: ScrobbleTracker;
+
+  beforeEach(() => {
+    engine = createFakeEngine();
+    client = createFakeClient();
+    tracker = new ScrobbleTracker(client, engine);
+    tracker.attach();
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: -1 });
+  });
+
+  afterEach(() => {
+    tracker.detach();
+    vi.useRealTimers();
+  });
+
+  function submittedIds(c = client): string[] {
+    return c.subsonicRequest.mock.calls
+      .filter((call) => (call[1] as Record<string, string>).submission === 'true')
+      .map((call) => (call[1] as Record<string, string>).id);
+  }
+
+  async function startSong(songId: string, entryId: number, index = 0): Promise<void> {
+    engine.setPlaylist([{ index, songId, entryId, duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: index });
+    await flush();
+  }
+
+  function claim(key: string, claimant: string): void {
+    engine.fire({ kind: 'message', args: [CLAIM, key, claimant] });
+  }
+
+  it('broadcasts one claim keyed by entry id and song at the threshold', async () => {
+    await startSong('song-A', 7);
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    engine.fire({ kind: 'property', name: 'time-pos', data: 102 });
+    await flush();
+
+    expect(engine.broadcasts).toHaveLength(1);
+    expect(engine.broadcasts[0]?.slice(0, 2)).toEqual([CLAIM, '7:song-A']);
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('a foreign claim seen before the threshold means no claim and no submit', async () => {
+    await startSong('song-A', 7);
+    claim('7:song-A', 'other-process');
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    expect(engine.broadcasts).toHaveLength(0);
+    expect(submittedIds()).toEqual([]);
+  });
+
+  it('a foreign claim ordered before the own echo means no submit', async () => {
+    engine.autoEcho = false;
+    await startSong('song-A', 7);
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    const own = engine.broadcasts[0];
+    expect(own).toBeDefined();
+
+    claim('7:song-A', 'other-process');
+    engine.fire({ kind: 'message', args: own ?? [] });
+    await flush();
+    expect(submittedIds()).toEqual([]);
+  });
+
+  it('the own echo ordered before a foreign claim submits exactly once', async () => {
+    engine.autoEcho = false;
+    await startSong('song-A', 7);
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    engine.fire({ kind: 'message', args: engine.broadcasts[0] ?? [] });
+    claim('7:song-A', 'other-process');
+    engine.fire({ kind: 'property', name: 'time-pos', data: 150 });
+    await flush();
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('ignores a claim for another play and other message topics', async () => {
+    await startSong('song-A', 7);
+    claim('6:song-A', 'other-process');
+    engine.fire({ kind: 'message', args: ['some-other-topic', '7:song-A', 'other-process'] });
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('submits when mpv never echoes the claim', async () => {
+    vi.useFakeTimers();
+    engine.autoEcho = false;
+    engine.setPlaylist([{ index: 0, songId: 'song-A', entryId: 7, duration: 200 }]);
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    expect(submittedIds()).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('submits when the claim broadcast fails', async () => {
+    engine.broadcastMessage = (): Promise<void> => Promise.reject(new Error('mpv IPC is not connected'));
+    await startSong('song-A', 7);
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    expect(submittedIds()).toEqual(['song-A']);
+  });
+
+  it('a stale echo after a skip does not submit the next play early', async () => {
+    engine.autoEcho = false;
+    await startSong('song-A', 7);
+    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+    const staleClaim = engine.broadcasts[0] ?? [];
+
+    await startSong('song-B', 8, 1);
+    engine.fire({ kind: 'message', args: staleClaim });
+    engine.fire({ kind: 'property', name: 'time-pos', data: 5 });
+    await flush();
+    expect(submittedIds()).toEqual([]);
+  });
+
+  it('an adopted play never claims', async () => {
+    const adopting = createFakeEngine();
+    const adoptingClient = createFakeClient();
+    const adopter = new ScrobbleTracker(adoptingClient, adopting);
+    adopter.attach();
+    adopting.setCached('path', 'http://navidrome/stream?id=song-A');
+    adopting.setPlaylist([{ index: 0, songId: 'song-A', entryId: 7, isCurrent: true, duration: 200 }]);
+    adopting.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+
+    adopting.fire({ kind: 'property', name: 'time-pos', data: 150 });
+    await flush();
+    expect(adopting.broadcasts).toHaveLength(0);
+    expect(submittedIds(adoptingClient)).toEqual([]);
+    adopter.detach();
+  });
+});
+
+/**
+ * Two processes attached to one mpv. The bus delivers every property event and
+ * every broadcast to both trackers in one order, as mpv does.
+ */
+describe('ScrobbleTracker claim channel across two processes', () => {
+  interface Bus {
+    engineFor(slot: number): ScrobbleEngine;
+    fire(event: StateChangeEvent): void;
+    fireTo(slot: number, event: StateChangeEvent): void;
+    setPlaylist(entries: FakeEntry[]): void;
+    setCached(name: string, value: unknown): void;
+  }
+
+  function createBus(): Bus {
+    const handlers = new Map<number, (event: StateChangeEvent) => void>();
+    let playlist: FakeEntry[] = [];
+    const cache = new Map<string, unknown>();
+    const fire = (event: StateChangeEvent): void => {
+      for (const handler of [...handlers.values()]) handler(event);
+    };
+    return {
+      engineFor: (slot): ScrobbleEngine => ({
+        onStateChange(h): () => void {
+          handlers.set(slot, h);
+          return () => handlers.delete(slot);
+        },
+        // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async ScrobbleEngine.getQueue interface
+        async getQueue(): Promise<FakeEntry[]> {
+          return playlist;
+        },
+        getCachedProperty: (name): unknown => cache.get(name),
+        // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async ScrobbleEngine.broadcastMessage interface
+        async broadcastMessage(args): Promise<void> {
+          queueMicrotask(() => fire({ kind: 'message', args }));
+        },
+      }),
+      fire,
+      fireTo: (slot, event): void => handlers.get(slot)?.(event),
+      setPlaylist: (entries): void => {
+        playlist = entries;
+      },
+      setCached: (name, value): void => {
+        cache.set(name, value);
+      },
+    };
+  }
+
+  function submissions(c: ReturnType<typeof createFakeClient>): number {
+    return c.subsonicRequest.mock.calls.filter(
+      (call) => (call[1] as Record<string, string>).submission === 'true',
+    ).length;
+  }
+
+  const trackers: ScrobbleTracker[] = [];
+  afterEach(() => {
+    for (const t of trackers.splice(0)) t.detach();
+  });
+
+  function startTracker(bus: Bus, slot: number, client: ReturnType<typeof createFakeClient>): void {
+    const tracker = new ScrobbleTracker(client, bus.engineFor(slot));
+    tracker.attach();
+    trackers.push(tracker);
+  }
+
+  it('two trackers that both counted a play submit it exactly once', async () => {
+    const bus = createBus();
+    const first = createFakeClient();
+    const second = createFakeClient();
+    startTracker(bus, 0, first);
+    startTracker(bus, 1, second);
+    bus.fire({ kind: 'property', name: 'playlist-pos', data: -1 });
+
+    bus.setPlaylist([{ index: 0, songId: 'song-A', entryId: 3, duration: 200 }]);
+    bus.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    bus.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    expect(submissions(first) + submissions(second)).toBe(1);
+  });
+
+  it('a play one tracker adopted is submitted by the tracker that counted it', async () => {
+    const bus = createBus();
+    const counting = createFakeClient();
+    const adopting = createFakeClient();
+    startTracker(bus, 0, counting);
+    bus.fireTo(0, { kind: 'property', name: 'playlist-pos', data: -1 });
+    bus.setPlaylist([{ index: 0, songId: 'song-A', entryId: 3, isCurrent: true, duration: 200 }]);
+    bus.setCached('path', 'http://navidrome/stream?id=song-A');
+    bus.fireTo(0, { kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+
+    // The second process attaches mid-play, so its first playlist-pos is the snapshot it adopts.
+    startTracker(bus, 1, adopting);
+    bus.fireTo(1, { kind: 'property', name: 'playlist-pos', data: 0 });
+    await flush();
+    bus.fire({ kind: 'property', name: 'time-pos', data: 101 });
+    await flush();
+
+    expect(submissions(counting)).toBe(1);
+    expect(submissions(adopting)).toBe(0);
   });
 });
