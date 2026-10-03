@@ -187,8 +187,8 @@ The `play_` verb prefix consistently means "affect what's audibly coming out of 
 | Tool | Args | Effect |
 |---|---|---|
 | `pause` / `resume` | — | Pause or resume playback. Attach-only, so they return `{ success: false, message }` when no mpv runs. |
-| `next` / `previous` | — | `next` sends `playlist-next force`, which stops playback on the last entry. `previous` sends `playlist-prev`, and on the first entry it restarts the current track. |
-| `seek` | `{ seconds, mode: 'absolute' \| 'relative' }` (default `'relative'`) | Move within the current track |
+| `next` / `previous` | — | `next` sends `playlist-next force`, which stops playback on the last entry, and the result then carries `stopped: true`. `previous` sends `playlist-prev`, and on the first entry it restarts the current track. |
+| `seek` | `{ seconds, mode: 'absolute' \| 'relative' }` (default `'relative'`) | Move within the current track. An absolute target must be 0 or more, since mpv reads a negative one as an offset from the end. A target past the end skips to the next track. |
 | `set_volume` | `{ level }` (any finite number) | mpv internal volume. The engine clamps the level to 0-100. |
 
 #### Queue management
@@ -206,7 +206,7 @@ The `play_` verb prefix consistently means "affect what's audibly coming out of 
 
 | Tool | Returns |
 |---|---|
-| `now_playing` | `{ engineRunning, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength?, isRadio?, radioStation? }` (cache first, see above. Does NOT spawn mpv) |
+| `now_playing` | `{ engineRunning, songId?, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength?, isRadio?, radioStation? }` (cache first, see above. Does NOT spawn mpv). `paused` is omitted when no entry is current, and `duration` is omitted for radio. |
 | `playback_status` | `{ engineRunning, mpvPath, mpvVersion, volume, idle }` (does NOT spawn mpv) |
 
 `now_playing` returns real-time playback state (current title, position, paused). It is **distinct from** `get_play_queue`: "now playing" answers *"what's happening right this second?"*; `get_play_queue` answers *"what's the full ordered list of tracks that are queued up?"*. Same underlying mpv playlist, different granularities and very different payload sizes. When a radio stream is loaded, `now_playing` adds `isRadio: true` and `radioStation: { name }`.
@@ -227,7 +227,7 @@ A radio stream is infinite; songs and albums are finite. Mixing them in one mpv 
 
 The recognition primitive is the queue entry's `songId` field: when a stream URL doesn't carry a Navidrome `?id=...` query parameter (i.e., it's an arbitrary URL like a SomaFM Icecast stream), `parseSongIdFromStreamUrl` returns `null` and the entry is treated as a radio stream. `playbackEngine.hasRadioStream()` exposes this check; `enqueue` calls it to decide whether to demote append → replace.
 
-`radioStation.name` is the saved station whose stream URL matches mpv's `path` or `playlist-path`, or "Unknown station" when none matches. Any process attached to mpv resolves it the same way.
+`radioStation.name` is the saved station whose stream URL matches mpv's `path` or `playlist-path`, or "Unknown station" when none matches. Saved stations can share a stream URL, so `play_radio_station` writes the station ID to mpv's `user-data/navidrome-mcp/radio-station-id` before the load, and that station wins among the matches. Any process attached to mpv resolves it the same way. An mpv older than 0.36 has no `user-data`, and the first matching station wins.
 
 #### Why search-driven tools are separate from `play_albums` / `play_songs`
 
@@ -259,7 +259,7 @@ Fail fast. Every error surfaces a structured message via `ErrorFormatter`:
 | mpv exits unexpectedly | Tool call returns error; engine clears IPC state; next call re-attaches or spawns |
 | IPC socket disconnects | Engine clears state; next call attempts re-attach |
 | Navidrome stream URL 4xx/5xx | mpv emits `end-file` with reason `error`, the engine logs it at debug, and mpv moves to the next entry. No tool result or `now_playing` field reports it. |
-| Out-of-range index for `move_in_play_queue` / `remove_from_play_queue` / `play_queue_index` | `move_in_play_queue` rejects a `to` past the last index with a bound message. An out-of-range `from`, `remove_from_play_queue` index or `play_queue_index` index fails with a message that names the index and points to `get_play_queue`. |
+| Out-of-range index for `move_in_play_queue` / `remove_from_play_queue` / `play_queue_index` | `move_in_play_queue` rejects a `to` past the last index, and `play_queue_index` rejects an index past the end, each with a bound message, since mpv accepts both without an error. An out-of-range `from` or `remove_from_play_queue` index fails with a message that names the index and points to `get_play_queue`. |
 
 No retry loops, no auto-recovery beyond re-attach.
 

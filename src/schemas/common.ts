@@ -22,7 +22,8 @@ import { z } from 'zod';
 // encodeURIComponent at the call sites is defense-in-depth on top of this regex.
 export const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-export const IdStringSchema = z.string().min(1, 'ID is required').regex(ID_PATTERN, 'ID contains invalid characters');
+// abort stops an empty ID at its first issue, so it is not also reported as invalid characters.
+export const IdStringSchema = z.string().min(1, { message: 'ID is required', abort: true }).regex(ID_PATTERN, 'ID contains invalid characters');
 
 export const IdSchema = z.object({
   id: IdStringSchema,
@@ -34,7 +35,7 @@ export const IdSchema = z.object({
 export const createIdSchema = <F extends string>(resourceType: string, fieldName: F) =>
   z.object({
     [fieldName]: z.string()
-      .min(1, `${resourceType} ID is required`)
+      .min(1, { message: `${resourceType} ID is required`, abort: true })
       .regex(ID_PATTERN, `${resourceType} ID contains invalid characters`),
   } as { [K in F]: z.ZodString });
 

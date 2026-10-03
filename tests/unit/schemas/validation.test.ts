@@ -4,7 +4,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { SetActiveLibrariesSchema, TopTracksByArtistSchema } from '../../../src/schemas/validation.js';
+import {
+  CreatePlaylistSchema,
+  SeekSchema,
+  SetActiveLibrariesSchema,
+  TopTracksByArtistSchema,
+  UpdatePlaylistSchema,
+} from '../../../src/schemas/validation.js';
 
 describe('SetActiveLibrariesSchema', () => {
   it('accepts a normal positive-integer libraryIds array', () => {
@@ -80,5 +86,24 @@ describe('TopTracksByArtistSchema limit contract', () => {
 
   it('rejects a limit above the max (51)', () => {
     expect(() => TopTracksByArtistSchema.parse({ artist: 'Radiohead', limit: 51 })).toThrow();
+  });
+});
+
+describe('playlist name', () => {
+  it('rejects a whitespace-only name on create and update with one message', () => {
+    expect(CreatePlaylistSchema.safeParse({ name: '   ' }).error?.issues.map((issue) => issue.message)).toEqual(['Playlist name is required']);
+    expect(UpdatePlaylistSchema.safeParse({ playlistId: 'p1', name: '' }).error?.issues.map((issue) => issue.message)).toEqual(['Playlist name is required']);
+  });
+
+  it('stores the name without surrounding whitespace', () => {
+    expect(CreatePlaylistSchema.parse({ name: '  Road Trip ' }).name).toBe('Road Trip');
+  });
+});
+
+describe('SeekSchema', () => {
+  it('rejects a negative absolute target and accepts a negative relative offset', () => {
+    expect(SeekSchema.safeParse({ seconds: -5, mode: 'absolute' }).success).toBe(false);
+    expect(SeekSchema.parse({ seconds: -5 })).toEqual({ seconds: -5, mode: 'relative' });
+    expect(SeekSchema.parse({ seconds: 0, mode: 'absolute' })).toEqual({ seconds: 0, mode: 'absolute' });
   });
 });

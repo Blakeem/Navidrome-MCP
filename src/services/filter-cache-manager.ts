@@ -26,6 +26,9 @@ const FILTER_TYPES = FilterOptionsSchema.shape.filterType.options;
 
 export type FilterType = (typeof FILTER_TYPES)[number];
 
+// Case-insensitive, so "Accession Records" sorts beside "ATO Records" instead of after every capital.
+const FILTER_OPTION_ORDER = new Intl.Collator(undefined, { sensitivity: 'base' });
+
 // The /api/tag tag_name each filter type loads from.
 const TAG_NAMES: Record<FilterType, string> = {
   genres: 'genre',
@@ -215,7 +218,7 @@ class FilterCacheManager {
       throw new Error('FilterCacheManager not initialized');
     }
 
-    return Array.from(this.filterSets[type].originals.values()).sort();
+    return Array.from(this.filterSets[type].originals.values()).sort((a, b) => FILTER_OPTION_ORDER.compare(a, b));
   }
 
   /** Feeds "did you mean?" suggestions. */

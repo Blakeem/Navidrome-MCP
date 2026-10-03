@@ -56,7 +56,7 @@ const BASE_RADIO_TOOLS: Tool[] = [
   },
   {
     name: 'create_radio_station',
-    description: 'Create one or more radio stations. Always provide stations as a JSON array - use a single-item array for one station. Each station requires name and streamUrl, with optional homePageUrl.',
+    description: 'Create one or more radio stations. Always provide stations as a JSON array - use a single-item array for one station. Each station requires name and streamUrl, with optional homePageUrl. A created row carries a note when another saved station already uses its stream URL.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -190,7 +190,7 @@ const RADIO_BROWSER_TOOLS: Tool[] = [
         },
         language: {
           type: 'string',
-          description: 'Broadcast language as a language name, as listed by get_radio_filters (e.g., "english", "spanish", "french", "german", "japanese", "portuguese", "italian"). ISO codes such as "en" do not work.',
+          description: 'Broadcast language as a language name, as listed by get_radio_filters (e.g., "english", "spanish", "french", "german", "japanese", "portuguese", "italian"). Radio Browser matches it as a substring, so an ISO code such as "en" also matches "french" and "slovenian".',
         },
         codec: {
           type: 'string',
@@ -286,7 +286,7 @@ const RADIO_BROWSER_TOOLS: Tool[] = [
   },
   {
     name: 'vote_station',
-    description: 'Vote for a radio station to increase its popularity',
+    description: 'Vote for a radio station to increase its popularity. Radio Browser counts one vote per IP per station every 10 minutes, so a repeat vote in that window reports the first one.',
     inputSchema: {
       type: 'object',
       properties: {

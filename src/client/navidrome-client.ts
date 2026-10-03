@@ -28,23 +28,42 @@ import {
   type RetryPolicy,
 } from '../utils/fetch-with-timeout.js';
 
-/** A REST read of an item Navidrome does not hold, so the caller's ID is probably wrong. */
+// Only these resources take an item ID as their second path segment, so only they can name the missing item.
+const ITEM_RESOURCE_NAMES: Readonly<Record<string, string>> = {
+  song: 'Song',
+  album: 'Album',
+  artist: 'Artist',
+  playlist: 'Playlist',
+};
+
+function itemFromEndpoint(endpoint: string): { resource: string; id: string } | null {
+  const [, resourceSegment, idSegment] = (endpoint.split('?')[0] ?? '').split('/');
+  const resource = resourceSegment === undefined ? undefined : ITEM_RESOURCE_NAMES[resourceSegment];
+  if (resource === undefined || idSegment === undefined || idSegment === '') return null;
+  return { resource, id: decodeURIComponent(idSegment) };
+}
+
+/** A request for an item Navidrome does not hold, so the caller's ID is probably wrong. */
 export class NavidromeNotFoundError extends Error {
-  constructor(label: string) {
-    super(`${label} found no item. The ID is probably wrong.`);
+  constructor(label: string, endpoint: string) {
+    const item = itemFromEndpoint(endpoint);
+    super(item === null ? `${label} found no item. The ID is probably wrong.` : ErrorFormatter.notFound(item.resource, item.id));
     this.name = 'NavidromeNotFoundError';
   }
 }
 
-// Navidrome answers a by-id read of a missing item with HTTP 500 and this body, which reads as a server outage.
+// Navidrome answers a missing item with 404, or with 400 or 500 and this body, which reads as a server outage.
 const MISSING_ITEM_ERROR_BODY = 'data not found';
 
 function isMissingItemResponse(status: number, errorText: string): boolean {
   if (status === 404) {
     return true;
   }
-  if (status !== 500) {
+  if (status !== 400 && status !== 500) {
     return false;
+  }
+  if (errorText.trim() === MISSING_ITEM_ERROR_BODY) {
+    return true;
   }
   try {
     const body: unknown = JSON.parse(errorText);
@@ -130,7 +149,7 @@ export class NavidromeClient {
     const parsed = totalHeader !== null ? Number.parseInt(totalHeader, 10) : NaN;
     const total = Number.isFinite(parsed) ? parsed : null;
     const method = options.method ?? 'GET';
-    const data = await this.parseResponse<T>(response, `Navidrome ${method} ${endpoint}`, method === 'GET');
+    const data = await this.parseResponse<T>(response, method, endpoint);
     return { data, total };
   }
 
@@ -320,14 +339,17 @@ export class NavidromeClient {
     );
   }
 
-  private async parseResponse<T>(response: Response, label: string, isRead: boolean): Promise<T> {
+  private async parseResponse<T>(response: Response, method: string, endpoint: string): Promise<T> {
+    const label = `Navidrome ${method} ${endpoint}`;
     if (!response.ok) {
       // Cap the raw error body before it flows to the LLM via toolExecution: a
       // proxy's large HTML 5xx page (server version/OS/path info) or a 4xx body
       // referencing internal paths would otherwise reach the context unbounded.
       const errorText = (await response.text()).slice(0, 512);
-      if (isRead && isMissingItemResponse(response.status, errorText)) {
-        throw new NavidromeNotFoundError(label);
+      // A write to a path that names no item, such as POST /playlist, answers 404 for a wrong route, not a wrong ID.
+      const namesItem = method === 'GET' || itemFromEndpoint(endpoint) !== null;
+      if (namesItem && isMissingItemResponse(response.status, errorText)) {
+        throw new NavidromeNotFoundError(label, endpoint);
       }
       throw new Error(ErrorFormatter.httpRequest(label, response, errorText));
     }

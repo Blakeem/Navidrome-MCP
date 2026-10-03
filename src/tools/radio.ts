@@ -165,7 +165,8 @@ function createdAtMs(station: RadioStationDTO): number {
 
 /**
  * Subsonic's create does not echo the id, so one list call resolves the batch by (name, streamUrl), newest
- * createdAt first, assigning each id once since Navidrome allows duplicates.
+ * createdAt first, assigning each id once since Navidrome allows duplicates. The same listing flags a stream URL
+ * that another saved station already uses.
  */
 async function resolveCreatedStationIds(
   client: NavidromeClient,
@@ -185,6 +186,10 @@ async function resolveCreatedStationIds(
         result.station.createdAt = newest.createdAt;
         result.station.updatedAt = newest.updatedAt;
         assignedIds.add(newest.id);
+        const sameStream = allStations.find((s) => s.streamUrl === newest.streamUrl && s.id !== newest.id);
+        if (sameStream !== undefined) {
+          result.note = `Saved station "${sameStream.name}" already uses this stream URL.`;
+        }
       } else {
         // The note keeps the LLM from calling delete_radio_station('') with the empty id.
         result.note = `Created "${result.station.name}" but could not resolve its id. Call list_radio_stations to find it.`;
@@ -388,7 +393,7 @@ export async function playRadioStation(
       throw new Error(`Radio station "${station.name}" has no stream URL`);
     }
 
-    await playbackEngine.enqueueRadio(station.streamUrl);
+    await playbackEngine.enqueueRadio(station.streamUrl, station.id);
 
     return {
       success: true,

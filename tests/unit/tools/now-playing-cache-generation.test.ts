@@ -40,6 +40,18 @@ const getCachedPropertyMock = vi.hoisted(() => vi.fn());
 const getQueueGenerationMock = vi.hoisted(() => vi.fn());
 const getQueueMock = vi.hoisted(() => vi.fn());
 const ingestQueueMetadataMock = vi.hoisted(() => vi.fn());
+const getRadioStationTagMock = vi.hoisted(() => vi.fn().mockReturnValue(null));
+// Mirrors the engine's parse: only a Subsonic stream URL names a song.
+const songIdForPathMock = vi.hoisted(() =>
+  vi.fn((path: string): string | null => {
+    try {
+      const url = new URL(path);
+      return url.pathname.endsWith('/rest/stream') ? url.searchParams.get('id') : null;
+    } catch {
+      return null;
+    }
+  }),
+);
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -49,6 +61,8 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     getQueueGeneration: getQueueGenerationMock,
     getQueue: getQueueMock,
     ingestQueueMetadata: ingestQueueMetadataMock,
+    getRadioStationTag: getRadioStationTagMock,
+    songIdForPath: songIdForPathMock,
   },
 }));
 

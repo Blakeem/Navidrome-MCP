@@ -203,7 +203,7 @@ Tool categories whose heading says **requires ...** are only registered when tha
 | `previous` | Skip to the previous track |
 | `seek` | Move within the current track (absolute or relative) |
 | `set_volume` | Set mpv's internal volume (0-100) |
-| `now_playing` | Current title/artist/album/position/duration and queue index (or station + ICY metadata for radio) |
+| `now_playing` | Current song ID, title, artist, album, position, duration and queue index. Radio reports the station and its ICY title. |
 | `playback_status` | Engine health probe (running, mpv version, idle) without spawning mpv |
 | `get_play_queue` | One page of the live queue (`limit`, `offset`) with metadata and the current-track index |
 | `clear_play_queue` | Clear the queue and stop playback |

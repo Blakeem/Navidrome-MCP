@@ -524,13 +524,12 @@ describe('clickStation', () => {
     expect(typeof result.message).toBe('string');
   });
 
-  it('returns success:false when Radio Browser responds ok:false', async () => {
+  it('fails the call when Radio Browser responds ok:false, since no click was counted', async () => {
     global.fetch = makeFetch(200, { ok: false, message: 'Station not found' });
 
     const { clickStation } = await import('../../../src/tools/radio-discovery.js');
-    const result = await clickStation(makeConfig(), { stationUuid: 'bad-uuid' });
-
-    expect(result.success).toBe(false);
+    await expect(clickStation(makeConfig(), { stationUuid: 'bad-uuid' }))
+      .rejects.toThrow("Tool 'click_station' failed: Radio Browser rejected the click: Station not found");
   });
 
   it('throws on HTTP error', async () => {
@@ -598,8 +597,8 @@ describe('clickStation', () => {
 
     const { clickStation } = await import('../../../src/tools/radio-discovery.js');
 
-    await clickStation(makeConfig(), { stationUuid: 'uuid-fail' });
-    await clickStation(makeConfig(), { stationUuid: 'uuid-fail' });
+    await expect(clickStation(makeConfig(), { stationUuid: 'uuid-fail' })).rejects.toThrow(/rejected the click/);
+    await expect(clickStation(makeConfig(), { stationUuid: 'uuid-fail' })).rejects.toThrow(/rejected the click/);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -624,23 +623,33 @@ describe('voteStation', () => {
     expect(typeof result.message).toBe('string');
   });
 
-  it('returns success:false when server declines the vote', async () => {
-    global.fetch = makeFetch(200, { ok: false, message: 'Already voted' });
+  it('fails the call with the server reason when the server declines the vote', async () => {
+    global.fetch = makeFetch(200, { ok: false, message: "VoteError 'could not find station with matching id'" });
 
     const { voteStation } = await import('../../../src/tools/radio-discovery.js');
-    const result = await voteStation(makeConfig(), { stationUuid: 'uuid-001' });
-
-    expect(result.success).toBe(false);
-    expect(result.message).toBe('Already voted');
+    await expect(voteStation(makeConfig(), { stationUuid: 'uuid-001' }))
+      .rejects.toThrow("Tool 'vote_station' failed: Radio Browser rejected the vote: VoteError 'could not find station with matching id'");
   });
 
-  it('does not report success when the server declines with no message', async () => {
+  it('fails the call when the server declines with no message', async () => {
     global.fetch = makeFetch(200, { ok: false });
 
     const { voteStation } = await import('../../../src/tools/radio-discovery.js');
-    const result = await voteStation(makeConfig(), { stationUuid: 'uuid-001' });
+    await expect(voteStation(makeConfig(), { stationUuid: 'uuid-001' }))
+      .rejects.toThrow('Radio Browser rejected the vote: no reason given');
+  });
 
-    expect(result).toEqual({ success: false, message: 'Vote failed' });
+  it('reports a vote another process cast within the window as registered, and dedupes the next one', async () => {
+    const fetchMock = makeFetch(200, { ok: false, message: "VoteError 'you are voting for the same station too often'" });
+    global.fetch = fetchMock;
+
+    const { voteStation } = await import('../../../src/tools/radio-discovery.js');
+    const first = await voteStation(makeConfig(), { stationUuid: 'uuid-vote-other-process' });
+    const second = await voteStation(makeConfig(), { stationUuid: 'uuid-vote-other-process' });
+
+    expect(first).toEqual({ success: true, message: expect.stringMatching(/already registered/i) as unknown });
+    expect(second.success).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('throws on HTTP error', async () => {
@@ -676,8 +685,9 @@ describe('voteStation', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(first.success).toBe(true);
-    expect(second.success).toBe(false);
-    expect(second.message).toMatch(/already voted/i);
+    // The first vote counts, so the repeat reports it as registered, like a repeat click.
+    expect(second.success).toBe(true);
+    expect(second.message).toMatch(/already registered/i);
   });
 
   it('vote and click for the same UUID are independent (one of each allowed)', async () => {

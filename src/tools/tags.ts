@@ -205,10 +205,16 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
     // One backfill across every page, so BACKFILL_CONCURRENCY bounds the whole tool call.
     await backfillTagCounts(client, pages.flatMap((page) => page.entries));
 
-    const distributions = pages
-      .map(buildDistribution)
-      .filter((dist): dist is TagDistribution => dist !== null);
-    return { distributions };
+    const distributions: TagDistribution[] = [];
+    const emptyTagNames: string[] = [];
+    for (const page of pages) {
+      const dist = buildDistribution(page);
+      if (dist === null) emptyTagNames.push(page.tagName);
+      else distributions.push(dist);
+    }
+    const result: GetTagDistributionResult = { distributions };
+    if (emptyTagNames.length > 0) result.emptyTagNames = emptyTagNames;
+    return result;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_tag_distribution', error));
   }

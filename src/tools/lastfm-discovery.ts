@@ -60,19 +60,15 @@ interface SimilarTracksResult {
   similarTracks: LastFmTrack[];
 }
 
-interface LastFmTag {
-  name: string;
-  url: string;
-}
-
 interface ArtistInfoResult {
   name: string;
   mbid: string | null;
-  url: string;
+  // Only with verbose, like the other Last.fm tools.
+  url?: string;
   listeners: number;
   playcount: number;
   biography: string | null;
-  tags: LastFmTag[];
+  tags: string[];
   similar: string[];
 }
 
@@ -244,9 +240,9 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
 
 export async function getArtistInfo(config: Config, args: unknown): Promise<ArtistInfoResult> {
   try {
-    const { artist, lang } = ArtistInfoSchema.parse(args);
+    const { artist, lang, verbose } = ArtistInfoSchema.parse(args);
 
-    logger.debug('Tool getArtistInfo called with args:', { artist, lang });
+    logger.debug('Tool getArtistInfo called with args:', { artist, lang, verbose });
 
     const apiKey = requireLastFmApiKey(config);
 
@@ -267,19 +263,21 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
       ? await fetchEnglishBiography(artist, apiKey)
       : localizedBiography;
 
-    return {
+    const result: ArtistInfoResult = {
       name: typeof artistInfo['name'] === 'string' ? artistInfo['name'] : '',
       mbid: typeof artistInfo['mbid'] === 'string' ? artistInfo['mbid'] : null,
-      url: typeof artistInfo['url'] === 'string' ? artistInfo['url'] : '',
       listeners: safeNumber(stats?.['listeners']),
       playcount: safeNumber(stats?.['playcount']),
       biography,
-      tags: ((tags?.['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>) => ({
-        name: typeof t['name'] === 'string' ? t['name'] : '',
-        url: typeof t['url'] === 'string' ? t['url'] : '',
-      })),
+      tags: ((tags?.['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>) =>
+        typeof t['name'] === 'string' ? t['name'] : '',
+      ),
       similar: ((similar?.['artist'] as Record<string, unknown>[] | undefined) ?? []).slice(0, 5).map((a: Record<string, unknown>) => typeof a['name'] === 'string' ? a['name'] : ''),
     };
+    if (verbose) {
+      result.url = typeof artistInfo['url'] === 'string' ? artistInfo['url'] : '';
+    }
+    return result;
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_artist_info', error));
   }

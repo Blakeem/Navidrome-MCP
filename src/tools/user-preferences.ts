@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { NavidromeNotFoundError, type NavidromeClient } from '../client/navidrome-client.js';
+import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
 import {
   transformSongsToDTO,
@@ -57,16 +57,12 @@ interface SetRatingResult {
   message: string;
 }
 
-// Subsonic /star and /unstar never read `type` and resolve the kind from the ID, so the ID is checked against `type` first.
+/**
+ * Subsonic /star, /unstar and /setRating never read `type` and resolve the kind from the ID, so the ID is checked
+ * against `type` first. A missing item throws the client's NavidromeNotFoundError, which names the type and ID.
+ */
 async function assertItemExists(client: NavidromeClient, type: 'song' | 'album' | 'artist', itemId: string): Promise<void> {
-  try {
-    await client.request<unknown>(`/${type}/${encodeURIComponent(itemId)}`);
-  } catch (error) {
-    if (error instanceof NavidromeNotFoundError) {
-      throw new Error(`${type} ${itemId} not found`);
-    }
-    throw error;
-  }
+  await client.request<unknown>(`/${type}/${encodeURIComponent(itemId)}`);
 }
 
 export async function starItem(client: NavidromeClient, args: unknown): Promise<StarItemResult> {
@@ -118,6 +114,7 @@ export async function setRating(client: NavidromeClient, args: unknown): Promise
     logger.debug('Tool setRating called with args:', { itemId, type, rating });
     logger.info(`Setting rating ${rating} for ${type}: ${itemId}`);
 
+    await assertItemExists(client, type, itemId);
     const response = await client.subsonicRequest('/setRating', {
       id: itemId,
       rating: rating.toString()

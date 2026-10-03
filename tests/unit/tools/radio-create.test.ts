@@ -119,6 +119,30 @@ describe('createRadioStation real-id resolution', () => {
     expect(result.results[0]?.station?.updatedAt).toBeNull();
   });
 
+  it('notes a saved station that already uses the new stream URL, and no note for a unique URL', async () => {
+    mockClient.subsonicRequest
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockResolvedValueOnce({ status: 'ok' });
+    mockClient.request.mockResolvedValueOnce(
+      makeRestList([
+        { id: 'old-1', name: 'Groove Salad', streamUrl: 'http://dup.test/', createdAt: '2025-01-01T00:00:00Z' },
+        { id: 'new-1', name: 'Groove Salad copy', streamUrl: 'http://dup.test/', createdAt: '2025-09-03T22:07:50Z' },
+        { id: 'new-2', name: 'Unique', streamUrl: 'http://unique.test/' },
+      ])
+    );
+
+    const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
+      stations: [
+        { name: 'Groove Salad copy', streamUrl: 'http://dup.test/' },
+        { name: 'Unique', streamUrl: 'http://unique.test/' },
+      ],
+    });
+
+    expect(result.results[0]?.station?.id).toBe('new-1');
+    expect(result.results[0]?.note).toBe('Saved station "Groove Salad" already uses this stream URL.');
+    expect(result.results[1]?.note).toBeUndefined();
+  });
+
   it('annotates with a note when create succeeded but station vanished from the listing', async () => {
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });        // create succeeded
     mockClient.request.mockResolvedValueOnce(makeRestList([]));                // listing returned empty

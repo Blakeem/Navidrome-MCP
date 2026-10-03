@@ -341,6 +341,21 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
     });
 
     describe('addTracksToPlaylist', () => {
+      /** Answers the song-ID check with a row per known ID, and the add POST with `addResponse`. */
+      function answerAdd(addResponse: unknown, unknownIds: readonly string[] = []): void {
+        mockClient.request.mockImplementation((endpoint: string) => {
+          if (!endpoint.startsWith('/song?')) return Promise.resolve(addResponse);
+          const ids = new URLSearchParams(endpoint.slice('/song?'.length)).getAll('id');
+          return Promise.resolve(ids.filter((id) => !unknownIds.includes(id)).map((id) => ({ id, title: id })));
+        });
+      }
+
+      function tracksPostBody(): unknown {
+        const call = mockClient.request.mock.calls.find(([endpoint]) => endpoint === '/playlist/playlist-123/tracks');
+        if (call === undefined) throw new Error('no POST /tracks call');
+        return JSON.parse((call[1] as RequestInit).body as string);
+      }
+
       it('should add individual song IDs to playlist', async () => {
         const mockResponse = { 
           added: 2,
@@ -348,7 +363,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           success: true
         };
         
-        mockClient.request.mockResolvedValue(mockResponse);
+        answerAdd(mockResponse);
         
         const result = await addTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
@@ -366,7 +381,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           })
         );
         // Navidrome reads song IDs from `ids`, so the input name `songIds` must not reach the body.
-        expect(JSON.parse((mockClient.request.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+        expect(tracksPostBody()).toEqual({
           ids: ['song-1', 'song-2'],
         });
 
@@ -379,7 +394,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
 
       it('should report that nothing matched (not a failure) when no tracks were added', async () => {
         // Navidrome does not dedupe, so added=0 means no requested ID matched a track.
-        mockClient.request.mockResolvedValue({ added: 0 });
+        answerAdd({ added: 0 });
 
         const result = await addTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
@@ -394,7 +409,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       it('should default a missing `added` field to 0 (nothing-matched message)', async () => {
         // The response type says `{ added: number }` but Navidrome may omit
         // it; the guard must not produce NaN or undefined.
-        mockClient.request.mockResolvedValue({});
+        answerAdd({});
 
         const result = await addTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
@@ -407,7 +422,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should use singular "track" for a single add', async () => {
-        mockClient.request.mockResolvedValue({ added: 1 });
+        answerAdd({ added: 1 });
 
         const result = await addTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
@@ -469,6 +484,15 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
       });
 
+      it('rejects an unknown song ID without adding, since Navidrome would store a dangling row', async () => {
+        answerAdd({ added: 2 }, ['gone']);
+
+        await expect(
+          addTracksToPlaylist(mockClient, { playlistId: 'playlist-123', songIds: ['song-1', 'gone'] }),
+        ).rejects.toThrow("Tool 'add_tracks_to_playlist' failed: Unknown song IDs: gone. Nothing was added.");
+        expect(mockClient.request.mock.calls.some(([endpoint]) => endpoint === '/playlist/playlist-123/tracks')).toBe(false);
+      });
+
       it('should reject when no content IDs are supplied', async () => {
         await expect(
           addTracksToPlaylist(mockClient, {
@@ -521,7 +545,9 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           success: true
         };
 
-        mockClient.request.mockResolvedValue(mockAddResponse);
+        mockClient.request
+          .mockResolvedValueOnce([{ id: 'song-1' }, { id: 'song-2' }, { id: 'song-3' }])
+          .mockResolvedValueOnce(mockAddResponse);
 
         const result = await addTracksToPlaylist(mockClient, {
           playlistId: 'playlist-123',
@@ -530,8 +556,8 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           artistIds: ['artist-1']
         });
 
-        // Single POST to /tracks; no before/after pagination
-        expect(mockClient.request).toHaveBeenCalledTimes(1);
+        // One song-ID check, then a single POST to /tracks with no before/after pagination.
+        expect(mockClient.request).toHaveBeenCalledTimes(2);
         expect(mockClient.request).toHaveBeenCalledWith(
           '/playlist/playlist-123/tracks',
           expect.objectContaining({
@@ -542,7 +568,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             body: expect.stringContaining('album-1')
           })
         );
-        expect(JSON.parse((mockClient.request.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+        expect(JSON.parse((mockClient.request.mock.calls[1]![1] as RequestInit).body as string)).toEqual({
           ids: ['song-1', 'song-2', 'song-3'],
           albumIds: ['album-1', 'album-2'],
           artistIds: ['artist-1'],

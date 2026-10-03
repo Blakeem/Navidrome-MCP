@@ -94,7 +94,7 @@ describe('getArtistInfo', () => {
     const result = await getArtistInfo(makeConfig(), { artist: 'Radiohead' });
 
     expect(typeof result.name).toBe('string');
-    expect(typeof result.url).toBe('string');
+    expect(result.url).toBeUndefined();
     expect(typeof result.listeners).toBe('number');
     expect(Number.isFinite(result.listeners)).toBe(true);
     expect(typeof result.playcount).toBe('number');
@@ -103,6 +103,28 @@ describe('getArtistInfo', () => {
     expect(Array.isArray(result.similar)).toBe(true);
     // biography has HTML stripped
     expect(result.biography).not.toContain('<a');
+  });
+
+  it('returns tag names and adds the artist URL only with verbose', async () => {
+    const mockBody = {
+      artist: {
+        name: 'Radiohead',
+        url: 'https://www.last.fm/music/Radiohead',
+        stats: { listeners: '1', playcount: '2' },
+        bio: { summary: 'An English band.' },
+        tags: { tag: [{ name: 'alternative', url: 'https://last.fm/tag/alternative' }] },
+        similar: { artist: [] },
+      },
+    };
+    global.fetch = makeFetch(200, mockBody);
+
+    const { getArtistInfo } = await import('../../../src/tools/lastfm-discovery.js');
+    const compact = await getArtistInfo(makeConfig(), { artist: 'Radiohead' });
+    const verbose = await getArtistInfo(makeConfig(), { artist: 'Radiohead', verbose: true });
+
+    expect(compact.tags).toEqual(['alternative']);
+    expect(compact).not.toHaveProperty('url');
+    expect(verbose.url).toBe('https://www.last.fm/music/Radiohead');
   });
 
   it('returns null biography when bio.summary is absent', async () => {
@@ -155,7 +177,7 @@ describe('getArtistInfo', () => {
 
     expect(result.biography).toBe('A French synthwave project.');
     expect(result.listeners).toBe(500000);
-    expect(result.tags).toEqual([{ name: 'synthwave', url: 'https://last.fm/tag/synthwave' }]);
+    expect(result.tags).toEqual(['synthwave']);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchedUrl(fetchMock, 0).searchParams.get('lang')).toBe('ja');
     expect(fetchedUrl(fetchMock, 1).searchParams.get('lang')).toBe('en');

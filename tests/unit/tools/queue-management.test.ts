@@ -135,6 +135,21 @@ describe('getSavedQueue', () => {
   });
 });
 
+/** Answers the song-ID check with a row per known ID, and every other request with undefined. */
+function answerSongLookups(mockClient: MockNavidromeClient, unknownIds: readonly string[] = []): void {
+  mockClient.request.mockImplementation((endpoint: string) => {
+    if (!endpoint.startsWith('/song?')) return Promise.resolve(undefined);
+    const ids = new URLSearchParams(endpoint.slice('/song?'.length)).getAll('id');
+    return Promise.resolve(ids.filter((id) => !unknownIds.includes(id)).map((id) => ({ id, title: id })));
+  });
+}
+
+function queuePostBody(mockClient: MockNavidromeClient): { ids: string[]; current: number; position: number } {
+  const call = mockClient.request.mock.calls.find(([endpoint]) => endpoint === '/queue');
+  if (call === undefined) throw new Error('no POST /queue call');
+  return JSON.parse((call[1] as RequestInit).body as string);
+}
+
 describe('saveQueue', () => {
   let mockClient: MockNavidromeClient;
 
@@ -143,7 +158,7 @@ describe('saveQueue', () => {
   });
 
   it('POSTs to /queue with ids, current, and the position converted to milliseconds', async () => {
-    mockClient.request.mockResolvedValue(undefined);
+    answerSongLookups(mockClient);
 
     await saveQueue(mockClient as unknown as NavidromeClient, {
       songIds: ['id-1', 'id-2', 'id-3'],
@@ -151,27 +166,24 @@ describe('saveQueue', () => {
       position: 5,
     });
 
-    expect(mockClient.request).toHaveBeenCalledTimes(1);
-    const [endpoint, options] = mockClient.request.mock.calls[0]!;
-    expect(endpoint).toBe('/queue');
-    expect((options as RequestInit)?.method).toBe('POST');
+    const post = mockClient.request.mock.calls.find(([endpoint]) => endpoint === '/queue');
+    expect(post?.[1]?.method).toBe('POST');
 
-    const body = JSON.parse((options as RequestInit)?.body as string);
+    const body = queuePostBody(mockClient);
     expect(body.ids).toEqual(['id-1', 'id-2', 'id-3']);
     expect(body.current).toBe(1);
     expect(body.position).toBe(5000);
   });
 
   it('accepts a fractional now_playing position and rounds it to whole milliseconds', async () => {
-    mockClient.request.mockResolvedValue(undefined);
+    answerSongLookups(mockClient);
 
     await saveQueue(mockClient as unknown as NavidromeClient, {
       songIds: ['id-1'],
       position: 12.3456,
     });
 
-    const body = JSON.parse((mockClient.request.mock.calls[0]![1] as RequestInit)?.body as string);
-    expect(body.position).toBe(12346);
+    expect(queuePostBody(mockClient).position).toBe(12346);
   });
 
   it('rejects a currentIndex past the end of songIds', async () => {
@@ -189,7 +201,7 @@ describe('saveQueue', () => {
   });
 
   it('returns success with correct trackCount', async () => {
-    mockClient.request.mockResolvedValue(undefined);
+    answerSongLookups(mockClient);
 
     const result = await saveQueue(mockClient as unknown as NavidromeClient, {
       songIds: ['a', 'b'],
@@ -201,15 +213,24 @@ describe('saveQueue', () => {
   });
 
   it('defaults currentIndex and position to 0 when omitted', async () => {
-    mockClient.request.mockResolvedValue(undefined);
+    answerSongLookups(mockClient);
 
     await saveQueue(mockClient as unknown as NavidromeClient, {
       songIds: ['x'],
     });
 
-    const body = JSON.parse((mockClient.request.mock.calls[0]![1] as RequestInit)?.body as string);
+    const body = queuePostBody(mockClient);
     expect(body.current).toBe(0);
     expect(body.position).toBe(0);
+  });
+
+  it('rejects an unknown song ID without saving, since Navidrome would drop it and shift currentIndex', async () => {
+    answerSongLookups(mockClient, ['gone']);
+
+    await expect(
+      saveQueue(mockClient as unknown as NavidromeClient, { songIds: ['gone', 'a', 'b'], currentIndex: 1 }),
+    ).rejects.toThrow("Tool 'save_queue' failed: Unknown song IDs: gone. The saved queue was not changed.");
+    expect(mockClient.request.mock.calls.some(([endpoint]) => endpoint === '/queue')).toBe(false);
   });
 
   it('rejects when songIds is missing (Zod validation)', async () => {

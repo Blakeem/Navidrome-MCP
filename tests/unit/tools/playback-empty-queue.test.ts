@@ -172,7 +172,21 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
   it('next skips and reports success', async () => {
     const result = await next({});
     expect(nextMock).toHaveBeenCalledTimes(1);
-    expect(result.success).toBe(true);
+    expect(result).toEqual({ success: true });
+  });
+
+  it('next on the last entry reports that playback stopped', async () => {
+    readQueueStateMock.mockResolvedValueOnce({ position: 4, count: 5 });
+    const result = await next({});
+    expect(nextMock).toHaveBeenCalledTimes(1);
+    expect(result.stopped).toBe(true);
+    expect(result.message).toMatch(/last entry, so playback stopped\. Call play_queue_index/);
+  });
+
+  it('play_queue_index rejects an index past the end without jumping, since mpv would stop playback', async () => {
+    await expect(playQueueIndex({ index: 5 }))
+      .rejects.toThrow(/index 5 is not in the play queue\. The queue holds 5 entries\. Call get_play_queue/);
+    expect(jumpMock).not.toHaveBeenCalled();
   });
 
   it('resume unpauses and reports success', async () => {
@@ -193,6 +207,11 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
     const result = await seek({ seconds: 30, mode: 'absolute' });
     expect(seekMock).toHaveBeenCalledWith(30, 'absolute');
     expect(result.success).toBe(true);
+  });
+
+  it('seek rejects a negative absolute target, which mpv reads as an offset from the end', async () => {
+    await expect(seek({ seconds: -5, mode: 'absolute' })).rejects.toThrow(/absolute seek needs seconds of 0 or more/);
+    expect(seekMock).not.toHaveBeenCalled();
   });
 
   it('play_queue_index jumps and reports success', async () => {
@@ -288,8 +307,26 @@ describe('attach-only tools on an idle mpv (connected, nothing current)', () => 
     it('resume reports nothing to resume instead of unpausing silence', async () => {
       const result = await resume({});
       expect(result.success).toBe(false);
-      expect(result.message).toMatch(/Start something with a play tool/);
       expect(resumeMock).not.toHaveBeenCalled();
+    });
+
+    it('transport tools name the remaining entries and point to play_queue_index, not an empty queue', async () => {
+      const expected = 'Nothing is playing. The queue holds 3 entries and none is current. Call play_queue_index to start one.';
+      expect((await resume({})).message).toBe(expected);
+      expect((await pause({})).message).toBe(expected);
+      expect((await next({})).message).toBe(expected);
+      expect((await previous({})).message).toBe(expected);
+      expect((await seek({ seconds: 5, mode: 'relative' })).message).toBe(expected);
+      expect(nextMock).not.toHaveBeenCalled();
+      expect(previousMock).not.toHaveBeenCalled();
+    });
+
+    it('names a single remaining entry in the singular', async () => {
+      readQueueStateMock.mockResolvedValue({ position: -1, count: 1 });
+      expect((await pause({})).message).toBe(
+        'Nothing is playing. The queue holds 1 entry and none is current. Call play_queue_index to start one.',
+      );
+      await expect(playQueueIndex({ index: 1 })).rejects.toThrow(/The queue holds 1 entry\. Call get_play_queue/);
     });
 
     it('play_queue_index still jumps, since restarting a row is valid', async () => {

@@ -265,6 +265,7 @@ describe('getTagDistribution', () => {
     });
 
     expect(result.distributions.map((d) => d.tagName)).toEqual(['mood']);
+    expect(result.emptyTagNames).toEqual(['genre']);
   });
 
   it('throws a tool error when a /tag request fails instead of reporting an empty library', async () => {

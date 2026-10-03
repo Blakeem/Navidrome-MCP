@@ -222,16 +222,17 @@ function fetchStarredAlbumIds(client: NavidromeClient): Promise<string[]> {
 /**
  * Look up queue metadata (title/artist/album/duration) for a list of song IDs.
  * Each chunk is one request that repeats the `id` key per ID.
- * The scoped read is the play-eligible set, so a failed or malformed read throws.
- * Only the unscoped enrichment read is best-effort, and a failed chunk yields no metadata.
+ * The scoped read is the play-eligible set, so a failed or malformed read throws. `strict` makes an unscoped read
+ * throw too. Otherwise the unscoped enrichment read is best-effort, and a failed chunk yields no metadata.
  */
 export async function fetchSongMetadata(
   client: NavidromeClient,
   songIds: readonly string[],
-  options: { scopeToActiveLibraries?: boolean } = {},
+  options: { scopeToActiveLibraries?: boolean; strict?: boolean } = {},
 ): Promise<QueueTrackMetadata[]> {
   if (songIds.length === 0) return [];
   const scoped = options.scopeToActiveLibraries === true;
+  const strict = scoped || options.strict === true;
   const out: QueueTrackMetadata[] = [];
   for (let i = 0; i < songIds.length; i += ID_CHUNK_SIZE) {
     const chunk = songIds.slice(i, i + ID_CHUNK_SIZE);
@@ -247,7 +248,7 @@ export async function fetchSongMetadata(
         ? await client.requestWithLibraryFilter<unknown>(endpoint)
         : await client.request<unknown>(endpoint);
       if (!Array.isArray(data)) {
-        if (scoped) throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
+        if (strict) throw new Error(`Unexpected response shape from ${endpoint}: expected array`);
         continue;
       }
       for (const track of data) {
@@ -256,10 +257,32 @@ export async function fetchSongMetadata(
         if (row !== null) out.push(toQueueMetadata(row));
       }
     } catch (err) {
-      if (scoped) throw err;
+      if (strict) throw err;
       // Unscoped enrichment only. The affected entries fall back to mpv's own metadata.
       logger.debug(`fetchSongMetadata chunk failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   return out;
+}
+
+// Caps the IDs one error names, since a caller can pass hundreds.
+const UNKNOWN_SONG_IDS_SHOWN = 10;
+
+/**
+ * Throws when any ID names no song in any library. Navidrome stores an unknown ID in a playlist as a dangling row
+ * and drops it from a saved queue, so writes check their IDs here first. `consequence` says what the call skipped.
+ */
+export async function assertKnownSongIds(
+  client: NavidromeClient,
+  songIds: readonly string[],
+  consequence: string,
+): Promise<void> {
+  const found = await fetchSongMetadata(client, songIds, { strict: true });
+  const known = new Set(found.map((metadata) => metadata.songId));
+  const unknown = [...new Set(songIds.filter((id) => !known.has(id)))];
+  if (unknown.length === 0) return;
+
+  const shown = unknown.slice(0, UNKNOWN_SONG_IDS_SHOWN).join(', ');
+  const more = unknown.length > UNKNOWN_SONG_IDS_SHOWN ? ` and ${unknown.length - UNKNOWN_SONG_IDS_SHOWN} more` : '';
+  throw new Error(`Unknown song IDs: ${shown}${more}. ${consequence} Check the IDs with search_songs.`);
 }

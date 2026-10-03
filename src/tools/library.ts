@@ -168,7 +168,7 @@ export async function setActiveLibraries(client: NavidromeClient, args: unknown)
 
     const result: LibraryManagementResponse = {
       success: true,
-      message: `Successfully set ${activeLibraries.length} active libraries: ${activeLibraries.map(lib => lib.name).join(', ')}`,
+      message: `Successfully set ${activeLibraries.length} active ${activeLibraries.length === 1 ? 'library' : 'libraries'}: ${activeLibraries.map(lib => lib.name).join(', ')}`,
       activeLibraries,
       totalCount: availableLibraries.length,
     };

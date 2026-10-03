@@ -31,6 +31,7 @@ import {
 } from '../../schemas/index.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
+import { assertKnownSongIds } from '../queue-sources.js';
 
 type DiscEntry = NonNullable<AddTracksToPlaylistRequest['discs']>[number];
 
@@ -81,6 +82,10 @@ export async function addTracksToPlaylist(client: NavidromeClient, args: unknown
   try {
     const params = AddTracksToPlaylistSchema.parse(args);
     logger.debug('Tool addTracksToPlaylist called with args:', params);
+
+    if (params.songIds !== undefined && params.songIds.length > 0) {
+      await assertKnownSongIds(client, params.songIds, 'Nothing was added.');
+    }
 
     const requestBody: AddTracksToPlaylistRequest = {};
     if (params.songIds !== undefined) requestBody.ids = params.songIds;

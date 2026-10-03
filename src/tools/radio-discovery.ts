@@ -106,6 +106,14 @@ interface RadioBrowserActionResponse {
   url?: string;
 }
 
+// Radio Browser's rejection of a vote inside its 10-minute window, which another process on this IP may have cast.
+const REPEAT_VOTE_REJECTION = 'voting for the same station too often';
+
+const ALREADY_VOTED_RESULT: VoteRadioStationResponse = {
+  success: true,
+  message: 'Vote already registered for this station. Radio Browser counts one vote per IP per station every 10 minutes.',
+};
+
 type RadioFilterKind = z.infer<typeof RadioFiltersSchema>['kinds'][number];
 
 interface RadioBrowserRequest {
@@ -545,18 +553,17 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
       `/json/url/${encodeURIComponent(stationUuid)}`,
       { retryPolicy: 'never', label: '/json/url (click)' },
     );
-    const ok = Boolean(data.ok);
-
     // A rejected click stays unmarked so the caller can retry it.
-    if (ok) {
-      markClicked(stationUuid, data.url ?? '');
+    if (!data.ok) {
+      throw new Error(`Radio Browser rejected the click: ${data.message ?? 'no reason given'}`);
     }
+    markClicked(stationUuid, data.url ?? '');
 
     // Upstream's success text "retrieved station url" reads as an implementation leak, so success gets our own message.
     return {
-      success: ok,
+      success: true,
       streamUrl: data.url ?? '',
-      message: ok ? 'Click registered successfully' : (data.message ?? 'Click failed'),
+      message: 'Click registered successfully',
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('click_station', error));
@@ -566,7 +573,7 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
 /**
  * Vote for a radio station.
  *
- * A second vote for the same UUID within 10 minutes returns a no-op instead of
+ * A second vote for the same UUID within 10 minutes reports the first vote instead of
  * calling Radio Browser, which accepts one vote per IP per station every 10 minutes.
  */
 export async function voteStation(config: Config, args: unknown): Promise<VoteRadioStationResponse> {
@@ -577,10 +584,7 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
 
     if (hasRecentlyVoted(stationUuid)) {
       logger.debug(`voteStation: deduped (already voted ${stationUuid} within the last 10 minutes)`);
-      return {
-        success: false,
-        message: `Already voted for station ${stationUuid} within the last 10 minutes. Radio Browser accepts one vote per IP per station every 10 minutes, so another vote now would be rejected.`
-      };
+      return ALREADY_VOTED_RESULT;
     }
 
     const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
@@ -591,16 +595,17 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
       `/json/vote/${encodeURIComponent(stationUuid)}`,
       { retryPolicy: 'never', label: '/json/vote' },
     );
-    const ok = Boolean(data.ok);
-
+    const repeatVote = !data.ok && data.message?.includes(REPEAT_VOTE_REJECTION) === true;
     // A declined vote stays unmarked, so a retry later is still meaningful.
-    if (ok) {
-      markVoted(stationUuid);
+    if (!data.ok && !repeatVote) {
+      throw new Error(`Radio Browser rejected the vote: ${data.message ?? 'no reason given'}`);
     }
+    markVoted(stationUuid);
+    if (repeatVote) return ALREADY_VOTED_RESULT;
 
     return {
-      success: ok,
-      message: ok ? 'Vote registered successfully' : (data.message ?? 'Vote failed'),
+      success: true,
+      message: 'Vote registered successfully',
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('vote_station', error));

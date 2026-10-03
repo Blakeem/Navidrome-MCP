@@ -23,6 +23,7 @@ import { transformSongsToDTO } from '../transformers/index.js';
 import type { SongDTO } from '../types/index.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { assertKnownSongIds } from './queue-sources.js';
 
 /** Raw shape returned by Navidrome's `/queue` GET endpoint. `items` are full media files. */
 interface RawSavedQueue {
@@ -83,6 +84,9 @@ export async function saveQueue(client: NavidromeClient, args: unknown): Promise
 
     logger.debug('Tool saveQueue called with args:', { songIdCount: songIds.length, currentIndex, position });
     logger.info(`Saving queue with ${songIds.length} tracks to Navidrome server`);
+
+    // Navidrome drops an unknown ID, which shifts every later index and moves currentIndex onto another track.
+    await assertKnownSongIds(client, songIds, 'The saved queue was not changed.');
 
     await client.request('/queue', {
       method: 'POST',

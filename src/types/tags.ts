@@ -56,4 +56,6 @@ export interface TagDistribution {
 export interface TagDistributionResponse {
   /** Array of tag distributions by name */
   distributions: TagDistribution[];
+  /** Requested tag names with no values in the active libraries. Omitted when every name has values. */
+  emptyTagNames?: string[];
 }

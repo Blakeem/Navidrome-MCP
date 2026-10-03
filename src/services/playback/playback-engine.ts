@@ -62,6 +62,13 @@ const OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [12, 'playlist-path'],
 ];
 
+// Names the saved station a radio stream was played from, since saved stations can share a stream URL.
+// Observed so every process sharing mpv sees a change, but optional because mpv before 0.36 has no user-data.
+const RADIO_STATION_TAG_PROPERTY = 'user-data/navidrome-mcp/radio-station-id';
+const OPTIONAL_OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
+  [13, RADIO_STATION_TAG_PROPERTY],
+];
+
 // On a transcoded stream mpv can briefly reject a valid seek while its cache
 // settles. Retrying the same command clears it without touching mpv's clock.
 const SEEK_MAX_ATTEMPTS = 4;
@@ -498,7 +505,7 @@ class PlaybackEngine {
    * position, and scrobbling, so this always replaces the whole queue, as
    * Navidrome's web UI does. `loadfile <url> replace` clears the prior queue.
    */
-  async enqueueRadio(streamUrl: string): Promise<void> {
+  async enqueueRadio(streamUrl: string, stationId: string): Promise<void> {
     if (streamUrl.trim() === '') {
       throw new Error('enqueueRadio requires a non-empty stream URL');
     }
@@ -506,10 +513,27 @@ class PlaybackEngine {
     await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       this.queueGeneration++;
+      // Tagged before the load, so a poll never pairs the new stream with the previous station's tag.
+      await this.writeRadioStationTag(ipc, stationId);
       await ipc.command('loadfile', streamUrl, 'replace');
       await ipc.command('set_property', 'pause', false);
     });
     this.emitStateChange({ kind: 'queue' });
+  }
+
+  /** The saved-station ID the last radio play tagged. Null when none is set or mpv has no user-data. */
+  getRadioStationTag(): string | null {
+    const tag = this.propertyCache.get(RADIO_STATION_TAG_PROPERTY);
+    return typeof tag === 'string' && tag !== '' ? tag : null;
+  }
+
+  // Best effort. Without the tag, the station name falls back to the first saved station with the stream URL.
+  private async writeRadioStationTag(ipc: MpvIpc, stationId: string): Promise<void> {
+    try {
+      await ipc.command('set_property', RADIO_STATION_TAG_PROPERTY, stationId);
+    } catch (error) {
+      logger.debug(`radio station tag not written: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -665,8 +689,7 @@ class PlaybackEngine {
    *
    * Unpauses, because a jump means play this now. Mirrors the unpause in enqueue(replace).
    *
-   * Out-of-range indices are not pre-validated, which avoids a race with
-   * concurrent mutations. The tool layer names the index when mpv rejects it.
+   * mpv accepts an index past the end and stops playback, so the tool layer checks the bound first.
    * No `emitStateChange` is needed, since mpv's
    * `playlist-pos` change event reaches subscribers.
    */
@@ -736,6 +759,10 @@ class PlaybackEngine {
       volume: typeof volume === 'number' ? volume : null,
       idle: typeof idle === 'boolean' ? idle : null,
     };
+  }
+
+  songIdForPath(path: string): string | null {
+    return this.parseSongIdCached(path, 0);
   }
 
   // ---------- internals ----------
@@ -1001,7 +1028,7 @@ class PlaybackEngine {
       if (this.ipc === ipc) this.ipc = null;
     });
 
-    for (const [, name] of OBSERVED_PROPERTIES) {
+    for (const [, name] of [...OBSERVED_PROPERTIES, ...OPTIONAL_OBSERVED_PROPERTIES]) {
       try {
         const value = await ipc.command('get_property', name);
         this.propertyCache.set(name, value);
@@ -1019,6 +1046,13 @@ class PlaybackEngine {
     this.emitStateChange({ kind: 'attach' });
     for (const [id, name] of OBSERVED_PROPERTIES) {
       await ipc.observeProperty(id, name);
+    }
+    for (const [id, name] of OPTIONAL_OBSERVED_PROPERTIES) {
+      try {
+        await ipc.observeProperty(id, name);
+      } catch (error) {
+        logger.debug(`mpv cannot observe ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 

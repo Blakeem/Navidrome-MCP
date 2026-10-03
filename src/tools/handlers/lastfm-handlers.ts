@@ -105,6 +105,11 @@ const tools: Tool[] = [
           description: 'Language for the biography (ISO 639-1 code). Falls back to English when Last.fm has no biography in that language.',
           default: 'en',
         },
+        verbose: {
+          type: 'boolean',
+          description: 'Add the Last.fm artist URL. No extra requests.',
+          default: false,
+        },
       },
       required: ['artist'],
     },

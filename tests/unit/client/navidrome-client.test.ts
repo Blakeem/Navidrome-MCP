@@ -112,10 +112,10 @@ describe('NavidromeClient', () => {
         .mockResolvedValueOnce(jsonResponse({ error: 'data not found' }, 500));
 
       const client = new NavidromeClient(makeConfig());
-      const failure = client.request('/song/missing');
+      const failure = client.request('/song/missing?library_id=1');
 
       await expect(failure).rejects.toBeInstanceOf(NavidromeNotFoundError);
-      await expect(failure).rejects.toThrow('Navidrome GET /song/missing found no item. The ID is probably wrong.');
+      await expect(failure).rejects.toThrow(/^Song not found: missing$/);
     });
 
     it('maps a 404 on a read to a wrong-ID error', async () => {
@@ -128,14 +128,56 @@ describe('NavidromeClient', () => {
       await expect(client.request('/album/missing')).rejects.toBeInstanceOf(NavidromeNotFoundError);
     });
 
-    it('keeps the HTTP error for a data-not-found 500 on a write', async () => {
+    it('names the playlist for a 404 on a write', async () => {
       mockFetch
         .mockResolvedValueOnce(tokenResponse('first'))
-        .mockResolvedValueOnce(jsonResponse({ error: 'data not found' }, 500));
+        .mockResolvedValueOnce(jsonResponse({ error: 'playlist not found' }, 404));
 
       const client = new NavidromeClient(makeConfig());
 
-      await expect(client.request('/playlist/missing', { method: 'DELETE' })).rejects.toThrow(/Navidrome DELETE \/playlist\/missing - 500/);
+      await expect(client.request('/playlist/missing', { method: 'PUT', body: '{}' })).rejects.toThrow(/^Playlist not found: missing$/);
+    });
+
+    it('names the playlist for a plain-text data-not-found 400 on a track write', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('data not found\n', { status: 400 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/playlist/missing/tracks', { method: 'POST', body: '{}' })).rejects.toThrow(/^Playlist not found: missing$/);
+    });
+
+    it('keeps the request label when the endpoint names no item', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/queue')).rejects.toThrow('Navidrome GET /queue found no item. The ID is probably wrong.');
+    });
+
+    it('keeps the HTTP error for a 404 on a write to a path that names no item', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+      const client = new NavidromeClient(makeConfig());
+      const failure = client.request('/playlist', { method: 'POST', body: '{}' });
+
+      await expect(failure).rejects.not.toBeInstanceOf(NavidromeNotFoundError);
+      await expect(failure).rejects.toThrow(/Navidrome POST \/playlist - 404/);
+    });
+
+    it('keeps the HTTP error for a 400 that is not a missing item', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('invalid request', { status: 400 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/playlist/abc/tracks', { method: 'POST', body: '{}' })).rejects.toThrow(/Navidrome POST \/playlist\/abc\/tracks - 400/);
     });
 
     it('non-401 errors do not trigger retry', async () => {

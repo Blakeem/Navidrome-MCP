@@ -24,7 +24,7 @@ vi.mock('../../../src/utils/network-safety.js', async (importOriginal) => {
 
 import { validateRadioStream } from '../../../src/tools/radio-validation.js';
 import { classifyStream, type StreamProbe } from '../../../src/tools/radio-validation/validation-core.js';
-import { extractStreamingHeaders } from '../../../src/tools/radio-validation/stream-detector.js';
+import { detectAudioFormat, extractStreamingHeaders } from '../../../src/tools/radio-validation/stream-detector.js';
 // Resolves through the vi.mock above, whose factory spreads the ACTUAL module —
 // so this is the real production constant, keeping the mock rejection below in
 // sync with the dispatcher's real message shape.
@@ -1105,5 +1105,67 @@ describe('extractStreamingHeaders', () => {
 
   it('keeps a value a latin1 server sent as latin1', () => {
     expect(extractStreamingHeaders(new Headers({ 'icy-name': 'Café' }))).toEqual({ 'icy-name': 'Café' });
+  });
+
+  it('collapses a header the server sent twice with the same value', () => {
+    const headers = new Headers();
+    headers.append('icy-br', '320');
+    headers.append('icy-br', '320');
+    expect(extractStreamingHeaders(headers)).toEqual({ 'icy-br': '320' });
+  });
+
+  it('keeps a comma-separated value whose parts differ', () => {
+    expect(extractStreamingHeaders(new Headers({ 'icy-genre': 'Synthwave, Retro' }))).toEqual({ 'icy-genre': 'Synthwave, Retro' });
+  });
+});
+
+describe('detectAudioFormat on a sample that starts mid-stream', () => {
+  // Filler bytes never form a sync pattern, so detection depends on the frames alone.
+  function stream(lead: number, frame: readonly number[], frameLength: number, frames: number): Uint8Array {
+    const bytes = new Uint8Array(lead + frameLength * frames).fill(0x11);
+    for (let i = 0; i < frames; i++) bytes.set(frame, lead + i * frameLength);
+    return bytes;
+  }
+
+  it('finds MP3 frames after a partial frame', async () => {
+    // MPEG-1 Layer III at 128 kbps and 44.1 kHz, no padding: 417-byte frames.
+    const result = await detectAudioFormat(stream(100, [0xff, 0xfb, 0x90, 0x00], 417, 4));
+    expect(result).toEqual({ detected: true, format: 'mp3', mime: 'audio/mpeg' });
+  });
+
+  it('finds padded MP3 frames', async () => {
+    // MPEG-1 Layer III at 128 kbps and 44.1 kHz with the padding bit set: 418-byte frames.
+    const result = await detectAudioFormat(stream(100, [0xff, 0xfb, 0x92, 0x00], 418, 4));
+    expect(result).toEqual({ detected: true, format: 'mp3', mime: 'audio/mpeg' });
+  });
+
+  it('finds MPEG-2 Layer III frames, which use the half-size frame coefficient', async () => {
+    // MPEG-2 Layer III at 64 kbps and 22.05 kHz: 208-byte frames.
+    const result = await detectAudioFormat(stream(100, [0xff, 0xf3, 0x80, 0x00], 208, 4));
+    expect(result).toEqual({ detected: true, format: 'mp3', mime: 'audio/mpeg' });
+  });
+
+  it('finds MPEG-1 Layer II frames', async () => {
+    // MPEG-1 Layer II at 192 kbps and 48 kHz: 576-byte frames.
+    const result = await detectAudioFormat(stream(100, [0xff, 0xfd, 0xa4, 0x00], 576, 4));
+    expect(result).toEqual({ detected: true, format: 'mp2', mime: 'audio/mpeg' });
+  });
+
+  it('finds ADTS AAC frames after a partial frame', async () => {
+    // 200-byte ADTS frames at 44.1 kHz.
+    const result = await detectAudioFormat(stream(57, [0xff, 0xf1, 0x50, 0x80, 0x19, 0x1f, 0xfc], 200, 4));
+    expect(result).toEqual({ detected: true, format: 'aac', mime: 'audio/aac' });
+  });
+
+  it('finds an Ogg page mid-sample', async () => {
+    const bytes = new Uint8Array(400).fill(0x11);
+    bytes.set([0x4f, 0x67, 0x67, 0x53, 0x00], 123);
+    expect((await detectAudioFormat(bytes)).format).toBe('ogg');
+  });
+
+  it('rejects a lone sync pattern with no frame after it', async () => {
+    const bytes = new Uint8Array(4096).fill(0x11);
+    bytes.set([0xff, 0xfb, 0x90, 0x00], 300);
+    expect(await detectAudioFormat(bytes)).toEqual({ detected: false });
   });
 });

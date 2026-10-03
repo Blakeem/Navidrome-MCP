@@ -282,18 +282,18 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       });
 
       it('rejects an ID that does not match `type` without starring', async () => {
-        mockClient.request.mockRejectedValue(new NavidromeNotFoundError('Navidrome GET /song/album-456'));
+        mockClient.request.mockRejectedValue(new NavidromeNotFoundError('Navidrome GET /song/album-456', '/song/album-456'));
 
         await expect(starItem(mockClient, { itemId: 'album-456', type: 'song' }))
-          .rejects.toThrow("Tool 'star_item' failed: song album-456 not found");
+          .rejects.toThrow("Tool 'star_item' failed: Song not found: album-456");
         expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
       });
 
       it('rejects an unknown ID without unstarring', async () => {
-        mockClient.request.mockRejectedValue(new NavidromeNotFoundError('Navidrome GET /artist/gone'));
+        mockClient.request.mockRejectedValue(new NavidromeNotFoundError('Navidrome GET /artist/gone', '/artist/gone'));
 
         await expect(unstarItem(mockClient, { itemId: 'gone', type: 'artist' }))
-          .rejects.toThrow("Tool 'unstar_item' failed: artist gone not found");
+          .rejects.toThrow("Tool 'unstar_item' failed: Artist not found: gone");
         expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
       });
     });
@@ -488,6 +488,15 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
         expect(result.success).toBe(true);
         expect(result.message).toContain('5 stars');
+      });
+
+      it('checks the ID against `type` and rejects an unknown ID without rating', async () => {
+        mockClient.request.mockRejectedValue(new NavidromeNotFoundError('Navidrome GET /album/gone', '/album/gone'));
+
+        await expect(setRating(mockClient, { itemId: 'gone', type: 'album', rating: 3 }))
+          .rejects.toThrow("Tool 'set_rating' failed: Album not found: gone");
+        expect(mockClient.request).toHaveBeenCalledWith('/album/gone');
+        expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
       });
     });
   });

@@ -101,7 +101,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       const options = filterCacheManager.getAvailableOptions('genres');
 
       // Should return original case, sorted
-      expect(options).toEqual(['Classical', 'ELECTRONIC', 'Rock', 'jazz']);
+      expect(options).toEqual(['Classical', 'ELECTRONIC', 'jazz', 'Rock']);
       expect(options).toHaveLength(4);
     });
 
@@ -115,7 +115,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     it('should return original case values for countries', () => {
       const options = filterCacheManager.getAvailableOptions('countries');
 
-      expect(options).toEqual(['US', 'uk']);
+      expect(options).toEqual(['uk', 'US']);
       expect(options).toHaveLength(2);
     });
 
@@ -297,7 +297,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     it('pages with offset and reports the full total', async () => {
       const page = await getFilterOptions({ filterType: 'genres', limit: 2, offset: 2 });
 
-      expect(page.available).toEqual(['Rock', 'jazz']);
+      expect(page.available).toEqual(['jazz', 'Rock']);
       expect(page.total).toBe(4);
     });
 

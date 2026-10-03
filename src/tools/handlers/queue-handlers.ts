@@ -39,7 +39,7 @@ const tools: Tool[] = [
   },
   {
     name: 'save_queue',
-    description: 'Save a playback queue to the Navidrome server so it appears in the web interface and syncs to other Navidrome clients. Does not start playback. `currentIndex` is a 0-based index into `songIds`. `position` is seconds within the current track, so now_playing\'s `position` passes through unchanged. It replaces the entire saved queue, including its current index and position. To add tracks, call get_saved_queue first and pass the merged songIds.',
+    description: 'Save a playback queue to the Navidrome server so it appears in the web interface and syncs to other Navidrome clients. Does not start playback. `currentIndex` is a 0-based index into `songIds`. `position` is seconds within the current track, so now_playing\'s `position` passes through unchanged. It replaces the entire saved queue, including its current index and position. To add tracks, call get_saved_queue first and pass the merged songIds. An unknown song ID fails the call and leaves the saved queue unchanged.',
     inputSchema: {
       type: 'object',
       properties: {

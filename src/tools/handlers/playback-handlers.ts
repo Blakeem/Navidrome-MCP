@@ -122,7 +122,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_songs',
-    description: "Play one or many songs through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end of the queue without clearing or unpausing. `shuffle: true` randomizes only the new batch before queueing.",
+    description: "Play one or many songs through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end of the queue without clearing or unpausing. `shuffle: true` randomizes only the new batch before queueing. `skipped` counts requested IDs that are unknown or outside the active libraries.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -243,7 +243,7 @@ const tools: Tool[] = [
   },
   {
     name: 'next',
-    description: 'Skip to the next track in the play queue. Reports an empty queue when nothing is playing (does not start mpv).',
+    description: 'Skip to the next track in the play queue. On the last entry it stops playback and reports `stopped: true`. When no entry is current it changes nothing and says so (does not start mpv).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -252,7 +252,7 @@ const tools: Tool[] = [
   },
   {
     name: 'previous',
-    description: 'Skip to the previous track in the play queue. Reports an empty queue when nothing is playing (does not start mpv).',
+    description: 'Skip to the previous track in the play queue. On the first entry it restarts the track. When no entry is current it changes nothing and says so (does not start mpv).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -261,7 +261,7 @@ const tools: Tool[] = [
   },
   {
     name: 'seek',
-    description: "Move the playback position within the current track. `mode: 'absolute'` jumps to the given second. `mode: 'relative'` (default) offsets from the current position (negative seeks backwards). Reports nothing to seek when no playback is active (does not start mpv).",
+    description: "Move the playback position within the current track. `mode: 'absolute'` jumps to the given second, which must be 0 or more. `mode: 'relative'` (default) offsets from the current position (negative seeks backwards). A target past the end of the track skips to the next track. Reports nothing to seek when no playback is active (does not start mpv).",
     inputSchema: {
       type: 'object',
       properties: {
@@ -282,7 +282,7 @@ const tools: Tool[] = [
   },
   {
     name: 'now_playing',
-    description: "Report the current local playback state: title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache. Does NOT spawn mpv if it isn't already running. `title`/`artist`/`album` and `duration` are reconciled against Navidrome's per-song metadata (by songId), so they're accurate from the first poll. That holds even during the brief track-load window where mpv would otherwise report the raw stream URL as the title, or a partial VBR duration during its scan. For radio, `isRadio` is true and `radioStation.name` names the saved station, or \"Unknown station\" when the stream matches none.",
+    description: "Report the current local playback state: songId, title, artist, album, position, duration, paused, and queue index/length. `paused` is omitted when no entry is current. Reads from the engine's property cache. Does NOT spawn mpv if it isn't already running. `title`/`artist`/`album` and `duration` are reconciled against Navidrome's per-song metadata (by songId), so they're accurate from the first poll. That holds even during the brief track-load window where mpv would otherwise report the raw stream URL as the title, or a partial VBR duration during its scan. For radio, `isRadio` is true, `duration` is omitted since a live stream has no length, and `radioStation.name` names the saved station that play_radio_station played, or \"Unknown station\" when the stream matches none.",
     inputSchema: {
       type: 'object',
       properties: {},
@@ -369,7 +369,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_queue_index',
-    description: "Jump directly to the play-queue entry at the given index, like clicking a track row in the web UI. Does NOT reorder the queue, only moves the play head. Unpauses if paused. Reports an empty queue when nothing is playing (does not start mpv). Discovery flow: call `get_play_queue` first to find the index of the target track. For adjacent moves prefer `next`/`previous`.",
+    description: "Jump directly to the play-queue entry at the given index, like clicking a track row in the web UI. Does NOT reorder the queue, only moves the play head. Unpauses if paused. An index past the end is rejected. Reports an empty queue when nothing is playing (does not start mpv). Discovery flow: call `get_play_queue` first to find the index of the target track. For adjacent moves prefer `next`/`previous`.",
     inputSchema: {
       type: 'object',
       properties: {

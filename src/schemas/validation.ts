@@ -55,14 +55,17 @@ export const SetRatingSchema = z.object({
   rating: RatingSchema,
 });
 
+// Navidrome stores a whitespace-only name as given, which lists as a blank playlist.
+const PlaylistNameSchema = z.string().trim().min(1, 'Playlist name is required');
+
 export const CreatePlaylistSchema = z.object({
-  name: z.string().min(1, 'Playlist name is required'),
+  name: PlaylistNameSchema,
   comment: z.string().optional(),
   public: OptionalBooleanSchema.default(false),
 });
 
 export const UpdatePlaylistSchema = PlaylistIdSchema.extend({
-  name: z.string().min(1).optional(),
+  name: PlaylistNameSchema.optional(),
   comment: z.string().optional(),
   public: OptionalBooleanSchema,
 }).superRefine((val, ctx) => {
@@ -165,6 +168,7 @@ export const SimilarTracksSchema = z.object({
 export const ArtistInfoSchema = z.object({
   artist: z.string().min(1),
   lang: z.string().optional().default('en'),
+  verbose: VerboseSchema,
 });
 
 export const TopTracksByArtistSchema = z.object({
@@ -294,7 +298,7 @@ export const LibraryPlayRequestSchema = z.discriminatedUnion('type', [
     type: z.enum(['artist', 'album', 'song', 'playlist']),
     id: z
       .string({ error: (issue) => (issue.input === undefined ? 'ID is required' : undefined) })
-      .min(1, 'ID is required')
+      .min(1, { message: 'ID is required', abort: true })
       .regex(ID_PATTERN, 'ID contains invalid characters'),
     ...LibraryPlayOptionsShape,
   }),
@@ -314,6 +318,10 @@ export const SetVolumeSchema = z.strictObject({
 export const SeekSchema = z.strictObject({
   seconds: z.number(),
   mode: z.enum(['absolute', 'relative']).default('relative'),
+}).refine((val) => val.mode === 'relative' || val.seconds >= 0, {
+  // mpv reads a negative absolute target as an offset from the end of the track.
+  message: 'An absolute seek needs seconds of 0 or more. Use mode relative with a negative value to seek backwards.',
+  path: ['seconds'],
 });
 
 export const PlayQueueIndexSchema = z.strictObject({

@@ -63,7 +63,7 @@ describe('play_songs active-library lookup', () => {
     const result = await playSongs(client as never, { songIds: ['song-1', 'song-2', 'song-3'] });
 
     expect(enqueueMock.mock.calls[0]?.[0]).toEqual(['song-1', 'song-3']);
-    expect(result).toEqual({ success: true, count: 2 });
+    expect(result).toEqual({ success: true, count: 2, skipped: 1 });
   });
 
   // Navidrome paginates even an id-filtered read, so each chunk must span its own length.

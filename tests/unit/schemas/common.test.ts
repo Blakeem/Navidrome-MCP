@@ -50,6 +50,11 @@ describe('createIdSchema', () => {
     expect(() => schema.parse({ id: '../bad' })).toThrow(/Playlist ID contains invalid characters/);
     expect(() => schema.parse({ id: '' })).toThrow(/Playlist ID is required/);
   });
+
+  it('reports an empty ID once, not also as invalid characters', () => {
+    const result = createIdSchema('Artist', 'artistId').safeParse({ artistId: '' });
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual(['Artist ID is required']);
+  });
 });
 
 describe('ItemTypeSchema (singular normalization)', () => {

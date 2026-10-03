@@ -299,7 +299,7 @@ describe('setActiveLibraries', () => {
     expect(result.activeLibraries[0]).toHaveProperty('id');
     expect(result.activeLibraries[0]).toHaveProperty('name');
     expect(typeof result.totalCount).toBe('number');
-    expect(typeof result.message).toBe('string');
+    expect(result.message).toMatch(/^Successfully set 1 active library: /);
 
     // Verify the singleton state was actually updated
     expect(libraryManager.getActiveLibraryIds()).toEqual([1]);
@@ -315,8 +315,9 @@ describe('setActiveLibraries', () => {
 
   it('activates all provided valid library IDs', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
-    await category.handleToolCall('set_active_libraries', { libraryIds: [1, 2] });
+    const result = await category.handleToolCall('set_active_libraries', { libraryIds: [1, 2] }) as { message: string };
 
+    expect(result.message).toMatch(/^Successfully set 2 active libraries: /);
     expect(libraryManager.getActiveLibraryIds()).toContain(1);
     expect(libraryManager.getActiveLibraryIds()).toContain(2);
   });

@@ -186,7 +186,7 @@ const tools: Tool[] = [
   },
   {
     name: 'add_tracks_to_playlist',
-    description: 'Add multiple types of content to a playlist in a single efficient operation. Supports any combination of individual songs, complete albums, every track whose album artist is a given artist, or specific disc tracks. At least one of songIds, albumIds, artistIds or discs must be non-empty.',
+    description: 'Add multiple types of content to a playlist in a single efficient operation. Supports any combination of individual songs, complete albums, every track whose album artist is a given artist, or specific disc tracks. At least one of songIds, albumIds, artistIds or discs must be non-empty. An unknown song ID fails the call and adds nothing.',
     inputSchema: {
       type: 'object',
       properties: {

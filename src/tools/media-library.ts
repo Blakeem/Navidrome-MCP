@@ -84,6 +84,10 @@ export async function getSongPlaylists(client: NavidromeClient, args: unknown): 
 
     const rawPlaylists = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.songId)}/playlists`);
     const playlists = transformPlaylistsToDTO(rawPlaylists);
+    if (playlists.length === 0) {
+      // Navidrome lists no playlists for an unknown song too, so the song read tells the two apart.
+      await client.request<unknown>(`/song/${encodeURIComponent(params.songId)}`);
+    }
 
     return {
       playlists,

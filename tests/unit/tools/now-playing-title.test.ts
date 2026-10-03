@@ -41,6 +41,18 @@ const getCachedPropertyMock = vi.hoisted(() => vi.fn());
 const getQueueGenerationMock = vi.hoisted(() => vi.fn());
 const getQueueMock = vi.hoisted(() => vi.fn());
 const ingestQueueMetadataMock = vi.hoisted(() => vi.fn());
+const getRadioStationTagMock = vi.hoisted(() => vi.fn().mockReturnValue(null));
+// Mirrors the engine's parse: only a Subsonic stream URL names a song.
+const songIdForPathMock = vi.hoisted(() =>
+  vi.fn((path: string): string | null => {
+    try {
+      const url = new URL(path);
+      return url.pathname.endsWith('/rest/stream') ? url.searchParams.get('id') : null;
+    } catch {
+      return null;
+    }
+  }),
+);
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -50,6 +62,8 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     getQueueGeneration: getQueueGenerationMock,
     getQueue: getQueueMock,
     ingestQueueMetadata: ingestQueueMetadataMock,
+    getRadioStationTag: getRadioStationTagMock,
+    songIdForPath: songIdForPathMock,
   },
 }));
 
@@ -232,6 +246,100 @@ describe('now_playing title reconciliation (Issue #3)', () => {
     expect(getQueueMock).toHaveBeenCalledTimes(1);
   });
 
+  it('names the tagged station when two saved stations share the stream URL', async () => {
+    const streamUrl = 'http://ice.somafm.com/groovesalad';
+    getCachedPropertyMock.mockImplementation(radioProps(streamUrl));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    getRadioStationTagMock.mockReturnValueOnce('r2');
+    const client = radioClient([
+      { id: 'r1', name: 'Groove Salad', streamUrl },
+      { id: 'r2', name: 'Groove Salad copy', streamUrl },
+    ]);
+
+    const result = await nowPlaying({}, client);
+
+    expect(result.radioStation).toEqual({ name: 'Groove Salad copy' });
+  });
+
+  it('names the first station with the URL when the tag names a station on another stream', async () => {
+    const streamUrl = 'http://ice.somafm.com/groovesalad';
+    getCachedPropertyMock.mockImplementation(radioProps(streamUrl));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    getRadioStationTagMock.mockReturnValueOnce('r3');
+    const client = radioClient([
+      { id: 'r1', name: 'Groove Salad', streamUrl },
+      { id: 'r2', name: 'Groove Salad copy', streamUrl },
+      { id: 'r3', name: 'Drone Zone', streamUrl: 'http://ice.somafm.com/dronezone' },
+    ]);
+
+    const result = await nowPlaying({}, client);
+
+    expect(result.radioStation).toEqual({ name: 'Groove Salad' });
+  });
+
+  it('renames the station when another process tags a second station on the same URL, index and generation', async () => {
+    const streamUrl = 'http://ice.somafm.com/groovesalad';
+    getCachedPropertyMock.mockImplementation(radioProps(streamUrl));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const client = radioClient([
+      { id: 'r1', name: 'Groove Salad', streamUrl },
+      { id: 'r2', name: 'Groove Salad copy', streamUrl },
+    ]);
+
+    getRadioStationTagMock.mockReturnValueOnce('r1');
+    const first = await nowPlaying({}, client);
+    getRadioStationTagMock.mockReturnValueOnce('r2');
+    const second = await nowPlaying({}, client);
+
+    expect(first.radioStation).toEqual({ name: 'Groove Salad' });
+    expect(second.radioStation).toEqual({ name: 'Groove Salad copy' });
+  });
+
+  it('omits the buffered duration and the songId of a radio stream on every poll', async () => {
+    const streamUrl = 'http://ice.somafm.com/groovesalad';
+    const props = radioProps(streamUrl);
+    getCachedPropertyMock.mockImplementation((name: string) => (name === 'duration' ? 17.4 : props(name)));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const client = radioClient([{ id: 'r1', name: 'SomaFM Groove Salad', streamUrl }]);
+
+    const first = await nowPlaying({}, client);
+    const second = await nowPlaying({}, client);
+
+    expect(first.duration).toBeUndefined();
+    expect(second.duration).toBeUndefined();
+    expect(first.songId).toBeUndefined();
+  });
+
+  it('reports the songId of the loaded song stream', async () => {
+    getCachedPropertyMock.mockImplementation(
+      cachedProps({
+        'playlist-pos': 1,
+        'playlist-count': 3,
+        pause: false,
+        duration: 200,
+        'media-title': 'Real Title',
+        metadata: { artist: 'Real Artist' },
+        path: LEAKY_URL,
+      }),
+    );
+    getQueueMock.mockResolvedValue([
+      { index: 1, songId: 'song-123', isCurrent: true, isPlaying: true, duration: 200 },
+    ]);
+
+    const result = await nowPlaying({});
+
+    expect(result.songId).toBe('song-123');
+  });
+
+  it('omits paused when no entry is current', async () => {
+    getCachedPropertyMock.mockImplementation(cachedProps({ 'playlist-pos': -1, 'playlist-count': 0, pause: true }));
+
+    const result = await nowPlaying({});
+
+    expect(result.queueIndex).toBe(-1);
+    expect(result.paused).toBeUndefined();
+  });
+
   it('names no station while the cached path still holds the replaced song', async () => {
     const streamUrl = 'http://ice.somafm.com/groovesalad';
     const songPath = 'http://navidrome.test/rest/stream?id=song-1&u=user&t=token&s=salt';
@@ -305,7 +413,7 @@ describe('now_playing title reconciliation (Issue #3)', () => {
         'playlist-count': 1,
         'media-title': 'Song',
         duration: 200,
-        path: '/fail/ipc',
+        path: 'http://nd.test/rest/stream?id=song-1&u=a&t=b&s=c',
       }),
     );
     getQueueMock.mockRejectedValueOnce(new Error('ipc'));
@@ -314,6 +422,16 @@ describe('now_playing title reconciliation (Issue #3)', () => {
 
     expect(result.title).toBe('Song');
     expect(result.duration).toBe(200);
+  });
+
+  it('omits the buffered duration of a radio stream when the queue read fails', async () => {
+    const props = radioProps('http://ice.somafm.com/groovesalad');
+    getCachedPropertyMock.mockImplementation((name: string) => (name === 'duration' ? 17.4 : props(name)));
+    getQueueMock.mockRejectedValueOnce(new Error('ipc'));
+
+    const result = await nowPlaying({});
+
+    expect(result.duration).toBeUndefined();
   });
 
   it('resolves without metadata when the Navidrome lookup fails', async () => {

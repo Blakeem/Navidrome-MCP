@@ -947,7 +947,7 @@ describe('mutation lock', () => {
 
     await Promise.all([
       playbackEngine.enqueue(['a', 'b', 'c'], 'replace'),
-      playbackEngine.enqueueRadio('http://radio/x'),
+      playbackEngine.enqueueRadio('http://radio/x', 'station-1'),
     ]);
 
     const loadfiles = ipc.command.mock.calls.filter((c) => c[0] === 'loadfile').map((c) => c[1]);
@@ -1154,7 +1154,7 @@ describe('queue generation', () => {
     answerProperties(ipc, {});
     const before = playbackEngine.getQueueGeneration();
 
-    await playbackEngine.enqueueRadio('http://r/x');
+    await playbackEngine.enqueueRadio('http://r/x', 'station-1');
 
     expect(playbackEngine.getQueueGeneration()).toBe(before + 1);
   });
@@ -1168,6 +1168,74 @@ describe('queue generation', () => {
     await playbackEngine.enqueue(['s'], 'append');
 
     expect(playbackEngine.getQueueGeneration()).toBe(before);
+  });
+});
+
+// ---------- the radio station tag names a station among saved stations sharing a URL ----------
+
+describe('radio station tag', () => {
+  const TAG = 'user-data/navidrome-mcp/radio-station-id';
+
+  it('tags the station in mpv user-data before loading the stream', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+
+    await playbackEngine.enqueueRadio('http://r/x', 'station-7');
+
+    const commands = mutatingCommands(ipc);
+    expect(commands.indexOf(`set ${TAG} station-7`)).toBeGreaterThanOrEqual(0);
+    expect(commands.indexOf(`set ${TAG} station-7`)).toBeLessThan(commands.indexOf('loadfile'));
+  });
+
+  it('still loads the stream when the mpv build has no user-data property', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'set_property' && args[1] === TAG) throw new Error('mpv command error: property not found');
+      return null;
+    });
+
+    await playbackEngine.enqueueRadio('http://r/x', 'station-7');
+
+    expect(ipc.command.mock.calls.some((c) => c[0] === 'loadfile' && c[1] === 'http://r/x')).toBe(true);
+  });
+
+  it('caches the tag from the observer, and null when it is unset', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    expect(playbackEngine.getRadioStationTag()).toBeNull();
+
+    for (const handler of ipc.propertyHandlers) handler({ id: 13, name: TAG, data: 'station-7' });
+    expect(playbackEngine.getRadioStationTag()).toBe('station-7');
+
+    for (const handler of ipc.propertyHandlers) handler({ id: 13, name: TAG, data: '' });
+    expect(playbackEngine.getRadioStationTag()).toBeNull();
+  });
+
+  it('still attaches when the mpv build cannot observe user-data', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC observeProperty interface
+    ipc.observeProperty.mockImplementation(async (_id: number, name: string) => {
+      if (name === TAG) throw new Error('mpv command error: property not found');
+      return undefined;
+    });
+
+    await playbackEngine.ensureRunning();
+
+    expect(ipc.observeProperty).toHaveBeenCalledWith(13, TAG);
+    expect(playbackEngine.getStatus().engineRunning).toBe(true);
+    expect(playbackEngine.getRadioStationTag()).toBeNull();
+  });
+});
+
+describe('songIdForPath', () => {
+  it('names the song of a Subsonic stream URL and nothing for any other file', () => {
+    expect(playbackEngine.songIdForPath('http://nd.test/rest/stream?id=song-9&u=a&t=b&s=c')).toBe('song-9');
+    expect(playbackEngine.songIdForPath('https://stream.example/radio.mp3')).toBeNull();
+    expect(playbackEngine.songIdForPath('/music/file.flac')).toBeNull();
   });
 });
 

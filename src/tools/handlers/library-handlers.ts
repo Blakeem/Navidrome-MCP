@@ -95,7 +95,7 @@ const staticTools: Tool[] = [
   },
   {
     name: 'get_user_details',
-    description: 'Get user information including available libraries with active status flags. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so the active-library selection is process-global. Under the HTTP transport it is shared across ALL connected sessions. summary.totalSongs, totalAlbums and totalArtists count the active libraries only. Per-library counts are in libraries.available[].stats.',
+    description: 'Get user information including available libraries with active status flags. Library filtering affects all search and list operations. When multiple libraries are active, results combine content from all active libraries. Use this to separate different music collections (e.g., personal vs family music). Note: the server authenticates as a single Navidrome account, so the active-library selection is process-global. Under the HTTP transport it is shared across ALL connected sessions. summary.totalSongs, totalAlbums and totalArtists count the active libraries only. totalArtists counts every credited participant, composers included, so it exceeds the search_artists total, which counts album and track artists. Per-library counts are in libraries.available[].stats.',
     inputSchema: {
       type: 'object',
       properties: {},

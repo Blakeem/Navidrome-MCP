@@ -68,7 +68,7 @@ const tools: Tool[] = [
     name: 'get_tag_distribution',
     description: 'Analyze tag usage counts per tag name. Supports "genre", "releasetype", "media", "releasecountry", "recordlabel", "mood". Each distribution row holds tagValue, albumCount and songCount, sorted by song count. ' +
       'For genre, distribution is the top distributionLimit values by song count. Other tag names have no server-side counts. When one has more values than distributionLimit, distribution is the first distributionLimit values in alphabetical order, the result carries sampled: true, and totalSongs and totalAlbums cover only that slice. ' +
-      'uniqueValues is the library-wide count of distinct values. countsIncomplete: true means some counts failed to load and read as 0.',
+      'uniqueValues is the library-wide count of distinct values. countsIncomplete: true means some counts failed to load and read as 0. emptyTagNames lists requested tag names that have no values.',
     inputSchema: {
       type: 'object',
       properties: {

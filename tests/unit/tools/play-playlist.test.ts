@@ -277,10 +277,22 @@ describe('play_playlist', () => {
 
   it('throws a library-scoped message for a playlist with no tracks in the active libraries', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
+    client.request.mockResolvedValueOnce({ id: 'pl-empty', songCount: 4 });
 
     await expect(playPlaylist(client as never, { playlistId: 'pl-empty' })).rejects.toThrow(
       /Playlist has no tracks in the active libraries\. Call get_user_details/,
     );
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('reports an empty playlist as empty, not as a library filter problem', async () => {
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
+    client.request.mockResolvedValueOnce({ id: 'pl-empty', songCount: 0 });
+
+    await expect(playPlaylist(client as never, { playlistId: 'pl-empty' })).rejects.toThrow(
+      /Playlist is empty\. Add tracks with add_tracks_to_playlist first\./,
+    );
+    expect(client.request).toHaveBeenCalledWith('/playlist/pl-empty');
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 

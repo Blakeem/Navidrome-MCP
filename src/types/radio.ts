@@ -160,8 +160,8 @@ export interface RadioFiltersResponse {
  * Response from clicking/playing a radio station
  */
 export interface ClickRadioStationResponse {
-  /** Success status */
-  success: boolean;
+  /** A rejected click throws, so a returned click always succeeded. */
+  success: true;
   /** Canonical stream URL */
   streamUrl: string;
   /** Response message */
@@ -172,8 +172,8 @@ export interface ClickRadioStationResponse {
  * Response from voting for a radio station
  */
 export interface VoteRadioStationResponse {
-  /** Success status */
-  success: boolean;
+  /** A rejected vote throws, so a returned vote always succeeded. */
+  success: true;
   /** Response message */
   message: string;
 }

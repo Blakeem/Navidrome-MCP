@@ -62,6 +62,12 @@ function decodeIcyValue(value: string): string {
   return utf8.includes('\uFFFD') ? value : utf8;
 }
 
+// Headers joins a header sent twice with ", ", and some servers repeat an ICY field, which showed as "320, 320".
+function collapseRepeatedValue(value: string): string {
+  const parts = value.split(', ');
+  return parts.every((part) => part === parts[0]) ? (parts[0] ?? value) : value;
+}
+
 /** Some SHOUTcast/Icecast servers put markup in ICY fields, and raw HTML breaks client markdown. */
 export function extractStreamingHeaders(headers: Headers): Record<string, string> {
   const streamHeaders: Record<string, string> = {};
@@ -70,11 +76,79 @@ export function extractStreamingHeaders(headers: Headers): Record<string, string
     const lowerKey = key.toLowerCase();
     const isStreamingHeader = STREAMING_HEADER_PREFIXES.some((prefix) => lowerKey.startsWith(prefix));
     if (isStreamingHeader && !lowerKey.startsWith(NOTICE_HEADER_PREFIX)) {
-      streamHeaders[lowerKey] = stripHtml(decodeIcyValue(value));
+      streamHeaders[lowerKey] = stripHtml(decodeIcyValue(collapseRepeatedValue(value)));
     }
   });
 
   return streamHeaders;
+}
+
+// Bitrates in kbps by bitrate index for Layer II and III. Index 0 (free format) and 15 (invalid) are unusable.
+const MPEG1_LAYER2_KBPS = [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384];
+const MPEG1_LAYER3_KBPS = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+const MPEG2_LAYER23_KBPS = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+// Sample rates by MPEG version bits (0 = MPEG 2.5, 2 = MPEG 2, 3 = MPEG 1). Version 1 is reserved.
+const MPEG_SAMPLE_RATES: Readonly<Record<number, readonly number[]>> = {
+  0: [11025, 12000, 8000],
+  2: [22050, 24000, 16000],
+  3: [44100, 48000, 32000],
+};
+const ADTS_HEADER_BYTES = 7;
+const OGG_CAPTURE_PATTERN = [0x4f, 0x67, 0x67, 0x53, 0x00];
+
+interface FrameHeader {
+  readonly kind: 'mp3' | 'mp2' | 'aac';
+  readonly length: number;
+}
+
+function readMpegFrame(buffer: Uint8Array, offset: number): FrameHeader | null {
+  const [b0, b1, b2] = [buffer[offset], buffer[offset + 1], buffer[offset + 2]];
+  if (b0 !== 0xff || b1 === undefined || b2 === undefined || (b1 & 0xe0) !== 0xe0) return null;
+  const version = (b1 >> 3) & 0x03;
+  const layer = (b1 >> 1) & 0x03;
+  const sampleRate = MPEG_SAMPLE_RATES[version]?.[(b2 >> 2) & 0x03];
+  // Layer bits 3 are Layer I, which radio does not use, and 0 is reserved.
+  if (sampleRate === undefined || (layer !== 1 && layer !== 2)) return null;
+  const table = version === 3 ? (layer === 1 ? MPEG1_LAYER3_KBPS : MPEG1_LAYER2_KBPS) : MPEG2_LAYER23_KBPS;
+  const kbps = table[b2 >> 4] ?? 0;
+  if (kbps === 0) return null;
+  const coefficient = layer === 1 && version !== 3 ? 72 : 144;
+  const length = Math.floor((coefficient * kbps * 1000) / sampleRate) + ((b2 >> 1) & 0x01);
+  return { kind: layer === 1 ? 'mp3' : 'mp2', length };
+}
+
+function readAdtsFrame(buffer: Uint8Array, offset: number): FrameHeader | null {
+  const [b0, b1, b2, b3, b4, b5] = [0, 1, 2, 3, 4, 5].map((i) => buffer[offset + i]);
+  if (b0 !== 0xff || b1 === undefined || b2 === undefined || b3 === undefined || b4 === undefined || b5 === undefined) {
+    return null;
+  }
+  // ADTS shares MPEG's sync bits but its layer bits are always 0, which MPEG reserves.
+  if ((b1 & 0xf6) !== 0xf0 || ((b2 >> 2) & 0x0f) > 12) return null;
+  const length = ((b3 & 0x03) << 11) | (b4 << 3) | (b5 >> 5);
+  return length > ADTS_HEADER_BYTES ? { kind: 'aac', length } : null;
+}
+
+/**
+ * A live stream sample starts mid-frame, so a format signature at byte 0 misses it. Three frame headers, each one
+ * frame after the last, identify MPEG audio or ADTS AAC, since a lone sync pattern shows up in random data.
+ */
+function findStreamFrames(buffer: Uint8Array): AudioDetectionResult | null {
+  for (let offset = 0; offset + 6 < buffer.length; offset++) {
+    if (OGG_CAPTURE_PATTERN.every((byte, i) => buffer[offset + i] === byte)) {
+      return { detected: true, format: 'ogg', mime: 'audio/ogg' };
+    }
+    const frame = readMpegFrame(buffer, offset) ?? readAdtsFrame(buffer, offset);
+    if (frame === null) continue;
+    const readFrame = frame.kind === 'aac' ? readAdtsFrame : readMpegFrame;
+    const second = readFrame(buffer, offset + frame.length);
+    const third = second === null ? null : readFrame(buffer, offset + frame.length + second.length);
+    if (second?.kind === frame.kind && third?.kind === frame.kind) {
+      return frame.kind === 'aac'
+        ? { detected: true, format: 'aac', mime: 'audio/aac' }
+        : { detected: true, format: frame.kind, mime: 'audio/mpeg' };
+    }
+  }
+  return null;
 }
 
 export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetectionResult> {
@@ -116,7 +190,7 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
       }
     }
 
-    return { detected: false };
+    return findStreamFrames(buffer) ?? { detected: false };
   } catch {
     return { detected: false };
   }
