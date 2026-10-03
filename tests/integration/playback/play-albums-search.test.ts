@@ -16,7 +16,7 @@
 
 import { beforeAll, beforeEach, expect, it } from 'vitest';
 import {
-  clearPlayQueue,
+  clearQueueAndWait,
   describePlayback,
   getPlayQueue,
   getTestSongIds,
@@ -75,11 +75,7 @@ describePlayback('play_albums_search (live)', () => {
   beforeEach(async () => {
     // Each test starts with a known empty queue so the search-driven load
     // is unambiguous. Append-mode tests build their own preamble queue.
-    await clearPlayQueue();
-    await waitFor(async () => {
-      const np = await nowPlaying();
-      return np.queueLength === 0;
-    });
+    await clearQueueAndWait();
   });
 
   // ---------------------------------------------------------------------
@@ -167,8 +163,7 @@ describePlayback('play_albums_search (live)', () => {
     }
 
     // Capture a no-shuffle baseline so we can compare album order later.
-    await clearPlayQueue();
-    await waitFor(async () => (await nowPlaying()).queueLength === 0);
+    await clearQueueAndWait();
     const baseline = await playAlbumsSearch({
       query: artistName,
       sort: 'year',
@@ -186,8 +181,7 @@ describePlayback('play_albums_search (live)', () => {
       .filter((id): id is string => id !== null);
 
     // Now run the same query with shuffle:'albums'.
-    await clearPlayQueue();
-    await waitFor(async () => (await nowPlaying()).queueLength === 0);
+    await clearQueueAndWait();
     const shuffled = await playAlbumsSearch({
       query: artistName,
       sort: 'year',
@@ -275,8 +269,7 @@ describePlayback('play_albums_search (live)', () => {
     }
 
     // Get the deterministic baseline once.
-    await clearPlayQueue();
-    await waitFor(async () => (await nowPlaying()).queueLength === 0);
+    await clearQueueAndWait();
     const baseline = await playAlbumsSearch({
       query: artistName,
       sort: 'year',
@@ -298,8 +291,7 @@ describePlayback('play_albums_search (live)', () => {
 
     if (orderEqual(ids, baselineIds)) {
       // Retry once. Re-run shuffle:'songs' from scratch.
-      await clearPlayQueue();
-      await waitFor(async () => (await nowPlaying()).queueLength === 0);
+      await clearQueueAndWait();
       result = await playAlbumsSearch({
         query: artistName,
         sort: 'year',
@@ -380,7 +372,7 @@ describePlayback('play_albums_search (live)', () => {
 
     // Live queue should remain empty (beforeEach cleared it).
     const np = await nowPlaying();
-    expect(np.queueLength).toBe(0);
+    expect(np.queueLength ?? 0).toBe(0);
   });
 
   // ---------------------------------------------------------------------
@@ -410,8 +402,7 @@ describePlayback('play_albums_search (live)', () => {
         ) {
           throw err;
         }
-        await clearPlayQueue();
-        await waitFor(async () => (await nowPlaying()).queueLength === 0);
+        await clearQueueAndWait();
       }
     }
 

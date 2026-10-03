@@ -17,8 +17,6 @@ const RESULT_GROUPS = [
 
 // Bumped on every load, so a slow response never paints over a newer one.
 let generation = 0;
-// Clearing the query returns to the recent plays only while search results are shown.
-let showingSearch = false;
 
 export function bindSearchPane() {
   searchBtn.addEventListener('click', () => void loadLibrary(query.value));
@@ -27,10 +25,6 @@ export function bindSearchPane() {
     // Enter implicitly submits the dialog's form, which would close the dialog.
     ev.preventDefault();
     void loadLibrary(query.value);
-  });
-  // The type=search clear button also fires `input`, so it lands here too.
-  query.addEventListener('input', () => {
-    if (showingSearch && query.value === '') void loadLibrary('');
   });
 }
 
@@ -52,7 +46,6 @@ async function loadLibrary(rawQuery) {
 
   // PROCESS
   generation = mine;
-  showingSearch = isSearch;
   caption.textContent = isSearch ? `Searching for “${text}”…` : 'Loading recently played…';
   results.replaceChildren();
   data = await getJson(url);

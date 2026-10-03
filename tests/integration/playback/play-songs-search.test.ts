@@ -17,7 +17,7 @@
 
 import { beforeAll, beforeEach, expect } from 'vitest';
 import {
-  clearPlayQueue,
+  clearQueueAndWait,
   describePlayback,
   getPlayQueue,
   getTestSongIds,
@@ -37,11 +37,7 @@ describePlayback('play_songs_search (live)', () => {
   beforeEach(async () => {
     // Each test starts with a known empty queue so the search-driven load
     // is unambiguous. Append-mode tests build their own preamble queue.
-    await clearPlayQueue();
-    await waitFor(async () => {
-      const np = await nowPlaying();
-      return np.queueLength === 0;
-    });
+    await clearQueueAndWait();
   });
 
   // ---------------------------------------------------------------------
@@ -134,8 +130,7 @@ describePlayback('play_songs_search (live)', () => {
     expect(baselineIds.length).toBe(baseline.count);
 
     // Now run the same query with shuffle:true.
-    await clearPlayQueue();
-    await waitFor(async () => (await nowPlaying()).queueLength === 0);
+    await clearQueueAndWait();
 
     let shuffled = await playSongsSearch({
       starred: true,
@@ -164,8 +159,7 @@ describePlayback('play_songs_search (live)', () => {
       a.length === b.length && a.every((id, i) => id === b[i]);
 
     if (orderEqual(shuffledIds, baselineIds)) {
-      await clearPlayQueue();
-      await waitFor(async () => (await nowPlaying()).queueLength === 0);
+      await clearQueueAndWait();
 
       shuffled = await playSongsSearch({
         starred: true,
@@ -245,7 +239,7 @@ describePlayback('play_songs_search (live)', () => {
 
     // Live queue should remain empty (beforeEach cleared it).
     const np = await nowPlaying();
-    expect(np.queueLength).toBe(0);
+    expect(np.queueLength ?? 0).toBe(0);
   });
 
   // ---------------------------------------------------------------------

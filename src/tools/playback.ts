@@ -37,6 +37,7 @@ import {
   type QueueTrackMetadata,
 } from '../services/playback/playback-engine.js';
 import { fisherYatesShuffle, orderQueueSongs } from './queue-order.js';
+import { listRadioStations } from './radio.js';
 import {
   fetchAlbumSetSongs,
   fetchLibrarySourceRows,
@@ -140,10 +141,9 @@ interface NowPlayingResult {
   paused?: boolean;
   queueIndex?: number;
   queueLength?: number;
-  // Set when a radio stream is currently loaded. `isRadio` is true when the
-  // current queue entry is not a Navidrome song stream.
-  // `radioStation` is populated only when this server process started the
-  // station and mpv still holds it.
+  // `isRadio` is true when the current queue entry is not a Navidrome song stream.
+  // `radioStation.name` is the saved station whose stream URL mpv plays, or
+  // "Unknown station" when no saved station matches.
   isRadio?: boolean;
   radioStation?: { name: string };
 }
@@ -674,6 +674,26 @@ let durationRepair: { key: string; duration: number } | null = null;
 // The key a getQueue() reconciliation confirmed is NOT radio. Without it,
 // `needsRadioFallback` forces a getQueue() IPC on every poll of ordinary playback.
 let notRadioConfirmedForKey: string | null = null;
+// The radio station resolved for one loaded file, so later polls skip the IPC and the station lookup.
+let radioForKey: { key: string; stationName: string } | null = null;
+
+const UNKNOWN_STATION_NAME = 'Unknown station';
+
+/**
+ * Every process sharing mpv can name the station this way, including one that
+ * did not start it. A .pls or .m3u station plays an expanded URL, so mpv's
+ * playlist-path is tried too.
+ */
+async function findSavedStationName(client: NavidromeClient | undefined, streamUrls: unknown[]): Promise<string | null> {
+  if (client === undefined) return null;
+  try {
+    const { stations } = await listRadioStations(client, {});
+    return stations.find((station) => streamUrls.includes(station.streamUrl))?.name ?? null;
+  } catch (error) {
+    logger.debug('now_playing: saved radio station lookup failed:', error);
+    return null;
+  }
+}
 
 /**
  * Read current playback state from the engine's observed-property cache.
@@ -729,11 +749,6 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
 
     // getQueue() runs for three triggers: radio fallback, VBR duration repair and metadata repair.
     // `now_playing` runs on every poll, so the per-key caches skip that IPC once a key is resolved.
-    const radioStation = playbackEngine.getCurrentRadioStation();
-    if (radioStation !== null) {
-      result.isRadio = true;
-      result.radioStation = radioStation;
-    }
     // mpv's `path` is in the key because the generation is per process: another process
     // sharing this mpv, or removal of the playing entry, loads a new file at the same index.
     const loadedPath = playbackEngine.getCachedProperty('path');
@@ -741,22 +756,27 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
       typeof queueIndex === 'number' && typeof loadedPath === 'string' && loadedPath !== ''
         ? `${String(playbackEngine.getQueueGeneration())}:idx:${String(queueIndex)}:${loadedPath}`
         : null;
+    const knownRadio = repairKey !== null && radioForKey?.key === repairKey ? radioForKey : null;
+    if (knownRadio !== null) {
+      result.isRadio = true;
+      result.radioStation = { name: knownRadio.stationName };
+    }
     // A key confirmed not radio stops the radio fallback, which would otherwise fire getQueue() on every poll.
     const notRadioConfirmed =
       repairKey !== null && notRadioConfirmedForKey === repairKey;
-    const needsRadioFallback = radioStation === null && !notRadioConfirmed;
+    const needsRadioFallback = knownRadio === null && !notRadioConfirmed;
     const cachedRepair = repairKey !== null && durationRepair?.key === repairKey ? durationRepair : null;
     const alreadyRepaired = cachedRepair !== null;
     if (cachedRepair !== null) {
       result.duration = preferAuthoritativeDuration(result.duration, cachedRepair.duration);
     }
     const needsDurationRepair =
-      radioStation === null &&
+      knownRadio === null &&
       !alreadyRepaired &&
       (result.duration === undefined || result.duration < DURATION_REPAIR_MAX_SECONDS);
     // Radio is excluded because it has no album and takes its title from ICY, so it would fire getQueue() every poll.
     const needsMetadataRepair =
-      radioStation === null &&
+      knownRadio === null &&
       (result.title === undefined || result.artist === undefined);
     if (
       typeof queueLength === 'number' &&
@@ -769,6 +789,13 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
         if (current !== undefined) {
           if (needsRadioFallback && current.songId === null) {
             result.isRadio = true;
+            // Mid-load mpv has no path yet, so the name waits for a later poll.
+            if (repairKey !== null) {
+              const playlistPath = playbackEngine.getCachedProperty('playlist-path');
+              const stationName = (await findSavedStationName(client, [loadedPath, playlistPath])) ?? UNKNOWN_STATION_NAME;
+              radioForKey = { key: repairKey, stationName };
+              result.radioStation = { name: stationName };
+            }
           }
           if (current.songId !== null && repairKey !== null) {
             notRadioConfirmedForKey = repairKey;

@@ -28,7 +28,7 @@ import { PLAYBACK_TOOL_NAMES } from './handlers/playback-handlers.js';
 import { RADIO_BROWSER_TOOL_NAMES, RADIO_PLAYBACK_TOOL_NAMES } from './handlers/radio-handlers.js';
 
 interface TestConnectionResult {
-  success: boolean;
+  success: true;
   message: string;
   serverInfo?: {
     url: string;
@@ -65,11 +65,10 @@ export async function testConnection(
   config: Config,
   args: unknown
 ): Promise<TestConnectionResult> {
-  const params = TestConnectionSchema.parse(args);
-
-  logger.debug('Tool testConnection called with args:', params);
-
   try {
+    const params = TestConnectionSchema.parse(args);
+    logger.debug('Tool testConnection called with args:', params);
+
     // Try to make a simple API call to verify authentication using working /song endpoint
     const queryParams = new URLSearchParams({
       _start: '0',
@@ -130,9 +129,7 @@ export async function testConnection(
 
     return result;
   } catch (error) {
-    return {
-      success: false,
-      message: ErrorFormatter.toolExecution('test_connection', error),
-    };
+    // A failed check is a tool error, so the agent sees the failure flagged instead of a success-shaped result.
+    throw new Error(ErrorFormatter.toolExecution('test_connection', error));
   }
 }

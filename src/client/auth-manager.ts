@@ -16,7 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { setTimeout as delay } from 'node:timers/promises';
+
 import type { Config } from '../config.js';
+import { MAX_AUTH_RATE_LIMIT_WAIT_MS } from '../constants/timeouts.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import {
@@ -68,28 +71,21 @@ export class AuthManager {
   }
 
   private async performAuthenticate(): Promise<void> {
-    // Auth gets no retry: a timed-out /auth/login could mean the server
-    // accepted-but-didn't-respond, in which case retry is harmless, OR it
-    // could mean account-lockout-on-N-failures policies were tripped on a
-    // prior attempt and the server is rate-limiting us. Better to surface
-    // the timeout to the caller — they (or the LLM) can retry the original
-    // tool call, which goes through this single-flight path anyway.
-    const response = await fetchWithTimeout(
-      `${this.config.navidromeUrl}/auth/login`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: this.config.navidromeUsername,
-          password: this.config.navidromePassword,
-        }),
-      },
-      {
-        timeoutMs: getNavidromeAuthTimeoutMs(),
-        retryPolicy: 'never',
-        operationLabel: 'Navidrome /auth/login',
-      },
-    );
+    let response = await this.postLogin();
+
+    // Navidrome allows a few logins per window, so processes started together
+    // (MCP restarts, a spawned web player) wait out the window once.
+    if (response.status === 429) {
+      const waitMs = retryAfterMs(response.headers.get('retry-after'));
+      logger.warn(`Navidrome is rate-limiting logins (HTTP 429). Retrying in ${Math.ceil(waitMs / 1000)}s.`);
+      await delay(waitMs);
+      response = await this.postLogin();
+    }
+    if (response.status === 429) {
+      throw new Error(ErrorFormatter.authentication(
+        'Navidrome is rate-limiting logins (HTTP 429). Wait about 20 seconds, then retry.',
+      ));
+    }
 
     // Only 401 and 403 mean bad credentials. Any other status points at the URL or a down server.
     if (response.status === 401 || response.status === 403) {
@@ -127,4 +123,34 @@ export class AuthManager {
     this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
     logger.debug('Authentication successful');
   }
+
+  /**
+   * A timed-out login is not retried, since a retry could trip an account
+   * lockout. The caller retries the tool call through the single-flight path.
+   */
+  private postLogin(): Promise<Response> {
+    return fetchWithTimeout(
+      `${this.config.navidromeUrl}/auth/login`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: this.config.navidromeUsername,
+          password: this.config.navidromePassword,
+        }),
+      },
+      {
+        timeoutMs: getNavidromeAuthTimeoutMs(),
+        retryPolicy: 'never',
+        operationLabel: 'Navidrome /auth/login',
+      },
+    );
+  }
+}
+
+/** Reads a delta-seconds `Retry-After`, falling back to Navidrome's 20s default window. */
+function retryAfterMs(header: string | null): number {
+  const seconds = Number(header);
+  const waitMs = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 20_000;
+  return Math.min(waitMs, MAX_AUTH_RATE_LIMIT_WAIT_MS);
 }

@@ -21,7 +21,7 @@
  */
 export interface PlaylistDTO {
   /** Unique playlist ID */
-  playlistId: string;
+  id: string;
   /** Playlist name */
   name: string;
   /** Playlist description */

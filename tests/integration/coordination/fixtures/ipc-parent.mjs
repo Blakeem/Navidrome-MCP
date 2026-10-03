@@ -12,6 +12,8 @@ const [distWebMain, storePath] = process.argv.slice(2);
 const child = spawn(process.execPath, [distWebMain], {
   stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
   env: { ...process.env, NAVIDROME_CONFIG_PATH: storePath, NAVIDROME_WEB_AUTO_OPEN: '0' },
+  detached: true,
+  windowsHide: true,
 });
 child.unref();
 

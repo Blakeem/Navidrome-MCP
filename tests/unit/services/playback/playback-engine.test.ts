@@ -739,52 +739,6 @@ describe('previous', () => {
   });
 });
 
-// ---------- radio station name clears when something else replaces the radio ----------
-
-describe('currentRadioStation', () => {
-  const stationUrl = 'http://radio.example/listen.pls';
-
-  async function loadStation(): Promise<(evt: { id: number; name: string; data: unknown }) => void> {
-    const ipc = fakeIpcRef.value as FakeIpc;
-    await playbackEngine.ensureRunning();
-    await playbackEngine.enqueueRadio(stationUrl, 'Station');
-    const propertyHandler = ipc.propertyHandlers[0];
-    if (propertyHandler === undefined) throw new Error('no property handler installed');
-    return propertyHandler;
-  }
-
-  it('keeps the name while mpv plays the stream expanded from the station playlist', async () => {
-    const propertyHandler = await loadStation();
-    expect(playbackEngine.getCurrentRadioStation()).toEqual({ name: 'Station' });
-
-    propertyHandler({ id: 12, name: 'playlist-path', data: stationUrl });
-    propertyHandler({ id: 11, name: 'path', data: 'http://radio.example/listen.mp3' });
-    expect(playbackEngine.getCurrentRadioStation()).toEqual({ name: 'Station' });
-  });
-
-  it('clears when the loaded path changes to a Navidrome song stream', async () => {
-    const propertyHandler = await loadStation();
-
-    propertyHandler({ id: 11, name: 'path', data: 'http://navidrome.test/rest/stream?id=x&u=a&s=b&t=c' });
-    expect(playbackEngine.getCurrentRadioStation()).toBeNull();
-  });
-
-  it('clears when mpv goes idle, as after a clear from another process', async () => {
-    const propertyHandler = await loadStation();
-
-    propertyHandler({ id: 8, name: 'idle-active', data: true });
-    expect(playbackEngine.getCurrentRadioStation()).toBeNull();
-  });
-
-  it('returns null when another process loads a different station', async () => {
-    const propertyHandler = await loadStation();
-
-    propertyHandler({ id: 12, name: 'playlist-path', data: undefined });
-    propertyHandler({ id: 11, name: 'path', data: 'http://other-radio.example/stream' });
-    expect(playbackEngine.getCurrentRadioStation()).toBeNull();
-  });
-});
-
 // ---------- concurrent attaches share one connection ----------
 
 describe('ensureAttached coalescing', () => {

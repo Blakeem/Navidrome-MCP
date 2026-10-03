@@ -18,7 +18,7 @@
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
@@ -65,7 +65,7 @@ export function registerDegradedTools(server: Server, settingsUrl: string, failu
     // instead of masking an unknown tool with a success notice (matches the
     // registry convention).
     if (name !== 'open_settings' && name !== 'test_connection') {
-      throw new Error(ErrorFormatter.toolUnknown(name));
+      throw new McpError(ErrorCode.InvalidParams, ErrorFormatter.toolUnknown(name));
     }
     if (name === 'open_settings') {
       openBrowser(settingsUrl);

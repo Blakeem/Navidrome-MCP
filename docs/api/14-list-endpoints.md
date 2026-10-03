@@ -17,23 +17,21 @@ List all tags across all tag types with filtering support.
 **Query Parameters:**
 - `_start` (number): Starting index (default: 0)
 - `_end` (number): Ending index (exclusive)
-- `_sort` (string): Sort field ("name", "songCount", "albumCount")
+- `_sort` (string): Sort field ("tagValue", "songCount", "albumCount")
 - `_order` (string): "ASC" or "DESC" (default: ASC)
-- `name` (string): Substring search in tag names
+- `tag_name` (string): Filter by tag name, such as `genre` or `mood`. Navidrome ignores `tagType`.
+- `tag_value` or `name` (string): Substring search in tag values
 - `library_id` (number): Filter by library access (via library_tag table)
-- `tagType` (string): Filter by specific tag type
 
 **Response (200 OK):**
 ```json
 [
   {
     "id": "string",
-    "name": "string",
-    "tagType": "string",
-    "songCount": number,
+    "tagName": "string",   // e.g. "genre", "mood"
+    "tagValue": "string",
     "albumCount": number,
-    "createdAt": "ISO-8601",
-    "updatedAt": "ISO-8601"
+    "songCount": number
   }
 ]
 ```
@@ -45,12 +43,10 @@ Get a specific tag by ID.
 ```json
 {
   "id": "string",
-  "name": "string",
-  "tagType": "string",
-  "songCount": number,
+  "tagName": "string",   // e.g. "genre", "mood"
+  "tagValue": "string",
   "albumCount": number,
-  "createdAt": "ISO-8601",
-  "updatedAt": "ISO-8601"
+  "songCount": number
 }
 ```
 
@@ -89,120 +85,88 @@ Get a specific genre by ID with detailed statistics.
 ### Main Content Tags
 
 #### Music Genres
-- **Endpoint**: `/api/genre` or `/api/tag?tagType=genre`
+- **Endpoint**: `/api/genre` or `/api/tag?tag_name=genre`
 - **Filter Usage**: `genre_id={id}`
 - **Description**: Music genres (Rock, Jazz, Classical, etc.)
 
 #### Mood Tags
-- **Endpoint**: `/api/tag?tagType=mood`
+- **Endpoint**: `/api/tag?tag_name=mood`
 - **Filter Usage**: `mood={id}`
 - **Description**: Musical moods and emotions (Happy, Sad, Energetic, etc.)
 
 #### Grouping/Collection Tags
-- **Endpoint**: `/api/tag?tagType=grouping`
+- **Endpoint**: `/api/tag?tag_name=grouping`
 - **Filter Usage**: `grouping={id}`
 - **Description**: Content groupings and collections
 
 ### Album-Level Tags
 
 #### Release Type Tags
-- **Endpoint**: `/api/tag?tagType=releasetype`
+- **Endpoint**: `/api/tag?tag_name=releasetype`
 - **Filter Usage**: `releasetype={id}`
 - **Description**: Album release types
 - **Common Values**: EP, LP, Single, Compilation, Soundtrack, Live
 
 #### Album Version Tags
-- **Endpoint**: `/api/tag?tagType=albumversion`
+- **Endpoint**: `/api/tag?tag_name=albumversion`
 - **Filter Usage**: `albumversion={id}`
 - **Description**: Album versions and releases
 - **Common Values**: Remaster, Deluxe Edition, Anniversary Edition, Director's Cut
 
 #### Media Type Tags
-- **Endpoint**: `/api/tag?tagType=media`
+- **Endpoint**: `/api/tag?tag_name=media`
 - **Filter Usage**: `media={id}`
 - **Description**: Physical and digital media types
 - **Common Values**: CD, Vinyl, Digital, Cassette, DVD, Blu-ray
 
 #### Record Label Tags
-- **Endpoint**: `/api/tag?tagType=recordlabel`
+- **Endpoint**: `/api/tag?tag_name=recordlabel`
 - **Filter Usage**: `recordlabel={id}`
 - **Description**: Record labels and publishers
 
 #### Release Country Tags
-- **Endpoint**: `/api/tag?tagType=releasecountry`
+- **Endpoint**: `/api/tag?tag_name=releasecountry`
 - **Filter Usage**: `releasecountry={id}`
 - **Description**: Countries of release
 - **Common Values**: US, UK, DE, JP, etc. (ISO country codes)
 
-### Role/Credit Tags
+### Role/Credit Filters
 
-#### Composer Tags
-- **Endpoint**: `/api/tag?tagType=composer`
-- **Filter Usage**: `composer_id={id}` or `role_composer_id={id}`
-- **Description**: Music composers and songwriters
+Roles are artist credits, not tags, so `/api/tag` does not list them.
 
-#### Producer Tags
-- **Endpoint**: `/api/tag?tagType=producer`
-- **Filter Usage**: `producer_id={id}` or `role_producer_id={id}`
-- **Description**: Music producers
+- **List the artists in a role**: `/api/artist?role={role}`, such as `role=composer`
+- **Filter albums by a role**: `/api/album?role_{role}_id={artistId}`
+- **Filter albums by any role**: `/api/album?role_total_id={artistId}`
+- `/api/song` has no role filter. It ignores `role_{role}_id`, and both endpoints ignore the `{role}_id` form.
 
-#### Conductor Tags
-- **Endpoint**: `/api/tag?tagType=conductor`
-- **Filter Usage**: `conductor_id={id}` or `role_conductor_id={id}`
-- **Description**: Orchestra and ensemble conductors
-
-#### Engineer Tags
-- **Endpoint**: `/api/tag?tagType=engineer`
-- **Filter Usage**: `engineer_id={id}` or `role_engineer_id={id}`
-- **Description**: Audio engineers and technical staff
-
-#### Mixer Tags
-- **Endpoint**: `/api/tag?tagType=mixer`
-- **Filter Usage**: `mixer_id={id}` or `role_mixer_id={id}`
-- **Description**: Mix engineers
-
-#### Additional Role Tags
-All following roles follow the same pattern:
-- **Lyricist**: `lyricist_id` / `role_lyricist_id`
-- **Arranger**: `arranger_id` / `role_arranger_id`
-- **Remixer**: `remixer_id` / `role_remixer_id`
-- **DJ/Mixer**: `djmixer_id` / `role_djmixer_id`
-- **Director**: `director_id` / `role_director_id`
-- **Performer**: `performer_id` / `role_performer_id` (instrument-specific)
+Roles: `composer`, `producer`, `conductor`, `engineer`, `mixer`, `lyricist`, `arranger`, `remixer`, `djmixer`, `director`, `performer` (instrument-specific).
 
 ## Extended Metadata Tags
 
 ### Additional Tags (Smart Playlist Support)
-These tags are available for advanced filtering and smart playlists:
+These tags filter with their bare tag name. Song-level tags such as `isrc` and `asin` filter `/api/song` only.
 
 #### Catalog and Identification
-- **ASIN**: `asin_id` - Amazon Standard Identification Number
-- **Barcode**: `barcode_id` - Product barcodes
-- **ISRC**: `isrc_id` - International Standard Recording Code
-- **Catalog Number**: `catalognumber_id` - Catalog numbers
+- **ASIN**: `asin` - Amazon Standard Identification Number
+- **Barcode**: `barcode` - Product barcodes
+- **ISRC**: `isrc` - International Standard Recording Code
+- **Catalog Number**: `catalognumber` - Catalog numbers
 
 #### Content Description
-- **Key**: `key_id` - Musical key signatures
-- **Language**: `language_id` - Content language
-- **Movement Name**: `movementname_id` - Classical movement names
-- **Subtitle**: `subtitle_id` - Track subtitles
-- **Work**: `work_id` - Musical work titles
+- **Key**: `key` - Musical key signatures
+- **Language**: `language` - Content language
+- **Movement Name**: `movementname` - Classical movement names
+- **Subtitle**: `subtitle` - Track subtitles
+- **Work**: `work` - Musical work titles
 
 #### Technical and Legal
-- **Copyright**: `copyright_id` - Copyright information
-- **License**: `license_id` - License information
-- **Encoded By**: `encodedby_id` - Encoding software/person
-- **Website**: `website_id` - Related websites
+- **Copyright**: `copyright` - Copyright information
+- **License**: `license` - License information
+- **Encoded By**: `encodedby` - Encoding software/person
+- **Website**: `website` - Related websites
 
-### MusicBrainz Identifier Tags
-All MusicBrainz UUIDs are available as tags:
-
-- **Artist MBID**: `mbzartistid_id`
-- **Album MBID**: `mbzalbumid_id`
-- **Recording MBID**: `mbzrecordingid_id`
-- **Track MBID**: `mbztrackid_id`
-- **Release Group MBID**: `mbzreleasegroupid_id`
-- **Work MBID**: `mbzworkid_id`
+### MusicBrainz Identifiers
+MusicBrainz IDs are album and song fields, not tags. `/api/tag` does not list them.
 
 ## Library Management
 
@@ -211,15 +175,15 @@ All tag endpoints support library filtering to show only tags relevant to the us
 
 ```
 GET /api/genre?library_id=1
-GET /api/tag?tagType=mood&library_id=2
-GET /api/tag?tagType=recordlabel&library_id=1,3
+GET /api/tag?tag_name=mood&library_id=2
+GET /api/tag?tag_name=recordlabel&library_id=1,3
 ```
 
 ### Multi-Library Support
 Users can access multiple libraries simultaneously:
 
 ```
-GET /api/tag?library_id=1,2,3&tagType=genre
+GET /api/tag?library_id=1,2,3&tag_name=genre
 ```
 
 ## Usage Examples
@@ -233,29 +197,29 @@ GET /api/genre?library_id=1&_sort=name&_order=ASC
 
 **Get top moods by usage:**
 ```
-GET /api/tag?tagType=mood&library_id=1&_sort=songCount&_order=DESC&_end=20
+GET /api/tag?tag_name=mood&library_id=1&_sort=songCount&_order=DESC&_end=20
 ```
 
 **Get all record labels with content:**
 ```
-GET /api/tag?tagType=recordlabel&library_id=1&_sort=albumCount&_order=DESC
+GET /api/tag?tag_name=recordlabel&library_id=1&_sort=albumCount&_order=DESC
 ```
 
 ### Advanced Tag Queries
 
 **Search for specific mood:**
 ```
-GET /api/tag?tagType=mood&name=happy&library_id=1
+GET /api/tag?tag_name=mood&name=happy&library_id=1
 ```
 
-**Get classical composers:**
+**Get composers:**
 ```
-GET /api/tag?tagType=composer&library_id=1&_sort=name
+GET /api/artist?role=composer&_sort=name
 ```
 
 **Find electronic music labels:**
 ```
-GET /api/tag?tagType=recordlabel&name=electronic&library_id=1
+GET /api/tag?tag_name=recordlabel&name=electronic&library_id=1
 ```
 
 ### Using Tags in Media Queries
@@ -267,7 +231,7 @@ GET /api/album?genre_id=rock123&mood=energetic456&library_id=1
 
 **Albums by specific producer and label:**
 ```
-GET /api/album?role_producer_id=quincy789&recordlabel_id=motown123&library_id=1
+GET /api/album?role_producer_id=quincy789&recordlabel=motown123&library_id=1
 ```
 
 **Classical works by composer and conductor:**

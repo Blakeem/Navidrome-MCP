@@ -16,6 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { z } from 'zod';
+
 /**
  * Standardized error message formatting utilities
  * Provides consistent error messages across the MCP application
@@ -23,9 +25,13 @@
 
 export class ErrorFormatter {
   /**
-   * Extract message from unknown error type
+   * A ZodError's own message is a JSON dump of its issues, too noisy for the agent to act on.
    */
   private static extractMessage(error: unknown): string {
+    if (error instanceof z.ZodError) {
+      const issues = error.issues.map((issue) => `${issue.path.join('.') || 'arguments'}: ${issue.message}`);
+      return `Invalid arguments. ${issues.join('. ')}`;
+    }
     return error instanceof Error ? error.message : 'Unknown error';
   }
 

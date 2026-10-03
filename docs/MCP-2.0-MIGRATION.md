@@ -73,7 +73,7 @@ Drawn once. Every later claim names a part of this.
    │                                                                                 │
    │  B1  tool results          {content:[text]}  → + resultType, isError  [M7]      │
    │  B2  list results          → REQUIRED ttlMs + cacheScope              [M8]      │
-   │  B3  errors                everything -32603 → protocol vs execution  [M9]      │
+   │  B3  errors                protocol vs execution split, done          [M9]      │
    │  B4  resources             -32002 → -32602                            [M10]     │
    │  B5  inputSchema           hand-written JSON Schema, 12 drifts        [M11]     │
    │  B6  HTTP headers          + Mcp-Method, Mcp-Name required            [M12]     │
@@ -221,7 +221,7 @@ Ordered by dependency. None require design decisions.
 | **M6** | `setRequestHandler(XRequestSchema,…)` → method strings | `registry.ts:130,134`; `resources/index.ts:40,45`; `degraded-tools.ts:55,57` | `setRequestHandler('tools/list', …)`. 7 sites. Low-level `Server` **survives** — the registry architecture can stay |
 | **M7** | `resultType` on every result | `registry.ts:70-79` | All results carry required `resultType: "complete"`. Single encoder ⇒ one place to change |
 | **M8** | **`ttlMs` + `cacheScope` required** on list results | `registry.ts:130`, `resources/index.ts:40,45` | Minor item 5 — required on `tools/list`, `resources/list`, `resources/read`. SDK `cacheHints` defaults to `ttlMs:0` + `private`, which is safe. §5 lists the tools where a non-zero TTL would be *wrong* |
-| **M9** | Error model split | `registry.ts:134-138`, `error-formatter.ts` | **Behavioral change across all 71 tools.** Today everything throws → `-32603`. Spec wants: protocol errors for unknown-tool/malformed (`-32602`), **`isError:true` tool results** for execution failures so the model can self-correct |
+| **M9** | Error model split | `registry.ts`, `error-formatter.ts` | **Done.** An unknown tool is a `-32602` protocol error. Every execution failure, including invalid arguments, is an `isError: true` tool result the model can correct |
 | **M10** | Resource-not-found `-32002` → `-32602` | `src/resources/index.ts` | Minor item 6 |
 | **M11** | `inputSchema` drift | `src/tools/handlers/*`, `src/schemas/*` | 12 verified divergences. §5 |
 | **M12** | `Mcp-Method` / `Mcp-Name` request headers | HTTP path | Minor item 4 — required on Streamable HTTP POST. Handled by the SDK, but custom middleware in front of the endpoint must not strip them |
@@ -264,7 +264,7 @@ These are wrong on 2.2.0 now. Fix them on `main` before or alongside the 3.0 bra
 | **F2** | JWT expiry is **guessed** from `config.tokenExpiry` (24h default) instead of read from the token's `exp` claim — which `jwt-decode.ts:151` already decodes | `auth-manager.ts:117` | If Navidrome's real TTL is shorter, every process serves 401s until the retry-once path repairs it. ~5 lines |
 | **F3** | `durationRepairedForKey` / `notRadioConfirmedForKey` are module-level `let`s, correct only because exactly one process exists | `playback.ts:1247,1253` | Move onto `PlaybackEngine` next to `queueGeneration` (`playback-engine.ts:190`). ~20 lines. Do this regardless of which playback option wins |
 | **F4** | `get_radio_station` returns "not found" for a station that demonstrably exists, when the 300s cache is stale | `radio.ts:517-521` | On cache-miss failure, retry via the uncached path the create flow already uses (`:396`). ~5 lines |
-| **F5** | `test_connection` returns `{success:false}` at protocol-success — the exact pattern `library.ts:143-147` documents as misleading to an LLM | `src/tools/test.ts:123-128` | Aligns with M9 |
+| **F5** | `test_connection` returned `{success:false}` at protocol-success | `src/tools/test.ts` | **Done** with M9. A failed check is now an `isError` result |
 | **F6** | mpv IPC socket path interpolated into an error reaching LLM context | `mpv-ipc.ts:124` | Low severity; internal infrastructure detail |
 | **F7** | `filterCacheManager.initialize()` failure leaves the process permanently throwing on filtered searches | `filter-cache-manager.ts:119` vs `:322` | Make it soft-fail with lazy retry, matching `LibraryManager` (`library-manager.ts:112-117`) |
 | **F8** | `discover_radio_stations` accepts `offset`/`limit` but returns no total or more-pages signal | `src/types/radio.ts:115-131` | Caller cannot distinguish a full page from the last one |

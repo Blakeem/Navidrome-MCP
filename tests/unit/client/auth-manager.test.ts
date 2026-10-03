@@ -144,6 +144,25 @@ describe('AuthManager', () => {
     expect(error?.message).not.toContain('Authentication failed');
   });
 
+  it('waits out a 429 Retry-After once, then logs in', async () => {
+    mockFetch
+      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '0.01' } }))
+      .mockResolvedValueOnce(jsonResponse({ token: 'after-wait' }));
+    const auth = new AuthManager(makeConfig());
+
+    expect(await auth.getToken()).toBe('after-wait');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a second 429 as rate limiting, not a URL problem', async () => {
+    const limited = (): Response => new Response('', { status: 429, headers: { 'Retry-After': '0.01' } });
+    mockFetch.mockResolvedValueOnce(limited()).mockResolvedValueOnce(limited());
+    const auth = new AuthManager(makeConfig());
+
+    await expect(auth.authenticate()).rejects.toThrow(/rate-limiting logins \(HTTP 429\)/);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('concurrent callers all see the same failure when authenticate fails', async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({ message: 'down' }, 500));
     const auth = new AuthManager(makeConfig());

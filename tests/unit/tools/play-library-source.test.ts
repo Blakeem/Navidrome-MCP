@@ -16,7 +16,6 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     enqueue: enqueueMock,
     ensureRunning: vi.fn().mockResolvedValue(undefined),
     isRunning: () => true,
-    getCurrentRadioStation: () => null,
   },
 }));
 

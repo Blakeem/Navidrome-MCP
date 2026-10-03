@@ -279,7 +279,7 @@ const tools: Tool[] = [
   },
   {
     name: 'now_playing',
-    description: "Report the current local playback state: title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache. Does NOT spawn mpv if it isn't already running. `title`/`artist`/`album` and `duration` are reconciled against Navidrome's per-song metadata (by songId), so they're accurate from the first poll. That holds even during the brief track-load window where mpv would otherwise report the raw stream URL as the title, or a partial VBR duration during its scan.",
+    description: "Report the current local playback state: title, artist, album, position, duration, paused, and queue index/length. Reads from the engine's property cache. Does NOT spawn mpv if it isn't already running. `title`/`artist`/`album` and `duration` are reconciled against Navidrome's per-song metadata (by songId), so they're accurate from the first poll. That holds even during the brief track-load window where mpv would otherwise report the raw stream URL as the title, or a partial VBR duration during its scan. For radio, `isRadio` is true and `radioStation.name` names the saved station, or \"Unknown station\" when the stream matches none.",
     inputSchema: {
       type: 'object',
       properties: {},

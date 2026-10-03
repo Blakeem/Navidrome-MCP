@@ -60,14 +60,14 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           const playlist = result.playlists[0];
           
           // Required fields from PlaylistDTO
-          expect(playlist).toHaveProperty('playlistId');
+          expect(playlist).toHaveProperty('id');
           expect(playlist).toHaveProperty('name');
           expect(playlist).toHaveProperty('owner');
           expect(playlist).toHaveProperty('public');
           expect(playlist).toHaveProperty('songCount');
 
           // Verify field types
-          expect(typeof playlist.playlistId).toBe('string');
+          expect(typeof playlist.id).toBe('string');
           expect(typeof playlist.name).toBe('string');
           expect(typeof playlist.owner).toBe('string');
           expect(typeof playlist.public).toBe('boolean');
@@ -100,18 +100,18 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         const listResult = await listPlaylists(liveClient, { limit: 1 });
         
         if (listResult.playlists.length > 0) {
-          const playlistId = listResult.playlists[0].playlistId;
+          const playlistId = listResult.playlists[0].id;
           const result = await getPlaylist(liveClient, { playlistId });
 
           // Validate detailed playlist structure
-          expect(result).toHaveProperty('playlistId');
+          expect(result).toHaveProperty('id');
           expect(result).toHaveProperty('name');
           expect(result).toHaveProperty('owner');
           expect(result).toHaveProperty('public');
           expect(result).toHaveProperty('songCount');
           expect(result).toHaveProperty('durationFormatted');
 
-          expect(result.playlistId).toBe(playlistId);
+          expect(result.id).toBe(playlistId);
         }
       });
     });
@@ -125,7 +125,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         if (playlistWithTracks) {
           // Default call — compact mode.
           const result = await getPlaylistTracks(liveClient, {
-            playlistId: playlistWithTracks.playlistId,
+            playlistId: playlistWithTracks.id,
             limit: 1
           });
 
@@ -158,7 +158,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
 
         if (playlistWithTracks) {
           const result = await getPlaylistTracks(liveClient, {
-            playlistId: playlistWithTracks.playlistId,
+            playlistId: playlistWithTracks.id,
             limit: 1,
             verbose: true
           });
@@ -177,7 +177,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             expect(track).toHaveProperty('playlistId');
             expect(track).toHaveProperty('duration');
 
-            expect(track.playlistId).toBe(playlistWithTracks.playlistId);
+            expect(track.playlistId).toBe(playlistWithTracks.id);
           }
         }
       });
@@ -225,7 +225,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         );
 
         // Verify response structure
-        expect(result).toHaveProperty('playlistId');
+        expect(result).toHaveProperty('id');
         expect(result).toHaveProperty('name');
         expect(result.name).toBe('Test Playlist');
       });

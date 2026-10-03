@@ -86,12 +86,10 @@ describePlayback('transport controls (live)', () => {
     expect(status.volume).toBe(50);
   });
 
-  itPlayback('set_volume rejects below 0', async () => {
-    await expect(setVolume({ level: -1 })).rejects.toThrow();
-  });
-
-  itPlayback('set_volume rejects above 100', async () => {
-    await expect(setVolume({ level: 101 })).rejects.toThrow();
+  itPlayback('set_volume clamps out-of-range levels to 0-100', async () => {
+    expect((await setVolume({ level: -1 })).volume).toBe(0);
+    expect((await setVolume({ level: 101 })).volume).toBe(100);
+    await setVolume({ level: 50 });
   });
 
   // -------------------------------------------------------------------------

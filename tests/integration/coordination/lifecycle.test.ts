@@ -67,9 +67,9 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     expect(await waitFor(async () => (await healthz(port)) !== null)).toBe(true);
 
     const list = (await (await fetch(`http://127.0.0.1:${port}/api/playlists`)).json()) as {
-      playlists?: Array<{ playlistId: string }>;
+      playlists?: Array<{ id: string }>;
     };
-    const id = list.playlists?.[0]?.playlistId;
+    const id = list.playlists?.[0]?.id;
     if (id === undefined) {
       owner.kill('SIGKILL'); // empty library — nothing to play, skip the assertion
       return;

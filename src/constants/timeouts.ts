@@ -163,3 +163,7 @@ export const MAX_FETCH_TIMEOUT_MS = 25_000;
 /** Hard lower bound — prevents accidental sub-second timeouts that would
  *  fail-fast on a perfectly healthy but slow connection. */
 export const MIN_FETCH_TIMEOUT_MS = 1_000;
+
+/** Longest `Retry-After` wait honored on a 429 from `/auth/login`. Navidrome's
+ *  default login window is 20s, and a longer wait would push a tool call past the SDK's 60s limit. */
+export const MAX_AUTH_RATE_LIMIT_WAIT_MS = 25_000;

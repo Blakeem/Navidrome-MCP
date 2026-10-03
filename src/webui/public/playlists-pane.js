@@ -16,8 +16,7 @@ export async function loadPlaylistsPane() {
     status.textContent = 'Could not load playlists.';
     return;
   }
-  // A /api/playlists row carries its id as `playlistId`, and the row builder posts `item.id`.
-  const rows = (data.playlists ?? []).map((pl) => buildLibraryNode('playlist', { ...pl, id: pl.playlistId }, 0, status));
+  const rows = (data.playlists ?? []).map((pl) => buildLibraryNode('playlist', pl, 0, status));
   status.textContent = rows.length > 0 ? '' : 'No playlists found.';
   list.replaceChildren(...rows);
 }

@@ -35,7 +35,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const ensureAttachedMock = vi.fn().mockResolvedValue(undefined);
 const getStatusMock = vi.fn();
 const getCachedPropertyMock = vi.fn();
-const getCurrentRadioStationMock = vi.fn();
 const getQueueGenerationMock = vi.fn();
 const getQueueMock = vi.fn();
 const ingestQueueMetadataMock = vi.fn();
@@ -45,7 +44,6 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     ensureAttached: ensureAttachedMock,
     getStatus: getStatusMock,
     getCachedProperty: getCachedPropertyMock,
-    getCurrentRadioStation: getCurrentRadioStationMock,
     getQueueGeneration: getQueueGenerationMock,
     getQueue: getQueueMock,
     ingestQueueMetadata: ingestQueueMetadataMock,
@@ -63,7 +61,6 @@ describe('now_playing per-position cache keying', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getStatusMock.mockReturnValue({ engineRunning: true });
-    getCurrentRadioStationMock.mockReturnValue(null);
   });
 
   it('re-repairs duration after a replace reload lands a new track at index 0, and skips getQueue once resolved', async () => {

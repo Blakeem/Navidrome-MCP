@@ -474,7 +474,7 @@ export async function playRadioStation(
       throw new Error(`Radio station "${station.name}" has no stream URL`);
     }
 
-    await playbackEngine.enqueueRadio(station.streamUrl, station.name);
+    await playbackEngine.enqueueRadio(station.streamUrl);
 
     return {
       success: true,

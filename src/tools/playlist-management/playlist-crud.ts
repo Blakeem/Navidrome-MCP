@@ -86,7 +86,7 @@ async function filterToPlayablePlaylists(
     // One failed probe must not blank the web-UI play picker. A rejected probe keeps
     // the playlist, since hiding a playable one is worse than showing a maybe-unplayable one.
     const results = await Promise.allSettled(
-      batch.map((p) => playlistHasPlayableTracks(client, p.playlistId)),
+      batch.map((p) => playlistHasPlayableTracks(client, p.id)),
     );
     batch.forEach((p, idx) => {
       const r = results[idx];
@@ -94,7 +94,7 @@ async function filterToPlayablePlaylists(
       if (r.status === 'fulfilled') {
         if (r.value) kept.push(p);
       } else {
-        logger.warn(`playable-probe failed for playlist ${p.playlistId}; keeping it (fail-open):`, r.reason);
+        logger.warn(`playable-probe failed for playlist ${p.id}; keeping it (fail-open):`, r.reason);
         kept.push(p);
       }
     });

@@ -319,6 +319,16 @@ export async function clearPlayQueue(): Promise<Awaited<ReturnType<typeof clearP
   return clearPlayQueueTool({});
 }
 
+/** Clears the queue and waits until it reads empty. A stopped engine counts as
+ * empty, since clear_play_queue never spawns mpv. */
+export async function clearQueueAndWait(): Promise<void> {
+  await clearPlayQueue();
+  await waitFor(async () => {
+    const np = await nowPlayingTool({});
+    return np.engineRunning === false || np.queueLength === 0;
+  });
+}
+
 export async function shufflePlayQueue(): Promise<Awaited<ReturnType<typeof shufflePlayQueueTool>>> {
   return shufflePlayQueueTool({});
 }
@@ -365,8 +375,10 @@ export async function setVolume(args: {
   return setVolumeTool(args);
 }
 
+/** Passes the client like the MCP handler does, so radio station names resolve. */
 export async function nowPlaying(): Promise<Awaited<ReturnType<typeof nowPlayingTool>>> {
-  return nowPlayingTool({});
+  const { client } = await ctx();
+  return nowPlayingTool({}, client);
 }
 
 export async function playbackStatus(): Promise<PlaybackStatus> {

@@ -30,7 +30,7 @@ List songs with pagination and filtering.
 - `starred` (boolean): Filter starred songs
 - `missing` (boolean): Filter missing files
 - `library_id` (number): Filter by library ID (access controlled)
-- `artists_id` (string): Filter by artist participant ID
+- `artists_id` (string): Filter by an artist credited in the song's artist role. Composers and other credits do not match.
 - `genre_id` (string): Filter by genre tag ID
 
 **Dynamic Tag-Based Filters:**
@@ -40,17 +40,9 @@ Tag fields other than genre filter with the bare tag name and the tag UUID. Navi
 - `media` (string): Filter by media type tag
 - `recordlabel` (string): Filter by record label tag
 - `releasecountry` (string): Filter by release country tag
-- `composer_id` (string): Filter by composer role
-- `producer_id` (string): Filter by producer role
-- `conductor_id` (string): Filter by conductor role
-- `arranger_id` (string): Filter by arranger role
-- `lyricist_id` (string): Filter by lyricist role
-- `engineer_id` (string): Filter by engineer role
-- `mixer_id` (string): Filter by mixer role
-- `remixer_id` (string): Filter by remixer role
-- `djmixer_id` (string): Filter by DJ/mixer role
-- `director_id` (string): Filter by director role
-- `performer_id` (string): Filter by performer role (instrument-specific)
+- `isrc`, `asin` (string): Song-level tags, which filter songs only
+
+`/api/song` has no role filter. It ignores `role_{role}_id` and `{role}_id`. Use the album role filters below.
 
 **Legacy Filter Support:**
 - `filter` (string): JSON filter criteria (see [Legacy Filtering](#legacy-filtering))
@@ -144,7 +136,7 @@ List albums with pagination and filtering.
 - `id` (string): Exact album ID match
 - `name` (string): Full-text search in album names (includes MusicBrainz IDs)
 - `compilation` (boolean): Filter compilation albums
-- `artist_id` (string): Filter by artist ID (supports role-based artist filtering)
+- `artist_id` (string): Filter by album artist ID. Composers and other credits need the role filters below.
 - `year` (number): Year range filter (matches min_year <= value <= max_year)
 - `recently_played` (boolean): Albums with play_count > 0
 - `starred` (boolean): Filter starred albums
@@ -333,7 +325,8 @@ List all tags with filtering support.
 - `_end` (number): Ending index
 - `_sort` (string): Sort field
 - `_order` (string): "ASC" or "DESC"
-- `name` (string): Substring search in tag names
+- `tag_name` (string): Filter by tag name, such as `genre` or `mood`
+- `tag_value` or `name` (string): Substring search in tag values
 - `library_id` (number): Filter by library access
 
 **Response (200 OK):**
@@ -341,10 +334,10 @@ List all tags with filtering support.
 [
   {
     "id": "string",
-    "name": "string",
-    "tagType": "string",  // e.g., "genre", "mood", "composer"
-    "songCount": number,
-    "albumCount": number
+    "tagName": "string",   // e.g. "genre", "mood"
+    "tagValue": "string",
+    "albumCount": number,
+    "songCount": number
   }
 ]
 ```
@@ -369,18 +362,7 @@ Navidrome supports extensive tag-based filtering through its comprehensive tag s
 - `recordlabel` - Record labels
 - `releasecountry` - Release countries
 
-**Role/Credit Tags:**
-- `composer` - Music composers
-- `lyricist` - Lyric writers
-- `conductor` - Conductors
-- `producer` - Producers
-- `arranger` - Arrangers
-- `engineer` - Audio engineers
-- `mixer` - Mix engineers
-- `remixer` - Remixers
-- `djmixer` - DJ/Mixers
-- `director` - Directors
-- `performer` - Performers (instrument-specific)
+**Roles are not tags.** Composers, producers and the other credits are artists. List them with `/api/artist?role={role}` and filter albums with `role_{role}_id`.
 
 ### Additional Tags
 **Extended Metadata (available for smart playlists):**

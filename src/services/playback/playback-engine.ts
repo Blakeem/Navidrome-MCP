@@ -165,12 +165,6 @@ class PlaybackEngine {
   // Set by quitMpv so the child's exit handler stays silent on a deliberate quit.
   private shuttingDown = false;
   private readonly propertyCache = new Map<string, unknown>();
-  // Station for `now_playing`. Set by `enqueueRadio`. Cleared by `enqueue`,
-  // `clearQueue`, mpv going idle, and a `path` change to a Navidrome song
-  // stream, since another process sharing mpv can replace the radio. A new
-  // process cannot recover the name, but `getQueue()` entries with a null
-  // `songId` still mark radio.
-  private currentRadioStation: { name: string; streamUrl: string } | null = null;
   // Bumped by every load that can land a new track at position 0, so
   // per-position caches in consumers (e.g. now_playing's duration repair)
   // never match the previous track at the same index.
@@ -315,10 +309,6 @@ class PlaybackEngine {
         demoted = true;
       }
 
-      // Loading songs always evicts any radio context, so `now_playing` must not
-      // show a stale radio header.
-      this.currentRadioStation = null;
-
       if (effectiveMode === 'replace') {
         this.queueGeneration++;
         // Replace is not atomic on mpv's side. A mid-sequence failure stops and
@@ -351,7 +341,6 @@ class PlaybackEngine {
           } catch {
             // The connection is gone. Further teardown is the IPC layer's job.
           }
-          this.currentRadioStation = null;
           // A read before mpv's async change event must see the empty queue.
           this.propertyCache.set('playlist-count', 0);
           this.propertyCache.set('playlist-pos', null);
@@ -474,7 +463,6 @@ class PlaybackEngine {
       // An append after a clear lands a new track at index 0, so per-position caches must not match it.
       this.queueGeneration++;
       await this.requireIpc().command('stop');
-      this.currentRadioStation = null;
       this.metadataCache.clear();
     });
     this.emitStateChange({ kind: 'queue' });
@@ -486,11 +474,8 @@ class PlaybackEngine {
    * An infinite radio stream mixed with finite tracks breaks skip, queue
    * position, and scrobbling, so this always replaces the whole queue, as
    * Navidrome's web UI does. `loadfile <url> replace` clears the prior queue.
-   *
-   * `stationName` gives `now_playing` a header. A restarted server loses the
-   * name, but `getQueue()` entries with a null `songId` still mark radio.
    */
-  async enqueueRadio(streamUrl: string, stationName?: string): Promise<void> {
+  async enqueueRadio(streamUrl: string): Promise<void> {
     if (streamUrl.trim() === '') {
       throw new Error('enqueueRadio requires a non-empty stream URL');
     }
@@ -500,9 +485,6 @@ class PlaybackEngine {
       this.queueGeneration++;
       await ipc.command('loadfile', streamUrl, 'replace');
       await ipc.command('set_property', 'pause', false);
-      this.currentRadioStation = stationName !== undefined && stationName !== ''
-        ? { name: stationName, streamUrl }
-        : null;
     });
     this.emitStateChange({ kind: 'queue' });
   }
@@ -520,21 +502,6 @@ class PlaybackEngine {
     if (typeof count !== 'number' || count === 0) return false;
     const playlist = await this.getQueue();
     return playlist.some(entry => entry.songId === null);
-  }
-
-  /**
-   * Name of the radio station this process loaded, or null when no station is
-   * recorded or mpv now holds a different file.
-   */
-  getCurrentRadioStation(): { name: string } | null {
-    const station = this.currentRadioStation;
-    if (station === null) return null;
-    const loadedPath = this.propertyCache.get('path');
-    const playlistPath = this.propertyCache.get('playlist-path');
-    // mpv has no path mid-load. A .pls or .m3u station plays an expanded URL and keeps the station URL in playlist-path.
-    const stationLoaded =
-      typeof loadedPath !== 'string' || loadedPath === station.streamUrl || playlistPath === station.streamUrl;
-    return stationLoaded ? { name: station.name } : null;
   }
 
   /**
@@ -1007,9 +974,6 @@ class PlaybackEngine {
     }
 
     ipc.onPropertyChange((evt) => {
-      const songLoaded = evt.name === 'path' && typeof evt.data === 'string' && this.parseSongIdCached(evt.data) !== null;
-      const nothingLoaded = evt.name === 'idle-active' && evt.data === true;
-      if (songLoaded || nothingLoaded) this.currentRadioStation = null;
       this.propertyCache.set(evt.name, evt.data);
       this.emitStateChange({ kind: 'property', name: evt.name, data: evt.data });
     });
@@ -1053,7 +1017,6 @@ class PlaybackEngine {
     this.propertyCache.clear();
     this.filenameCache.clear();
     this.metadataCache.clear();
-    this.currentRadioStation = null;
     this.startPromise = null;
     // Subscribers belong to the prior session.
     this.stateChangeHandlers.length = 0;

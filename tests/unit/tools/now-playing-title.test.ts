@@ -25,6 +25,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
 // A realistic credential-bearing stream URL, shaped like what mpv reports as
 // `media-title` before metadata loads. Contains the auth token + salt.
@@ -34,7 +35,6 @@ const LEAKY_URL =
 const ensureAttachedMock = vi.fn().mockResolvedValue(undefined);
 const getStatusMock = vi.fn();
 const getCachedPropertyMock = vi.fn();
-const getCurrentRadioStationMock = vi.fn();
 const getQueueGenerationMock = vi.fn();
 const getQueueMock = vi.fn();
 const ingestQueueMetadataMock = vi.fn();
@@ -44,7 +44,6 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     ensureAttached: ensureAttachedMock,
     getStatus: getStatusMock,
     getCachedProperty: getCachedPropertyMock,
-    getCurrentRadioStation: getCurrentRadioStationMock,
     getQueueGeneration: getQueueGenerationMock,
     getQueue: getQueueMock,
     ingestQueueMetadata: ingestQueueMetadataMock,
@@ -62,7 +61,6 @@ describe('now_playing title reconciliation (Issue #3)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getStatusMock.mockReturnValue({ engineRunning: true });
-    getCurrentRadioStationMock.mockReturnValue(null);
     getQueueGenerationMock.mockReturnValue(0);
   });
 
@@ -192,26 +190,47 @@ describe('now_playing title reconciliation (Issue #3)', () => {
     expect(result.album).toBe('Some Album');
   });
 
-  it('passes an ICY radio title (Artist - Track) through and flags isRadio', async () => {
-    getCurrentRadioStationMock.mockReturnValue({ name: 'SomaFM Groove Salad' });
-    getCachedPropertyMock.mockImplementation(
-      cachedProps({
-        'playlist-pos': 0,
-        'playlist-count': 1,
-        pause: false,
-        'time-pos': 12,
-        duration: 0,
-        'media-title': 'Galimatias - Purple Rain',
-        metadata: { 'icy-name': 'Groove Salad' },
-      }),
-    );
+  it('names a radio stream from the saved station with its URL, then skips getQueue', async () => {
+    const streamUrl = 'http://ice.somafm.com/groovesalad';
+    getCachedPropertyMock.mockImplementation(radioProps(streamUrl));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const client = radioClient([{ id: 'r1', name: 'SomaFM Groove Salad', streamUrl }]);
 
-    const result = await nowPlaying({});
+    const first = await nowPlaying({}, client);
+    const second = await nowPlaying({}, client);
 
-    expect(result.title).toBe('Galimatias - Purple Rain');
+    expect(first.title).toBe('Galimatias - Purple Rain');
+    expect(first.isRadio).toBe(true);
+    expect(first.radioStation).toEqual({ name: 'SomaFM Groove Salad' });
+    expect(second.radioStation).toEqual({ name: 'SomaFM Groove Salad' });
+    expect(getQueueMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('labels a radio stream that matches no saved station "Unknown station"', async () => {
+    getCachedPropertyMock.mockImplementation(radioProps('http://unsaved.example/stream'));
+    getQueueMock.mockResolvedValue([{ index: 0, songId: null, isCurrent: true, isPlaying: true }]);
+    const client = radioClient([{ id: 'r1', name: 'Other', streamUrl: 'http://other.example/stream' }]);
+
+    const result = await nowPlaying({}, client);
+
     expect(result.isRadio).toBe(true);
-    expect(result.radioStation).toEqual({ name: 'SomaFM Groove Salad' });
-    // Radio path should not call getQueue (station known, no album to repair).
-    expect(getQueueMock).not.toHaveBeenCalled();
+    expect(result.radioStation).toEqual({ name: 'Unknown station' });
   });
 });
+
+function radioProps(path: string): (name: string) => unknown {
+  return cachedProps({
+    'playlist-pos': 0,
+    'playlist-count': 1,
+    pause: false,
+    'time-pos': 12,
+    duration: 0,
+    'media-title': 'Galimatias - Purple Rain',
+    metadata: { 'icy-name': 'Groove Salad' },
+    path,
+  });
+}
+
+function radioClient(rows: Array<{ id: string; name: string; streamUrl: string }>): NavidromeClient {
+  return { request: vi.fn().mockResolvedValue(rows) } as unknown as NavidromeClient;
+}

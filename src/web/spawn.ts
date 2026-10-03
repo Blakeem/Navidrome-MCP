@@ -63,8 +63,8 @@ function resolveLaunchTarget(): LaunchTarget {
  * 'disconnect' to learn when this MCP exits, then stops with it or persists per
  * webui.persistAfterMcpExit. Both the child handle and its IPC channel are
  * unref'd so neither keeps the MCP event loop alive, and the child still receives
- * 'disconnect' when MCP exits. NOT detached, since the IPC channel must stay
- * bound to this parent.
+ * 'disconnect' when MCP exits. Detached, because Windows kills a non-detached
+ * child the moment its parent exits, before 'disconnect' or the mpv quit can run.
  *
  * The child re-runs `acquireOrAttach`, so a redundant spawn stands down and exits
  * cleanly. It inherits `NAVIDROME_CONFIG_PATH`, so parent and child read the same
@@ -79,6 +79,8 @@ function spawnWebChild(): WebServerStatus {
       // the IPC channel that lets the child detect this parent's exit.
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
       env: process.env,
+      detached: true,
+      windowsHide: true,
     });
     // A late 'error' (e.g. ENOENT) fires after this function returns, so it can only be logged.
     child.on('error', (err) => {

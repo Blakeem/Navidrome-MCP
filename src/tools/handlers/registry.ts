@@ -17,8 +17,8 @@
  */
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
@@ -46,6 +46,10 @@ export class ToolRegistry {
     return [...this.allTools];
   }
 
+  hasTool(name: string): boolean {
+    return this.allTools.some(t => t.name === name);
+  }
+
   async handleToolCall(name: string, args: unknown): Promise<unknown> {
     const start = Date.now();
     for (const category of this.categories.values()) {
@@ -66,16 +70,13 @@ export class ToolRegistry {
   }
 }
 
-// Utility function to create consistent tool responses
-function createToolResponse(result: unknown): { content: { type: 'text'; text: string }[] } {
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(result),
-      },
-    ],
-  };
+function createToolResponse(result: unknown): CallToolResult {
+  return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+}
+
+/** An execution failure is a result the model reads, so it can correct its call and retry. */
+function createToolErrorResponse(name: string, error: unknown): CallToolResult {
+  return { content: [{ type: 'text', text: ErrorFormatter.toolExecution(name, error) }], isError: true };
 }
 
 // Import category factory functions
@@ -131,9 +132,15 @@ export function registerTools(server: Server, client: NavidromeClient, config: C
     tools: registry.getAllTools(),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
     const { name, arguments: args } = request.params;
-    const result = await registry.handleToolCall(name, args ?? {});
-    return createToolResponse(result);
+    if (!registry.hasTool(name)) {
+      throw new McpError(ErrorCode.InvalidParams, ErrorFormatter.toolUnknown(name));
+    }
+    try {
+      return createToolResponse(await registry.handleToolCall(name, args ?? {}));
+    } catch (error) {
+      return createToolErrorResponse(name, error);
+    }
   });
 }

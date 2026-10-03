@@ -72,7 +72,7 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
     });
 
     // Empty playlists are NOT dropped in the default management view.
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['a', 'b']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['a', 'b']);
     expect(result.total).toBe(2);
 
     // Single list read; no per-playlist probes.
@@ -100,7 +100,7 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
     });
 
     // Empty playlist dropped; non-empty kept. No probes fired.
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['a', 'c']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['a', 'c']);
     expect(result.total).toBe(2);
     expect(mockClient.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
   });
@@ -119,7 +119,7 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
       onlyWithPlayableTracks: true,
     });
 
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['a']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['a']);
     expect(result.total).toBe(1);
     expect(mockClient.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
   });
@@ -154,7 +154,7 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
       onlyWithPlayableTracks: true,
     });
 
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['keep']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['keep']);
     expect(result.total).toBe(1);
 
     // Only the two NON-empty playlists were probed (empty one skipped).
@@ -189,6 +189,6 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
 
     // total reflects the full FILTERED count (3), the page is offset/limit of it.
     expect(result.total).toBe(3);
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['p2']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['p2']);
   });
 });
