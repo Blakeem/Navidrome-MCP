@@ -8,6 +8,8 @@ const openBtn = byId('open-settings');
 const dialog = byId('settings-dialog');
 const persist = byId('set-persist');
 const autoOpen = byId('set-autoopen');
+const visualizer = byId('set-visualizer');
+const visualizerUnsupported = byId('set-visualizer-unsupported');
 const status = byId('settings-status');
 const themeRadios = Array.from(dialog.querySelectorAll('input[name="theme"]'));
 // The System radio stands for a stored null, which lets each device follow its own setting.
@@ -28,6 +30,7 @@ export function bindSettings() {
   }
   persist.addEventListener('change', () => queueSave({ persistAfterMcpExit: persist.checked }));
   autoOpen.addEventListener('change', () => queueSave({ autoOpenBrowser: autoOpen.checked }));
+  visualizer.addEventListener('change', () => queueSave({ visualizer: visualizer.checked }));
 }
 
 async function openSettings() {
@@ -63,9 +66,11 @@ function showSettings(settings) {
   saved = settings;
   persist.checked = settings.persistAfterMcpExit === true;
   autoOpen.checked = settings.autoOpenBrowser === true;
+  visualizer.checked = settings.visualizer !== false;
+  visualizerUnsupported.hidden = !(visualizer.checked && settings.visualizerUnsupported === true);
   for (const radio of themeRadios) radio.checked = radio.value === theme;
 }
 
 function setControlsDisabled(disabled) {
-  for (const control of [...themeRadios, persist, autoOpen]) control.disabled = disabled;
+  for (const control of [...themeRadios, persist, autoOpen, visualizer]) control.disabled = disabled;
 }

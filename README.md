@@ -32,7 +32,7 @@ This works with voice transports (Whisper STT + TTS) for a hands-free music devi
 
 > Requires `mpv` (same as Local Audio Playback).
 
-A web UI at `http://localhost:8808` gives any browser the Local Playback controls. These include now playing with cover art, transport and seek, volume, and a live queue you can click to jump around, updated in real time. A built-in Play Music window searches artists, albums, and songs. It also starts any playlist, your starred songs, or your starred albums. Each pick adds to the queue or replaces it, with an option to shuffle songs or albums. So the page works as a remote without the assistant. Enable **Expose on LAN** to control playback from a phone or tablet. Audio always comes out of the machine running the server. Setup, lifetime, and security details are in [MPV Remote setup](#mpv-remote-setup).
+A web UI at `http://localhost:8808` gives any browser the Local Playback controls. These include now playing with cover art, transport and seek, volume, and a live queue you can click to jump around, updated in real time. A visualizer beside the track info moves with the music. Click it to change its style. A built-in Play Music window searches artists, albums, and songs. It also starts any playlist, your starred songs, or your starred albums. Each pick adds to the queue or replaces it, with an option to shuffle songs or albums. So the page works as a remote without the assistant. Enable **Expose on LAN** to control playback from a phone or tablet. Audio always comes out of the machine running the server. Setup, lifetime, and security details are in [MPV Remote setup](#mpv-remote-setup).
 
 [![MPV Remote web interface](navidome-mcp-mpv-remote-small.png)](navidome-mcp-mpv-remote-large.png)
 
@@ -397,7 +397,7 @@ Re-run the generator after moving or rebuilding the project to refresh the paths
 
 #### Configuration
 
-All settings are optional and are keyed below by their `settings.json` paths. Every setting except `webui.theme` lives in the **Web UI** section of the settings page. To apply a change, stop a running player with the power button, then restart the MCP client or `navidrome-web`. The exceptions are `persistAfterMcpExit` and `theme`, which the gear modal applies live.
+All settings are optional and are keyed below by their `settings.json` paths. Every setting except `webui.theme` lives in the **Web UI** section of the settings page. To apply a change, stop a running player with the power button, then restart the MCP client or `navidrome-web`. The exceptions are `persistAfterMcpExit`, `theme` and `visualizer`, which the gear modal applies live.
 
 | Setting (`settings.json`) | Default | Effect |
 |---|---|---|
@@ -407,6 +407,7 @@ All settings are optional and are keyed below by their `settings.json` paths. Ev
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the panel, unless `webui.host` is set. |
 | `webui.autoOpenBrowser` | `false` | Open the player in your browser when the MCP server starts. Running `navidrome-web` directly always opens a browser. |
 | `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player running after the last MCP server using it closes. |
+| `webui.visualizer` | `true` | Shows a visualizer beside the track info. Set `false` to remove it, along with the audio analysis it adds to mpv. That analysis uses about 2.5% of one CPU core while music plays. |
 | `webui.theme` | unset | Forces `light` or `dark` on every device viewing the player. Unset, each device follows its own setting. The in-player gear modal sets it. Its **System** option clears it. |
 
 #### Phone and Tablet Remote
@@ -462,7 +463,7 @@ When a token is set, every `/mcp` request must carry `Authorization: Bearer <tok
 
 **Host filtering (DNS rebinding protection):** on the default bind (loopback with no auth token), requests whose `Host` header isn't a loopback alias are rejected, so a malicious web page can't drive the server through your browser. Setting an `authToken` or binding a non-loopback address turns the automatic filter off. A remote deployment is reached by names the server can't know in advance. The bearer token already blocks rebinding, since a lured browser can't attach your token. To pin the accepted names, set `transport.allowedHosts`, which is enforced whenever present. Each entry is the exact `Host` header value, with the port when it is not 80 or 443 (such as `mcp.example.com:3000`). Set `transport.allowedOrigins` only for browser clients. It gates the `Origin` header.
 
-The transport can also be configured through environment variables: `MCP_TRANSPORT` (`stdio`|`http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, and `MCP_HTTP_ALLOWED_HOSTS` / `MCP_HTTP_ALLOWED_ORIGINS` (comma-separated). The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`). These follow the headless fallback rule in [First-run setup](#first-run-setup). They also pre-fill the settings form on first run.
+The transport can also be configured through environment variables: `MCP_TRANSPORT` (`stdio`|`http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, and `MCP_HTTP_ALLOWED_HOSTS` / `MCP_HTTP_ALLOWED_ORIGINS` (comma-separated). The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`, `WEBUI_VISUALIZER`). These follow the headless fallback rule in [First-run setup](#first-run-setup). They also pre-fill the settings form on first run.
 
 > **Single account, shared state:** every HTTP session is served by one process holding one authenticated Navidrome account, and the active-library selection is process-global. A `set_active_libraries` call changes the library filter for all connected sessions, and `get_user_details` reflects that shared selection.
 
@@ -502,6 +503,7 @@ ChatGPT's MCP support (web and desktop) requires a hosted HTTPS endpoint and doe
 
 - **No audio without mpv.** Use the Navidrome web UI or a Subsonic client instead (see [mpv Installation](#mpv-installation)).
 - **Recently played shows one play per track.** Navidrome stores each track's last play time, not a full play history.
+- **The visualizer depends on mpv's log format.** It reads its levels from mpv's log, which a future mpv release may change. If the visualizer stops moving after an mpv update, playback still works.
 - **Saved queue ≠ live queue.** The saved-queue tools (`get_saved_queue`, `save_queue`, `clear_saved_queue`) operate on Navidrome's server-side queue (web UI sync). The live-queue tools (`get_play_queue`, `clear_play_queue`, `shuffle_play_queue`, `move_in_play_queue`, `remove_from_play_queue`, `play_queue_index`) operate on the live mpv queue.
 
 ## Development

@@ -119,12 +119,18 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
 }
 
 /**
- * The webui endpoint settings.json holds now. A spawned or re-run web player binds this one, not the
- * endpoint this process started with. Null when the store is absent or invalid.
+ * The webui settings settings.json holds now, so a running process sees what the web player or the
+ * config app saved after it started. Null when the store is absent or invalid.
  */
-export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
+export function readSavedWebuiSettings(): Config['webui'] | null {
   const settings = readSettings();
   if (settings === null) return null;
   const result = validateMappedSettings(settings, null);
-  return result.ok ? { port: result.config.webui.port, host: result.config.webui.host } : null;
+  return result.ok ? result.config.webui : null;
+}
+
+/** A spawned or re-run web player binds the saved endpoint, not the one this process started with. */
+export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
+  const webui = readSavedWebuiSettings();
+  return webui === null ? null : { port: webui.port, host: webui.host };
 }

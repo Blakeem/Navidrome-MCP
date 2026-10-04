@@ -38,6 +38,7 @@ const BASE: Config = {
     autoOpenBrowser: false,
     persistAfterMcpExit: false,
     theme: null,
+    visualizer: true,
   },
 };
 

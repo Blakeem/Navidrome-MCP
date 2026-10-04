@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { StateChangeEvent } from '../../../../src/services/playback/playback-engine.js';
 import { MAX_QUEUE_READ_PAGES, QUEUE_READ_PAGE_SIZE } from '../../../../src/constants/defaults.js';
+import { MPV_VISUALIZER_SPAWN_WAIT_MS } from '../../../../src/constants/timeouts.js';
 import { withPlatform } from '../../../helpers/platform.js';
 
 interface FakeIpc extends EventEmitter {
@@ -96,6 +97,21 @@ vi.mock('node:fs', () => ({
   existsSync: () => true,
 }));
 
+// The real check spawns mpv, so tests set its answer, whether it has finished, and a run still going.
+const visualizerCheck = vi.hoisted(() => ({
+  result: { ok: true, build: 'mpv v0.40.0 with FFmpeg n7.1' } as
+    | { ok: true; build: string }
+    | { ok: false; reason: string; retry: boolean },
+  settled: true,
+  running: null as Promise<unknown> | null,
+}));
+
+vi.mock('../../../../src/services/playback/visualizer-filter.js', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  validateVisualizerFilter: vi.fn(() => visualizerCheck.running ?? Promise.resolve(visualizerCheck.result)),
+  settledVisualizerValidation: vi.fn(() => (visualizerCheck.settled ? visualizerCheck.result : undefined)),
+}));
+
 vi.mock('node:fs/promises', () => ({
   unlink: vi.fn().mockResolvedValue(undefined),
 }));
@@ -129,6 +145,7 @@ const { playbackEngine } = await import('../../../../src/services/playback/playb
 const { MpvIpc } = await import('../../../../src/services/playback/mpv-ipc.js');
 const { spawnMpv } = await import('../../../../src/services/playback/mpv-process.js');
 const { unlink } = await import('node:fs/promises');
+const { VISUALIZER_FILTER_LABEL, visualizerFilterSpec } = await import('../../../../src/services/playback/visualizer-filter.js');
 
 const baseConfig = {
   navidromeUrl: 'http://navidrome.test',
@@ -1228,6 +1245,218 @@ describe('radio station tag', () => {
     expect(ipc.observeProperty).toHaveBeenCalledWith(13, TAG);
     expect(playbackEngine.getStatus().engineRunning).toBe(true);
     expect(playbackEngine.getRadioStationTag()).toBeNull();
+  });
+});
+
+// ---------- the visualizer filter changes only while mpv is idle, paused or starting a file ----------
+
+describe('visualizer filter sync', () => {
+  const LIVE_MPV = { 'mpv-version': 'mpv v0.40.0', 'ffmpeg-version': 'n7.1' };
+  const CHECKED = { ok: true, build: 'mpv v0.40.0 with FFmpeg n7.1' } as const;
+  const installed = [{ name: 'lavfi', label: VISUALIZER_FILTER_LABEL, enabled: true }];
+  const flush = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
+  const afCommands = (ipc: FakeIpc): unknown[][] => ipc.command.mock.calls.filter((call) => call[0] === 'af');
+  const emitEvent = (ipc: FakeIpc, event: string): void => {
+    for (const handler of ipc.eventHandlers) handler({ event });
+  };
+  const emitProperty = (ipc: FakeIpc, name: string, data: unknown): void => {
+    for (const handler of ipc.propertyHandlers) handler({ id: 3, name, data });
+  };
+  const expectInstall = (ipc: FakeIpc): Promise<void> =>
+    vi.waitFor(() => { expect(ipc.command).toHaveBeenCalledWith('af', 'add', visualizerFilterSpec()); });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    playbackEngine.setVisualizerSource(() => false);
+    visualizerCheck.result = CHECKED;
+    visualizerCheck.settled = true;
+    visualizerCheck.running = null;
+  });
+
+  it('adds nothing while the setting is off', async () => {
+    playbackEngine.setVisualizerSource(() => false, { keepInSync: true });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, 'idle-active': true });
+
+    await playbackEngine.ensureRunning();
+    emitEvent(ipc, 'start-file');
+    await flush();
+
+    expect(afCommands(ipc)).toEqual([]);
+  });
+
+  it('installs the filter at spawn, before the caller loads the first track', async () => {
+    playbackEngine.setVisualizerSource(() => true);
+    netState.outcome = 'error';
+    const { spawnFake } = queueSpawnPath(true);
+    answerProperties(spawnFake, { ...LIVE_MPV, 'idle-active': true });
+
+    await playbackEngine.ensureRunning();
+
+    expect(spawnFake.command).toHaveBeenCalledWith('af', 'add', visualizerFilterSpec());
+  });
+
+  it('gives up the first track rather than hold the spawn for a slow check', async () => {
+    playbackEngine.setVisualizerSource(() => true);
+    visualizerCheck.settled = false;
+    visualizerCheck.running = new Promise(() => undefined);
+    netState.outcome = 'error';
+    const { spawnFake } = queueSpawnPath(true);
+    answerProperties(spawnFake, { ...LIVE_MPV, 'idle-active': true });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    // The spawn path creates the wait timer several real event-loop turns in, so time advances in steps.
+    let finished = false;
+    const started = playbackEngine.ensureRunning().finally(() => { finished = true; });
+    for (let waited = 0; !finished && waited <= MPV_VISUALIZER_SPAWN_WAIT_MS * 2; waited += 100) {
+      await flush();
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    await started;
+
+    expect(finished).toBe(true);
+    expect(afCommands(spawnFake)).toEqual([]);
+  });
+
+  it('leaves the filter alone after spawn when the engine does not keep it in sync', async () => {
+    playbackEngine.setVisualizerSource(() => true);
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, 'idle-active': true });
+
+    await playbackEngine.ensureRunning();
+    emitEvent(ipc, 'start-file');
+    emitProperty(ipc, 'pause', true);
+    await playbackEngine.syncVisualizerFilter();
+    await flush();
+
+    expect(afCommands(ipc)).toEqual([]);
+  });
+
+  it('waits for a pause to install on an mpv attached mid-track', async () => {
+    playbackEngine.setVisualizerSource(() => true, { keepInSync: true });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, pause: false, 'idle-active': false });
+
+    await playbackEngine.ensureRunning();
+    await flush();
+    expect(afCommands(ipc)).toEqual([]);
+
+    emitProperty(ipc, 'pause', true);
+    await expectInstall(ipc);
+  });
+
+  it('re-adds a filter mpv disabled, at the next track start', async () => {
+    playbackEngine.setVisualizerSource(() => true, { keepInSync: true });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, pause: false, 'idle-active': false, af: [{ ...installed[0], enabled: false }] });
+
+    await playbackEngine.ensureRunning();
+    await flush();
+    expect(afCommands(ipc)).toEqual([]);
+
+    emitEvent(ipc, 'start-file');
+    await expectInstall(ipc);
+  });
+
+  it('defers a track-start sync that waited past the audio start, then installs at the pause', async () => {
+    playbackEngine.setVisualizerSource(() => true, { keepInSync: true });
+    visualizerCheck.settled = false;
+    let finishCheck: () => void = () => undefined;
+    visualizerCheck.running = new Promise((resolve) => { finishCheck = () => { resolve(CHECKED); }; });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, pause: false, 'idle-active': false });
+    await playbackEngine.ensureRunning();
+
+    emitEvent(ipc, 'start-file');
+    await flush();
+    emitEvent(ipc, 'playback-restart');
+    finishCheck();
+    await flush();
+    expect(afCommands(ipc)).toEqual([]);
+
+    visualizerCheck.settled = true;
+    emitProperty(ipc, 'pause', true);
+    await expectInstall(ipc);
+  });
+
+  it('leaves a working filter alone', async () => {
+    playbackEngine.setVisualizerSource(() => true, { keepInSync: true });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, 'idle-active': true, af: installed });
+
+    await playbackEngine.ensureRunning();
+    emitEvent(ipc, 'start-file');
+    await flush();
+
+    expect(afCommands(ipc)).toEqual([]);
+  });
+
+  it('removes the filter at once when the setting turns off while paused', async () => {
+    let wanted = true;
+    playbackEngine.setVisualizerSource(() => wanted, { keepInSync: true });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, pause: true, af: installed });
+    await playbackEngine.ensureRunning();
+
+    wanted = false;
+    await playbackEngine.syncVisualizerFilter();
+
+    expect(afCommands(ipc)).toEqual([['af', 'remove', `@${VISUALIZER_FILTER_LABEL}`]]);
+  });
+
+  it('treats an unreadable setting as off', async () => {
+    playbackEngine.setVisualizerSource(() => { throw new Error('settings.json is locked'); }, { keepInSync: true });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, 'idle-active': true });
+
+    await playbackEngine.ensureRunning();
+    await flush();
+
+    expect(afCommands(ipc)).toEqual([]);
+  });
+
+  it('adds nothing and reports unsupported when the check rejects the filter', async () => {
+    playbackEngine.setVisualizerSource(() => true, { keepInSync: true });
+    visualizerCheck.result = { ok: false, reason: "No such filter: 'astats'", retry: false };
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, 'idle-active': true });
+
+    await playbackEngine.ensureRunning();
+    await flush();
+
+    expect(afCommands(ipc)).toEqual([]);
+    expect(playbackEngine.isVisualizerUnsupported()).toBe(true);
+  });
+
+  it('installs nothing into a running mpv of another build, and announces it', async () => {
+    playbackEngine.setVisualizerSource(() => true, { keepInSync: true });
+    const events: StateChangeEvent[] = [];
+    playbackEngine.onStateChange((event) => { events.push(event); });
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { 'mpv-version': 'mpv v0.35.0', 'ffmpeg-version': 'n4.3', 'idle-active': true });
+
+    await playbackEngine.ensureRunning();
+    await flush();
+
+    expect(afCommands(ipc)).toEqual([]);
+    expect(playbackEngine.isVisualizerUnsupported()).toBe(true);
+    expect(events).toContainEqual({ kind: 'visualizer' });
+  });
+
+  it('clears the report once another process has the filter running', async () => {
+    playbackEngine.setVisualizerSource(() => true, { keepInSync: true });
+    visualizerCheck.result = { ok: false, reason: 'mpv did not finish in 10000 ms', retry: true };
+    const ipc = fakeIpcRef.value as FakeIpc;
+    answerProperties(ipc, { ...LIVE_MPV, 'idle-active': true });
+    await playbackEngine.ensureRunning();
+    await flush();
+    expect(playbackEngine.isVisualizerUnsupported()).toBe(true);
+
+    answerProperties(ipc, { ...LIVE_MPV, 'idle-active': true, af: installed });
+    emitEvent(ipc, 'start-file');
+    await flush();
+
+    expect(playbackEngine.isVisualizerUnsupported()).toBe(false);
   });
 });
 

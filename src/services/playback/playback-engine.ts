@@ -28,11 +28,22 @@ import {
   MPV_ATTACH_CONNECT_RETRIES,
   MPV_QUIT_SOCKET_TIMEOUT_MS,
   MPV_STALE_SOCKET_PROBE_MS,
+  MPV_VISUALIZER_SPAWN_WAIT_MS,
 } from '../../constants/timeouts.js';
 import { MAX_QUEUE_READ_PAGES, QUEUE_READ_PAGE_SIZE } from '../../constants/defaults.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
 import { MpvIpc } from './mpv-ipc.js';
 import { getDefaultIpcPath, spawnMpv } from './mpv-process.js';
+import {
+  decideVisualizerAction,
+  hasVisualizerFilter,
+  mpvBuildId,
+  settledVisualizerValidation,
+  validateVisualizerFilter,
+  VISUALIZER_FILTER_LABEL,
+  visualizerFilterSpec,
+  type VisualizerValidation,
+} from './visualizer-filter.js';
 
 /**
  * Sized to the largest batch one enqueue can carry. Both caches grow past it for a
@@ -141,14 +152,24 @@ export interface QueueTrackMetadata {
  *
  * `kind === 'message'` forwards mpv's `client-message`, which mpv delivers to every IPC client
  * (the sender included) in one order. Processes sharing mpv use it as a broadcast channel.
+ *
+ * `kind === 'visualizer'` fires when `isVisualizerUnsupported()` changes, which no mpv event announces.
  */
 export type StateChangeEvent =
   | { kind: 'property'; name: string; data: unknown }
   | { kind: 'queue' }
   | { kind: 'attach' }
-  | { kind: 'message'; args: string[] };
+  | { kind: 'message'; args: string[] }
+  | { kind: 'visualizer' };
 
 type StateChangeHandler = (event: StateChangeEvent) => void;
+
+interface VisualizerSyncRequest {
+  // A track start is safe until its audio begins, which mpv announces with playback-restart.
+  stillSafe?: () => boolean;
+  // Set by the spawn path, whose caller holds a play request until the sync finishes.
+  checkWaitMs?: number;
+}
 
 /**
  * Singleton playback engine wrapping mpv.
@@ -200,6 +221,17 @@ class PlaybackEngine {
   // Song IDs in the playlist the last getQueue() read, which metadata eviction never drops.
   private liveSongIds: ReadonlySet<string> = new Set();
   private readonly stateChangeHandlers: Array<StateChangeHandler> = [];
+  // Each entry point says how it reads the visualizer setting. Off until one does, so a bare engine adds no filter.
+  private visualizerWanted: () => boolean = () => false;
+  // Only the web player's engine follows the setting after spawn, since an MCP process in env mode reads another value.
+  private visualizerKeepsInSync = false;
+  private visualizerPending = false;
+  // Why the filter cannot run on the current mpv, or null when it can.
+  private visualizerRefusal: string | null = null;
+  // Lets a track-start sync that waited in the chain tell whether that track's audio has begun.
+  private playbackRestarts = 0;
+  // A pause and a track start can land together, and each reads the af list before it writes.
+  private visualizerSyncChain: Promise<void> = Promise.resolve();
 
   private constructor() {}
 
@@ -216,6 +248,25 @@ class PlaybackEngine {
   configure(config: Config): void {
     this.config = config;
     this.mpvBinary = config.mpvPath ?? null;
+  }
+
+  /**
+   * Every engine adds the filter to an mpv it spawns, so the first track plays through it. Only an engine with
+   * `keepInSync` changes it later, so two processes that read the setting differently never undo each other.
+   */
+  setVisualizerSource(source: () => boolean, options: { keepInSync?: boolean } = {}): void {
+    this.visualizerWanted = source;
+    this.visualizerKeepsInSync = options.keepInSync === true;
+  }
+
+  /** Applies the visualizer setting now if mpv is idle or paused, otherwise at the next track start, pause or stop. */
+  syncVisualizerFilter(): Promise<void> {
+    const ipc = this.ipc;
+    return ipc === null || !this.visualizerKeepsInSync ? Promise.resolve() : this.queueVisualizerSync(ipc, {});
+  }
+
+  isVisualizerUnsupported(): boolean {
+    return this.visualizerRefusal !== null;
   }
 
   /** Whether the engine has a live IPC connection to mpv. */
@@ -947,6 +998,7 @@ class PlaybackEngine {
       // installObservers rejects on an unresponsive socket, which fails the attach.
       await this.installObservers(ipc);
       this.ipc = ipc;
+      if (this.visualizerKeepsInSync) void this.queueVisualizerSync(ipc, {});
       return true;
     } catch (err) {
       logger.debug(`Could not attach to existing mpv at ${this.ipcPath}: ${err instanceof Error ? err.message : String(err)}`);
@@ -969,6 +1021,8 @@ class PlaybackEngine {
 
     let ipc: MpvIpc | null = null;
     let expectedExit = false;
+    // Runs beside the spawn, so the filter is checked by the time the new mpv answers.
+    if (this.readVisualizerWanted()) void validateVisualizerFilter(this.mpvBinary);
     const child: ChildProcess = spawnMpv(this.mpvBinary, this.ipcPath);
     this.pendingSpawn = child;
 
@@ -986,6 +1040,8 @@ class PlaybackEngine {
       this.mpvVersion = await this.readMpvVersion(ipc);
 
       await this.installObservers(ipc);
+      // Before the caller's first load, so the first track already plays through the filter.
+      await this.queueVisualizerSync(ipc, { checkWaitMs: MPV_VISUALIZER_SPAWN_WAIT_MS });
 
       this.ipc = ipc;
     } catch (err) {
@@ -1018,6 +1074,12 @@ class PlaybackEngine {
         this.emitStateChange({ kind: 'message', args: args.filter((a): a is string => typeof a === 'string') });
         return;
       }
+      if (evt.event === 'playback-restart') this.playbackRestarts++;
+      // Every track start, not only a pending one, since mpv disables a filter that fails for one track.
+      if (evt.event === 'start-file' && this.visualizerKeepsInSync) {
+        const restarts = this.playbackRestarts;
+        void this.queueVisualizerSync(ipc, { stillSafe: () => this.playbackRestarts === restarts });
+      }
       const reason = typeof evt['reason'] === 'string' ? ` (${evt['reason']})` : '';
       logger.debug(`mpv event: ${evt.event}${reason}`);
     });
@@ -1040,6 +1102,8 @@ class PlaybackEngine {
     ipc.onPropertyChange((evt) => {
       this.propertyCache.set(evt.name, evt.data);
       this.emitStateChange({ kind: 'property', name: evt.name, data: evt.data });
+      const quietNow = (evt.name === 'pause' || evt.name === 'idle-active') && evt.data === true;
+      if (quietNow && this.visualizerPending && this.visualizerKeepsInSync) void this.queueVisualizerSync(ipc, {});
     });
 
     // mpv sends no property events before observe_property, so this precedes the new instance's snapshot.
@@ -1054,6 +1118,94 @@ class PlaybackEngine {
         logger.debug(`mpv cannot observe ${name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+  }
+
+  // Never rejects, so a failed sync cannot fail the spawn that awaits it.
+  private queueVisualizerSync(ipc: MpvIpc, request: VisualizerSyncRequest): Promise<void> {
+    this.visualizerSyncChain = this.visualizerSyncChain
+      .then(() => this.applyVisualizerFilter(ipc, request))
+      .catch((err: unknown) => {
+        logger.debug(`visualizer filter sync failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    return this.visualizerSyncChain;
+  }
+
+  // Safety is read when the sync runs, since a sync can wait in the chain past the moment that queued it.
+  private async applyVisualizerFilter(ipc: MpvIpc, request: VisualizerSyncRequest): Promise<void> {
+    const wanted = this.readVisualizerWanted();
+    const installed = hasVisualizerFilter(await ipc.command('get_property', 'af'));
+    // A working filter proves this mpv runs it, whichever process added it.
+    if (installed) this.setVisualizerRefusal(null);
+    const action = decideVisualizerAction({ wanted, installed, safe: this.isSafeForFilterChange(request) });
+    this.visualizerPending = action === 'defer';
+    // Warms the check, so the deferred install at the next track start does not wait on it.
+    if (action === 'defer' && wanted) void validateVisualizerFilter(this.mpvBinary);
+    if (action === 'install') await this.installVisualizerFilter(ipc, request);
+    if (action === 'remove') await ipc.command('af', 'remove', `@${VISUALIZER_FILTER_LABEL}`);
+  }
+
+  private async installVisualizerFilter(ipc: MpvIpc, request: VisualizerSyncRequest): Promise<void> {
+    const validation = await this.awaitVisualizerCheck(request.checkWaitMs);
+    if (validation === undefined) {
+      this.visualizerPending = true;
+      return;
+    }
+    const refusal = validation.ok ? await this.checkLiveBuild(ipc, validation.build) : validation.reason;
+    this.setVisualizerRefusal(refusal);
+    if (refusal !== null) return;
+    // The check can outlast the safe moment, so a track playing by now gets the filter at the next one.
+    if (!this.isSafeForFilterChange(request)) {
+      this.visualizerPending = true;
+      return;
+    }
+    await ipc.command('af', 'add', visualizerFilterSpec());
+  }
+
+  /** Undefined when the check outlasts `waitMs`. */
+  private async awaitVisualizerCheck(waitMs: number | undefined): Promise<VisualizerValidation | undefined> {
+    const settled = settledVisualizerValidation(this.mpvBinary);
+    if (settled !== undefined) return settled;
+    const check = validateVisualizerFilter(this.mpvBinary);
+    if (waitMs === undefined) return check;
+    let timer: NodeJS.Timeout | undefined;
+    const giveUp = new Promise<undefined>((resolve) => { timer = setTimeout(() => { resolve(undefined); }, waitMs); });
+    try {
+      return await Promise.race([check, giveUp]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // The check ran the configured binary, and an mpv started from another one may lack what the filter needs.
+  private async checkLiveBuild(ipc: MpvIpc, checkedBuild: string): Promise<string | null> {
+    const ffmpegVersion: unknown = await ipc.command('get_property', 'ffmpeg-version').catch(() => null);
+    const liveBuild = mpvBuildId(this.mpvVersion, ffmpegVersion);
+    if (liveBuild === checkedBuild) return null;
+    return `the running mpv (${liveBuild ?? 'unknown build'}) is not the checked ${checkedBuild}`;
+  }
+
+  private setVisualizerRefusal(refusal: string | null): void {
+    if (refusal === this.visualizerRefusal) return;
+    if (refusal !== null) logger.warn(`The visualizer is off: ${refusal}`);
+    this.visualizerRefusal = refusal;
+    this.emitStateChange({ kind: 'visualizer' });
+  }
+
+  private isSafeForFilterChange(request: VisualizerSyncRequest): boolean {
+    return request.stillSafe?.() === true || this.isIdleOrPaused();
+  }
+
+  private readVisualizerWanted(): boolean {
+    try {
+      return this.visualizerWanted();
+    } catch (err) {
+      logger.debug(`visualizer setting unreadable, treating it as off: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  private isIdleOrPaused(): boolean {
+    return this.propertyCache.get('idle-active') === true || this.propertyCache.get('pause') === true;
   }
 
   /**
@@ -1093,6 +1245,8 @@ class PlaybackEngine {
     this.metadataCache.clear();
     this.liveSongIds = new Set();
     this.startPromise = null;
+    this.visualizerPending = false;
+    this.visualizerRefusal = null;
     // Subscribers belong to the prior session.
     this.stateChangeHandlers.length = 0;
   }

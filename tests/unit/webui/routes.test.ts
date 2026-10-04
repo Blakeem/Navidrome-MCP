@@ -46,6 +46,8 @@ vi.mock('../../../src/web/player-runtime.js', async (importOriginal) => {
     setPersist: vi.fn(),
     getTheme: vi.fn(() => null),
     setTheme: vi.fn(),
+    getVisualizer: vi.fn(() => true),
+    setVisualizer: vi.fn(),
   };
 });
 
@@ -72,7 +74,7 @@ vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
 });
 
 import { readSettings, writeSettings } from '../../../src/config/store.js';
-import { getPersist, setPersist, setTheme } from '../../../src/web/player-runtime.js';
+import { getPersist, setPersist, setTheme, setVisualizer } from '../../../src/web/player-runtime.js';
 import { fetchWithTimeout } from '../../../src/utils/fetch-with-timeout.js';
 import { HEALTH_APP_ID, handleHealth } from '../../../src/webui/routes/health.js';
 import {
@@ -142,6 +144,7 @@ function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: bo
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: false,
       theme: null,
+      visualizer: true,
     },
   });
 }
@@ -499,6 +502,62 @@ describe('handleSetPlayerSettings theme', () => {
   });
 });
 
+describe('handleSetPlayerSettings visualizer', () => {
+  it('applies the setting live, syncs the mpv filter to it, persists it and broadcasts it', async () => {
+    vi.mocked(readSettings).mockReturnValue({
+      navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
+      webui: { theme: 'dark' },
+    });
+    const order: string[] = [];
+    let written: SettingsFile | undefined;
+    vi.mocked(writeSettings).mockImplementation((s) => {
+      written = s;
+    });
+    vi.mocked(setVisualizer).mockImplementation(() => { order.push('set'); });
+    const sync = vi.spyOn(playbackEngine, 'syncVisualizerFilter').mockImplementation(() => {
+      order.push('sync');
+      return Promise.resolve();
+    });
+    const broadcaster = fakeBroadcaster();
+
+    try {
+      const cap = fakeRes();
+      await handleSetPlayerSettings(
+        fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ visualizer: false }))]),
+        cap.res,
+        LOOPBACK_CONFIG,
+        broadcaster,
+      );
+
+      expect(cap.status()).toBe(200);
+      expect(setVisualizer).toHaveBeenCalledWith(false);
+      expect(written?.webui).toEqual({ theme: 'dark', visualizer: false });
+      expect(broadcaster.broadcastNow).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(['set', 'sync']);
+    } finally {
+      sync.mockRestore();
+    }
+  });
+
+  it('leaves the mpv filter alone when the visualizer is not in the patch', async () => {
+    vi.mocked(readSettings).mockReturnValue(null);
+    const sync = vi.spyOn(playbackEngine, 'syncVisualizerFilter');
+
+    try {
+      await handleSetPlayerSettings(
+        fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ theme: 'light' }))]),
+        fakeRes().res,
+        LOOPBACK_CONFIG,
+        fakeBroadcaster(),
+      );
+
+      expect(sync).not.toHaveBeenCalled();
+    } finally {
+      sync.mockRestore();
+    }
+  });
+});
+
 describe('handleSetPlayerSettings reports autoOpenBrowser as stored', () => {
   const STORED: SettingsFile = {
     navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
@@ -552,7 +611,13 @@ describe('handleGetPlayerSettings reports autoOpenBrowser', () => {
     );
 
     expect(cap.status()).toBe(200);
-    expect(cap.json()).toEqual({ persistAfterMcpExit: false, autoOpenBrowser: true, theme: null });
+    expect(cap.json()).toEqual({
+      persistAfterMcpExit: false,
+      autoOpenBrowser: true,
+      theme: null,
+      visualizer: true,
+      visualizerUnsupported: false,
+    });
   });
 });
 
@@ -667,6 +732,7 @@ async function requestServer(method: string, path: string, options: ServerReques
     config,
     client: {} as never,
     broadcaster: {} as never,
+    visualizer: { addClient: vi.fn() },
     shutdown: () => undefined,
     leases: { open: () => undefined, close: () => undefined },
   });
@@ -815,6 +881,7 @@ describe('MCP lease route over a live dispatcher', () => {
       config: configWith({ expose: false, host: '127.0.0.1' }),
       client: {} as never,
       broadcaster: {} as never,
+      visualizer: { addClient: vi.fn() },
       shutdown: () => undefined,
       leases,
     });

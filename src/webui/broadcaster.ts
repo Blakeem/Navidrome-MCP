@@ -22,18 +22,17 @@ import {
   playbackEngine,
   type StateChangeEvent,
 } from '../services/playback/playback-engine.js';
+import { SSE_HEARTBEAT_MS } from '../constants/timeouts.js';
 import { getPlayQueue, nowPlaying, playbackStatus } from '../tools/playback.js';
-import { getTheme } from '../web/player-runtime.js';
+import { getTheme, getVisualizer } from '../web/player-runtime.js';
 import { logger } from '../utils/logger.js';
+import { openSseStream } from './http-helpers.js';
 
 // mpv fires time-pos every 250 ms and a bulk loadfile fires one playlist-count change per track, so property events are throttled.
 const BROADCAST_THROTTLE_MS = 1000;
 
 // Browsers retry at this interval verbatim, so it sets how soon an idle phone reconnects without polling the server hard.
 const SSE_RETRY_MS = 10_000;
-
-// Stays under common reverse-proxy idle timeouts (nginx proxy_read_timeout is 60s) and bounds dead-client reaping latency.
-const SSE_HEARTBEAT_MS = 10_000;
 
 /**
  * Pushes engine snapshots to every SSE remote. Property events are throttled to one broadcast per
@@ -97,17 +96,8 @@ export class SseBroadcaster {
     }
   }
 
-  // The retry directive goes first, so the browser learns the reconnect interval even if the stream drops before a snapshot.
   async addClient(res: ServerResponse): Promise<void> {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      // Hint to reverse proxies (nginx in particular) not to buffer the
-      // stream. Harmless when no proxy is in the loop.
-      'X-Accel-Buffering': 'no',
-    });
-    res.write(`retry: ${SSE_RETRY_MS}\n\n`);
+    openSseStream(res, SSE_RETRY_MS);
 
     this.clients.add(res);
     res.on('close', () => { this.clients.delete(res); });
@@ -237,8 +227,8 @@ export class SseBroadcaster {
       return null;
     }
 
-    // `player` carries process-global state, so every open remote follows a theme change.
-    const player = { theme: getTheme() };
+    // `player` carries process-global state, so every open remote follows a theme or visualizer change.
+    const player = { theme: getTheme(), visualizer: getVisualizer() && !playbackEngine.isVisualizerUnsupported() };
     return JSON.stringify({ nowPlaying: np, queue, status, player });
   }
 }

@@ -66,6 +66,25 @@ export const WEB_OWNER_ATTACH_INTERVAL_MS = 5000;
  *  A local IPC round trip takes milliseconds, so only a wedged or gone mpv reaches it. */
 export const SCROBBLE_CLAIM_ECHO_TIMEOUT_MS = 5000;
 
+/** Bounds the headless mpv run that checks the visualizer filter. A pass took 313 ms when measured. */
+export const MPV_VISUALIZER_VALIDATE_TIMEOUT_MS = 10_000;
+
+/** A validation run that timed out or failed to start says nothing about the filter, so it runs again after this. */
+export const MPV_VISUALIZER_VALIDATE_RETRY_MS = 60_000;
+
+/** How long a fresh mpv waits for the filter check before the first track. A slower check gives up that track, not the play. */
+export const MPV_VISUALIZER_SPAWN_WAIT_MS = 1000;
+
+/** How long the visualizer level feed waits before it reconnects to a missing or restarted mpv. */
+export const VISUALIZER_FEED_RETRY_MS = 3000;
+
+/** How long the level feed stays open after the last viewer leaves, so a page reload keeps it. */
+export const VISUALIZER_FEED_GRACE_MS = 5000;
+
+/** A quiet SSE stream sends a comment this often, under common reverse-proxy idle timeouts (nginx waits 60 s).
+ *  It also bounds how long a dead client lingers. */
+export const SSE_HEARTBEAT_MS = 10_000;
+
 export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
   'loadfile',
   'loadlist',

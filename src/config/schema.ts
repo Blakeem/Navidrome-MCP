@@ -86,6 +86,8 @@ export const ConfigSchema = z.object({
     persistAfterMcpExit: z.boolean(),
     // Every device viewing the player uses this theme. Null leaves each device on its own setting.
     theme: z.enum(WEBUI_THEMES).nullable(),
+    // Off removes the mpv analysis filter too, which costs about 2.5% of one core while music plays.
+    visualizer: z.boolean(),
   }),
 });
 

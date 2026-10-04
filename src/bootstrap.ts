@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { Config } from './config.js';
+import { readSavedWebuiSettings, type Config } from './config.js';
 import { NavidromeClient } from './client/navidrome-client.js';
 import { libraryManager } from './services/library-manager.js';
 import { filterCacheManager } from './services/filter-cache-manager.js';
@@ -53,6 +53,10 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   // detected), since `buildStreamUrl()` and every play_* tool depend on it.
   if (config.features.playback) {
     playbackEngine.configure(config);
+    // Read when this process spawns mpv, so a toggle the web player saved after this process started applies.
+    playbackEngine.setVisualizerSource(
+      () => config.webui.enabled && (readSavedWebuiSettings()?.visualizer ?? config.webui.visualizer),
+    );
   }
 
   return { config, client };

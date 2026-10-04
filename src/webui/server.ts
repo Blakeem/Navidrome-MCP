@@ -64,11 +64,13 @@ import {
   type McpLeaseCounter,
 } from './routes/player.js';
 import { handleStatic } from './routes/static-files.js';
+import type { VisualizerHub } from './visualizer-hub.js';
 
 interface ServerDeps {
   config: Config;
   client: NavidromeClient;
   broadcaster: SseBroadcaster;
+  visualizer: Pick<VisualizerHub, 'addClient'>;
   /** Tear down the player (stop mpv + exit). POST /api/shutdown invokes it. */
   shutdown: () => void;
   leases: McpLeaseCounter;
@@ -150,6 +152,10 @@ async function handleRequest(
   // --- API: SSE stream ---
   if (method === 'GET' && path === '/api/events') {
     return handleEvents(res, deps.broadcaster);
+  }
+  if (method === 'GET' && path === '/api/visualizer') {
+    deps.visualizer.addClient(res);
+    return;
   }
 
   // --- API: control actions ---

@@ -37,7 +37,8 @@
     "host": null,
     "expose": false,
     "autoOpenBrowser": false,
-    "persistAfterMcpExit": false
+    "persistAfterMcpExit": false,
+    "visualizer": true
   },
   "advanced": {
     "debug": false,

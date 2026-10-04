@@ -57,7 +57,9 @@ Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-
 src/services/playback/
 ├── mpv-process.ts        # spawn, binary detection, stable IPC path
 ├── mpv-ipc.ts            # JSON-IPC client (net socket + line framing, request_id correlation)
-└── playback-engine.ts    # high-level facade; the only thing handlers use
+├── playback-engine.ts    # high-level facade; the only thing handlers use
+├── visualizer-filter.ts  # the visualizer's mpv audio filter, its validation run and install rule
+└── visualizer-log.ts     # groups the filter's log lines into level records
 
 src/tools/
 ├── playback.ts           # tool function impls (mirror existing pattern)
@@ -262,6 +264,18 @@ Fail fast. Every error surfaces a structured message via `ErrorFormatter`:
 | Out-of-range index for `move_in_play_queue` / `remove_from_play_queue` / `play_queue_index` | `move_in_play_queue` rejects a `to` past the last index, and `play_queue_index` rejects an index past the end, each with a bound message, since mpv accepts both without an error. An out-of-range `from` or `remove_from_play_queue` index fails with a message that names the index and points to `get_play_queue`. |
 
 No retry loops, no auto-recovery beyond re-attach.
+
+## Visualizer Filter
+
+The web remote's visualizer reads band levels that mpv measures, since the browser receives no audio.
+
+- **Filter.** `@navidrome-viz` is a `lavfi` graph. Its main path is `asplit` then `anull`, so the audio passes through unchanged in any channel layout. Its side path resamples a mono copy to 44.1 kHz, splits it into 16 log-spaced `bandpass` bands from 40 Hz to 16 kHz, measures each with `astats` every 1024 samples, prints the result with `ametadata=mode=print`, and ends in `anullsink`. It costs about 2.5% of one core while audio plays.
+- **Validation.** mpv accepts a broken graph while idle, then fails every track. So the engine first runs the configured binary headless on 0.2 s of generated silence with the filter, and installs only when that run exits 0. It also reads `mpv --version` and installs only into a running mpv that reports the same mpv and FFmpeg versions, since an mpv started from another binary may lack what the graph needs. A rejection is cached per binary for the process lifetime. A run that timed out or failed to start runs again after 60 s.
+- **Install timing.** A filter change during a track dropped about 40 ms of audio when measured, and a change at a gapless track start showed no measurable gap. Every engine adds the filter to an mpv it spawns, before the first load. It waits at most 1 s for the check, and a slower check leaves the first track without the filter. After spawn only the web player's engine changes the filter. It acts on attach when mpv is idle or paused, and otherwise at the next `start-file`, pause or idle. A `start-file` sync that waited in line past mpv's `playback-restart` counts as mid-track. The web player checks again at every `start-file`, since mpv disables a filter whose graph fails for one track and keeps playing.
+- **Setting.** `webui.visualizer` (default `true`) decides whether the filter belongs in mpv. An MCP process reads the saved value when it spawns mpv, so the first track follows a toggle saved after that process started. The web player reads its live flag, which the snapshot and the settings dialog also report. In env-only mode an MCP process can read a different value than the web player's session toggle, which is why only the web player changes the filter after spawn. The snapshot hides the visualizer while the filter cannot run on the current mpv. With `webui.enabled` false no process installs it.
+- **Level feed.** The web player opens a second IPC connection while a remote shows the visualizer and sends `request_log_messages v`. mpv forwards FFmpeg's info lines at level `v` as `Parsed_ametadata_N: frame:… pts_time:T` followed by one `lavfi.astats.K.RMS_level=V` line per band. The connection is separate because mpv finishes each write to a client before the next, so a slow log reader would stall commands on its connection.
+- **Delivery.** `GET /api/visualizer` streams `levels` events every 100 ms as `[segment, ptsMs, ...levelsDb]` rows. Measurements arrive about 0.28 s before the sound. A segment changes when timestamps restart, which marks a new file, and the browser matches `pts` to its playback clock.
+- **Limits.** mpv's IPC docs warn that log text can change between releases. A changed format leaves the visualizer at rest without affecting audio. At a gapless change the new file's first levels show during the old file's last 0.28 s.
 
 ## Out of Scope
 

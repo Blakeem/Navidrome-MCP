@@ -39,8 +39,9 @@ import { SseBroadcaster } from '../webui/broadcaster.js';
 import { isLanReachable, listLanInterfaces } from '../webui/network.js';
 import type { McpLeaseCounter } from '../webui/routes/player.js';
 import { createServer } from '../webui/server.js';
+import { VisualizerHub } from '../webui/visualizer-hub.js';
 import { acquireOrAttach, loopbackUrl } from './acquire.js';
-import { getPersist, setPersist, setTheme, shouldStopForMcpExit } from './player-runtime.js';
+import { getPersist, getVisualizer, setPersist, setTheme, setVisualizer, shouldStopForMcpExit } from './player-runtime.js';
 
 // Node 20+ exits on an unhandled rejection, and an MCP-spawned child's stderr is ignored, so it goes to the file sink.
 process.on('unhandledRejection', (reason) => {
@@ -78,6 +79,7 @@ function logBanner(port: number, host: string): void {
 // Set once this process owns the port, so the one shutdown path can tear them down whatever triggered it.
 let serverRef: Server | null = null;
 let broadcasterRef: SseBroadcaster | null = null;
+let visualizerHubRef: VisualizerHub | null = null;
 let shuttingDown = false;
 // MCP processes other than the spawner that use this player, each through a kept-open lease.
 let openMcpLeases = 0;
@@ -88,6 +90,7 @@ function shutdownPlayer(reason: string): void {
   shuttingDown = true;
   logger.info(`navidrome-web shutting down (${reason})`);
   broadcasterRef?.stop();
+  visualizerHubRef?.stop();
   serverRef?.close();
   const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_HARD_EXIT_MS);
   hardExit.unref();
@@ -208,6 +211,9 @@ async function main(): Promise<void> {
   // Seed the live flags, which the settings modal may toggle.
   setPersist(config.webui.persistAfterMcpExit);
   setTheme(config.webui.theme);
+  setVisualizer(config.webui.visualizer);
+  // The snapshot and the settings dialog read the same live flag, so the card shows only while this engine keeps the filter.
+  playbackEngine.setVisualizerSource(getVisualizer, { keepInSync: true });
 
   // Startup can outlast the MCP that spawned this process, and binding then would only open a doomed player.
   if (launchedByMcp && !process.connected && !getPersist()) {
@@ -216,8 +222,9 @@ async function main(): Promise<void> {
   }
 
   const broadcaster = new SseBroadcaster(client);
+  const visualizer = new VisualizerHub();
   const makeServer = (): Server =>
-    createServer({ config, client, broadcaster, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases });
+    createServer({ config, client, broadcaster, visualizer, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases });
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
@@ -232,6 +239,7 @@ async function main(): Promise<void> {
 
   serverRef = result.server;
   broadcasterRef = broadcaster;
+  visualizerHubRef = visualizer;
   broadcaster.start();
 
   // The owner claims plays through mpv like every attached MCP, and the first claim submits.

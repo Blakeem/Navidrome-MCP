@@ -367,6 +367,7 @@ export const PlayerSettingsPatchSchema = z.strictObject({
   autoOpenBrowser: z.boolean().optional(),
   // Null clears a forced theme, so each device follows its own setting again.
   theme: z.enum(WEBUI_THEMES).nullable().optional(),
+  visualizer: z.boolean().optional(),
 });
 
 export const LibrarySearchQuerySchema = z.string().trim().min(1).max(SEARCH_QUERY_MAX_LENGTH);

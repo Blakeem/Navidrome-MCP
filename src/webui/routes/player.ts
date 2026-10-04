@@ -21,8 +21,9 @@ import type { Config } from '../../config.js';
 import type { WebuiTheme } from '../../constants/defaults.js';
 import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../../config/store.js';
 import { PlayerSettingsPatchSchema } from '../../schemas/index.js';
+import { playbackEngine } from '../../services/playback/playback-engine.js';
 import { logger } from '../../utils/logger.js';
-import { getPersist, getTheme, setPersist, setTheme } from '../../web/player-runtime.js';
+import { getPersist, getTheme, getVisualizer, setPersist, setTheme, setVisualizer } from '../../web/player-runtime.js';
 import type { SseBroadcaster } from '../broadcaster.js';
 import { readValidBody, writeError, writeJson } from '../http-helpers.js';
 import { isLocalRequest } from '../loopback.js';
@@ -31,11 +32,19 @@ interface PlayerSettingsBody {
   persistAfterMcpExit: boolean;
   autoOpenBrowser: boolean;
   theme: WebuiTheme | null;
+  visualizer: boolean;
+  visualizerUnsupported: boolean;
 }
 
 /** Live flags report live state. `autoOpenBrowser` has no live state, so each caller supplies it. */
 function playerSettingsBody(autoOpenBrowser: boolean): PlayerSettingsBody {
-  return { persistAfterMcpExit: getPersist(), autoOpenBrowser, theme: getTheme() };
+  return {
+    persistAfterMcpExit: getPersist(),
+    autoOpenBrowser,
+    theme: getTheme(),
+    visualizer: getVisualizer(),
+    visualizerUnsupported: playbackEngine.isVisualizerUnsupported(),
+  };
 }
 
 /**
@@ -73,9 +82,10 @@ export function handleGetPlayerSettings(req: IncomingMessage, res: ServerRespons
 
 /**
  * POST /api/player/settings updates player-scoped settings (loopback-only).
- * Body `{ persistAfterMcpExit?: boolean, autoOpenBrowser?: boolean, theme?: WebuiTheme }`.
- * `persistAfterMcpExit` and `theme` take effect immediately AND are persisted,
- * and the snapshot broadcast carries them to every open remote.
+ * Body `{ persistAfterMcpExit?: boolean, autoOpenBrowser?: boolean, theme?: WebuiTheme, visualizer?: boolean }`.
+ * `persistAfterMcpExit`, `theme` and `visualizer` take effect immediately AND are persisted,
+ * and the snapshot broadcast carries them to every open remote. mpv's filter follows `visualizer`
+ * at once when idle or paused, otherwise at the next track start or pause.
  * `autoOpenBrowser` is persisted for next launch.
  * `persisted` is false when settings.json was not written, so the change holds for this session only.
  * Only the webui keys are touched (read-merge-write), so other settings and
@@ -103,6 +113,10 @@ export async function handleSetPlayerSettings(
   if (input.theme !== undefined) {
     setTheme(input.theme);
   }
+  if (input.visualizer !== undefined) {
+    setVisualizer(input.visualizer);
+    void playbackEngine.syncVisualizerFilter();
+  }
 
   const current = readSettings();
   if (current === null) {
@@ -114,6 +128,7 @@ export async function handleSetPlayerSettings(
     if (input.persistAfterMcpExit !== undefined) webui.persistAfterMcpExit = input.persistAfterMcpExit;
     if (input.autoOpenBrowser !== undefined) webui.autoOpenBrowser = input.autoOpenBrowser;
     if (input.theme !== undefined) webui.theme = input.theme;
+    if (input.visualizer !== undefined) webui.visualizer = input.visualizer;
     const merged = { ...current, webui };
     // Never persist a file that would not parse back, the same guard the config-app writer keeps.
     const check = SettingsFileSchema.safeParse(merged);

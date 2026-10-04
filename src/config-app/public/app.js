@@ -36,6 +36,7 @@ const FIELDS = [
   ['webui.expose', 'webuiExpose', 'bool', false],
   ['webui.autoOpenBrowser', 'webuiAutoOpen', 'bool', false],
   ['webui.persistAfterMcpExit', 'webuiPersist', 'bool', false],
+  ['webui.visualizer', 'webuiVisualizer', 'bool', true],
   ['advanced.debug', 'debug', 'bool', false],
   ['advanced.tokenExpiry', 'tokenExpiry', 'int', 86400],
 ];

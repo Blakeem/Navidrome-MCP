@@ -233,6 +233,8 @@ main {
 [data-tip] { position: relative; }
 /* The top-bar buttons sit at the right edge, so their tips grow leftward. */
 .topbar [data-tip]::after { left: auto; right: 0; }
+/* The clear button ends the queue header, and a rightward tip made a phone scroll sideways by 21px. */
+#clear-queue[data-tip]::after { left: auto; right: 0; }
 [data-tip]::after {
   content: attr(data-tip);
   position: absolute;
@@ -284,6 +286,53 @@ main {
     grid-template-columns: 1fr;
     text-align: center;
     justify-items: center;
+  }
+}
+
+/* The visualizer takes a third column only while it is on, so the card keeps its current layout when off.
+   It has no background or border, and its canvas fades toward every edge, so it blends into the card. */
+.now-playing-card.has-visualizer {
+  grid-template-columns: minmax(120px, 160px) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.visualizer {
+  position: relative;
+  align-self: stretch;
+  min-height: 120px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.visualizer canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.visualizer:focus {
+  outline: none;
+}
+
+.visualizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .now-playing-card.has-visualizer {
+    grid-template-columns: 1fr;
+  }
+
+  .visualizer {
+    justify-self: stretch;
+    min-height: 72px;
+    height: 72px;
   }
 }
 

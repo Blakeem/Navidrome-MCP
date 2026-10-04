@@ -36,6 +36,19 @@ export function writeError(res: ServerResponse, status: number, message: string)
   writeJson(res, status, { error: message });
 }
 
+/** Opens a server-sent events response. The retry directive goes first, so the browser learns it even if the stream drops at once. */
+export function openSseStream(res: ServerResponse, retryMs: number): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // Hint to reverse proxies (nginx in particular) not to buffer the
+    // stream. Harmless when no proxy is in the loop.
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(`retry: ${retryMs}\n\n`);
+}
+
 export function isJsonContentType(contentType: string | undefined): boolean {
   const baseType = contentType?.split(';')[0]?.trim().toLowerCase();
   return baseType === 'application/json';

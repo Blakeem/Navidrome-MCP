@@ -179,6 +179,7 @@ async function withServer(config: Config, run: (port: number) => Promise<void>):
     config,
     client: testClient(),
     broadcaster: {} as unknown as SseBroadcaster,
+    visualizer: { addClient: vi.fn() },
     shutdown: () => undefined,
     leases: { open: () => undefined, close: () => undefined },
   });

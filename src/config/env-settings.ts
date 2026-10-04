@@ -137,6 +137,7 @@ function settingsFromEnvSource(
       expose: toBool('WEBUI_EXPOSE', get('WEBUI_EXPOSE'), false),
       autoOpenBrowser: toBool('WEBUI_AUTO_OPEN_BROWSER', get('WEBUI_AUTO_OPEN_BROWSER'), false),
       persistAfterMcpExit: toBool('WEBUI_PERSIST_AFTER_MCP_EXIT', get('WEBUI_PERSIST_AFTER_MCP_EXIT'), false),
+      visualizer: toBool('WEBUI_VISUALIZER', get('WEBUI_VISUALIZER'), true),
     },
     advanced: {
       debug: toBool('DEBUG', get('DEBUG'), false),

@@ -137,6 +137,7 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: webui.persistAfterMcpExit ?? false,
       theme: parseWebuiTheme(webui.theme),
+      visualizer: webui.visualizer ?? true,
     },
   };
 }

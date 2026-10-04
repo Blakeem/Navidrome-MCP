@@ -66,6 +66,9 @@
         <p class="track-album" id="track-album"></p>
         <p class="queue-pos" id="queue-pos"></p>
       </div>
+      <button type="button" class="visualizer" id="visualizer" hidden>
+        <canvas id="visualizer-canvas" aria-hidden="true"></canvas>
+      </button>
     </section>
 
     <section class="progress-section" aria-label="Progress">
@@ -299,6 +302,11 @@
         <label class="check">
           <input type="checkbox" id="set-autoopen" />
           <span>Open in browser when the MCP server starts <span class="modal-hint">applies on next start</span></span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="set-visualizer" />
+          <span>Show the visualizer <span class="modal-hint">beside the track info. Off also removes its audio analysis from mpv. While a track plays, a change waits for the next track or a pause.</span>
+            <span class="modal-hint" id="set-visualizer-unsupported" hidden>mpv could not run the visualizer. The server log has the reason.</span></span>
         </label>
       </fieldset>
       <p class="modal-hint" id="settings-status" aria-live="polite"></p>

@@ -80,6 +80,7 @@ export const SettingsFileSchema = z.object({
     persistAfterMcpExit: z.boolean().optional(),
     // A plain nullable string, so a hand-edited null or unknown theme reads as unset instead of voiding the store.
     theme: z.string().nullish(),
+    visualizer: z.boolean().optional(),
   }).optional(),
   advanced: z.object({
     debug: z.boolean().optional(),

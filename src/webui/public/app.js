@@ -15,6 +15,7 @@ import { bindSettings } from './settings.js';
 import { playingIndex, storeSnapshot } from './snapshot.js';
 import { applyTheme, applyThemeHint } from './theme.js';
 import { bindTransport, renderTransport } from './transport.js';
+import { bindVisualizer, renderVisualizer } from './visualizer.js';
 import { bindVolume, renderVolume } from './volume.js';
 
 // The clock rebases first, since the transport and the lyrics read its paused state.
@@ -27,6 +28,8 @@ function applySnapshot(raw) {
   renderQueue(queue, playingIndex(nowPlaying));
   syncLyricsToSnapshot(nowPlaying);
   if (player !== null) applyTheme(player.theme);
+  // After the theme, so the visualizer reads the new palette.
+  renderVisualizer(player, nowPlaying);
   // Last, so the rows reflect this snapshot before the reveal measures them.
   revealCurrentRow(nowPlaying);
 }
@@ -51,6 +54,7 @@ function bootstrap() {
   bindSettings();
   bindPowerButton();
   bindLyricsView();
+  bindVisualizer();
   void loadPlayerState();
   // A reconnect may have missed any amount of the song, so the next snapshot lands the lyrics clock.
   connect({ onOpen: snapLyricsClock, onSnapshot: applySnapshot });

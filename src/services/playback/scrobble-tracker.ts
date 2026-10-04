@@ -199,6 +199,7 @@ export class ScrobbleTracker {
       this.onMessage(event.args);
       return;
     }
+    if (event.kind === 'visualizer') return;
     switch (event.name) {
       case 'playlist-pos':
         this.onPlaylistPos(event.data);

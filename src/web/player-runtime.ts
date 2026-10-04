@@ -23,14 +23,15 @@
  * The persist flag governs whether a player spawned by the MCP server keeps
  * running after the MCP server exits (webui.persistAfterMcpExit). It's
  * initialized from config at startup and can be toggled live from the player's
- * loopback-only settings modal. The theme follows the same seed-then-toggle path,
- * and null leaves each device on its own light or dark setting.
+ * loopback-only settings modal. The theme and the visualizer follow the same seed-then-toggle path,
+ * and a null theme leaves each device on its own light or dark setting.
  */
 
 import type { WebuiTheme } from '../constants/defaults.js';
 
 let persist = false;
 let theme: WebuiTheme | null = null;
+let visualizer = true;
 
 /** Seeds the flag from config at startup and toggles it at runtime. */
 export function setPersist(value: boolean): void {
@@ -47,6 +48,14 @@ export function setTheme(value: WebuiTheme | null): void {
 
 export function getTheme(): WebuiTheme | null {
   return theme;
+}
+
+export function setVisualizer(value: boolean): void {
+  visualizer = value;
+}
+
+export function getVisualizer(): boolean {
+  return visualizer;
 }
 
 /** An MCP-launched player stops once no MCP uses it: its spawner is gone and no lease is open. */
