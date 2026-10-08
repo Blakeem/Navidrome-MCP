@@ -1,5 +1,6 @@
 /**
- * Coverage for the visualizer's pure browser modules: the level timeline and the drawing modes.
+ * Coverage for the visualizer's pure browser modules: the level timeline and the kit the modes share.
+ * The modes themselves run the plugin contract in visualizer-plugins.test.ts.
  *
  * Both live under src/webui/public/, which eslint ignores and tsc cannot see, so this file is their
  * only automated guard. They stay importable here only while they reference no browser global,
@@ -8,29 +9,72 @@
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { MODES, PAD_RATIO, levelSummary, resample } from '../../../src/webui/public/visualizer-modes.js';
-import { BAND_COUNT, bandHeight, createSmoother, createTimeline } from '../../../src/webui/public/visualizer-timeline.js';
-
-const PALETTE = { accent: { r: 124, g: 156, b: 255 }, strong: { r: 165, g: 190, b: 255 } };
+import { detectBeat, hslOf, resample } from '../../../src/webui/public/visualizer-kit.js';
+import { BAND_COUNT, createLevelGain, createSmoother, createTimeline } from '../../../src/webui/public/visualizer-timeline.js';
 
 describe('visualizer browser modules stay pure', () => {
-  it.each(['visualizer-timeline.js', 'visualizer-modes.js'])('%s references no browser global', (file) => {
+  it.each(['visualizer-timeline.js', 'visualizer-kit.js'])('%s references no browser global', (file) => {
     const source = readFileSync(new URL(`../../../src/webui/public/${file}`, import.meta.url), 'utf8');
     expect(source).not.toMatch(/\b(window|document|navigator|localStorage|requestAnimationFrame|getComputedStyle)\b/);
   });
 });
 
-describe('bandHeight', () => {
-  it('maps the floor to 0 and the ceiling to 1, clamping beyond them', () => {
-    expect(bandHeight(-55, 0)).toBe(0);
-    expect(bandHeight(-100, 0)).toBe(0);
-    expect(bandHeight(-15, 0)).toBe(1);
-    expect(bandHeight(-3, 0)).toBe(1);
+describe('createLevelGain', () => {
+  // A spectrum shape that falls off toward the treble, as most music does.
+  const SHAPE = Array.from({ length: BAND_COUNT }, (_, band) => -20 - band * 1.5);
+  const shifted = (db: number): number[] => SHAPE.map((level) => level + db);
+  const run = (gain: ReturnType<typeof createLevelGain>, levels: number[], seconds: number, segment = 1): number[] => {
+    let heights: number[] = [];
+    for (let t = 0; t < seconds; t += 1 / 60) heights = gain.heights({ segment, levels }, 1 / 60);
+    return heights;
+  };
+
+  it('gives a loud master and a quiet recording of the same shape the same heights', () => {
+    const loud = run(createLevelGain(), shifted(0), 1);
+    const quiet = run(createLevelGain(), shifted(-30), 1);
+
+    loud.forEach((height, band) => { expect(quiet[band]).toBeCloseTo(height, 6); });
   });
 
-  it('lifts the upper bands, which carry less energy in most music', () => {
-    expect(bandHeight(-40, 15)).toBeGreaterThan(bandHeight(-40, 0));
-    expect(bandHeight(-40, 6)).toBe(bandHeight(-40, 0));
+  it('keeps the loudest band under the top, so steady music never pins', () => {
+    const heights = run(createLevelGain(), shifted(0), 3);
+
+    expect(Math.max(...heights)).toBeGreaterThan(0.85);
+    expect(Math.max(...heights)).toBeLessThan(1);
+  });
+
+  it('shows a quieter passage lower, then lets it rise back over several seconds', () => {
+    const gain = createLevelGain();
+    const loud = run(gain, shifted(0), 3);
+    const justAfter = run(gain, shifted(-10), 0.1);
+    const later = run(gain, shifted(-10), 6);
+
+    expect(Math.max(...justAfter)).toBeLessThan(Math.max(...loud) - 0.3);
+    expect(Math.max(...later)).toBeCloseTo(Math.max(...loud), 2);
+  });
+
+  it('follows a louder passage within a second', () => {
+    const gain = createLevelGain();
+    run(gain, shifted(-15), 3);
+    const louder = run(gain, shifted(0), 1);
+
+    expect(Math.max(...louder)).toBeLessThan(1);
+  });
+
+  it('starts each new file from its own level', () => {
+    const gain = createLevelGain();
+    const loud = run(gain, shifted(0), 3, 1);
+    const quietNextFile = run(gain, shifted(-30), 1 / 60, 2);
+
+    expect(Math.max(...quietNextFile)).toBeCloseTo(Math.max(...loud), 2);
+  });
+
+  it('lifts the upper bands a little and clamps to the range', () => {
+    const flat = run(createLevelGain(), Array.from({ length: BAND_COUNT }, () => -30), 1);
+    expect(flat[15]).toBeGreaterThan(flat[0] ?? 1);
+
+    const silentBand = run(createLevelGain(), [-100, ...shifted(0).slice(1)], 1);
+    expect(silentBand[0]).toBe(0);
   });
 });
 
@@ -43,7 +87,7 @@ describe('createTimeline', () => {
     const timeline = createTimeline();
     timeline.ingest([row(1, 1000, -40), row(1, 1023, -20), row(1, 1046, -50)], 0);
 
-    expect(timeline.heightsAt(1.03, 10)?.[0]).toBe(bandHeight(-20, 0));
+    expect(timeline.levelsAt(1.03, 10)?.levels[0]).toBe(-20);
   });
 
   it('falls back to the arrival lead when the clock does not reach the newest segment yet', () => {
@@ -51,7 +95,7 @@ describe('createTimeline', () => {
     // A new file started: its timestamps restart while the clock still reports the old track's end.
     timeline.ingest([row(1, 200_000), row(2, 0, -45), row(2, 100, -35), row(2, 400, -20)], 0);
 
-    expect(timeline.heightsAt(200.1, 10)?.[0]).toBe(bandHeight(-35, 0));
+    expect(timeline.levelsAt(200.1, 10)).toEqual({ segment: 2, levels: row(2, 100, -35).slice(2) });
   });
 
   it('replaces the old segment, since its timestamps restart', () => {
@@ -59,23 +103,23 @@ describe('createTimeline', () => {
     timeline.ingest([row(1, 5000, -20)], 0);
     timeline.ingest([row(2, 0, -50)], 0);
 
-    expect(timeline.heightsAt(0.01, 10)?.[0]).toBe(bandHeight(-50, 0));
+    expect(timeline.levelsAt(0.01, 10)?.levels[0]).toBe(-50);
   });
 
   it('returns null when the feed stalls or nothing has arrived', () => {
     const timeline = createTimeline();
-    expect(timeline.heightsAt(1, 0)).toBeNull();
+    expect(timeline.levelsAt(1, 0)).toBeNull();
 
     timeline.ingest([row(1, 1000)], 0);
-    expect(timeline.heightsAt(1, 2000)).toBeNull();
+    expect(timeline.levelsAt(1, 2000)).toBeNull();
   });
 
   it('drops measurements older than the buffer', () => {
     const timeline = createTimeline();
     timeline.ingest([row(1, 0, -20), row(1, 20_000, -40)], 0);
 
-    expect(timeline.heightsAt(20, 10)?.[0]).toBe(bandHeight(-40, 0));
-    expect(timeline.heightsAt(0.01, 10)).toBeNull();
+    expect(timeline.levelsAt(20, 10)?.levels[0]).toBe(-40);
+    expect(timeline.levelsAt(0.01, 10)).toBeNull();
   });
 });
 
@@ -113,90 +157,30 @@ describe('createSmoother', () => {
   });
 });
 
-interface Bounds { minX: number; maxX: number; minY: number; maxY: number }
-
-function alphaOf(style: unknown): number {
-  if (typeof style === 'string') return Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(style)?.[1] ?? 1);
-  return (style as { maxAlpha: number }).maxAlpha;
-}
-
-/**
- * Records how far each painted path reaches: its points, widened by an arc's radius, and by half the
- * line width when stroked. Also counts paints that show anything, meaning a path with a non-transparent style.
- */
-function recordingContext(): { ctx: Record<string, unknown>; bounds: Bounds; visibleDraws: () => number } {
-  const bounds: Bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
-  let path: Array<{ x: number; y: number; radius: number }> = [];
-  let visible = 0;
-  const point = (x: number, y: number, radius = 0): void => { path.push({ x, y, radius }); };
-  const paint = (style: unknown, widen: number): void => {
-    if (path.length === 0 || alphaOf(style) <= 0) return;
-    visible += 1;
-    for (const p of path) {
-      const reach = p.radius + widen;
-      bounds.minX = Math.min(bounds.minX, p.x - reach);
-      bounds.maxX = Math.max(bounds.maxX, p.x + reach);
-      bounds.minY = Math.min(bounds.minY, p.y - reach);
-      bounds.maxY = Math.max(bounds.maxY, p.y + reach);
-    }
-  };
-  const gradient = (): { maxAlpha: number; addColorStop: (offset: number, color: string) => void } => {
-    const g = { maxAlpha: 0, addColorStop: (_offset: number, color: string) => { g.maxAlpha = Math.max(g.maxAlpha, alphaOf(color)); } };
-    return g;
-  };
-  const ctx: Record<string, unknown> = {
-    lineWidth: 1,
-    globalAlpha: 1,
-    beginPath: () => { path = []; },
-    closePath: () => undefined,
-    moveTo: (x: number, y: number) => { point(x, y); },
-    lineTo: (x: number, y: number) => { point(x, y); },
-    arc: (x: number, y: number, radius: number) => { point(x, y, radius); },
-    fill: () => { paint(ctx.fillStyle, 0); },
-    stroke: () => { paint(ctx.strokeStyle, (ctx.lineWidth as number) / 2); },
-    createLinearGradient: gradient,
-    createRadialGradient: gradient,
-  };
-  return { ctx, bounds, visibleDraws: () => visible };
-}
-
-function frameFor(width: number, height: number, level: number, state: Record<string, unknown>): Record<string, unknown> {
-  const values = new Float32Array(BAND_COUNT).fill(level);
-  return { width, height, values, peaks: values, ...levelSummary(values), palette: PALETTE, dtSeconds: 1 / 60, reducedMotion: false, state };
-}
-
-describe('visualizer modes', () => {
-  const sizes: Array<[number, number]> = [[320, 160], [160, 320], [360, 72], [200, 200]];
-
-  it.each(MODES.map((mode) => [mode.id, mode] as const))('%s stays inside the padded area at full level', (_id, mode) => {
-    for (const [width, height] of sizes) {
-      const { ctx, bounds } = recordingContext();
-      const state: Record<string, unknown> = {};
-      // Alternating loud and silent frames trigger the orb's beat rings, which expand toward the edge.
-      for (let frame = 0; frame < 240; frame++) {
-        mode.draw(ctx, frameFor(width, height, frame % 6 < 3 ? 1 : 0, state));
-      }
-      const pad = Math.min(width, height) * PAD_RATIO;
-      expect(bounds.minX).toBeGreaterThanOrEqual(pad - 0.5);
-      expect(bounds.minY).toBeGreaterThanOrEqual(pad - 0.5);
-      expect(bounds.maxX).toBeLessThanOrEqual(width - pad + 0.5);
-      expect(bounds.maxY).toBeLessThanOrEqual(height - pad + 0.5);
-    }
-  });
-
-  it.each(MODES.map((mode) => [mode.id, mode] as const))('%s draws nothing visible in silence', (_id, mode) => {
-    const { ctx, visibleDraws } = recordingContext();
-    const state: Record<string, unknown> = {};
-    for (let frame = 0; frame < 30; frame++) mode.draw(ctx, frameFor(320, 160, 0, state));
-
-    expect(visibleDraws()).toBe(0);
-  });
-
+describe('visualizer kit', () => {
   it('resamples band heights to a smooth curve through the original points', () => {
     const values = new Float32Array([0, 1, 0, 1]);
     const out = resample(values, 7);
 
     expect(Array.from(out.filter((_, i) => i % 2 === 0))).toEqual([0, 1, 0, 1]);
     for (const value of out) expect(value).toBeGreaterThanOrEqual(0);
+  });
+
+  it('fires a beat on a rise across the bands, then waits out the gap', () => {
+    const state: Record<string, unknown> = {};
+    const quiet = { values: new Float32Array(BAND_COUNT), dtSeconds: 0.05 };
+    const loud = { values: new Float32Array(BAND_COUNT).fill(0.5), dtSeconds: 0.05 };
+
+    expect(detectBeat(state, quiet)).toBe(false);
+    expect(detectBeat(state, loud)).toBe(true);
+    expect(detectBeat(state, quiet)).toBe(false);
+    expect(detectBeat(state, loud)).toBe(false);
+    expect(Object.keys(state)).toEqual(['beat']);
+  });
+
+  it('reads hue, saturation and lightness from a palette color', () => {
+    const { hue, saturation, lightness } = hslOf({ r: 255, g: 0, b: 0 });
+
+    expect([hue, saturation, lightness]).toEqual([0, 100, 50]);
   });
 });

@@ -271,10 +271,11 @@ main {
 
 /* ───────────────── now playing card ───────────────── */
 .now-playing-card {
+  --card-padding: 18px;
   background: var(--surface);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
-  padding: 18px;
+  padding: var(--card-padding);
   display: grid;
   grid-template-columns: minmax(120px, 160px) 1fr;
   gap: 16px;
@@ -290,15 +291,17 @@ main {
 }
 
 /* The visualizer takes a third column only while it is on, so the card keeps its current layout when off.
-   It has no background or border, and its canvas fades toward every edge, so it blends into the card. */
+   The info column is only as wide as its text, so the visualizer gets the rest of the card and reaches
+   into the card's padding. It has no background or border, and its canvas fades toward every edge. */
 .now-playing-card.has-visualizer {
-  grid-template-columns: minmax(120px, 160px) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(120px, 160px) fit-content(45%) minmax(0, 1fr);
 }
 
 .visualizer {
   position: relative;
   align-self: stretch;
   min-height: 120px;
+  margin: calc(-1 * var(--card-padding)) calc(-1 * var(--card-padding)) calc(-1 * var(--card-padding)) 0;
   padding: 0;
   border: 0;
   border-radius: var(--radius-md);
@@ -319,9 +322,25 @@ main {
   outline: none;
 }
 
+/* Inside the box, since the box reaches the card's edge. */
 .visualizer:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: -4px;
+}
+
+/* The tip names the style. It sits inside the box, since the box reaches the card's edge. */
+.visualizer[data-tip]::after {
+  top: auto;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* A style change shows the new name at once, without the hover delay. */
+.visualizer.naming-mode::after {
+  opacity: 1;
+  visibility: visible;
+  transition: none;
 }
 
 @media (max-width: 480px) {
@@ -333,6 +352,7 @@ main {
     justify-self: stretch;
     min-height: 72px;
     height: 72px;
+    margin: 0 calc(-1 * var(--card-padding)) calc(-1 * var(--card-padding));
   }
 }
 

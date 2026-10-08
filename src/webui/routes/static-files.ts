@@ -29,7 +29,7 @@ function resolvePublicDir(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 }
 
-const PUBLIC_DIR: string = resolvePublicDir();
+export const PUBLIC_DIR: string = resolvePublicDir();
 if (!existsSync(PUBLIC_DIR)) {
   logger.error(`webui: static asset folder ${PUBLIC_DIR} is missing, so every page answers 404. pnpm build copies it there.`);
 }

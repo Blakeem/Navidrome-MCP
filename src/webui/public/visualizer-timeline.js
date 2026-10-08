@@ -3,14 +3,19 @@
 
 export const BAND_COUNT = 16;
 
-// Measured on library music: band medians sit near -35 dB and the 99th percentile near -18 dB.
-const FLOOR_DB = -55;
-const CEILING_DB = -15;
-// Upper bands carry less energy in most music, so a lift lets them move as much as the low bands.
+// Band medians measured from -50 dB on a classical track to -21 dB on a pop master, so a fixed range
+// pinned loud masters at full height. A reference that follows the music keeps every track in range.
+const RANGE_DB = 24;
+// The loudest band sits this far under the top, so a frame at the reference never pins.
+const HEADROOM_DB = 2;
+const ATTACK_SECONDS = 0.3;
+// Slow enough that a quieter verse after a loud chorus shows lower for several seconds.
+const RELEASE_DB_PER_SECOND = 2;
+// Keeps a fade to silence from lifting noise to full height.
+const MIN_REFERENCE_DB = -55;
+// The bands are a constant fraction of an octave wide, and most music still falls off above the mids.
 const TILT_FROM_BAND = 6;
-const TILT_DB_PER_BAND = 1.5;
-// Above 1 so quiet passages stay low and peaks stand out.
-const HEIGHT_CURVE = 1.4;
+const TILT_DB_PER_BAND = 1;
 
 // Measurements arrive about 0.28 s before the sound, so a newer one than this is not playing yet.
 const ARRIVAL_LEAD_MS = 280;
@@ -26,12 +31,39 @@ const PEAK_HOLD_SECONDS = 0.5;
 const PEAK_FALL_PER_SECOND = 1.2;
 const REST_THRESHOLD = 0.002;
 
-/** Height from 0 to 1 for one band's level in decibels. */
-export function bandHeight(db, band) {
-  const tilt = Math.max(0, band - TILT_FROM_BAND) * TILT_DB_PER_BAND;
-  const linear = (db + tilt - FLOOR_DB) / (CEILING_DB - FLOOR_DB);
-  const clamped = Math.min(1, Math.max(0, linear));
-  return clamped ** HEIGHT_CURVE;
+/**
+ * Maps band levels to heights from 0 to 1 against a reference that follows the loudest band, the way
+ * cava's automatic sensitivity works. The reference rises fast and falls slowly, so a loud master never
+ * pins the bars and a quieter passage still shows lower than the one before it.
+ */
+export function createLevelGain() {
+  let reference = null;
+  let segment = null;
+
+  return {
+    /** `sample` is `{ segment, levels }` from the timeline, with levels in decibels. */
+    heights(sample, dtSeconds) {
+      const tilted = sample.levels.map((db, band) => db + Math.max(0, band - TILT_FROM_BAND) * TILT_DB_PER_BAND);
+      const loudest = Math.max(...tilted);
+      // A new file starts from its own level, so a quiet track after a loud one is not dwarfed for a minute.
+      if (reference === null || sample.segment !== segment) {
+        segment = sample.segment;
+        reference = loudest;
+      } else if (loudest > reference) {
+        reference += (loudest - reference) * (1 - Math.exp(-dtSeconds / ATTACK_SECONDS));
+      } else {
+        reference = Math.max(loudest, reference - RELEASE_DB_PER_SECOND * dtSeconds);
+      }
+      reference = Math.max(MIN_REFERENCE_DB, reference);
+      const floor = reference + HEADROOM_DB - RANGE_DB;
+      return tilted.map((db) => Math.min(1, Math.max(0, (db - floor) / RANGE_DB)));
+    },
+
+    reset() {
+      reference = null;
+      segment = null;
+    },
+  };
 }
 
 /**
@@ -60,17 +92,17 @@ export function createTimeline() {
     },
 
     /**
-     * Heights for the playback position, or null when nothing describes it. The playback clock is
-     * exact once it reports the new track, and the arrival lead covers the second before that.
+     * `{ segment, levels }` for the playback position, or null when nothing describes it. The playback
+     * clock is exact once it reports the new track, and the arrival lead covers the second before that.
      */
-    heightsAt(positionSeconds, nowMs) {
+    levelsAt(positionSeconds, nowMs) {
       if (frames.length === 0 || nowMs - lastIngestMs > FEED_STALE_MS) return null;
       const positionMs = positionSeconds * 1000;
       let frame = frameAtOrBefore(frames, positionMs);
       if (frame === null || positionMs - frame.ptsMs > MATCH_WINDOW_MS) {
         frame = frameAtOrBefore(frames, frames.at(-1).ptsMs - ARRIVAL_LEAD_MS);
       }
-      return frame === null ? null : frame.levels.map((db, band) => bandHeight(db, band));
+      return frame === null ? null : { segment, levels: frame.levels };
     },
 
     clear() {

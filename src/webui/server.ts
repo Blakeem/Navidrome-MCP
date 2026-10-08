@@ -64,6 +64,7 @@ import {
   type McpLeaseCounter,
 } from './routes/player.js';
 import { handleStatic } from './routes/static-files.js';
+import { handleVisualizerModes } from './routes/visualizer-modes.js';
 import type { VisualizerHub } from './visualizer-hub.js';
 
 interface ServerDeps {
@@ -157,6 +158,7 @@ async function handleRequest(
     deps.visualizer.addClient(res);
     return;
   }
+  if (method === 'GET' && path === '/api/visualizer/modes') return handleVisualizerModes(res);
 
   // --- API: control actions ---
   if (method === 'POST' && path === '/api/controls/pause')    return handlePause(res);
