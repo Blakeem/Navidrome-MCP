@@ -3,6 +3,13 @@ name: Publish to NPM
 on:
   release:
     types: [published]
+  # Re-runs a release whose publish failed, since a re-run of the release event uses the tagged workflow file.
+  workflow_dispatch:
+
+# npm trusted publishing exchanges this OIDC token for a one-time publish credential, so no npm token or OTP is needed.
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   publish:
@@ -17,9 +24,13 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
+
+      # Trusted publishing needs npm 11.5.1 or later, and Node 22 ships npm 10.
+      - name: Update npm
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -40,7 +51,6 @@ jobs:
       - name: Run lint and typecheck
         run: pnpm lint && pnpm typecheck
 
+      # npm documents trusted publishing for its own CLI, so this step uses npm instead of pnpm.
       - name: Publish to NPM
-        run: pnpm publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
