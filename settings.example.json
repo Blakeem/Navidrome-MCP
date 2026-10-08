@@ -37,11 +37,11 @@
     "host": null,
     "expose": false,
     "autoOpenBrowser": false,
-    "persistAfterMcpExit": false
+    "persistAfterMcpExit": false,
+    "visualizer": true
   },
   "advanced": {
     "debug": false,
-    "cacheTtl": 300,
     "tokenExpiry": 86400
   }
 }

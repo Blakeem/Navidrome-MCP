@@ -16,28 +16,27 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { z } from 'zod';
-import { buildFormSeed, FORM_SUGGESTIONS } from '../config/seed.js';
-import { writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
-import { mapStoreToConfig } from '../config/map-config.js';
-import { ConfigSchema } from '../config/schema.js';
+import { validateMappedSettings } from '../config.js';
+import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
+import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import { getSettingsStorePath } from '../config/store-path.js';
+import { parseWebuiTheme, WEBUI_BIND_HOSTS } from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
 import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger, redact } from '../utils/logger.js';
+import { describeFetchError } from '../utils/network-safety.js';
 
 /**
- * Sentinel sent to / accepted from the browser in place of the real password,
- * so secrets never leave the process in plaintext for display. On save/test, a
- * field still equal to the sentinel means "keep the stored value."
+ * Stands in for stored secrets (Navidrome password, MCP auth token) in the browser, so they
+ * never leave the process in plaintext. A field still equal to it on save/test keeps the stored value.
  */
-const PASSWORD_SENTINEL = '********';
+const SECRET_SENTINEL = '********';
 
 /**
- * Mountable settings routes — written so a future `/config` surface inside the
- * player web UI can reuse them verbatim. The caller (server.ts) is responsible
- * for the loopback guard; these handlers assume a local peer.
+ * The caller (server.ts) owns the loopback guard, so these handlers assume a local peer.
  *
  * Returns `true` if it handled the request, `false` if the path/method is not a
  * settings route (so the server can fall through to static files / 404).
@@ -67,7 +66,7 @@ export async function handleSettingsRoute(
   return false;
 }
 
-/** GET /api/settings/seed — pre-fill values, password masked. */
+/** GET /api/settings/seed. Returns pre-fill values with secrets masked. */
 function handleSeed(res: ServerResponse): void {
   try {
     writeJson(res, 200, maskSecrets(buildFormSeed()));
@@ -77,78 +76,98 @@ function handleSeed(res: ServerResponse): void {
   }
 }
 
-/** POST /api/settings — validate + persist. The primary settings writer; the
- * player's loopback-only `/api/player/settings` also writes (the player-scoped
- * webui subset). Both use the atomic `writeSettings`; concurrent saves are
- * last-writer-wins on the whole file, acceptable for these rare local actions. */
+// The player's /api/player/settings also writes this file. Both use atomic writeSettings, so concurrent saves are last-writer-wins on the whole file.
 async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const parsed = await parseSettingsBody(req, res);
   if (parsed === null) return;
 
   // A valid, savable config requires the mapped flat config to pass ConfigSchema
-  // (so we never persist a file the runtime would reject — e.g. a blank URL).
-  const validation = ConfigSchema.safeParse(mapStoreToConfig(parsed));
-  if (!validation.success) {
-    const messages = validation.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`);
-    writeError(res, 400, ErrorFormatter.configValidation(messages));
+  // (so we never persist a file the runtime would reject, e.g. a blank URL).
+  const validation = validateForm(parsed);
+  if (!validation.ok) {
+    writeError(res, 400, ErrorFormatter.configValidation(validation.messages));
     return;
   }
 
+  const stored = readSettings();
+  let backupPath: string | null = null;
   try {
-    writeSettings(parsed);
+    backupPath = backupUnusableStore(stored);
+    writeSettings(withStoredPlayerTheme(parsed, stored));
   } catch (err) {
     logger.error('settings save failed:', err);
-    writeError(res, 500, 'Failed to write settings');
+    const reason = err instanceof Error ? err.message : String(err);
+    writeError(res, 500, `Failed to write settings to ${getSettingsStorePath()}: ${reason}`);
     return;
   }
+  const backupNotice = backupPath === null
+    ? ''
+    : `The previous settings.json could not be read, so it was kept as ${backupPath}. `;
   writeJson(res, 200, {
     ok: true,
     // Host-agnostic: this server is launched by the MCP client, the standalone
     // web player, or `navidrome-config`, and the reader doesn't know which. All
     // load settings once at startup (no hot-reload), so cover both restart paths.
     message:
-      'Settings saved. They load at startup and the server does not hot-reload, so restart ' +
+      `${backupNotice}Settings saved. They load at startup and the server does not hot-reload, so restart ` +
       "whatever you launched to apply them: your MCP client (e.g. quit and reopen Claude " +
-      'Desktop — the full toolset appears after a restart) and/or the web player (re-run ' +
-      '`navidrome-web`). You can keep changing settings and saving again from this page.',
+      'Desktop, the full toolset appears after a restart) and/or the web player (re-run ' +
+      '`navidrome-web`). A web player port or host change needs both restarted. ' +
+      'You can keep changing settings and saving again from this page.',
   });
 }
 
-/** POST /api/settings/test — connect with the entered values without saving. */
+// The form never loaded a store that readSettings rejected, so overwriting it would lose every value not retyped.
+function backupUnusableStore(stored: SettingsFile | null): string | null {
+  const storePath = getSettingsStorePath();
+  if (stored !== null || !existsSync(storePath)) return null;
+  const backupPath = `${storePath}.bak`;
+  copyFileSync(storePath, backupPath);
+  return backupPath;
+}
+
+// The player's gear modal owns webui.theme and this form does not carry it, so a save keeps the stored theme.
+function withStoredPlayerTheme(settings: SettingsFile, stored: SettingsFile | null): SettingsFile {
+  const theme = parseWebuiTheme(stored?.webui?.theme);
+  return theme === null ? settings : { ...settings, webui: { ...settings.webui, theme } };
+}
+
+// The runtime downgrades an unsupported webui.host to a warning, so the form rejects it here where the user can fix it.
+function validateForm(settings: SettingsFile): ReturnType<typeof validateMappedSettings> {
+  const host = settings.webui?.host?.trim() ?? '';
+  if (host !== '' && !WEBUI_BIND_HOSTS.includes(host)) {
+    return {
+      ok: false,
+      messages: [`webui.host: "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`],
+    };
+  }
+  // Save and Test never read the playback fields, so they skip the mpv detection shell-out.
+  return validateMappedSettings(settings, null);
+}
+
+/** POST /api/settings/test. Connect with the entered values without saving. */
 async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const parsed = await parseSettingsBody(req, res);
   if (parsed === null) return;
 
-  const validation = ConfigSchema.safeParse(mapStoreToConfig(parsed));
-  if (!validation.success) {
-    const first = validation.error.issues[0];
-    writeJson(res, 200, {
-      ok: false,
-      error: first !== undefined ? `${first.path.join('.')}: ${first.message}` : 'Invalid settings',
-    });
+  const validation = validateForm(parsed);
+  if (!validation.ok) {
+    writeJson(res, 200, { ok: false, error: ErrorFormatter.configValidation(validation.messages) });
     return;
   }
 
   try {
-    const client = new NavidromeClient(validation.data);
-    await client.initialize(); // JWT login — the actual connectivity + auth test
+    const client = new NavidromeClient(validation.config);
+    await client.initialize(); // JWT login is the actual connectivity and auth test
     writeJson(res, 200, { ok: true, message: 'Successfully connected to Navidrome.' });
   } catch (err) {
-    // redact() strips any credentials embedded in the error text before it is
-    // echoed to the browser (e.g. a mistyped URL with userinfo, which native
-    // fetch reflects verbatim in its TypeError). ErrorFormatter only prefixes
-    // context and does no sanitization, so the redact() wrap is what enforces
-    // the "user-facing URLs strip credentials" convention here.
-    const message = redact(ErrorFormatter.authentication(extractMessage(err))) as string;
+    // redact() strips credentials before the text reaches the browser, since
+    // fetch reflects a mistyped URL's userinfo verbatim in its error.
+    const message = redact(describeFetchError(err)) as string;
     writeJson(res, 200, { ok: false, error: message });
   }
 }
 
-/**
- * Read + schema-validate the posted settings body and un-mask the password
- * (sentinel → stored value). Writes an error response and returns `null` on
- * malformed input.
- */
 async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Promise<SettingsFile | null> {
   let body: unknown;
   try {
@@ -166,47 +185,34 @@ async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Pro
   return unmaskSecrets(result.data);
 }
 
-/** Replace stored secrets (Navidrome password, MCP auth token) with the sentinel
- * for safe display. */
 function maskSecrets(settings: SettingsFile): SettingsFile {
   let masked = settings;
   const password = settings.navidrome?.password;
   if (password !== undefined && password !== '') {
-    masked = { ...masked, navidrome: { ...masked.navidrome, password: PASSWORD_SENTINEL } };
+    masked = { ...masked, navidrome: { ...masked.navidrome, password: SECRET_SENTINEL } };
   }
   const authToken = settings.transport?.authToken;
   if (authToken !== undefined && authToken !== null && authToken !== '') {
-    masked = { ...masked, transport: { ...masked.transport, authToken: PASSWORD_SENTINEL } };
+    masked = { ...masked, transport: { ...masked.transport, authToken: SECRET_SENTINEL } };
   }
   return masked;
 }
 
 /**
- * Restore the real password when the form sent back the unchanged sentinel.
- *
- * Read it from the SAME source the form was seeded from (`buildFormSeed`): the
- * existing settings.json if present, otherwise the legacy env/.env import. On a
- * true first run there is no settings.json yet, so reading only the store here
- * would yield an empty password and fail validation even though the field
- * looked filled — the seed is the correct source.
+ * Restore the real secrets when the form sent back the unchanged sentinel. They come from `buildFormSeed`, the
+ * source the form was seeded from, because on a first run no settings.json exists to read them from.
  */
 function unmaskSecrets(settings: SettingsFile): SettingsFile {
   let result = settings;
-  // Read both secrets from the SAME source the form was seeded from.
   let seed: SettingsFile | undefined;
   const seeded = (): SettingsFile => (seed ??= buildFormSeed());
-  if (result.navidrome?.password === PASSWORD_SENTINEL) {
+  if (result.navidrome?.password === SECRET_SENTINEL) {
     const stored = seeded().navidrome?.password ?? '';
     result = { ...result, navidrome: { ...result.navidrome, password: stored } };
   }
-  if (result.transport?.authToken === PASSWORD_SENTINEL) {
+  if (result.transport?.authToken === SECRET_SENTINEL) {
     const stored = seeded().transport?.authToken ?? null;
     result = { ...result, transport: { ...result.transport, authToken: stored } };
   }
   return result;
-}
-
-function extractMessage(err: unknown): string {
-  if (err instanceof z.ZodError) return 'Invalid settings';
-  return err instanceof Error ? err.message : 'Unknown error';
 }

@@ -15,6 +15,7 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+import { EnvHttpProxyAgent } from 'undici';
 import {
   DEFAULT_EXTERNAL_API_TIMEOUT_MS,
   DEFAULT_NAVIDROME_AUTH_TIMEOUT_MS,
@@ -22,13 +23,53 @@ import {
   MAX_FETCH_TIMEOUT_MS,
   MIN_FETCH_TIMEOUT_MS,
 } from '../constants/timeouts.js';
-import { logger } from './logger.js';
+import { logger, redact } from './logger.js';
+import { describeFetchError, fetchWithDispatcher } from './network-safety.js';
+
+/**
+ * Per protocol, the proxy is the first non-empty of the lowercase then the uppercase var.
+ * The gate and the agent share this rule, so the gate never routes to an agent that resolves no proxy.
+ */
+function resolveProxyEnv(protocol: 'http' | 'https'): string | undefined {
+  const lowercase = process.env[`${protocol}_proxy`] ?? '';
+  if (lowercase !== '') return lowercase;
+  const uppercase = process.env[`${protocol.toUpperCase()}_PROXY`] ?? '';
+  return uppercase !== '' ? uppercase : undefined;
+}
+
+/**
+ * Dispatcher honoring HTTP_PROXY/HTTPS_PROXY/NO_PROXY. Node's native `fetch`
+ * silently ignores those vars, so external APIs (Last.fm, MusicBrainz, LRCLIB,
+ * Radio Browser) go out direct and are unreachable on a host where only a
+ * proxied path leaves the network. Built on the first proxied request so a
+ * process that never sets a proxy var pays nothing, then cached. The agent
+ * snapshots the env at construction, so changing the vars needs a restart.
+ */
+let envProxyAgent: EnvHttpProxyAgent | undefined;
+function getEnvProxyAgent(): EnvHttpProxyAgent {
+  // An empty string makes undici fall back to the other protocol's proxy or go direct.
+  envProxyAgent ??= new EnvHttpProxyAgent({
+    httpProxy: resolveProxyEnv('http') ?? '',
+    httpsProxy: resolveProxyEnv('https') ?? '',
+  });
+  return envProxyAgent;
+}
+
+/**
+ * Gates the undici-dispatcher path so a process with no proxy configured (the
+ * common case, and every existing test) keeps using plain global `fetch`. That
+ * keeps it mockable via `global.fetch = ...` in tests, which an unconditional
+ * switch to undici's own `fetch` would silently bypass.
+ */
+function hasProxyEnvConfigured(): boolean {
+  return resolveProxyEnv('http') !== undefined || resolveProxyEnv('https') !== undefined;
+}
 
 /**
  * Methods that are safe to retry on timeout.
  *
  * GET is always idempotent. We also include the Subsonic mutations
- * (`/star`, `/unstar`, `/setRating`) which ARE idempotent semantically — but
+ * (`/star`, `/unstar`, `/setRating`) which ARE idempotent semantically. But
  * those go through `subsonicRequest` as POST, so we must classify by URL
  * intent, not method. The retry-policy decision is therefore made by the
  * caller (which knows whether the operation it's wrapping is idempotent),
@@ -37,12 +78,20 @@ import { logger } from './logger.js';
 export type RetryPolicy = 'safe' | 'never';
 
 export interface FetchWithTimeoutOptions {
-  /** Per-attempt timeout in ms. Clamped to [MIN_FETCH_TIMEOUT_MS, MAX_FETCH_TIMEOUT_MS]. */
+  /** Per-attempt timeout in ms, used as given. The env getters clamp it to [MIN_FETCH_TIMEOUT_MS, MAX_FETCH_TIMEOUT_MS]. */
   readonly timeoutMs: number;
   /** Whether to retry once on AbortError. `'safe'` = retry, `'never'` = single attempt. */
   readonly retryPolicy: RetryPolicy;
   /** Operation label used in timeout error messages surfaced to the LLM. */
   readonly operationLabel: string;
+  /**
+   * Route this request through HTTP_PROXY/HTTPS_PROXY/NO_PROXY if set.
+   * Defaults to `false`, so Navidrome/local calls stay direct. Set `true` for
+   * third-party internet APIs, which may be unreachable without a proxy.
+   */
+  readonly respectProxy?: boolean;
+  /** A timeout leaves this write's outcome unknown, so the timeout error says to check state before retrying. */
+  readonly nonIdempotent?: boolean;
 }
 
 /**
@@ -57,10 +106,13 @@ export class FetchTimeoutError extends Error {
   readonly attempts: number;
   readonly timeoutMs: number;
 
-  constructor(operationLabel: string, timeoutMs: number, attempts: number) {
+  constructor(operationLabel: string, timeoutMs: number, attempts: number, nonIdempotent = false) {
     const suffix = attempts > 1 ? ` (after ${attempts} attempts)` : '';
+    const writeNote = nonIdempotent
+      ? ' The change may already have been applied. Check the current state before retrying.'
+      : '';
     super(
-      `${operationLabel} did not respond within ${timeoutMs}ms${suffix} — server may be down or overloaded`,
+      `${operationLabel} did not respond within ${timeoutMs}ms${suffix}. The server may be down or overloaded.${writeNote}`,
     );
     this.attempts = attempts;
     this.timeoutMs = timeoutMs;
@@ -86,7 +138,7 @@ function warnOnce(key: string, message: string): void {
  * Read a positive-integer env var, or return `fallback` if unset/invalid.
  * Clamps to `[MIN_FETCH_TIMEOUT_MS, MAX_FETCH_TIMEOUT_MS]` and warns once
  * per distinct misconfigured value. The fallback/clamp RETURN values are
- * still computed on every call — only the log emission is deduplicated.
+ * still computed on every call. Only the log emission is deduplicated.
  */
 function readTimeoutEnv(envName: string, fallback: number): number {
   const raw = process.env[envName];
@@ -139,7 +191,7 @@ export function getNavidromeAuthTimeoutMs(): number {
   );
 }
 
-/** Resolve the configured external-API (Last.fm / LRCLIB / Radio Browser) timeout. */
+/** Resolve the configured third-party API timeout (Last.fm, MusicBrainz, LRCLIB, Radio Browser). */
 export function getExternalApiTimeoutMs(): number {
   return readTimeoutEnv(
     'EXTERNAL_API_TIMEOUT_MS',
@@ -165,24 +217,19 @@ function isTimeoutAbort(err: unknown): boolean {
  *   3. Surfaces a `FetchTimeoutError` (name: 'TimeoutError') on final failure
  *      with a message safe to expose to the LLM.
  *
- * Non-timeout errors (DNS failure, connection refused, 4xx/5xx) are re-thrown
- * unchanged — the standard error-handling paths upstream already format these.
+ * Non-timeout errors (DNS failure, connection refused) are rethrown as an Error
+ * naming the operation and the root cause. 4xx/5xx responses resolve normally.
  *
- * The caller-provided `init.signal`, if any, is respected and combined via
- * `AbortSignal.any` (Node 20.3+); on older Node the timeout signal alone is
- * used. Both `AbortSignal.timeout` and `AbortSignal.any` are part of the
- * package's stated `engines: ">=18"` because we already require Node 20+
- * for other features (verified at runtime via package.json `engines`).
+ * A caller `init.signal` is combined with the timeout through AbortSignal.any,
+ * which needs Node 20.3.
  */
 export async function fetchWithTimeout(
   url: string,
   init: RequestInit,
   options: FetchWithTimeoutOptions,
 ): Promise<Response> {
-  const { timeoutMs, retryPolicy, operationLabel } = options;
+  const { timeoutMs, retryPolicy, operationLabel, respectProxy = false, nonIdempotent = false } = options;
   const maxAttempts = retryPolicy === 'safe' ? 2 : 1;
-
-  let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -193,18 +240,21 @@ export async function fetchWithTimeout(
         : timeoutSignal;
 
     try {
+      // Only a configured proxy takes the dispatcher path, so the no-proxy case and every test mocking global.fetch are unaffected.
+      if (respectProxy && hasProxyEnvConfigured()) {
+        return await fetchWithDispatcher(url, { ...init, signal }, getEnvProxyAgent());
+      }
       return await fetch(url, { ...init, signal });
     } catch (err) {
-      lastError = err;
-
-      // If the caller's own signal aborted, don't retry — the caller wants out.
+      // The caller wants out, so a caller abort is never retried.
       if (callerSignal?.aborted === true) {
         throw err;
       }
 
       if (!isTimeoutAbort(err)) {
-        // Non-timeout error (DNS, connection refused, etc.) — surface immediately.
-        throw err;
+        // undici reports every connection failure as "fetch failed", with the reason in `cause`.
+        // This message reaches the LLM, and Node's credentials TypeError embeds the full URL, so redact() strips userinfo.
+        throw new Error(`${operationLabel} failed: ${redact(describeFetchError(err)) as string}`, { cause: err });
       }
 
       if (attempt < maxAttempts) {
@@ -216,9 +266,6 @@ export async function fetchWithTimeout(
     }
   }
 
-  // All attempts exhausted on timeout. `lastError` is intentionally not chained
-  // — the AbortError stack is uninformative, and surfacing it would expose the
-  // string "AbortError" to the LLM where "TimeoutError" is more meaningful.
-  void lastError;
-  throw new FetchTimeoutError(operationLabel, timeoutMs, maxAttempts);
+  // The AbortError is not chained, since "TimeoutError" is the meaningful name for the LLM.
+  throw new FetchTimeoutError(operationLabel, timeoutMs, maxAttempts, nonIdempotent);
 }

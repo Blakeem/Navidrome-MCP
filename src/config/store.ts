@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - Settings store (read / write / map)
+ * Navidrome MCP Server - Settings store (read / write)
  * Copyright (C) 2025
  *
  * This program is free software: you can redistribute it and/or modify
@@ -35,7 +35,7 @@ import { logger } from '../utils/logger.js';
 /**
  * The canonical on-disk settings shape (nested, grouped by surface). Every
  * field is optional/nullable so a partially-filled or hand-edited file still
- * parses — "is this a usable config?" is decided downstream by whether
+ * parses. "Is this a usable config?" is decided downstream by whether
  * `navidrome.url` is present and the mapped flat config passes `ConfigSchema`.
  */
 export const SettingsFileSchema = z.object({
@@ -47,7 +47,7 @@ export const SettingsFileSchema = z.object({
   transport: z.object({
     type: z.enum(['stdio', 'http']).optional(),
     host: z.string().nullish(),
-    port: z.number().int().min(1).max(65535).optional(),
+    port: z.number().optional(),
     expose: z.boolean().optional(),
     authToken: z.string().nullish(),
     allowedHosts: z.array(z.string()).nullish(),
@@ -73,15 +73,17 @@ export const SettingsFileSchema = z.object({
   }).optional(),
   webui: z.object({
     enabled: z.boolean().optional(),
-    port: z.number().int().min(1).max(65535).optional(),
+    port: z.number().optional(),
     host: z.string().nullish(),
     expose: z.boolean().optional(),
     autoOpenBrowser: z.boolean().optional(),
     persistAfterMcpExit: z.boolean().optional(),
+    // A plain nullable string, so a hand-edited null or unknown theme reads as unset instead of voiding the store.
+    theme: z.string().nullish(),
+    visualizer: z.boolean().optional(),
   }).optional(),
   advanced: z.object({
     debug: z.boolean().optional(),
-    cacheTtl: z.number().optional(),
     tokenExpiry: z.number().optional(),
   }).optional(),
 }).passthrough();
@@ -90,7 +92,7 @@ export type SettingsFile = z.infer<typeof SettingsFileSchema>;
 
 /**
  * Read and validate the settings store. Returns `null` when the file is
- * absent, unreadable, not JSON, or fails the (lenient) schema — callers treat
+ * absent, unreadable, not JSON, or fails the (lenient) schema. Callers treat
  * all of those as "unconfigured" rather than crashing at startup.
  */
 export function readSettings(): SettingsFile | null {
@@ -98,13 +100,19 @@ export function readSettings(): SettingsFile | null {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
-  } catch {
-    return null; // absent / unreadable
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      logger.warn(`settings.json at ${path} is unreadable (${code ?? String(err)}), treating as unconfigured`);
+    }
+    return null;
   }
+  // Windows editors may prepend a UTF-8 BOM, which JSON.parse rejects.
+  const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(text);
   } catch {
     logger.warn(`settings.json is not valid JSON (${path}); treating as unconfigured`);
     return null;
@@ -122,20 +130,8 @@ export function readSettings(): SettingsFile | null {
 }
 
 /**
- * Atomically write the settings store with owner-only permissions.
- *
- * Order matters for secret safety (a secrets file must never exist with
- * default perms, even momentarily):
- *   1. write to a uniquely-named temp file in the SAME directory (so the final
- *      `rename` is atomic — cross-device renames are not),
- *   2. `fchmod 0600` on the open fd BEFORE writing any bytes — umask-proof,
- *      so there is no default-perms window (openSync's mode arg alone is
- *      masked by the process umask and is not sufficient),
- *   3. write + `fsync` the fd (rename is atomic but does not flush contents),
- *   4. `rename()` over the target.
- *
- * On Windows the `0600` mode is a no-op; the per-user `%APPDATA%` location is
- * relied on instead (documented limitation).
+ * A secrets file must never exist with default perms or partial content, so this writes a 0600 temp
+ * file in the same directory, fsyncs it, then renames. Windows ignores the mode and relies on per-user %APPDATA%.
  */
 export function writeSettings(settings: SettingsFile): void {
   const path = getSettingsStorePath();
@@ -145,12 +141,8 @@ export function writeSettings(settings: SettingsFile): void {
   const tmpPath = `${path}.${process.pid}.${Math.floor(performance.now() * 1000).toString(36)}.tmp`;
   const fd = openSync(tmpPath, 'wx', 0o600);
   try {
-    // Any failure after the tmp file is opened — chmod/write/fsync (e.g. an
-    // exotic FS returning ENOSYS from fchmod, or a disk-full write) or the final
-    // rename — must remove the tmp file so a partial file holding plaintext
-    // credentials is never left orphaned on disk. The fd lifetime is nested so
-    // closeSync always runs (even if fchmodSync throws) before the rename/cleanup
-    // path — a leaked descriptor also blocks unlink of the .tmp file on Windows.
+    // Any failure after open removes the tmp file, so no plaintext credentials are orphaned.
+    // closeSync runs before that cleanup because an open fd blocks the unlink on Windows.
     try {
       // Enforce owner-only perms via the open fd, independent of the process
       // umask (openSync's mode arg is applied as mode & ~umask, so a non-standard

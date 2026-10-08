@@ -17,19 +17,18 @@
  */
 
 import type { ServerResponse } from 'node:http';
-import { Readable } from 'node:stream';
+import { pipeline, Readable } from 'node:stream';
 import type { Config } from '../../config.js';
-import { IdSchema } from '../../schemas/common.js';
+import { IdSchema } from '../../schemas/index.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
 import { fetchWithTimeout, getNavidromeRequestTimeoutMs } from '../../utils/fetch-with-timeout.js';
 import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
 /**
- * Raster image MIME types we'll proxy + cache. SVG (`image/svg+xml`) is
- * intentionally excluded: it can embed script, so a long-cached SVG served
- * same-origin would be a stored-XSS risk. Anything outside this set is
- * treated as an upstream error rather than forwarded.
+ * Raster image MIME types we'll proxy and cache for 24h. A non-image body (e.g. a text/html
+ * error page) or an SVG, which can embed script, would otherwise become a long-lived
+ * same-origin stored-XSS vector. Anything outside this set is treated as an upstream error.
  */
 const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set([
   'image/png',
@@ -39,25 +38,35 @@ const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set([
   'image/avif',
 ]);
 
+const MIN_COVER_SIZE = 16;
+const MAX_COVER_SIZE = 1024;
+
+function parseCoverSize(rawSize: string): string | null {
+  if (!/^\d{1,4}$/.test(rawSize)) return null;
+  const size = Number.parseInt(rawSize, 10);
+  return size >= MIN_COVER_SIZE && size <= MAX_COVER_SIZE ? String(size) : null;
+}
+
 /**
- * GET /api/cover/:id — Proxy the Subsonic `getCoverArt.view` endpoint.
+ * GET /api/cover/:id proxies the Subsonic `getCoverArt.view` endpoint.
  *
- * Credentials stay server-side (built per-request with a fresh salt; the
- * browser never sees a Subsonic auth token). The response body is streamed
+ * Credentials stay server-side (built per-request with a fresh salt), so the
+ * browser never sees a Subsonic auth token. The response body is streamed
  * through unmodified, preserving Navidrome's choice of image encoding so
  * the browser can pick the best decoder.
  *
- * `id` is validated against the Navidrome ID character set (`[A-Za-z0-9_-]+`)
- * before we even reach for the network — that pattern is also what `IdSchema`
- * enforces elsewhere in the codebase, so a request with `..` or path
- * separators is rejected as 400 with no upstream call. The Subsonic endpoint
- * accepts both album and song IDs (it returns the album-level art for either),
- * so we accept either kind without disambiguating.
+ * `id` is validated with `IdSchema` before any upstream call, so a request with
+ * `..` or path separators is rejected as 400 with no network I/O. The Subsonic
+ * endpoint accepts both album and song IDs (it returns the album-level art for
+ * either), so either kind is accepted without disambiguating.
+ *
+ * The optional `size` lets a list view fetch a thumbnail instead of full-resolution art.
  */
 export async function handleCover(
   res: ServerResponse,
   config: Config,
   rawId: string,
+  rawSize: string | null,
 ): Promise<void> {
   const parsed = IdSchema.safeParse({ id: rawId });
   if (!parsed.success) {
@@ -66,13 +75,18 @@ export async function handleCover(
   }
   const id = parsed.data.id;
 
+  const size = rawSize === null ? null : parseCoverSize(rawSize);
+  if (rawSize !== null && size === null) {
+    writeError(res, 400, 'Invalid size');
+    return;
+  }
+
   const params = buildSubsonicAuthParams(
     config.navidromeUsername,
     config.navidromePassword,
-    { id },
+    size === null ? { id } : { id, size },
   );
-  const base = config.navidromeUrl.replace(/\/+$/, '');
-  const url = `${base}/rest/getCoverArt.view?${params.toString()}`;
+  const url = `${config.navidromeUrl}/rest/getCoverArt.view?${params.toString()}`;
 
   let upstream: Response;
   try {
@@ -86,9 +100,7 @@ export async function handleCover(
       },
     );
   } catch (err) {
-    // Network failure reaching Navidrome — surface a discreet 502 so the
-    // UI can render a placeholder without making the user think the server
-    // itself is dead.
+    // A discreet 502 lets the UI render a placeholder without making the user think the server itself is dead.
     logger.debug(
       `webui: cover proxy fetch failed for id=${id}: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -97,27 +109,13 @@ export async function handleCover(
   }
 
   if (!upstream.ok || upstream.body === null) {
-    // Navidrome returns 404 for unknown IDs; pass it through.
-    res.writeHead(upstream.status === 404 ? 404 : 502, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
-    });
-    res.end(JSON.stringify({ error: `Upstream returned ${upstream.status}` }));
+    // Navidrome returns 404 for unknown IDs, so that status passes through.
+    writeError(res, upstream.status === 404 ? 404 : 502, `Upstream returned ${upstream.status}`);
     upstream.body?.cancel().catch(() => undefined);
     return;
   }
 
-  // Pass through the content type Navidrome chose (image/jpeg, image/png, …)
-  // and instruct the browser to cache aggressively — album art rarely changes
-  // and re-fetching it on every UI snapshot would be wasteful, especially on
-  // a phone.
-  //
-  // MIME allowlist (BEFORE the long Cache-Control): the upstream type is
-  // forwarded verbatim and cached for 24h, so a non-image body (e.g. a
-  // text/html error page) would otherwise become a long-lived, cacheable
-  // stored-XSS vector. Reject anything that isn't a known raster image type.
-  // svg+xml is deliberately excluded — SVG can carry inline script, so even
-  // though Navidrome shouldn't emit it for cover art, we don't proxy it.
+  // Album art rarely changes, so a long browser cache saves a phone re-fetching it on every snapshot.
   const rawType = upstream.headers.get('content-type') ?? '';
   const baseType = rawType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
   if (!ALLOWED_IMAGE_TYPES.has(baseType)) {
@@ -135,13 +133,8 @@ export async function handleCover(
   if (contentLength !== null) headers['Content-Length'] = contentLength;
   res.writeHead(200, headers);
 
-  // Stream the body through. Convert the WHATWG ReadableStream to a Node
-  // Readable; piping streams is preferable to buffering because some album
-  // art (animated, high-res) can be several MB.
-  const nodeStream = Readable.fromWeb(upstream.body);
-  nodeStream.on('error', (err) => {
-    logger.debug(`webui: cover stream error for id=${id}: ${err.message}`);
-    if (!res.writableEnded) res.end();
+  // A stream error must abort the response, because a cleanly ended chunked body would be cached as a complete image.
+  pipeline(Readable.fromWeb(upstream.body), res, (err) => {
+    if (err) logger.debug(`webui: cover stream error for id=${id}: ${err.message}`);
   });
-  nodeStream.pipe(res);
 }

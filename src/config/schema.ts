@@ -17,130 +17,81 @@
  */
 
 import { z } from 'zod';
-import { DEFAULT_LRCLIB_BASE } from '../constants/defaults.js';
+import { WEBUI_THEMES } from '../constants/defaults.js';
 
 /**
  * The canonical runtime configuration shape. This is a *flat* projection of the
  * nested `settings.json` store (see `src/config/store.ts`), kept flat because
  * `NavidromeClient`, the playback engine, the managers, and every tool category
  * read fields like `config.navidromeUrl` / `config.features.*` directly.
- *
- * Extracted into its own module (rather than living in `src/config.ts`) so that
- * `store.ts` can map the nested store into this shape without a circular import
- * back through `config.ts`.
  */
 export const ConfigSchema = z.object({
-  navidromeUrl: z.string().url('NAVIDROME_URL must be a valid URL'),
-  navidromeUsername: z.string().min(1, 'NAVIDROME_USERNAME is required'),
-  navidromePassword: z.string().min(1, 'NAVIDROME_PASSWORD is required'),
-  debug: z.boolean().default(false),
-  cacheTtl: z.number().positive().default(300),
-  tokenExpiry: z.number().positive().default(86400), // Default 24 hours in seconds
+  navidromeUrl: z.url({ protocol: /^https?$/, error: 'Navidrome URL must be a valid URL starting with http:// or https://' }),
+  navidromeUsername: z.string().min(1, 'Navidrome username is required'),
+  navidromePassword: z.string().min(1, 'Navidrome password is required'),
+  debug: z.boolean(),
+  tokenExpiry: z.number().positive(),
 
-  // MCP Transport Configuration — how the MCP server exposes itself to clients.
-  // 'stdio' (default) is the classic local-process transport every desktop MCP
-  // client speaks; nothing binds a socket. 'http' serves the MCP Streamable HTTP
-  // transport on `host:port` so the server can run as a long-lived process
-  // (e.g. a container in a cluster) that remote clients connect to over HTTP —
-  // removing the need to wrap it in an external bridge like `supergateway`.
-  // The MCP endpoint is served at `/mcp`.
-  //
-  // Mirrors the webui exposure model (see below): `host=127.0.0.1` keeps the
-  // endpoint on localhost only. Setting `expose=true` forces the bind to
-  // `0.0.0.0` so a remote/cluster client can reach it; an explicit `host`
-  // overrides this.
-  //
-  // `authToken` (optional) turns on bearer auth: when set, every `/mcp` request
-  // must present `Authorization: Bearer <token>`. Left unset the endpoint is
-  // unauthenticated — fine for loopback or a network-policy-locked pod, but the
-  // server warns loudly if it binds a non-loopback address without one.
-  //
-  // Host filtering (DNS-rebinding protection): `allowedHosts`, when set, is
-  // always enforced. When unset, the unauthenticated loopback default gets an
-  // automatic loopback allow-list (the actual rebinding threat model); setting
-  // `authToken` or binding a non-loopback address disables the automatic list —
-  // remote deployments are reached via names we can't enumerate, and the bearer
-  // gate already defeats rebinding. `allowedOrigins` is only for browser clients.
+  // 'http' serves Streamable HTTP at `/mcp` so the server can run long-lived without an external bridge.
+  // Only an unauthenticated loopback bind auto-allowlists loopback Hosts, since a bearer token already defeats DNS rebinding.
   transport: z.object({
-    type: z.enum(['stdio', 'http']).default('stdio'),
-    host: z.string().default('127.0.0.1'),
-    port: z.number().int().min(1).max(65535).default(3000),
-    expose: z.boolean().default(false),
+    type: z.enum(['stdio', 'http']),
+    host: z.string(),
+    port: z.number().int().min(1).max(65535),
+    expose: z.boolean(),
     authToken: z.string().optional(),
     allowedHosts: z.array(z.string()).optional(),
     allowedOrigins: z.array(z.string()).optional(),
   }),
 
-  // Library Configuration
   defaultLibraryIds: z.array(z.number()).optional(),
 
-  // Feature Configuration
   features: z.object({
-    lastfm: z.boolean().default(false),
-    radioBrowser: z.boolean().default(false),
-    lyrics: z.boolean().default(false),
-    playback: z.boolean().default(false),
+    lastfm: z.boolean(),
+    radioBrowser: z.boolean(),
+    lyrics: z.boolean(),
+    playback: z.boolean(),
   }),
 
-  // API Keys and External Service Configuration
   lastFmApiKey: z.string().optional(),
   // MusicBrainz requires a meaningful User-Agent (https://musicbrainz.org/doc/MusicBrainz_API).
-  // Optional: absent falls back to DEFAULT_MUSICBRAINZ_USER_AGENT. No feature flag —
-  // MusicBrainz needs no API key, so it is always available.
   musicBrainzUserAgent: z.string().optional(),
   radioBrowserUserAgent: z.string().optional(),
-  // Set only when the user explicitly provides a Radio Browser base in the
-  // store — bypasses SRV resolution and pins to the chosen mirror. Production
-  // base resolution otherwise flows through `getRadioBrowserBase()` which does
-  // SRV-record lookup + caching, with a hardcoded fallback in
-  // `RADIO_BROWSER_FALLBACK_BASE`.
-  radioBrowserBaseOverride: z.string().url().optional(),
+  // An explicit base pins one mirror and bypasses SRV resolution.
+  radioBrowserBaseOverride: z.url({ protocol: /^https?$/ }).optional(),
 
-  // Lyrics Configuration
   lyricsProvider: z.string().optional(),
   lrclibUserAgent: z.string().optional(),
-  lrclibBase: z.string().url().default(DEFAULT_LRCLIB_BASE),
+  lrclibBase: z.url({ protocol: /^https?$/ }),
 
-  // Playback (mpv) Configuration
   mpvPath: z.string().optional(),
-  // 'raw' (default) streams the original file untouched: highest quality and
-  // fully seekable. Set a codec (e.g. 'mp3', 'opus') to transcode for limited
-  // bandwidth — `playbackTranscodeBitrate` then applies.
-  playbackTranscodeFormat: z.string().default('raw'),
-  playbackTranscodeBitrate: z.string().default('192'),
+  // 'raw' streams the original file untouched, at the highest quality and fully seekable.
+  // A codec such as 'mp3' or 'opus' transcodes for limited bandwidth at `playbackTranscodeBitrate`.
+  playbackTranscodeFormat: z.string(),
+  playbackTranscodeBitrate: z.string(),
 
-  // Filter cache — when false, re-fetches tag/genre lists on every filter resolution
-  // instead of using the startup snapshot. Set to false if you curate your library
-  // mid-session and need newly-added genres/labels/moods to be immediately visible.
-  filterCacheEnabled: z.boolean().default(true),
+  // Off re-fetches tag lists on each filter resolution so mid-session library edits show at once.
+  filterCacheEnabled: z.boolean(),
 
-  // Web UI Configuration — companion HTTP control panel for mpv playback.
-  // The web UI is implicitly gated by the playback feature: it only ever
-  // initializes when mpv is detected. When `enabled` is true the server
-  // spawns the player eagerly at startup, so the port binds immediately.
-  // `host=127.0.0.1` keeps the panel on localhost only. Setting `expose=true`
-  // forces the bind to `0.0.0.0` so a phone on the same LAN can reach it;
-  // explicit `host` overrides this.
+  // The web remote initializes only when mpv is detected. `expose` binds 0.0.0.0
+  // so a phone on the LAN can reach it, and an explicit `host` wins over it.
   webui: z.object({
-    enabled: z.boolean().default(true),
-    host: z.string().default('127.0.0.1'),
-    port: z.number().int().min(1).max(65535).default(8808),
-    expose: z.boolean().default(false),
-    // When true, the player opens in the user's browser automatically when the
-    // MCP server starts (the standalone `navidrome-web` bin always opens, since
-    // the user ran it explicitly). Default false to avoid popping a tab on every
-    // headless Claude Desktop launch.
-    autoOpenBrowser: z.boolean().default(false),
-    // When true, a player spawned by the MCP server keeps running (and mpv keeps
-    // playing) after the MCP server closes/restarts. Default false: the spawned
-    // player and mpv stop with the MCP server, so nothing lingers. A player you
-    // launch yourself (`navidrome-web`) always persists regardless. Can be
-    // toggled live in the player's loopback-only settings modal.
-    persistAfterMcpExit: z.boolean().default(false),
+    enabled: z.boolean(),
+    host: z.string(),
+    port: z.number().int().min(1).max(65535),
+    expose: z.boolean(),
+    // Off by default so a headless MCP client launch never pops a browser tab.
+    autoOpenBrowser: z.boolean(),
+    // Off by default so an MCP-launched player stops with the last MCP server using it and nothing lingers.
+    persistAfterMcpExit: z.boolean(),
+    // Every device viewing the player uses this theme. Null leaves each device on its own setting.
+    theme: z.enum(WEBUI_THEMES).nullable(),
+    // Off removes the mpv analysis filter too, which costs about 2.5% of one core while music plays.
+    visualizer: z.boolean(),
   }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 
-/** The pre-validation input shape (fields with defaults are optional). */
+/** The pre-validation input shape. No field has a schema default, so the compiler flags a mapper that omits one. */
 export type RawConfigInput = z.input<typeof ConfigSchema>;

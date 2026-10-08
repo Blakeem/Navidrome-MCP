@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.analysis.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "allowJs": true,
+    "types": ["node", "vitest/globals"],
+    "noUncheckedIndexedAccess": false,
+    "noPropertyAccessFromIndexSignature": false,
+    "exactOptionalPropertyTypes": false
+  }
+}

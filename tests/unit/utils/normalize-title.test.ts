@@ -29,6 +29,18 @@ describe('normTitle', () => {
     // Trailing format suffixes
     ['66 MHz - Single', '66 mhz'],
     ['Accelerated - EP', 'accelerated'],
+    // A dashless format word is part of the title.
+    ['Foo EP', 'foo ep'],
+    // Source tags, bracketed or trailing
+    ['GUNSHIP WEB', 'gunship'],
+    ['GUNSHIP (WEB)', 'gunship'],
+    ['GUNSHIP [CDM]', 'gunship'],
+    ['GUNSHIP CDS', 'gunship'],
+    // Symbol-only titles keep the symbols as the key
+    ['÷', '÷'],
+    ['+', '+'],
+    ['÷ (Deluxe)', '÷'],
+    ['', ''],
     // Punctuation collapse
     ["Miami Nights '84", 'miami nights 84'],
     ['Art3mis & Parzival', 'art3mis parzival'],
@@ -44,11 +56,13 @@ describe('normTitle', () => {
   it('collapses variant duplicates onto the same key', () => {
     expect(normTitle('Dark All Day [Explicit]')).toBe(normTitle('Dark All Day'));
     expect(normTitle('UNICORN (Deluxe Edition)')).toBe(normTitle('Unicorn'));
+    expect(normTitle('GUNSHIP WEB')).toBe(normTitle('GUNSHIP'));
   });
 
   it('keeps genuinely different titles apart', () => {
     expect(normTitle('Dark All Day')).not.toBe(normTitle('GUNSHIP'));
     expect(normTitle('Turbulence')).not.toBe(normTitle('Early Summer'));
+    expect(normTitle('÷')).not.toBe(normTitle('×'));
   });
 });
 
@@ -83,7 +97,7 @@ describe('isJunkAlbumName', () => {
     'Unicorn',
     "Miami Nights '84",
     'Turbulence',
-    // Variant dupes are NOT junk — they dedup via normTitle instead.
+    // Variant dupes are not junk. They dedup via normTitle instead.
     'Dark All Day [Explicit]',
     'GUNSHIP WEB',
     // Contains "com" but not as a domain suffix.

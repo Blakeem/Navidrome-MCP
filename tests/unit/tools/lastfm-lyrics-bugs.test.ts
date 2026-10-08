@@ -37,16 +37,17 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Config } from '../../../src/config.js';
+import { makeTestConfig } from '../../helpers/test-config.js';
 
 // ---- helpers ---------------------------------------------------------------
 
 function makeMockConfig(overrides: Partial<Config> = {}): Config {
   return {
+    ...makeTestConfig(),
     navidromeUrl: 'http://mock-server:4533',
     navidromeUsername: 'testuser',
     navidromePassword: 'testpass',
     debug: false,
-    cacheTtl: 300,
     tokenExpiry: 86400,
     features: {
       lastfm: true,
@@ -55,7 +56,6 @@ function makeMockConfig(overrides: Partial<Config> = {}): Config {
       playback: false,
     },
     lastFmApiKey: 'test-api-key',
-    radioBrowserBase: 'https://de1.api.radio-browser.info',
     lyricsProvider: 'lrclib',
     lrclibUserAgent: 'TestAgent/1.0',
     lrclibBase: 'https://lrclib.net',
@@ -272,83 +272,83 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     vi.restoreAllMocks();
   });
 
-  it('getLyrics propagates 5xx transport error (not silently "not found")', async () => {
+  it('resolveLyricsByMetadata propagates 5xx transport error (not silently "not found")', async () => {
     // A 503 from LRCLIB (e.g., service down) should NOT silently return "no lyrics"
     global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(503, null, 'Service Unavailable'));
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
-    // BEFORE FIX: getLyrics resolves to a valid LyricsDTO with no lyrics (silent failure)
+    // BEFORE FIX: resolveLyricsByMetadata resolves to a valid LyricsDTO with no lyrics (silent failure)
     // AFTER FIX: must throw (transport error visible to caller)
     await expect(
-      getLyrics(config, { title: 'Creep', artist: 'Radiohead' })
+      resolveLyricsByMetadata(config, { title: 'Creep', artist: 'Radiohead' })
     ).rejects.toThrow();
   });
 
-  it('getLyrics propagates 429 rate-limit as an error (not silently "not found")', async () => {
+  it('resolveLyricsByMetadata propagates 429 rate-limit as an error (not silently "not found")', async () => {
     // A 429 response (rate-limited, often from a missing/wrong User-Agent) must surface
     global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(429, null, 'Too Many Requests'));
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
     await expect(
-      getLyrics(config, { title: 'Fake Plastic Trees', artist: 'Radiohead' })
+      resolveLyricsByMetadata(config, { title: 'Fake Plastic Trees', artist: 'Radiohead' })
     ).rejects.toThrow();
   });
 
-  it('getLyrics propagates network failure (fetch throws) as an error', async () => {
+  it('resolveLyricsByMetadata propagates network failure (fetch throws) as an error', async () => {
     // A total network failure (e.g., misconfigured LRCLIB_BASE)
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error: ECONNREFUSED'));
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
     await expect(
-      getLyrics(config, { title: 'Creep', artist: 'Radiohead' })
+      resolveLyricsByMetadata(config, { title: 'Creep', artist: 'Radiohead' })
     ).rejects.toThrow();
   });
 
-  it('getLyrics rejects an empty title (schema dedup → stricter .min(1) validation)', async () => {
-    // After dedup onto the canonical GetLyricsSchema, title/artist carry .min(1),
+  it('resolveLyricsByMetadata rejects an empty title (schema dedup → stricter .min(1) validation)', async () => {
+    // After dedup onto the canonical LyricsMetadataSchema, title/artist carry .min(1),
     // so an empty title is rejected before any network call. fetch must not run.
     const fetchSpy = vi.fn();
     global.fetch = fetchSpy;
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
     await expect(
-      getLyrics(config, { title: '', artist: 'Radiohead' })
+      resolveLyricsByMetadata(config, { title: '', artist: 'Radiohead' })
     ).rejects.toThrow();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('getLyrics rejects an empty artist (schema dedup → stricter .min(1) validation)', async () => {
+  it('resolveLyricsByMetadata rejects an empty artist (schema dedup → stricter .min(1) validation)', async () => {
     const fetchSpy = vi.fn();
     global.fetch = fetchSpy;
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
     await expect(
-      getLyrics(config, { title: 'Creep', artist: '' })
+      resolveLyricsByMetadata(config, { title: 'Creep', artist: '' })
     ).rejects.toThrow();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('getLyrics still returns "no lyrics found" shape on genuine 404 from /api/get (song not in LRCLIB)', async () => {
+  it('resolveLyricsByMetadata still returns "no lyrics found" shape on genuine 404 from /api/get (song not in LRCLIB)', async () => {
     // 404 on /api/get = song not in LRCLIB by exact lookup — legitimate "not found".
     // The search endpoint then returns 200 with an empty array (its standard "no results" shape).
     global.fetch = vi.fn()
       .mockResolvedValueOnce(makeFetchResponse(404, null, 'Not Found'))  // /api/get
       .mockResolvedValueOnce(makeFetchResponse(200, [], 'OK'));            // /api/search
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
-    const result = await getLyrics(config, {
+    const result = await resolveLyricsByMetadata(config, {
       title: 'SongThatDoesNotExist99999',
       artist: 'NoSuchArtist',
     });
@@ -362,24 +362,24 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     expect(result.unsynced).toBeUndefined();
   });
 
-  it('getLyrics returns "no lyrics found" when /api/get returns 404 and /api/search returns empty array', async () => {
+  it('resolveLyricsByMetadata returns "no lyrics found" when /api/get returns 404 and /api/search returns empty array', async () => {
     // LRCLIB search returns 200 + [] when no results exist (not 404).
     // This is the standard "song not in LRCLIB" path.
     global.fetch = vi.fn()
       .mockResolvedValueOnce(makeFetchResponse(404, null, 'Not Found'))  // /api/get → not found
       .mockResolvedValueOnce(makeFetchResponse(200, [], 'OK'));            // /api/search → empty
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
-    const result = await getLyrics(config, { title: 'GhostSong', artist: 'GhostArtist' });
+    const result = await resolveLyricsByMetadata(config, { title: 'GhostSong', artist: 'GhostArtist' });
 
     expect(result).toHaveProperty('provider', 'lrclib');
     expect(result.synced).toBeUndefined();
     expect(result.unsynced).toBeUndefined();
   });
 
-  it('getLyrics returns valid lyrics when both exact and search return 200', async () => {
+  it('resolveLyricsByMetadata returns valid lyrics when both exact and search return 200', async () => {
     // Normal happy path — confirm it still works after the fix
     const lrclibResponse = {
       id: 123,
@@ -393,10 +393,10 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     };
     global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(200, lrclibResponse));
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
-    const result = await getLyrics(config, { title: 'Creep', artist: 'Radiohead' });
+    const result = await resolveLyricsByMetadata(config, { title: 'Creep', artist: 'Radiohead' });
 
     expect(result).toMatchObject({
       track: { title: 'Creep', artist: 'Radiohead' },
@@ -407,7 +407,7 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     expect(result.synced?.length).toBeGreaterThan(0);
   });
 
-  it('getLyrics parses 3-digit millisecond LRC timestamps (does not silently drop them)', async () => {
+  it('resolveLyricsByMetadata parses 3-digit millisecond LRC timestamps (does not silently drop them)', async () => {
     // LRC permits 3-digit milliseconds (e.g. [00:09.123]) alongside the more
     // common 2-digit centiseconds. Community-sourced LRCLIB lyrics mix both.
     // Regression: the old regex required exactly 2 fractional digits, so any
@@ -425,10 +425,10 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     };
     global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(200, lrclibResponse));
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
-    const result = await getLyrics(config, { title: 'Precise', artist: 'Test Artist' });
+    const result = await resolveLyricsByMetadata(config, { title: 'Precise', artist: 'Test Artist' });
 
     // All three lines must survive — none dropped due to precision mismatch.
     expect(result.synced).toBeDefined();
@@ -441,7 +441,7 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     expect(result.synced?.[2]).toMatchObject({ timeMs: 10500, text: 'Line three' });
   });
 
-  it('getLyrics keeps lines whose timestamp tag is not the first char (leading whitespace/CR/indent)', async () => {
+  it('resolveLyricsByMetadata keeps lines whose timestamp tag is not the first char (leading whitespace/CR/indent)', async () => {
     // Community-sourced LRC text often has a leading space, a stray `\r` (from
     // `\r\n` line endings), or hand indentation before the `[mm:ss.xx]` tag.
     // Regression: an anchored `^`-tag matcher without a leading trim dropped
@@ -459,10 +459,10 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     };
     global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(200, lrclibResponse));
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
-    const result = await getLyrics(config, { title: 'Whitespace', artist: 'Test Artist' });
+    const result = await resolveLyricsByMetadata(config, { title: 'Whitespace', artist: 'Test Artist' });
 
     expect(result.synced).toBeDefined();
     expect(result.synced).toHaveLength(3);
@@ -471,7 +471,7 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     expect(result.synced?.[2]).toMatchObject({ timeMs: 3000, text: 'Three' });
   });
 
-  it('getLyrics splits grouped timestamps separated by whitespace (no bracket leak into text)', async () => {
+  it('resolveLyricsByMetadata splits grouped timestamps separated by whitespace (no bracket leak into text)', async () => {
     // LRC groups repeated timestamps on one line for repeated sections; some
     // files put a space between the grouped tags (`[..] [..]lyric`). Both tags
     // must yield their own timed line and neither's brackets may leak into text.
@@ -487,10 +487,10 @@ describe('Claim C — Lyrics transport errors visible vs. swallowed', () => {
     };
     global.fetch = vi.fn().mockResolvedValue(makeFetchResponse(200, lrclibResponse));
 
-    const { getLyrics } = await import('../../../src/tools/lyrics.js');
+    const { resolveLyricsByMetadata } = await import('../../../src/tools/lyrics.js');
     const config = makeMockConfig();
 
-    const result = await getLyrics(config, { title: 'Grouped', artist: 'Test Artist' });
+    const result = await resolveLyricsByMetadata(config, { title: 'Grouped', artist: 'Test Artist' });
 
     expect(result.synced).toBeDefined();
     expect(result.synced).toHaveLength(2);

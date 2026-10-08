@@ -17,30 +17,35 @@
  */
 
 /**
- * Covers `ensureWebForPlayback` — the respawn-on-play path. The whole point of
- * this function (vs. the startup `ensureWebServerRunning`) is that it must probe
- * `/healthz` FRESH every call and ignore the stale module-level `spawned` latch,
- * so a player powered off mid-session is brought back on the next play. Tests
+ * Covers `ensureWebForPlayback`, which runs at MCP startup and on every play.
+ * It must probe `/healthz` FRESH every call, so a player powered off
+ * mid-session is brought back on the next play. Tests
  * drive the probe/spawn decision through the injected `RespawnDeps` seam, so no
  * real sockets or child processes are touched.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProbeOutcome } from '../../../src/web/acquire.js';
+import type { ProbeOutcome, WebOwnerProbe } from '../../../src/web/acquire.js';
 import { ensureWebForPlayback, type RespawnDeps } from '../../../src/web/spawn.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
+
+const playbackEnabled = makeTestConfig({ features: { playback: true } });
+
+function ownerProbe(outcome: ProbeOutcome): WebOwnerProbe {
+  return { outcome, playbackAttached: true, scrobbleClaims: true, port: playbackEnabled.webui.port };
+}
 
 function makeDeps(probeOutcome: ProbeOutcome): RespawnDeps & {
   probe: ReturnType<typeof vi.fn>;
   spawn: ReturnType<typeof vi.fn>;
+  lease: ReturnType<typeof vi.fn>;
 } {
   return {
-    probe: vi.fn().mockResolvedValue(probeOutcome),
+    probe: vi.fn().mockResolvedValue(ownerProbe(probeOutcome)),
     spawn: vi.fn().mockReturnValue('spawned'),
+    lease: vi.fn().mockResolvedValue(undefined),
   };
 }
-
-const playbackEnabled = makeTestConfig({ features: { playback: true } });
 
 describe('ensureWebForPlayback (respawn-on-play)', () => {
   beforeEach(() => {
@@ -51,7 +56,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
     const deps = makeDeps('refused');
     const status = await ensureWebForPlayback(playbackEnabled, deps);
 
-    expect(deps.probe).toHaveBeenCalledWith(playbackEnabled.webui.port);
+    expect(deps.probe).toHaveBeenCalledWith(playbackEnabled.webui);
     expect(deps.spawn).toHaveBeenCalledTimes(1);
     expect(status).toBe('spawned');
   });
@@ -62,7 +67,15 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
 
     expect(deps.probe).toHaveBeenCalledTimes(1);
     expect(deps.spawn).not.toHaveBeenCalled();
+    expect(deps.lease).toHaveBeenCalledWith(playbackEnabled.webui.port);
     expect(status).toBe('running');
+  });
+
+  it.each(['refused', 'foreign'] as const)('holds no lease when the probe is %s', async (outcome) => {
+    const deps = makeDeps(outcome);
+    await ensureWebForPlayback(playbackEnabled, deps);
+
+    expect(deps.lease).not.toHaveBeenCalled();
   });
 
   it('does NOT spawn when the port is held by a foreign process', async () => {
@@ -97,15 +110,16 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
 
   it('coalesces concurrent calls into a single probe+spawn', async () => {
     // A slow probe so both calls overlap on the same in-flight promise.
-    let resolveProbe!: (o: ProbeOutcome) => void;
+    let resolveProbe!: (o: WebOwnerProbe) => void;
     const deps: RespawnDeps = {
-      probe: vi.fn().mockReturnValue(new Promise<ProbeOutcome>((r) => { resolveProbe = r; })),
+      probe: vi.fn().mockReturnValue(new Promise<WebOwnerProbe>((r) => { resolveProbe = r; })),
       spawn: vi.fn().mockReturnValue('spawned'),
+      lease: vi.fn().mockResolvedValue(undefined),
     };
 
     const p1 = ensureWebForPlayback(playbackEnabled, deps);
     const p2 = ensureWebForPlayback(playbackEnabled, deps);
-    resolveProbe('refused');
+    resolveProbe(ownerProbe('refused'));
     const [s1, s2] = await Promise.all([p1, p2]);
 
     expect(deps.probe).toHaveBeenCalledTimes(1);
@@ -119,8 +133,9 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
     // every later play would await a rejected promise. Verify the rejection
     // propagates once, then a fresh call probes again and succeeds.
     const boom: RespawnDeps = {
-      probe: vi.fn().mockRejectedValueOnce(new Error('probe boom')).mockResolvedValue('refused'),
+      probe: vi.fn().mockRejectedValueOnce(new Error('probe boom')).mockResolvedValue(ownerProbe('refused')),
       spawn: vi.fn().mockReturnValue('spawned'),
+      lease: vi.fn().mockResolvedValue(undefined),
     };
 
     await expect(ensureWebForPlayback(playbackEnabled, boom)).rejects.toThrow('probe boom');

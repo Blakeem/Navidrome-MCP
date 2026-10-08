@@ -72,7 +72,7 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
     });
 
     // Empty playlists are NOT dropped in the default management view.
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['a', 'b']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['a', 'b']);
     expect(result.total).toBe(2);
 
     // Single list read; no per-playlist probes.
@@ -100,9 +100,39 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
     });
 
     // Empty playlist dropped; non-empty kept. No probes fired.
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['a', 'c']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['a', 'c']);
     expect(result.total).toBe(2);
     expect(mockClient.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
+  });
+
+  it('flag ON probes a smart playlist whose stored songCount is 0 and keeps it when the probe finds tracks', async () => {
+    mockClient.requestWithMeta.mockResolvedValue({
+      data: [rawPlaylist('a', 5), { ...rawPlaylist('smart', 0), rules: { all: [] } }, rawPlaylist('empty', 0)],
+      total: 3,
+    });
+    mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 7 });
+
+    const result = await listPlaylists(mockClient, {
+      offset: 0,
+      limit: 100,
+      onlyWithPlayableTracks: true,
+    });
+
+    expect(result.playlists.map((p) => p.id)).toEqual(['a', 'smart']);
+    expect(result).not.toHaveProperty('truncated');
+    expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
+    expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledWith(
+      expect.stringContaining('/playlist/smart/tracks?_start=0&_end=1'),
+    );
+  });
+
+  it('flag ON marks the result truncated when the server holds more than 500 playlists', async () => {
+    mockClient.requestWithMeta.mockResolvedValue({ data: [rawPlaylist('a', 5)], total: 600 });
+
+    const result = await listPlaylists(mockClient, { onlyWithPlayableTracks: true });
+
+    expect(result.truncated).toBe(true);
+    expect(result.total).toBe(1);
   });
 
   it('flag ON when libraryManager is NOT initialized → songCount>0 filter, NO probes', async () => {
@@ -119,7 +149,7 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
       onlyWithPlayableTracks: true,
     });
 
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['a']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['a']);
     expect(result.total).toBe(1);
     expect(mockClient.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
   });
@@ -154,7 +184,7 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
       onlyWithPlayableTracks: true,
     });
 
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['keep']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['keep']);
     expect(result.total).toBe(1);
 
     // Only the two NON-empty playlists were probed (empty one skipped).
@@ -165,6 +195,31 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
     expect(mockClient.requestWithLibraryFilterAndMeta).toHaveBeenCalledWith(
       expect.stringContaining('/playlist/other/tracks?_start=0&_end=1'),
     );
+  });
+
+  it('flag ON keeps a playlist whose probe rejects (fail-open) and still drops a probed-empty one', async () => {
+    mockedGetActiveLibraryIds.mockReturnValue([1]);
+
+    mockClient.requestWithMeta.mockResolvedValue({
+      data: [rawPlaylist('flaky', 5), rawPlaylist('other', 5)],
+      total: 2,
+    });
+    mockClient.requestWithLibraryFilterAndMeta.mockImplementation(
+      (endpoint: string) => {
+        if (endpoint.includes('/playlist/flaky/')) {
+          return Promise.reject(new Error('503'));
+        }
+        return Promise.resolve({ data: [], total: 0 });
+      },
+    );
+
+    const result = await listPlaylists(mockClient, {
+      offset: 0,
+      limit: 100,
+      onlyWithPlayableTracks: true,
+    });
+
+    expect(result.playlists.map((p) => p.id)).toEqual(['flaky']);
   });
 
   it('flag ON with subset active → pagination applies over the FILTERED view', async () => {
@@ -189,6 +244,6 @@ describe('listPlaylists — onlyWithPlayableTracks', () => {
 
     // total reflects the full FILTERED count (3), the page is offset/limit of it.
     expect(result.total).toBe(3);
-    expect(result.playlists.map((p) => p.playlistId)).toEqual(['p2']);
+    expect(result.playlists.map((p) => p.id)).toEqual(['p2']);
   });
 });

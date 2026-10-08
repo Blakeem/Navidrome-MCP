@@ -18,17 +18,8 @@
 
 const SUBSONIC_AUTH_PARAMS = ['u', 'p', 's', 't'] as const;
 
-/**
- * Strip Subsonic auth params (`u`, `p`, `s`, `t`) from a URL before exposing
- * it to consumers we don't fully trust — specifically the LLM transcript via
- * tool responses. The MCP server's stream URLs sent to mpv may contain
- * salted-MD5 auth (or, in legacy paths, plaintext password) which has no
- * business reaching the LLM context window.
- *
- * Returns the input verbatim if it isn't a parseable URL or doesn't carry
- * any of the auth params (no allocation in the hot path).
- */
-export function sanitizeFilename(rawUrl: string): string {
+// Stream URLs carry replay-grade Subsonic auth (u, p, s, t) that must not reach the LLM transcript.
+export function stripSubsonicAuthParams(rawUrl: string): string {
   if (rawUrl === '') return rawUrl;
   try {
     const u = new URL(rawUrl);
@@ -43,4 +34,12 @@ export function sanitizeFilename(rawUrl: string): string {
   } catch {
     return rawUrl;
   }
+}
+
+// mpv's filename fallback is the URL basename, which has no scheme for URL to parse.
+export function hasSubsonicAuthParams(value: string): boolean {
+  const queryStart = value.indexOf('?');
+  if (queryStart === -1) return false;
+  const params = new URLSearchParams(value.slice(queryStart + 1));
+  return SUBSONIC_AUTH_PARAMS.some((key) => params.has(key));
 }

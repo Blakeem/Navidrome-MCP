@@ -1,13 +1,13 @@
 # Running in Docker
 
 The included [`Dockerfile`](../Dockerfile) packages the server for the
-[HTTP transport](../README.md#running-over-http): an always-on, library-only MCP
+[HTTP transport](../README.md#http-transport): an always-on, library-only MCP
 endpoint you can run next to Navidrome.
 
 ## What each deployment shape gives you
 
-The transport decides who can reach the MCP protocol; it does not move where the
-audio comes out (the MPV Remote is a control panel, not an audio stream). The
+The transport decides who can reach the MCP protocol. It does not move where the
+audio comes out, since the MPV Remote is a control panel, not an audio stream. The
 machine that runs the server is always the machine that makes the sound.
 
 | Deployment | MCP reachable from | Local audio (mpv) | MPV Remote web UI |
@@ -19,7 +19,7 @@ machine that runs the server is always the machine that makes the sound.
 
 Want remote MCP access *and* working audio? Skip the container: run the server with
 the HTTP transport on the machine wired to your speakers (see
-[Running over HTTP](../README.md#running-over-http)).
+[HTTP Transport](../README.md#http-transport)).
 
 ## Quick start
 
@@ -29,7 +29,7 @@ A prebuilt multi-arch image is published on each release:
 docker pull ghcr.io/blakeem/navidrome-mcp:latest
 ```
 
-Or build it from source with `docker build -t navidrome-mcp .`.
+Or build it from source with `docker build -t navidrome-mcp .`, then use `navidrome-mcp` in place of the GHCR name below.
 
 The image defaults to the HTTP transport bound to all interfaces (`MCP_TRANSPORT=http`
 and `MCP_HTTP_EXPOSE=true` are baked in as env fallbacks), so the only required config
@@ -41,16 +41,16 @@ docker run --rm -p 3000:3000 \
   -e NAVIDROME_USERNAME=mcp \
   -e NAVIDROME_PASSWORD=your-password \
   -e MCP_HTTP_AUTH_TOKEN=a-long-random-secret \
-  navidrome-mcp
+  ghcr.io/blakeem/navidrome-mcp:latest
 ```
 
 The MCP endpoint is then at `http://localhost:3000/mcp`. The image ships a Docker
-`HEALTHCHECK` that polls `GET /healthz` on port 3000 (so `docker ps` shows `healthy`;
-orchestrators can use the same endpoint), and runs as a non-root user.
+`HEALTHCHECK` that polls `GET /healthz` on port 3000 (so `docker ps` shows `healthy`,
+and orchestrators can use the same endpoint), and runs as a non-root user.
 
 One timing note for orchestrators: the HTTP socket binds only after the server has
 authenticated to Navidrome and primed its caches, so give health checks startup
-slack. The image's `HEALTHCHECK` sets `--start-period=10s`; in Kubernetes, use a
+slack. The image's `HEALTHCHECK` sets `--start-period=10s`. In Kubernetes, use a
 `startupProbe` so a slow Navidrome doesn't get the pod killed before it ever binds.
 
 ## No audio in the image, by design
@@ -59,7 +59,9 @@ mpv is not installed, so the container registers the library toolset only: the 2
 playback tools (`play_songs`, `pause`, `seek`, `set_volume`, the mpv play-queue
 tools, ...) are absent from `tools/list`, and the MPV Remote web UI never starts.
 Everything else (search, playlists, ratings, listening history, radio, Last.fm,
-lyrics) works exactly as it does over stdio.
+lyrics) works as it does over stdio. Radio discovery and LRCLIB lyrics stay off
+until their env vars are set, as listed in
+[First-run setup](../README.md#first-run-setup).
 
 ### Adding mpv to the image (rarely what you want)
 
@@ -71,7 +73,7 @@ but audio still has to reach a real sound device:
   `WEBUI_EXPOSE=true` (the env form of **Expose on LAN** / `webui.expose`) for the
   remote.
 - **Docker Desktop (Windows/macOS):** not possible. The engine runs in a Linux VM
-  with no audio device at all; `--device /dev/snd` fails with *no such file or
+  with no audio device. `--device /dev/snd` fails with *no such file or
   directory*, even `--privileged`.
 
 Without a device, the failure is silent to the assistant: `play_songs` still returns
@@ -82,7 +84,7 @@ the LLM is not told. Prefer running the server on the host when you want audio.
 ## Mounting a settings.json
 
 Prefer a file over env vars? Mount a `settings.json` at `/config/settings.json` (the
-image points `NAVIDROME_CONFIG_PATH` there); a mounted file always wins over env.
+image points `NAVIDROME_CONFIG_PATH` there). A usable mounted file is used instead of env.
 The file holds your Navidrome credentials in plaintext, so in an orchestrator mount
 it from a secret store (a Kubernetes `Secret`, compose secrets), not a plain config
 object:
@@ -90,7 +92,7 @@ object:
 ```bash
 docker run --rm -p 3000:3000 \
   -v "$PWD/settings.json:/config/settings.json:ro" \
-  navidrome-mcp
+  ghcr.io/blakeem/navidrome-mcp:latest
 ```
 
 > **With a mounted `settings.json`, the file is the whole config.** The image's env

@@ -16,10 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Export main search orchestration function
 export { searchAll } from './search-orchestrator.js';
 
-// Export individual search functions for parallel operations
-export { searchSongs, searchAlbums, searchArtists } from './parallel-searcher.js';
-
-// Internal types are not exported - they are used only within the search module
+// The single-type search tools: search_songs, search_albums and search_artists.
+export { searchSongs, searchAlbums, searchArtists } from './single-type-search.js';

@@ -16,13 +16,10 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
-import type { NavidromeClient } from '../../client/navidrome-client.js';
-import {
-  SINGLE_VALIDATION_TIMEOUT,
-  MIN_VALIDATION_TIMEOUT,
-  MAX_VALIDATION_TIMEOUT,
-} from '../../constants/timeouts.js';
+import type { z } from 'zod';
+import { ValidateStreamSchema } from '../../schemas/index.js';
+import type { StreamValidationResult } from '../../types/index.js';
+import { ErrorFormatter } from '../../utils/error-formatter.js';
 import {
   isAudioContentType,
   extractStreamingHeaders,
@@ -31,83 +28,126 @@ import {
 import {
   validateWithHead,
   sampleAudioData,
-  type ValidationContext,
 } from './network-validator.js';
-import {
-  generateRecommendations,
-  type StreamValidationResult,
-} from './recommendation-engine.js';
-import { describeFetchError, isHttpUrlScheme } from '../../utils/network-safety.js';
+import { generateRecommendations } from './recommendation-engine.js';
 
-// Validation parameter schema. The validator probes URLs over Node's fetch,
-// which only supports http:// and https://. Other valid radio protocols
-// (mms://, rtsp://, rtmp://) are playable by mpv but cannot be probed here;
-// reject them at the schema layer with a message that points users at
-// play_radio_station instead of letting fetch throw an opaque error.
-const ValidateStreamSchema = z.object({
-  url: z.string()
-    .url('URL must be a valid URL')
-    .refine(isHttpUrlScheme, {
-      message: 'URL must use http:// or https://. For other protocols (mms://, rtsp://, rtmp://), pass the URL directly to play_radio_station — mpv plays those streams natively but this validator can only probe HTTP/HTTPS.',
-    }),
-  timeout: z.number().min(MIN_VALIDATION_TIMEOUT).max(MAX_VALIDATION_TIMEOUT).optional().default(SINGLE_VALIDATION_TIMEOUT),
-  followRedirects: z.boolean().optional().default(true),
-});
+type ValidateStreamParams = z.infer<typeof ValidateStreamSchema>;
+type AudioFormat = NonNullable<StreamValidationResult['audioFormat']>;
 
-/**
- * Validate a radio stream URL
- */
-export async function validateRadioStream(
-  _client: NavidromeClient,
-  args: unknown
-): Promise<StreamValidationResult> {
+// Below this remaining budget a sample cannot finish, so it is not started.
+const MIN_SAMPLE_BUDGET_MS = 1000;
+
+/** Everything the network probe learned, in the form the pure classifier reads. */
+export interface StreamProbe {
+  headResponse: { readonly headers: Headers; readonly status: number } | null;
+  headError: string | null;
+  /** Sample headers when sampling ran, HEAD headers when HEAD was conclusive, else null. */
+  headers: Headers | null;
+  sampledStatus: number | null;
+  buffer: Uint8Array | null;
+  sampleError: string | null;
+  resolvedFinalUrl: string | null;
+  /** HEAD was inconclusive, so sampling ran or ran out of budget. */
+  sampled: boolean;
+  /** No HEAD response and no sample status, so the endpoint never answered. */
+  transportFailed: boolean;
+}
+
+export async function validateRadioStream(args: unknown): Promise<StreamValidationResult> {
   const startTime = Date.now();
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  // Parse and validate input
-  let params;
+  let params: ValidateStreamParams;
   try {
     params = ValidateStreamSchema.parse(args);
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      // Extract a displayable URL from the raw args (best-effort). When args
-      // is an object like { url: "..." }, String(args) would be "[object Object]"
-      // which is useless in error context. The LLM needs to see what it sent.
-      const rawUrl = (typeof args === 'object' && args !== null && 'url' in args && typeof (args as Record<string, unknown>)['url'] === 'string')
-        ? (args as Record<string, unknown>)['url'] as string
-        : '(invalid input)';
-      return {
-        success: false,
-        url: rawUrl,
-        status: 'error',
-        streamingHeaders: {},
-        validation: {
-          httpAccessible: false,
-          hasAudioContentType: false,
-          hasStreamingHeaders: false,
-          audioDataDetected: false,
-        },
-        errors: [`Invalid parameters: ${error.issues.map((e: { message: string }) => e.message).join(', ')}`],
-        warnings: [],
-        recommendations: ['Please provide a valid http:// or https:// URL'],
-        testDuration: Date.now() - startTime,
-      };
-    }
-    throw error;
+    throw new Error(ErrorFormatter.toolExecution('validate_radio_stream', error));
   }
 
-  const context: ValidationContext = {
-    url: params.url,
-    startTime,
-    timeout: params.timeout,
-    followRedirects: params.followRedirects,
+  const probe = await probeStream(params, startTime);
+  const audioFormat = probe.buffer !== null && probe.buffer.length > 0 ? await detectAudioFormat(probe.buffer) : null;
+  const result = classifyStream(params.url, probe, audioFormat);
+
+  result.recommendations = generateRecommendations(result);
+  result.testDurationMs = Date.now() - startTime;
+  return result;
+}
+
+/**
+ * HEAD first, then a GET sample only when HEAD was inconclusive. The overall timer
+ * aborts an in-flight sample, and the sampler reports that as its own timeout.
+ */
+async function probeStream(params: ValidateStreamParams, startTime: number): Promise<StreamProbe> {
+  const probe: StreamProbe = {
+    headResponse: null,
+    headError: null,
+    headers: null,
+    sampledStatus: null,
+    buffer: null,
+    sampleError: null,
+    resolvedFinalUrl: null,
+    sampled: false,
+    transportFailed: false,
   };
 
-  // Initialize result
+  const overallController = new AbortController();
+  const overallTimeoutId = setTimeout(() => {
+    overallController.abort();
+  }, params.timeout);
+
+  try {
+    const headResult = await validateWithHead({
+      url: params.url,
+      timeout: params.timeout,
+      followRedirects: params.followRedirects,
+    });
+    probe.headResponse = headResult.response;
+    probe.headError = headResult.error;
+    if (headResult.finalUrl !== params.url) {
+      probe.resolvedFinalUrl = headResult.finalUrl;
+    }
+
+    if (probe.headResponse !== null && headersAreConclusive(probe.headResponse.headers)) {
+      probe.headers = probe.headResponse.headers;
+    } else {
+      probe.sampled = true;
+      const remainingTime = params.timeout - (Date.now() - startTime);
+      if (remainingTime > MIN_SAMPLE_BUDGET_MS) {
+        // Reusing the URL HEAD resolved skips a second walk of the redirect chain and its private-IP checks.
+        const sampleResult = await sampleAudioData(probe.resolvedFinalUrl ?? params.url, remainingTime, params.followRedirects, overallController.signal);
+        probe.buffer = sampleResult.buffer;
+        probe.headers = sampleResult.headers;
+        probe.sampledStatus = sampleResult.httpStatus ?? null;
+        probe.sampleError = sampleResult.error;
+        if (probe.resolvedFinalUrl === null && sampleResult.finalUrl !== params.url) {
+          probe.resolvedFinalUrl = sampleResult.finalUrl;
+        }
+      } else {
+        probe.sampleError = `Timeout too short to sample audio: ${remainingTime}ms left after HEAD, sampling needs more than ${MIN_SAMPLE_BUDGET_MS}ms. Retry with a larger timeout.`;
+      }
+    }
+  } finally {
+    clearTimeout(overallTimeoutId);
+  }
+
+  probe.transportFailed =
+    probe.headResponse === null && probe.sampledStatus === null && probe.sampleError !== null && probe.sampleError !== '';
+  return probe;
+}
+
+function headersAreConclusive(headers: Headers): boolean {
+  const contentType = headers.get('content-type');
+  const hasAudioContentType = contentType !== null && contentType !== '' && isAudioContentType(contentType);
+  return hasAudioContentType || Object.keys(extractStreamingHeaders(headers)).length > 0;
+}
+
+/**
+ * Map a probe to the validation result. Recommendations and test duration are left for the caller.
+ */
+export function classifyStream(url: string, probe: StreamProbe, audioFormat: AudioFormat | null): StreamValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
   const result: StreamValidationResult = {
     success: false,
-    url: params.url,
+    url,
     status: 'invalid',
     streamingHeaders: {},
     validation: {
@@ -119,190 +159,78 @@ export async function validateRadioStream(
     errors,
     warnings,
     recommendations: [],
-    testDuration: 0,
+    testDurationMs: 0,
   };
 
-  // Add overall timeout protection
-  const overallController = new AbortController();
-  const overallTimeoutId = setTimeout(() => {
-    overallController.abort();
-    errors.push(`Validation timeout after ${params.timeout}ms`);
-  }, params.timeout);
-
-  let headResponse: Response | null = null;
-  let headError: string | null = null;
-  let buffer: Uint8Array | null = null;
-  let headers: Headers | null = null;
-  let sampledStatus: number | null = null;
-  let sampleError: string | null = null;
-  let resolvedFinalUrl: string | null = null;
-  // Hoisted to function scope so the post-validation warning logic (~line 243)
-  // can tell the difference between "sampling was tried and produced no data"
-  // and "sampling was deliberately skipped because headers were conclusive".
-  let skipAudioSampling = false;
-
-  try {
-    // Step 1: Try HEAD request first
-    const headResult = await validateWithHead(context);
-    headResponse = headResult.response;
-    headError = headResult.error;
-    if (headResult.finalUrl !== params.url) {
-      resolvedFinalUrl = headResult.finalUrl;
-    }
-
-    if (headError !== null && headError !== '') {
-      warnings.push(headError);
-    }
-
-    // Step 2: Check if HEAD response gives us enough info to determine validity
-    if (headResponse) {
-      const contentType = headResponse.headers.get('content-type');
-      const streamHeaders = extractStreamingHeaders(headResponse.headers);
-
-      // If we have clear audio content-type OR streaming headers, we can skip audio sampling
-      const hasAudioContentType = contentType !== null && contentType !== '' && isAudioContentType(contentType);
-      const hasStreamingHeaders = Object.keys(streamHeaders).length > 0;
-
-      if (hasAudioContentType || hasStreamingHeaders) {
-        skipAudioSampling = true;
-        // Headers were conclusive — no need to sample audio data.
-        // We intentionally do NOT synthesize a fake buffer here; that would
-        // set audioDataDetected=true via the magic-bytes path in detectAudioFormat,
-        // making the field dishonest (we never actually read stream bytes).
-        // Success is determined below from hasAudioContentType || hasStreamingHeaders,
-        // which correctly covers this case without a fake signal.
-        headers = headResponse.headers;
-        sampleError = null;
-      }
-    }
-
-    // Step 3: Sample audio data only if headers were inconclusive
-    if (!skipAudioSampling) {
-      const elapsed = Date.now() - startTime;
-      const remainingTime = params.timeout - elapsed;
-
-      if (remainingTime > 1000 && !overallController.signal.aborted) {
-        // Reuse the final URL HEAD already resolved (when it followed redirects)
-        // so the GET doesn't re-traverse the whole redirect chain — duplicating
-        // DNS lookups and private-IP/SSRF checks. followRedirects stays as-is; it
-        // harmlessly no-ops when the URL is already terminal.
-        const sampleResult = await sampleAudioData(resolvedFinalUrl ?? params.url, remainingTime, params.followRedirects, overallController.signal);
-        buffer = sampleResult.buffer;
-        headers = sampleResult.headers ?? headResponse?.headers ?? null;
-        sampledStatus = sampleResult.httpStatus ?? null;
-        sampleError = sampleResult.error;
-        if (resolvedFinalUrl === null && sampleResult.finalUrl !== params.url) {
-          resolvedFinalUrl = sampleResult.finalUrl;
-        }
-      } else if (remainingTime <= 1000) {
-        sampleError = 'Insufficient time remaining for audio sampling';
-      }
-    }
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      errors.push('Validation aborted due to overall timeout');
+  if (probe.headError !== null && probe.headError !== '') {
+    warnings.push(probe.headError);
+  }
+  if (probe.sampleError !== null && probe.sampleError !== '') {
+    // With a HEAD response the endpoint answered, so a failed sample stays a warning.
+    if (probe.headResponse === null) {
+      errors.push(probe.sampleError);
     } else {
-      errors.push(`Validation failed: ${describeFetchError(err)}`);
+      warnings.push(probe.sampleError);
     }
-  } finally {
-    clearTimeout(overallTimeoutId);
   }
 
-  if (sampleError !== null && sampleError !== '' && headResponse === null) {
-    errors.push(sampleError);
-    result.status = 'error';
-  } else if (headResponse !== null && sampleError !== null && sampleError !== '') {
-    // HEAD succeeded but sampling failed with a real error — surface it as a
-    // warning (not an error, to preserve the HEAD-succeeded severity) so the
-    // diagnostic isn't silently dropped.
-    warnings.push(sampleError);
-  }
+  const finalStatus: number | null = probe.sampledStatus ?? probe.headResponse?.status ?? null;
+  const finalHeaders = probe.headers ?? probe.headResponse?.headers ?? null;
 
-  // Use whichever response we got. When Step 3 actually sampled (headers were
-  // inconclusive), its status/headers must win — the HEAD response is truthy for
-  // ANY reply (2xx/4xx/5xx), so falling back to it here would discard the just-
-  // fetched sample's better content-type / ICY headers and revert to the HEAD
-  // data Step 2 already found inconclusive. `sampledStatus` is null unless Step 3
-  // ran, and `headers` already holds the correctly-prioritized value (sample when
-  // sampled, HEAD when headers were conclusive), so build the response from it.
-  // The status may still be absent when HEAD failed and sampling produced headers
-  // but no real HTTP status — track it separately so we never write a bogus 0.
-  const finalStatus: number | null = sampledStatus ?? headResponse?.status ?? null;
-  const finalResponse = headers !== null ? { headers, status: finalStatus } : headResponse;
-
-  if (finalResponse) {
+  if (finalHeaders !== null) {
     if (finalStatus !== null) {
       result.httpStatus = finalStatus;
       result.validation.httpAccessible = (finalStatus >= 200 && finalStatus < 300) || finalStatus === 206;
     }
 
-    if (resolvedFinalUrl !== null) {
-      result.finalUrl = resolvedFinalUrl;
+    if (probe.resolvedFinalUrl !== null) {
+      result.finalUrl = probe.resolvedFinalUrl;
     }
 
-    // Extract streaming headers first — their presence (ICY/audiocast) is the
-    // strongest possible signal and changes how we interpret content-type and
-    // HTTP status below.
-    result.streamingHeaders = extractStreamingHeaders(finalResponse.headers);
+    result.streamingHeaders = extractStreamingHeaders(finalHeaders);
     result.validation.hasStreamingHeaders = Object.keys(result.streamingHeaders).length > 0;
 
-    // Extract content type
-    const contentType = finalResponse.headers.get('content-type');
+    const contentType = finalHeaders.get('content-type');
     if (contentType !== null && contentType !== '') {
       result.contentType = contentType;
       result.validation.hasAudioContentType = isAudioContentType(contentType);
-
-      // A non-audio content-type is only a problem when there are NO streaming
-      // headers to corroborate the stream. Icecast/Shoutcast mounts that reject
-      // our HEAD probe return an HTML error body (`text/html`) yet still echo
-      // the full ICY header set — flagging that as an error would be misleading
-      // for a stream we can positively identify from its `icy-*` headers.
-      if (!result.validation.hasAudioContentType && !result.validation.hasStreamingHeaders) {
-        errors.push(`Non-audio content type: ${contentType}`);
-      }
     }
   }
 
-  // Step 3: Detect audio format if we got data
-  if (buffer && buffer.length > 0) {
-    const audioFormat = await detectAudioFormat(buffer);
+  if (audioFormat !== null) {
     result.audioFormat = audioFormat;
     result.validation.audioDataDetected = audioFormat.detected;
 
     if (!audioFormat.detected && result.validation.hasAudioContentType) {
       warnings.push('Could not detect audio format from data sample');
     }
-  } else if (result.validation.httpAccessible && !skipAudioSampling) {
-    // Only warn about missing samples when sampling was actually attempted —
-    // when headers are conclusive we deliberately skip the body read.
+  } else if (result.validation.httpAccessible && probe.sampled) {
     warnings.push('Could not sample audio data from stream');
   }
 
-  // Determine overall success.
-  //
-  // ICY/audiocast streaming headers (icy-br, icy-name, icy-metaint, ...) are
-  // emitted ONLY by Shoutcast/Icecast audio servers, so their presence is
-  // definitive proof of a real stream — even when the server rejects our HEAD
-  // probe with a non-2xx status. Many icecast mounts return 400/405 to HEAD
-  // while still echoing the ICY header set (e.g. walmradio on :8443), so
-  // gating on `httpAccessible` here produced false negatives on real, popular
-  // streams (Issue #7). Streaming headers are therefore sufficient on their own.
-  //
-  // Absent streaming headers, fall back to the conservative check: the endpoint
-  // must be HTTP-accessible AND look like audio (by content-type or sniffed
-  // magic bytes).
+  // ICY headers prove a stream even when HEAD returns 4xx.
+  // Without them the endpoint must be reachable and look like audio.
   result.success =
     result.validation.hasStreamingHeaders ||
     (result.validation.httpAccessible &&
       (result.validation.hasAudioContentType || result.validation.audioDataDetected));
 
-  result.status = result.success ? 'valid' : (errors.length > 0 ? 'error' : 'invalid');
+  if (!result.success && errors.length === 0) {
+    errors.push(describeInvalidStream(result));
+  }
 
-  // Generate recommendations
-  result.recommendations = generateRecommendations(result);
-
-  // Set test duration
-  result.testDuration = Date.now() - startTime;
-
+  result.status = result.success ? 'valid' : (probe.transportFailed ? 'error' : 'invalid');
   return result;
+}
+
+// Runs after the verdict, so a stream proven by audio data never carries a content-type error.
+function describeInvalidStream(result: StreamValidationResult): string {
+  const { httpStatus, contentType, validation } = result;
+  if (httpStatus !== undefined && !validation.httpAccessible) {
+    return `HTTP ${httpStatus}`;
+  }
+  if (contentType !== undefined && !validation.hasAudioContentType && !validation.hasStreamingHeaders) {
+    return `Non-audio content type: ${contentType}`;
+  }
+  return 'No audio content type, streaming headers, or audio data detected';
 }

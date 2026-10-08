@@ -3,13 +3,14 @@
  * Copyright (C) 2025
  *
  * Covers the one-shot `play_playlist` tool: the schema, the paginated
- * `fetchPlaylistTrackIds` helper, and the shuffle / mode / empty-playlist
+ * `fetchPlaylistSongs` helper, and the shuffle / mode / empty-playlist
  * paths. The playbackEngine is mocked so no real mpv is touched —
  * end-to-end mpv behavior is covered by the playback integration suite.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
+import { logger } from '../../../src/utils/logger.js';
 
 const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
 const ensureRunningMock = vi.fn().mockResolvedValue(undefined);
@@ -19,11 +20,11 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     enqueue: enqueueMock,
     ensureRunning: ensureRunningMock,
     isRunning: () => true,
-    getCurrentRadioStation: () => null,
   },
 }));
 
 const { playPlaylist } = await import('../../../src/tools/playback.js');
+const { fetchPlaylistSongs } = await import('../../../src/tools/queue-sources.js');
 
 function trackPage(start: number, count: number): unknown[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -93,6 +94,28 @@ describe('play_playlist', () => {
     expect(enqueuedIds).toEqual(['real-song-A', 'real-song-B']);
   });
 
+  it('skips and warns on a row with no mediaFileId instead of playing its position id', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({
+      data: [
+        { id: 1, mediaFileId: 'real-song-A' },
+        { id: 2, mediaFileId: '' },
+        { id: 3 },
+      ],
+      total: 3,
+    });
+
+    await playPlaylist(client as never, { playlistId: 'pl-x' });
+
+    const enqueuedIds = enqueueMock.mock.calls[0]?.[0] as string[];
+    expect(enqueuedIds).toEqual(['real-song-A']);
+    // Skipped rows still count as read, so X-Total-Count ends the walk after one page.
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('playlist pl-x row 2');
+    warnSpy.mockRestore();
+  });
+
   // ---------------------------------------------------------------------
   // Pagination
   // ---------------------------------------------------------------------
@@ -135,13 +158,46 @@ describe('play_playlist', () => {
     expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(2);
   });
 
-  it('places the (encoded) playlist ID in the request path', async () => {
+  it('ends the walk on an empty page even when X-Total-Count promised more rows', async () => {
+    client.requestWithLibraryFilterAndMeta
+      .mockResolvedValueOnce({ data: trackPage(0, 500), total: 1000 })
+      .mockResolvedValueOnce({ data: [], total: 1000 });
+
+    const result = await playPlaylist(client as never, { playlistId: 'pl-stale' });
+
+    expect(result.count).toBe(500);
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops at the page cap and warns when X-Total-Count exceeds it', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: trackPage(0, 500), total: 20000 });
+
+    await playPlaylist(client as never, { playlistId: 'pl-huge' });
+
+    expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(20);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toContain('MAX_QUEUE_READ_PAGES');
+    warnSpy.mockRestore();
+  });
+
+  it('places the playlist ID in the request path', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 1), total: 1 });
 
     await playPlaylist(client as never, { playlistId: 'pl_abc-123' });
 
     const endpoint = client.requestWithLibraryFilterAndMeta.mock.calls[0]?.[0] as string;
     expect(endpoint).toContain('/playlist/pl_abc-123/tracks');
+  });
+
+  // The schema regex blocks any ID that needs encoding, so only a direct call reaches the encode.
+  it('encodes the playlist ID in the request path', async () => {
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
+
+    await fetchPlaylistSongs(client as never, 'a b/c');
+
+    const endpoint = client.requestWithLibraryFilterAndMeta.mock.calls[0]?.[0] as string;
+    expect(endpoint).toContain('/playlist/a%20b%2Fc/tracks');
   });
 
   it('rejects a playlist ID with characters outside the ID pattern (defense-in-depth)', async () => {
@@ -219,12 +275,24 @@ describe('play_playlist', () => {
   // Error paths
   // ---------------------------------------------------------------------
 
-  it('throws "Playlist has no tracks" for an empty playlist', async () => {
+  it('throws a library-scoped message for a playlist with no tracks in the active libraries', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
+    client.request.mockResolvedValueOnce({ id: 'pl-empty', songCount: 4 });
 
     await expect(playPlaylist(client as never, { playlistId: 'pl-empty' })).rejects.toThrow(
-      /Playlist has no tracks/,
+      /Playlist has no tracks in the active libraries\. Call get_user_details/,
     );
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it('reports an empty playlist as empty, not as a library filter problem', async () => {
+    client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });
+    client.request.mockResolvedValueOnce({ id: 'pl-empty', songCount: 0 });
+
+    await expect(playPlaylist(client as never, { playlistId: 'pl-empty' })).rejects.toThrow(
+      /Playlist is empty\. Add tracks with add_tracks_to_playlist first\./,
+    );
+    expect(client.request).toHaveBeenCalledWith('/playlist/pl-empty');
     expect(enqueueMock).not.toHaveBeenCalled();
   });
 

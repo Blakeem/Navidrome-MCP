@@ -7,9 +7,10 @@
  * Covers both the player web UI (src/webui/public) and the settings app
  * (src/config-app/public).
  *
- * Idempotent. Safe to run repeatedly; cpSync with recursive: true overwrites.
+ * Idempotent. Each destination is cleared first, so a file removed from a source
+ * folder, such as a visualizer mode, also leaves the build.
  */
-import { cpSync, existsSync, mkdirSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -28,6 +29,7 @@ for (const [srcRel, destRel] of bundles) {
     console.error(`[build-webui] source not found: ${src}`);
     process.exit(1);
   }
+  rmSync(dest, { recursive: true, force: true });
   mkdirSync(dest, { recursive: true });
   cpSync(src, dest, { recursive: true });
   console.log(`[build-webui] copied ${src} -> ${dest}`);

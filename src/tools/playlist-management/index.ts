@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Export CRUD operations
 export {
   listPlaylists,
   getPlaylist,
@@ -25,14 +24,12 @@ export {
   deletePlaylist,
 } from './playlist-crud.js';
 
-// Export track management operations
 export {
   addTracksToPlaylist,
   removeTracksFromPlaylist,
   reorderPlaylistTrack,
 } from './track-management.js';
 
-// Export playlist export functionality
 export {
   getPlaylistTracks,
 } from './playlist-export.js';

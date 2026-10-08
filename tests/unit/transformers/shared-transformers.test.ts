@@ -56,15 +56,19 @@ describe('parseDuration', () => {
 
 describe('extractAllGenres', () => {
   it('returns undefined when all genre names are empty', () => {
-    expect(extractAllGenres({ genres: [{ id: '1', name: '' }] })).toBeUndefined();
+    expect(extractAllGenres({ genres: [{ name: '' }] })).toBeUndefined();
+  });
+
+  it('falls back to the genre string when every genres name is empty', () => {
+    expect(extractAllGenres({ genre: 'Rock', genres: [{ name: '' }] })).toEqual(['Rock']);
   });
 
   it('filters out empty genre names', () => {
     expect(
       extractAllGenres({
         genres: [
-          { id: '1', name: 'Rock' },
-          { id: '2', name: '' },
+          { name: 'Rock' },
+          { name: '' },
         ],
       }),
     ).toEqual(['Rock']);

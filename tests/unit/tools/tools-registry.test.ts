@@ -9,21 +9,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { logger } from '../../../src/utils/logger.js';
-import { ToolRegistry } from '../../../src/tools/handlers/registry.js';
+import { buildToolRegistry, type ToolRegistry } from '../../../src/tools/handlers/registry.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
-
-// Import category factory functions for comprehensive tool validation
-import { createTestToolCategory } from '../../../src/tools/test.js';
-import { createLibraryToolCategory } from '../../../src/tools/library.js';
-import { createPlaylistToolCategory } from '../../../src/tools/handlers/playlist-handlers.js';
-import { createSearchToolCategory } from '../../../src/tools/handlers/search-handlers.js';
-import { createUserPreferencesToolCategory } from '../../../src/tools/handlers/user-preferences-handlers.js';
-import { createQueueToolCategory } from '../../../src/tools/handlers/queue-handlers.js';
-import { createRadioToolCategory } from '../../../src/tools/handlers/radio-handlers.js';
-import { createLastFmToolCategory } from '../../../src/tools/handlers/lastfm-handlers.js';
-import { createLyricsToolCategory } from '../../../src/tools/handlers/lyrics-handlers.js';
-import { createTagsToolCategory } from '../../../src/tools/handlers/tag-handlers.js';
-import { createPlaybackToolCategory } from '../../../src/tools/handlers/playback-handlers.js';
 
 // COMPREHENSIVE EXPECTED TOOL LIST - Update this when adding/removing tools
 // This replaces count-based testing with explicit validation
@@ -81,7 +68,7 @@ const EXPECTED_CORE_TOOLS = [
   'validate_radio_stream',
 
   // Tags category
-  'search_by_tags',
+  'list_tag_values',
   'get_tag_distribution',
   'get_filter_options',
 
@@ -122,6 +109,7 @@ const EXPECTED_PLAYBACK_TOOLS = [
   'play_albums',
   'play_albums_search',
   'play_songs_search',
+  'play_playlist',
   'play_radio_station',
   'next',
   'previous',
@@ -132,6 +120,7 @@ const EXPECTED_PLAYBACK_TOOLS = [
   'shuffle_play_queue',
   'move_in_play_queue',
   'remove_from_play_queue',
+  'play_queue_index',
 ];
 
 describe('Tools Registry - Tool Count Verification', () => {
@@ -183,30 +172,17 @@ describe('Tools Registry - Tool Count Verification', () => {
     return expectedTools.sort();
   }
 
+  function withFeatures(features: Partial<Config['features']>): Config {
+    return { ...config, features: { ...config.features, ...features } };
+  }
+
+  function toolNamesOf(registry: ToolRegistry): string[] {
+    return registry.getAllTools().map(tool => tool.name);
+  }
+
   describe('Tool Registration', () => {
     it('should register exactly the expected tools for current configuration', () => {
-      // Create registry and register all categories
-      const registry = new ToolRegistry();
-
-      // Register core categories (always present)
-      registry.register('test', createTestToolCategory(liveClient, config));
-      registry.register('library', createLibraryToolCategory(liveClient, config));
-      registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
-      registry.register('search', createSearchToolCategory(liveClient, config));
-      registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
-      registry.register('queue-management', createQueueToolCategory(liveClient, config));
-      registry.register('radio', createRadioToolCategory(liveClient, config));
-      registry.register('tags', createTagsToolCategory(liveClient, config));
-      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
-
-      // Add conditional tools based on configuration
-      if (config.features.lastfm) {
-        registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
-      }
-
-      if (config.features.playback) {
-        registry.register('playback', createPlaybackToolCategory(liveClient, config));
-      }
+      const registry = buildToolRegistry(liveClient, config);
 
       const allTools = registry.getAllTools();
       const actualToolNames = allTools.map(t => t.name).sort();
@@ -242,26 +218,13 @@ describe('Tools Registry - Tool Count Verification', () => {
         expect(typeof tool.name).toBe('string');
         expect(typeof tool.description).toBe('string');
         expect(tool.name.length).toBeGreaterThan(0);
-        expect(tool.description.length).toBeGreaterThan(0);
+        expect(tool.description!.length).toBeGreaterThan(0);
       });
     });
 
     it('should register all core tools regardless of feature flags', () => {
-      // Create registry with only core categories (no conditional features)
-      const registry = new ToolRegistry();
-
-      registry.register('test', createTestToolCategory(liveClient, config));
-      registry.register('library', createLibraryToolCategory(liveClient, config));
-      registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
-      registry.register('search', createSearchToolCategory(liveClient, config));
-      registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
-      registry.register('queue-management', createQueueToolCategory(liveClient, config));
-      registry.register('radio', createRadioToolCategory(liveClient, config));
-      registry.register('tags', createTagsToolCategory(liveClient, config));
-      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
-
-      const allTools = registry.getAllTools();
-      const actualToolNames = allTools.map(tool => tool.name);
+      const coreOnly = withFeatures({ lastfm: false, radioBrowser: false, lyrics: false, playback: false });
+      const actualToolNames = toolNamesOf(buildToolRegistry(liveClient, coreOnly));
 
       // Every core tool should be present
       const missingCoreTools = EXPECTED_CORE_TOOLS.filter(toolName => !actualToolNames.includes(toolName));
@@ -272,67 +235,20 @@ describe('Tools Registry - Tool Count Verification', () => {
       }
 
       expect(missingCoreTools).toEqual([]);
-
-      // Should have at least all core tools (may have conditional tools if feature flags are enabled)
-      expect(actualToolNames.length).toBeGreaterThanOrEqual(EXPECTED_CORE_TOOLS.length);
+      expect(actualToolNames.sort()).toEqual(getExpectedToolList(coreOnly));
     });
 
-    it('should conditionally include Last.fm tools based on feature flag', () => {
-      const registry = new ToolRegistry();
-
-      // Register core categories
-      registry.register('test', createTestToolCategory(liveClient, config));
-      registry.register('library', createLibraryToolCategory(liveClient, config));
-      registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
-      registry.register('search', createSearchToolCategory(liveClient, config));
-      registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
-      registry.register('queue-management', createQueueToolCategory(liveClient, config));
-      registry.register('radio', createRadioToolCategory(liveClient, config));
-      registry.register('tags', createTagsToolCategory(liveClient, config));
-
-      // Conditionally add Last.fm based on config
-      if (config.features.lastfm) {
-        registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
-      }
-
-      const allTools = registry.getAllTools();
-      const actualToolNames = allTools.map(tool => tool.name);
+    it.each([true, false])('should include Last.fm tools only when features.lastfm is %s', (lastfm) => {
+      const actualToolNames = toolNamesOf(buildToolRegistry(liveClient, withFeatures({ lastfm })));
 
       // Validate Last.fm tools presence based on feature flag
       const actualLastFmTools = actualToolNames.filter(name => EXPECTED_LASTFM_TOOLS.includes(name));
-      const missingLastFmTools = EXPECTED_LASTFM_TOOLS.filter(name => !actualToolNames.includes(name));
 
-      if (config.features.lastfm) {
-        // When enabled, all Last.fm tools should be present
-        expect(missingLastFmTools).toEqual([]);
-        expect(actualLastFmTools).toEqual(EXPECTED_LASTFM_TOOLS);
-      } else {
-        // When disabled, no Last.fm tools should be present
-        expect(actualLastFmTools).toEqual([]);
-      }
+      expect(actualLastFmTools).toEqual(lastfm ? EXPECTED_LASTFM_TOOLS : []);
     });
 
     it('should conditionally include lyrics tools based on feature flag', () => {
-      const registry = new ToolRegistry();
-
-      // Register core categories
-      registry.register('test', createTestToolCategory(liveClient, config));
-      registry.register('library', createLibraryToolCategory(liveClient, config));
-      registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
-      registry.register('search', createSearchToolCategory(liveClient, config));
-      registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
-      registry.register('queue-management', createQueueToolCategory(liveClient, config));
-      registry.register('radio', createRadioToolCategory(liveClient, config));
-      registry.register('tags', createTagsToolCategory(liveClient, config));
-
-      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
-
-      if (config.features.playback) {
-        registry.register('playback', createPlaybackToolCategory(liveClient, config));
-      }
-
-      const allTools = registry.getAllTools();
-      const actualToolNames = allTools.map(tool => tool.name);
+      const actualToolNames = toolNamesOf(buildToolRegistry(liveClient, config));
 
       // Validate LRCLIB-gated lyrics tools presence based on feature flag
       const actualLyricsTools = actualToolNames.filter(name => EXPECTED_LYRICS_TOOLS.includes(name));
@@ -354,47 +270,31 @@ describe('Tools Registry - Tool Count Verification', () => {
       const localOnlyConfig = makeTestConfig({
         features: { lastfm: false, radioBrowser: false, lyrics: false, playback: false },
       });
-      const registry = new ToolRegistry();
 
-      registry.register('lyrics', createLyricsToolCategory(liveClient, localOnlyConfig));
+      const actualToolNames = toolNamesOf(buildToolRegistry(liveClient, localOnlyConfig));
 
-      const actualToolNames = registry.getAllTools().map(tool => tool.name);
-
-      expect(actualToolNames).toEqual(['get_lyrics']);
+      expect(actualToolNames).toContain('get_lyrics');
+      expect(actualToolNames.filter(name => EXPECTED_LYRICS_TOOLS.includes(name))).toEqual([]);
     });
 
-    it('should have unique tool names and match expected configuration', () => {
-      // Create registry with all possible tools
-      const registry = new ToolRegistry();
-
-      registry.register('test', createTestToolCategory(liveClient, config));
-      registry.register('library', createLibraryToolCategory(liveClient, config));
-      registry.register('playlist-management', createPlaylistToolCategory(liveClient, config));
-      registry.register('search', createSearchToolCategory(liveClient, config));
-      registry.register('user-preferences', createUserPreferencesToolCategory(liveClient, config));
-      registry.register('queue-management', createQueueToolCategory(liveClient, config));
-      registry.register('radio', createRadioToolCategory(liveClient, config));
-      registry.register('tags', createTagsToolCategory(liveClient, config));
-      registry.register('lyrics', createLyricsToolCategory(liveClient, config));
-
-      if (config.features.lastfm) {
-        registry.register('lastfm-discovery', createLastFmToolCategory(liveClient, config));
-      }
-
-      if (config.features.playback) {
-        registry.register('playback', createPlaybackToolCategory(liveClient, config));
-      }
-
-      const allTools = registry.getAllTools();
-      const actualToolNames = allTools.map(tool => tool.name);
+    it.each([false, true])('should have unique tool names and match expected configuration (playback %s)', (playback) => {
+      const variant = withFeatures({ playback });
+      const actualToolNames = toolNamesOf(buildToolRegistry(liveClient, variant));
       const uniqueNames = new Set(actualToolNames);
-      const expectedToolNames = getExpectedToolList(config);
+      const expectedToolNames = getExpectedToolList(variant);
 
       // All tool names should be unique (no duplicates)
       expect(uniqueNames.size).toBe(actualToolNames.length);
 
       // Should exactly match expected tools for current configuration
       expect(actualToolNames.sort()).toEqual(expectedToolNames);
+    });
+
+    it('rejects a category that registers an already-registered tool name', () => {
+      const registry = buildToolRegistry(liveClient, config);
+      const duplicate = { tools: [{ name: 'get_song', inputSchema: { type: 'object' as const } }], handleToolCall: () => Promise.resolve(null) };
+
+      expect(() => registry.register(duplicate)).toThrow(/get_song/);
     });
 
   });

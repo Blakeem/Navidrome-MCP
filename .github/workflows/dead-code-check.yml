@@ -37,22 +37,11 @@ jobs:
       run: pnpm lint
 
     - name: Run dead code detection
-      run: |
-        echo "🔍 Running ts-unused-exports..."
-        if pnpm run check:dead-code; then
-          echo "✅ No unused exports detected"
-        else
-          echo "⚠️ Unused exports detected (informational - see logs above)"
-          echo "This is currently informational only, but new unused exports should be avoided."
-        fi
-
-    - name: Run dead code detection tests
-      run: |
-        echo "🧪 Running deterministic dead code detection tests..."
-        pnpm test:run -- tests/meta/dead-code-detection.test.ts
+      id: dead_code
+      run: pnpm run check:dead-code
 
     - name: Comment on PR (if unused exports detected)
-      if: github.event_name == 'pull_request' && failure()
+      if: github.event_name == 'pull_request' && failure() && steps.dead_code.outcome == 'failure'
       uses: actions/github-script@v7
       with:
         script: |
@@ -60,19 +49,15 @@ jobs:
           const body = `
           ## ⚠️ Dead Code Detection Alert
 
-          This PR introduces new unused exports or dead code patterns.
+          This PR introduces new unused exports.
 
           **Action Required:**
           - Check the logs above for details
-          - Remove unused exports or add them to the known list in tests
-          - Ensure no method calls to non-existent methods
+          - Remove the unused exports
 
           **Tools Used:**
           - \`ts-unused-exports\` for unused export detection
-          - Deterministic tests for method call validation
           - ESLint rules for basic dead code patterns
-
-          See \`DEAD-CODE-ANALYSIS.md\` for details on our dead code prevention strategy.
           `;
 
           github.rest.issues.createComment({

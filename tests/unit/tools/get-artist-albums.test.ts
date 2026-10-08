@@ -18,7 +18,7 @@ import { resetMusicBrainzThrottleForTests } from '../../../src/utils/musicbrainz
 import {
   getArtistAlbums,
   clearArtistAlbumsCachesForTests,
-} from '../../../src/tools/lastfm-discovery.js';
+} from '../../../src/tools/artist-discography.js';
 
 // ---- fetch routing ----------------------------------------------------------
 
@@ -158,10 +158,10 @@ afterEach(() => {
 });
 
 describe('getArtistAlbums — happy path (GUNSHIP fixture)', () => {
-  it('throws when LASTFM_API_KEY is missing', async () => {
+  it('throws naming features.lastFmApiKey when the Last.fm key is missing', async () => {
     const config = makeTestConfig();
     await expect(getArtistAlbums(asClient(client), config, { artist: 'GUNSHIP' }))
-      .rejects.toThrow(/LASTFM_API_KEY/);
+      .rejects.toThrow(/features\.lastFmApiKey/);
   });
 
   it('merges the three sources: counts, ranks, genres, library flags', async () => {
@@ -294,9 +294,34 @@ describe('getArtistAlbums — unverified bucket (Waveshaper fixture)', () => {
     expect(single?.typeUnverified).toBe(true);
     expect(single?.primaryType).toBe('Unknown');
     expect(single?.source).toBe('lastfm-only');
+    // Last.fm's mbid is a release MBID that get_album_info's release-group lookup rejects.
+    expect(single?.mbid).toBeNull();
     // Ranks span the whole merged set, by playcount.
     expect(result.albums.map(a => a.title)).toEqual(['66 MHz', 'Maniac', 'Velocity']);
     expect(result.albums.map(a => a.popularityRank)).toEqual([1, 2, 3]);
+  });
+
+  it('includeUnverified joins a Last.fm row that MusicBrainz types as a single, emitting no lastfm-only row', async () => {
+    const fetchMock = installFetch({
+      mbArtistSearch: () => mbArtist('mb-waveshaper', 'Waveshaper'),
+      mbBrowse: () => mbBrowseBody([
+        mbRg('rg-velocity', 'Velocity', '2016-05-20'),
+        { ...(mbRg('rg-66mhz', '66 MHz', '2014-01-01') as Record<string, unknown>), 'primary-type': 'Single' },
+      ]),
+      lastFm: () => lastFmBody([
+        lastFmAlbum('66 MHz', 500000),
+        lastFmAlbum('Velocity', 100000),
+      ]),
+    });
+    wireEmptyNavidrome();
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    const result = await getArtistAlbums(asClient(client), config, { artist: 'Waveshaper', includeUnverified: true });
+
+    expect(result.albums.map(a => a.title)).toEqual(['Velocity']);
+    expect(result.albums.every(a => a.source === 'musicbrainz')).toBe(true);
+    const browseUrl = fetchMock.mock.calls.map(c => String(c[0])).find(u => u.includes('/ws/2/release-group'));
+    expect(new URL(String(browseUrl)).searchParams.get('type')).toBe('album|ep|single');
   });
 });
 
@@ -426,13 +451,62 @@ describe('getArtistAlbums — degradation', () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
 
     await expect(getArtistAlbums(asClient(client), config, { artist: 'GUNSHIP' }))
-      .rejects.toThrow(/no discography source available/);
+      .rejects.toThrow(/No discography source is available: MusicBrainz was unreachable/);
+  });
+
+  it('Last.fm "could not be found" ⇒ a "no entry" note instead of an outage', async () => {
+    installFetch({
+      mbArtistSearch: () => mbArtist('mb-gunship', 'GUNSHIP'),
+      mbBrowse: () => GUNSHIP_BROWSE,
+      lastFm: () => ({ error: 6, message: 'The artist you supplied could not be found' }),
+    });
+    wireGunshipNavidrome(client);
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    const result = await getArtistAlbums(asClient(client), config, { artist: 'GUNSHIP' });
+
+    expect(result.sources).toEqual({ musicbrainz: true, lastfm: false });
+    expect(result.note).toMatch(/Last\.fm has no entry for this artist/);
+    expect(result.note).not.toMatch(/unreachable/);
+  });
+
+  it('artist unknown to both sources ⇒ a spelling hint, not an outage', async () => {
+    installFetch({
+      mbArtistSearch: () => ({ artists: [] }),
+      lastFm: () => ({ error: 6, message: 'The artist you supplied could not be found' }),
+    });
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    await expect(getArtistAlbums(asClient(client), config, { artist: 'Gunshp' }))
+      .rejects.toThrow(/No artist matching "Gunshp" was found in MusicBrainz or Last\.fm\. Check the spelling/);
   });
 
   it('input validation: artist or mbid is required', async () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
     await expect(getArtistAlbums(asClient(client), config, {}))
       .rejects.toThrow(/artist.*mbid|mbid.*artist/i);
+  });
+});
+
+describe('getArtistAlbums — fallback album probe', () => {
+  it('a rejected album-name probe degrades that row to inLibrary: false instead of failing the tool', async () => {
+    installFetch({
+      mbArtistSearch: () => mbArtist('mb-qotsa', 'Queens of the Stone Age'),
+      mbBrowse: () => mbBrowseBody([mbRg('rg-clockwork', '...Like Clockwork', '2013-06-03')]),
+      lastFm: () => lastFmBody([lastFmAlbum('...Like Clockwork', 900000)]),
+    });
+    client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
+      if (endpoint.startsWith('/artist?')) return Promise.resolve({ data: [], total: 0 });
+      return Promise.reject(new Error('Endpoint must not contain path-traversal segments'));
+    });
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    const result = await getArtistAlbums(asClient(client), config, { artist: 'Queens of the Stone Age' });
+
+    expect(result.albums).toHaveLength(1);
+    expect(result.albums[0]?.inLibrary).toBe(false);
+    expect(result.albums[0]?.libraryAlbumId).toBeNull();
   });
 });
 

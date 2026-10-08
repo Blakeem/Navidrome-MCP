@@ -78,6 +78,8 @@ export interface LyricsCandidateDTO {
   durationMs?: number;
   /** Whether the record carries timed lines */
   hasSynced: boolean;
+  /** Whether LRCLIB marks the record instrumental, with no lyric text */
+  isInstrumental: boolean;
 }
 
 /**
@@ -91,6 +93,6 @@ export interface LyricsSearchDTO {
     /** Navidrome song ID, passed back to get_lyrics */
     songId: string;
     /** Lyrics carried by that song's own audio file, if any */
-    lyrics?: 'synced' | 'plain';
+    lyrics?: 'synced' | 'unsynced';
   };
 }

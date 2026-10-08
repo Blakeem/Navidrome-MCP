@@ -18,15 +18,15 @@ import { resetMusicBrainzThrottleForTests } from '../../../src/utils/musicbrainz
 import {
   getAlbumInfo,
   clearAlbumInfoCachesForTests,
-} from '../../../src/tools/lastfm-discovery.js';
+} from '../../../src/tools/artist-discography.js';
 
 // ---- fetch routing ----------------------------------------------------------
 
-function jsonResponse(body: unknown): Response {
+function jsonResponse(body: unknown, status = 200): Response {
   return {
-    ok: true,
-    status: 200,
-    statusText: 'OK',
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? 'OK' : 'Error',
     json: () => Promise.resolve(body),
     text: () => Promise.resolve(JSON.stringify(body)),
     headers: new Headers(),
@@ -38,6 +38,7 @@ interface FetchRoutes {
   mbRgSearch?: (url: URL) => unknown;
   mbReleaseBrowse?: (url: URL) => unknown;
   lastFm?: (url: URL) => unknown;
+  lastFmStatus?: number;
 }
 
 /** Route global.fetch by host/path; throwing handlers simulate a source being down. */
@@ -62,7 +63,7 @@ function installFetch(routes: FetchRoutes): ReturnType<typeof vi.fn> {
       }
       if (url.host === 'ws.audioscrobbler.com') {
         if (routes.lastFm === undefined) throw new Error('unexpected Last.fm call');
-        return Promise.resolve(jsonResponse(routes.lastFm(url)));
+        return Promise.resolve(jsonResponse(routes.lastFm(url), routes.lastFmStatus));
       }
       throw new Error(`unexpected host ${url.host}`);
     } catch (error) {
@@ -197,10 +198,10 @@ afterEach(() => {
 });
 
 describe('getAlbumInfo — happy path (Unicorn fixture)', () => {
-  it('throws when LASTFM_API_KEY is missing', async () => {
+  it('throws naming features.lastFmApiKey when the Last.fm key is missing', async () => {
     const config = makeTestConfig();
     await expect(getAlbumInfo(asClient(client), config, { artist: 'GUNSHIP', album: 'Unicorn' }))
-      .rejects.toThrow(/LASTFM_API_KEY/);
+      .rejects.toThrow(/features\.lastFmApiKey/);
   });
 
   it('mbid path: MB tracklist from the Official release, Last.fm wiki/popularity, library match', async () => {
@@ -395,9 +396,11 @@ describe('getAlbumInfo — degradation', () => {
   });
 
   it('Last.fm "Album not found" ⇒ MB-only with a distinct note', async () => {
+    // Live Last.fm answers an unknown album with HTTP 404 and this JSON body.
     installFetch({
       ...unicornRoutes(),
       lastFm: () => ({ error: 6, message: 'Album not found' }),
+      lastFmStatus: 404,
     });
     wireNavidromeOwningUnicorn(client);
     const config = makeTestConfig({ lastFmApiKey: 'k' });
@@ -423,7 +426,20 @@ describe('getAlbumInfo — degradation', () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
 
     await expect(getAlbumInfo(asClient(client), config, { artist: 'GUNSHIP', album: 'Unicorn' }))
-      .rejects.toThrow(/no album info source available/);
+      .rejects.toThrow(/No album info source is available: MusicBrainz was unreachable/);
+  });
+
+  it('album unknown to both sources ⇒ a title hint, not an outage', async () => {
+    installFetch({
+      mbRgSearch: () => ({ 'release-groups': [] }),
+      lastFm: () => ({ error: 6, message: 'Album not found' }),
+      lastFmStatus: 404,
+    });
+    wireEmptyNavidrome(client);
+    const config = makeTestConfig({ lastFmApiKey: 'k' });
+
+    await expect(getAlbumInfo(asClient(client), config, { artist: 'GUNSHIP', album: 'Unicron' }))
+      .rejects.toThrow(/Album "Unicron" by "GUNSHIP" was not found in MusicBrainz or Last\.fm\. Check the title/);
   });
 
   it('mbid-only input with MB down ⇒ hard error (no names to pivot on)', async () => {
@@ -435,7 +451,7 @@ describe('getAlbumInfo — degradation', () => {
     const config = makeTestConfig({ lastFmApiKey: 'k' });
 
     await expect(getAlbumInfo(asClient(client), config, { mbid: '56a2d3b3-cb32-4ba0-bf6b-e94ca1d45307' }))
-      .rejects.toThrow(/no names were provided/);
+      .rejects.toThrow(/MusicBrainz was unreachable while resolving mbid .*no artist and album names were provided/);
   });
 
   it('Navidrome down ⇒ inLibrary null with a note', async () => {

@@ -21,11 +21,14 @@ import type { NavidromeClient } from '../../client/navidrome-client.js';
 import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { DEFAULT_VALUES } from '../../constants/defaults.js';
+import {
+  MAX_VALIDATION_TIMEOUT_MS,
+  MIN_VALIDATION_TIMEOUT_MS,
+  SINGLE_VALIDATION_TIMEOUT_MS,
+} from '../../constants/timeouts.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
-import { logger } from '../../utils/logger.js';
-import { ensureWebForPlayback } from '../../web/spawn.js';
+import { respawnWebForPlay } from './respawn-on-play.js';
 
-// Import tool functions
 import {
   listRadioStations,
   createRadioStation,
@@ -42,306 +45,300 @@ import {
   voteStation,
 } from '../radio-discovery.js';
 
-// Helper function to get radio tools based on config
-function getRadioTools(config: Config): Tool[] {
-  const baseTools: Tool[] = [
-    {
-      name: 'list_radio_stations',
-      description: 'List all internet radio stations from Navidrome',
-      inputSchema: {
-        type: 'object',
-        properties: {},
-      },
+const BASE_RADIO_TOOLS: Tool[] = [
+  {
+    name: 'list_radio_stations',
+    description: 'List all internet radio stations from Navidrome',
+    inputSchema: {
+      type: 'object',
+      properties: {},
     },
-    {
-      name: 'create_radio_station',
-      description: 'Create one or more radio stations. Always provide stations as a JSON array - use a single-item array for one station. Each station requires name and streamUrl, with optional homePageUrl.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stations: {
-            type: 'array',
-            description: 'Array of radio stations to create. For a single station, use: [{"name": "Station Name", "streamUrl": "http://stream.url"}]. For multiple stations, add more objects to the array.',
-            minItems: 1,
-            items: {
-              type: 'object',
-              properties: {
-                name: {
-                  type: 'string',
-                  description: 'Station name (required)',
-                  minLength: 1,
-                },
-                streamUrl: {
-                  type: 'string',
-                  description: 'Stream URL (required) - must be valid HTTP/HTTPS URL',
-                  pattern: '^https?://.+$',
-                },
-                homePageUrl: {
-                  type: 'string',
-                  description: 'Optional homepage URL for the station',
-                  pattern: '^https?://.+$',
-                },
-              },
-              required: ['name', 'streamUrl'],
-              additionalProperties: false,
-            },
-          },
-          validateBeforeAdd: {
-            type: 'boolean',
-            description: 'Test stream URLs before adding to ensure they work (default: false). Recommended for unknown streams.',
-            default: false,
-          },
-        },
-        required: ['stations'],
-        additionalProperties: false,
-      },
-    },
-    {
-      name: 'delete_radio_station',
-      description: 'Delete an internet radio station by ID',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stationId: {
-            type: 'string',
-            minLength: 1,
-            description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
-          },
-        },
-        required: ['stationId'],
-      },
-    },
-    {
-      name: 'get_radio_station',
-      description: 'Get detailed information about a specific radio station by ID',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stationId: {
-            type: 'string',
-            minLength: 1,
-            description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
-          },
-        },
-        required: ['stationId'],
-      },
-    },
-    {
-      name: 'validate_radio_stream',
-      description: 'Tests if an HTTP/HTTPS radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and samples a small audio chunk. Note: this tool can only probe http:// and https:// URLs — other valid radio protocols (mms://, rtsp://, rtmp://) play fine through play_radio_station but cannot be validated here. Redirects to private/loopback addresses are refused.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          url: {
-            type: 'string',
-            format: 'uri',
-            description: 'The radio stream URL to validate (http:// or https:// only)',
-          },
-          timeout: {
-            type: 'number',
-            description: 'Timeout in milliseconds (default: 8000, max: 30000)',
-            minimum: 1000,
-            maximum: 30000,
-            default: 8000,
-          },
-          followRedirects: {
-            type: 'boolean',
-            description: 'Follow HTTP redirects (default: true)',
-            default: true,
-          },
-        },
-        required: ['url'],
-      },
-    },
-  ];
-
-  // Only expose play_radio_station when local playback (mpv) is available.
-  // Without mpv the engine never gets configured and the call would fail with
-  // an internal error — hiding the tool keeps parity with the other mpv tools.
-  if (config.features.playback) {
-    baseTools.push({
-      name: 'play_radio_station',
-      description: 'Play a radio station through the local mpv speakers (requires mpv on the host). Replaces the entire live play queue with this single radio stream — radio is mutually exclusive with songs/albums in the play queue, matching Navidrome\'s web UI convention. Use `now_playing` to see the currently-playing station name and ICY metadata.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          stationId: {
-            type: 'string',
-            description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
-          },
-        },
-        required: ['stationId'],
-      },
-    });
-  }
-
-  // Add radio discovery tools if Radio Browser is enabled
-  if (config.features.radioBrowser) {
-    baseTools.push(
-      {
-        name: 'discover_radio_stations',
-        description: 'Discover internet radio stations worldwide via Radio Browser API. Search by genre/tag, country, language, quality, and more. Returns validated streams with metadata, sorted by popularity by default.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: 'Search query for station names (e.g., "BBC", "Classic FM", "Jazz FM")',
-            },
-            tag: {
-              type: 'string',
-              description: 'Filter by music genre/tag (e.g., "jazz", "rock", "classical", "electronic", "hip-hop", "country", "reggae", "latin")',
-            },
-            countryCode: {
-              type: 'string',
-              description: 'ISO 2-letter country code (e.g., "US"=United States, "GB"=United Kingdom, "FR"=France, "DE"=Germany, "JP"=Japan, "AU"=Australia)',
-            },
-            language: {
-              type: 'string',
-              description: 'Broadcast language (e.g., "english", "spanish", "french", "german", "japanese", "portuguese", "italian")',
-            },
-            codec: {
-              type: 'string',
-              description: 'Audio codec preference (e.g., "MP3" for best compatibility, "AAC" for better quality, "OGG" for open standard)',
-            },
-            bitrateMin: {
-              type: 'number',
-              description: 'Minimum audio quality in kbps (e.g., 128 for standard quality, 256 for high quality, 320 for maximum quality)',
-              minimum: 0,
-            },
-            isHttps: {
-              type: 'boolean',
-              description: 'Require secure HTTPS streams (recommended for security)',
-            },
-            order: {
-              type: 'string',
-              description: 'Sort results by: "votes"=popularity, "name"=alphabetical, "clickcount"=most played, "bitrate"=quality, "lastcheckok"=reliability, "random"=shuffle',
-              enum: ['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random'],
-              default: 'votes',
-            },
-            reverse: {
-              type: 'boolean',
-              description: 'Reverse sort order (true=descending/best first, false=ascending)',
-              default: true,
-            },
-            offset: {
-              type: 'number',
-              description: 'Skip first N results for pagination',
-              minimum: 0,
-            },
-            limit: {
-              type: 'number',
-              description: 'Maximum number of stations to return (15=quick discovery, 50=extensive search, 500=maximum)',
-              minimum: 1,
-              maximum: 500,
-              default: DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT,
-            },
-            hideBroken: {
-              type: 'boolean',
-              description: 'Hide stations that failed recent connectivity checks (recommended: true)',
-              default: true,
-            },
-          },
-        },
-      },
-      {
-        name: 'get_radio_filters',
-        description: 'Get available filter options for radio station discovery (tags, countries, languages, codecs)',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            kinds: {
-              type: 'array',
-              description: 'Filter types to retrieve',
-              items: {
+  },
+  {
+    name: 'create_radio_station',
+    description: 'Create one or more radio stations. Always provide stations as a JSON array - use a single-item array for one station. Each station requires name and streamUrl, with optional homePageUrl. A created row carries a note when another saved station already uses its stream URL.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stations: {
+          type: 'array',
+          description: 'Array of radio stations to create. For a single station, use: [{"name": "Station Name", "streamUrl": "http://stream.url"}]. For multiple stations, add more objects to the array.',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: {
+              name: {
                 type: 'string',
-                enum: ['tags', 'countries', 'languages', 'codecs'],
+                description: 'Station name (required, non-empty)',
               },
-              default: ['tags', 'countries', 'languages', 'codecs'],
+              streamUrl: {
+                type: 'string',
+                description: 'Stream URL (required). Must use http:// or https://.',
+              },
+              homePageUrl: {
+                type: 'string',
+                description: 'Optional homepage URL. Must use http:// or https:// when set.',
+              },
             },
+            required: ['name', 'streamUrl'],
+            additionalProperties: false,
           },
+        },
+        validateBeforeAdd: {
+          type: 'boolean',
+          description: 'Test stream URLs before adding to ensure they work (default: false). Recommended for unknown streams. Streams on private or LAN addresses always fail validation, so leave this false for them.',
+          default: false,
         },
       },
-      {
-        name: 'get_station_by_uuid',
-        description: 'Get detailed information about a specific radio station by its UUID',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            stationUuid: {
-              type: 'string',
-              minLength: 1,
-              description: 'The unique UUID of the radio station',
-            },
-          },
-          required: ['stationUuid'],
+      required: ['stations'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'delete_radio_station',
+    description: 'Delete an internet radio station by ID',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stationId: {
+          type: 'string',
+          minLength: 1,
+          description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
         },
       },
-      {
-        name: 'click_station',
-        description: 'Register a play click for a radio station (helps with popularity metrics). Call this when starting playback.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            stationUuid: {
-              type: 'string',
-              minLength: 1,
-              description: 'The unique UUID of the radio station',
-            },
-          },
-          required: ['stationUuid'],
+      required: ['stationId'],
+    },
+  },
+  {
+    name: 'get_radio_station',
+    description: 'Get detailed information about a specific radio station by ID',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stationId: {
+          type: 'string',
+          minLength: 1,
+          description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
         },
       },
-      {
-        name: 'vote_station',
-        description: 'Vote for a radio station to increase its popularity',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            stationUuid: {
-              type: 'string',
-              minLength: 1,
-              description: 'The unique UUID of the radio station',
-            },
-          },
-          required: ['stationUuid'],
+      required: ['stationId'],
+    },
+  },
+  {
+    name: 'validate_radio_stream',
+    description: 'Tests if an HTTP/HTTPS radio stream URL is valid, accessible, and streams audio content. Checks HTTP response, content type, streaming headers, and samples a small audio chunk only when the HEAD response does not already show audio. audioDataDetected is false when no sample was taken. This validator probes only http:// and https:// URLs. Add an mms://, rtsp:// or rtmp:// station in the Navidrome web UI instead. URLs and redirect targets that resolve to private, loopback or link-local addresses are refused, so only publicly reachable streams can be validated.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          format: 'uri',
+          description: 'The radio stream URL to validate (http:// or https:// only)',
         },
-      }
-    );
+        timeout: {
+          type: 'number',
+          description: `Timeout in milliseconds (default: ${SINGLE_VALIDATION_TIMEOUT_MS}, max: ${MAX_VALIDATION_TIMEOUT_MS})`,
+          minimum: MIN_VALIDATION_TIMEOUT_MS,
+          maximum: MAX_VALIDATION_TIMEOUT_MS,
+          default: SINGLE_VALIDATION_TIMEOUT_MS,
+        },
+        followRedirects: {
+          type: 'boolean',
+          description: 'Follow HTTP redirects (default: true)',
+          default: true,
+        },
+      },
+      required: ['url'],
+    },
+  },
+];
+
+const PLAY_RADIO_STATION_TOOL: Tool = {
+  name: 'play_radio_station',
+  description: 'Play a radio station through the local mpv speakers (requires mpv on the host). Replaces the entire live play queue with this single radio stream. Radio is mutually exclusive with songs/albums in the play queue, matching Navidrome\'s web UI convention. Use `now_playing` to see the currently-playing station name and ICY metadata.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      stationId: {
+        type: 'string',
+        minLength: 1,
+        description: 'The Navidrome saved-station ID, as returned by `list_radio_stations`.',
+      },
+    },
+    required: ['stationId'],
+  },
+};
+
+const RADIO_BROWSER_TOOLS: Tool[] = [
+  {
+    name: 'discover_radio_stations',
+    description: `Discover internet radio stations worldwide via Radio Browser API. Search by genre/tag, country, language, quality, and more. The first ${DEFAULT_VALUES.RADIO_DISCOVERY_PROBE_COUNT} results get a quick best-effort probe with a per-station verdict (OK or FAIL). Later results are unprobed. Sorted by popularity by default. Each station's streamUrl and homePageUrl feed create_radio_station unchanged.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query for station names (e.g., "BBC", "Classic FM", "Jazz FM")',
+        },
+        tag: {
+          type: 'string',
+          description: 'Filter by music genre/tag (e.g., "jazz", "rock", "classical", "electronic", "hip-hop", "country", "reggae", "latin")',
+        },
+        countryCode: {
+          type: 'string',
+          description: 'ISO 2-letter country code (e.g., "US"=United States, "GB"=United Kingdom, "FR"=France, "DE"=Germany, "JP"=Japan, "AU"=Australia)',
+        },
+        language: {
+          type: 'string',
+          description: 'Broadcast language as a language name, as listed by get_radio_filters (e.g., "english", "spanish", "french", "german", "japanese", "portuguese", "italian"). Radio Browser matches it as a substring, so an ISO code such as "en" also matches "french" and "slovenian".',
+        },
+        codec: {
+          type: 'string',
+          description: 'Audio codec preference (e.g., "MP3" for best compatibility, "AAC" for better quality, "OGG" for open standard)',
+        },
+        bitrateMin: {
+          type: 'number',
+          description: 'Minimum audio quality in kbps (e.g., 128 for standard quality, 256 for high quality, 320 for maximum quality)',
+          minimum: 0,
+        },
+        isHttps: {
+          type: 'boolean',
+          description: 'true returns only HTTPS streams. false or omitted applies no HTTPS filter.',
+        },
+        sort: {
+          type: 'string',
+          description: 'Sort results by: "votes"=popularity, "name"=alphabetical, "clickcount"=most played, "bitrate"=quality, "lastcheckok"=reliability, "random"=shuffle',
+          enum: ['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random'],
+          default: 'votes',
+        },
+        order: {
+          type: 'string',
+          description: 'Sort direction. Omitted means ASC for "name" (A to Z) and DESC for every other sort (highest first).',
+          enum: ['ASC', 'DESC'],
+        },
+        offset: {
+          type: 'integer',
+          description: 'Skip first N results for pagination',
+          minimum: 0,
+        },
+        limit: {
+          type: 'integer',
+          description: 'Maximum number of stations to return (15=quick discovery, 50=extensive search, 500=maximum)',
+          minimum: 1,
+          maximum: 500,
+          default: DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT,
+        },
+        hideBroken: {
+          type: 'boolean',
+          description: 'Hide stations that failed recent connectivity checks (recommended: true)',
+          default: true,
+        },
+      },
+    },
+  },
+  {
+    name: 'get_radio_filters',
+    description: 'Get available filter options for radio station discovery (tags, countries, languages, codecs)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kinds: {
+          type: 'array',
+          description: 'Filter types to retrieve',
+          items: {
+            type: 'string',
+            enum: ['tags', 'countries', 'languages', 'codecs'],
+          },
+          default: ['tags', 'countries', 'languages', 'codecs'],
+        },
+      },
+    },
+  },
+  {
+    name: 'get_station_by_uuid',
+    description: 'Get detailed information about a specific radio station by its UUID. Its streamUrl and homePageUrl feed create_radio_station unchanged.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stationUuid: {
+          type: 'string',
+          minLength: 1,
+          description: 'The unique UUID of the radio station',
+        },
+      },
+      required: ['stationUuid'],
+    },
+  },
+  {
+    name: 'click_station',
+    description: 'Register a play click for a radio station (helps with popularity metrics). Call this when starting playback. Returns the canonical streamUrl of the station.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stationUuid: {
+          type: 'string',
+          minLength: 1,
+          description: 'The unique UUID of the radio station',
+        },
+      },
+      required: ['stationUuid'],
+    },
+  },
+  {
+    name: 'vote_station',
+    description: 'Vote for a radio station to increase its popularity. Radio Browser counts one vote per IP per station every 10 minutes, so a repeat vote in that window reports the first one.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        stationUuid: {
+          type: 'string',
+          minLength: 1,
+          description: 'The unique UUID of the radio station',
+        },
+      },
+      required: ['stationUuid'],
+    },
+  },
+];
+
+export const RADIO_PLAYBACK_TOOL_NAMES = [PLAY_RADIO_STATION_TOOL.name];
+export const RADIO_BROWSER_TOOL_NAMES = RADIO_BROWSER_TOOLS.map((tool) => tool.name);
+
+function getRadioTools(config: Config): Tool[] {
+  const tools: Tool[] = [...BASE_RADIO_TOOLS];
+
+  // Without mpv the engine never gets configured, so the call would fail with an internal error.
+  if (config.features.playback) {
+    tools.push(PLAY_RADIO_STATION_TOOL);
   }
 
-  return baseTools;
+  if (config.features.radioBrowser) {
+    tools.push(...RADIO_BROWSER_TOOLS);
+  }
+
+  return tools;
 }
 
-// Factory function for creating radio tool category with dependencies  
 export function createRadioToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools: getRadioTools(config),
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
         case 'list_radio_stations':
-          return await listRadioStations(client, args, config);
+          return await listRadioStations(client, args);
         case 'create_radio_station':
-          return await createRadioStation(client, config, args);
+          return await createRadioStation(client, args);
         case 'delete_radio_station':
           return await deleteRadioStation(client, args);
         case 'get_radio_station':
-          return await getRadioStation(client, args, config);
+          return await getRadioStation(client, args);
         case 'play_radio_station':
-          // Respawn-on-play (see PLAYBACK_STARTERS in playback-handlers.ts):
-          // starting a radio stream loads new content, so re-ensure the web
-          // player is up to own + scrobble it. Gated on webui.enabled internally.
-          // Best-effort — never block playback if the (re)spawn fails.
-          try {
-            await ensureWebForPlayback(config);
-          } catch (err) {
-            logger.warn('respawn-on-play: ensureWebForPlayback failed, continuing with playback:', err);
-          }
-          return await playRadioStation(client, args, config);
+          await respawnWebForPlay(config);
+          return await playRadioStation(client, args);
         case 'validate_radio_stream':
-          return await validateRadioStream(client, args);
+          return await validateRadioStream(args);
         case 'discover_radio_stations':
-          return await discoverRadioStations(config, client, args);
+          return await discoverRadioStations(config, args);
         case 'get_radio_filters':
           return await getRadioFilters(config, args);
         case 'get_station_by_uuid':
@@ -351,7 +348,7 @@ export function createRadioToolCategory(client: NavidromeClient, config: Config)
         case 'vote_station':
           return await voteStation(config, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`radio ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

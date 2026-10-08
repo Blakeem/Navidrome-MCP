@@ -26,9 +26,9 @@ export interface RadioStationDTO {
   name: string;
   /** Optional homepage URL */
   homePageUrl?: string;
-  /** ISO 8601 timestamp when created or null if the server never populated it (Go zero-time) */
+  /** ISO 8601 creation time. Null when the server sent the Go zero-time. */
   createdAt: string | null;
-  /** ISO 8601 timestamp when last updated or null if the server never populated it (Go zero-time) */
+  /** ISO 8601 last-update time. Null when the server sent the Go zero-time. */
   updatedAt: string | null;
 }
 
@@ -40,25 +40,16 @@ export interface CreateRadioStationResponse {
   station?: RadioStationDTO;
   /** Error message if failed */
   error?: string;
-  /** Non-fatal warning attached to a successful create — e.g. "station was
-      created but its id couldn't be resolved; call list_radio_stations to
-      find it". Present only on partial-failure success paths. */
+  /** Warning on a successful create whose station id could not be resolved. */
   note?: string;
-  /** One-time validation reminder message */
-  validation_reminder?: string;
 }
 
-/** Response from deleting a radio station. The deleted id is intentionally
- *  not echoed — the LLM just sent it. The success flag plus the human
- *  message are the round-trip confirmation; matches the shape of
- *  `delete_playlist` for consistency. */
+/** The deleted id is not echoed, since the caller sent it. */
 export interface DeleteRadioStationResponse {
   /** Success status */
   success: boolean;
   /** Human-readable confirmation, e.g. "Successfully deleted radio station" */
   message: string;
-  /** Error message if failed */
-  error?: string;
 }
 
 /** Response from listing radio stations */
@@ -79,16 +70,16 @@ export interface ExternalRadioStationDTO {
   stationUuid: string;
   /** Station name */
   name: string;
-  /** Resolved play URL (preferred over raw URL) */
-  playUrl: string;
+  /** Resolved stream URL (preferred over raw URL) */
+  streamUrl: string;
   /** Station homepage URL */
-  homepage?: string;
+  homePageUrl?: string;
   /** Tags/genres for the station */
   tags: string[];
   /** Country code (ISO 3166) */
   countryCode?: string;
-  /** Language codes */
-  languageCodes: string[];
+  /** Language names, the values discover_radio_stations' language filter matches */
+  languages: string[];
   /** Audio codec (MP3, AAC, OGG, etc.) */
   codec?: string;
   /** Bitrate in kbps */
@@ -101,14 +92,12 @@ export interface ExternalRadioStationDTO {
   clickCount: number;
   /** Stream validation results (if validated) */
   validation?: {
-    /** Whether validation was performed */
-    validated: boolean;
     /** Whether stream passed validation */
     isValid: boolean;
     /** Brief validation status */
-    status: string;
-    /** Validation duration in ms */
-    duration?: number;
+    status: 'OK' | 'FAIL';
+    /** Validation duration */
+    durationMs?: number;
   };
 }
 
@@ -118,6 +107,10 @@ export interface ExternalRadioStationDTO {
 export interface DiscoverRadioStationsResponse {
   /** Array of discovered stations */
   stations: ExternalRadioStationDTO[];
+  /** The offset of the next page, counted in upstream rows, since dropped and deduped rows never reach `stations`. */
+  nextOffset: number;
+  /** True when Radio Browser filled the page. Dedupe can shorten `stations`, so its length is no end signal. */
+  hasMore: boolean;
   /** Data source */
   source: 'radio-browser';
   /** Mirror server used */
@@ -148,7 +141,6 @@ export interface RadioFiltersResponse {
   }>;
   /** Available languages */
   languages?: Array<{
-    code: string;
     name: string;
     stationCount: number;
   }>;
@@ -158,10 +150,8 @@ export interface RadioFiltersResponse {
     stationCount: number;
   }>;
   /**
-   * Names of requested `kinds` whose fetch failed while at least one other
-   * kind succeeded. Absent means every requested kind returned successfully.
-   * Lets a caller distinguish "not requested" from "fetch errored" — a missing
-   * category is otherwise indistinguishable from an empty available-options set.
+   * Requested kinds whose fetch failed while another kind succeeded.
+   * Separates a failed fetch from an empty result.
    */
   partialFailures?: string[];
 }
@@ -170,10 +160,10 @@ export interface RadioFiltersResponse {
  * Response from clicking/playing a radio station
  */
 export interface ClickRadioStationResponse {
-  /** Success status */
-  ok: boolean;
-  /** Canonical play URL */
-  playUrl: string;
+  /** A rejected click throws, so a returned click always succeeded. */
+  success: true;
+  /** Canonical stream URL */
+  streamUrl: string;
   /** Response message */
   message: string;
 }
@@ -182,8 +172,36 @@ export interface ClickRadioStationResponse {
  * Response from voting for a radio station
  */
 export interface VoteRadioStationResponse {
-  /** Success status */
-  ok: boolean;
+  /** A rejected vote throws, so a returned vote always succeeded. */
+  success: true;
   /** Response message */
   message: string;
+}
+
+/**
+ * Result of validate_radio_stream
+ */
+export interface StreamValidationResult {
+  success: boolean;
+  url: string;
+  finalUrl?: string;
+  status: 'valid' | 'invalid' | 'error';
+  httpStatus?: number;
+  contentType?: string;
+  streamingHeaders: Record<string, string>;
+  audioFormat?: {
+    readonly detected: boolean;
+    readonly format?: string;
+    readonly mime?: string;
+  };
+  validation: {
+    httpAccessible: boolean;
+    hasAudioContentType: boolean;
+    hasStreamingHeaders: boolean;
+    audioDataDetected: boolean;
+  };
+  errors: string[];
+  warnings: string[];
+  recommendations: string[];
+  testDurationMs: number;
 }

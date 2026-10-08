@@ -16,14 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/**
- * Clean DTO for tags, representing metadata key-value pairs
- */
+/** One tag value with its usage counts. Rows sit under the tagName of the response that holds them. */
 export interface TagDTO {
-  /** Unique tag ID */
-  id: string;
-  /** Tag name (e.g., "genre", "composer", "label") */
-  tagName: string;
   /** Tag value */
   tagValue: string;
   /** Number of albums with this tag */
@@ -41,22 +35,19 @@ export interface TagDistribution {
   tagName: string;
   /** Library-wide count of distinct values for this tag name */
   uniqueValues: number;
-  /** Total songs across the surfaced top values (the `distribution` slice) */
+  /** Total songs across the `distribution` slice */
   totalSongs: number;
-  /** Total albums across the surfaced top values (the `distribution` slice) */
+  /** Total albums across the `distribution` slice */
   totalAlbums: number;
-  /** Most common tag value */
-  mostCommon: TagDTO;
-  /** Top values surfaced (sorted by usage), capped at the distribution limit */
+  /** Surfaced values sorted by song count, capped at distributionLimit. See `sampled`. */
   distribution: TagDTO[];
   /**
-   * True when this distribution is an alphabetical sample rather than a true
-   * top-N by count. Set for tag names other than `genre`, which have no
-   * server-provided counts to sort by (so the surfaced slice is the
-   * alphabetically-first values, then locally re-sorted by count). Absent for
-   * `genre`, which is sorted by song count server-side and is a real top-N.
+   * True when the slice is alphabetical rather than a top-N by count.
+   * Set when a non-genre tag name has more values than the page.
    */
   sampled?: boolean;
+  /** True when some counts failed to load and read as 0. */
+  countsIncomplete?: boolean;
 }
 
 /**
@@ -65,6 +56,6 @@ export interface TagDistribution {
 export interface TagDistributionResponse {
   /** Array of tag distributions by name */
   distributions: TagDistribution[];
-  /** Total unique tag names */
-  totalTagNames: number;
+  /** Requested tag names with no values in the active libraries. Omitted when every name has values. */
+  emptyTagNames?: string[];
 }

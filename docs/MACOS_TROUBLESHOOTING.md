@@ -56,26 +56,19 @@ Validate your JSON configuration. Common mistakes:
 - Missing quotes around string values
 - Using single quotes instead of double quotes
 
-Valid example:
+Valid example, with the full `npx` path from Issue 1:
 ```json
 {
   "mcpServers": {
     "navidrome": {
-      "command": "node",
-      "args": ["/Users/your-username/navidrome-mcp/dist/index.js"],
-      "env": {
-        "NAVIDROME_URL": "https://your-server.com",
-        "NAVIDROME_USERNAME": "your-username",
-        "NAVIDROME_PASSWORD": "your-password",
-        "LASTFM_API_KEY": "your-api-key",
-        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
-        "LYRICS_PROVIDER": "lrclib",
-        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)"
-      }
+      "command": "/opt/homebrew/bin/npx",
+      "args": ["navidrome-mcp"]
     }
   }
 }
 ```
+
+For a manual build, use `"command": "/opt/homebrew/bin/node"` with `"args": ["/Users/your-username/navidrome-mcp/dist/index.js"]`. Your credentials and options live in `settings.json`, edited with `navidrome-config`, so this file only launches the server.
 
 ### Testing Your Setup
 
@@ -97,10 +90,7 @@ node --version
 # Navigate to your Navidrome MCP directory
 cd /path/to/navidrome-mcp
 
-# Test with your credentials
-NAVIDROME_URL="https://your-server.com" \
-NAVIDROME_USERNAME="your-username" \
-NAVIDROME_PASSWORD="your-password" \
+# Start the server with the settings saved by navidrome-config
 node dist/index.js
 
 # You should see:
@@ -108,34 +98,11 @@ node dist/index.js
 # [INFO] Navidrome MCP Server started successfully
 ```
 
-Press `Ctrl+C` to stop the test server.
+Press `Ctrl+C` to stop the test server. Environment variables such as `NAVIDROME_URL` apply only when no `settings.json` exists.
 
 #### Step 3: Enable Debug Mode
 
-For troubleshooting, add debug mode to your configuration:
-
-```json
-{
-  "mcpServers": {
-    "navidrome": {
-      "command": "node",
-      "args": ["/Users/your-username/navidrome-mcp/dist/index.js"],
-      "env": {
-        "NAVIDROME_URL": "https://your-server.com",
-        "NAVIDROME_USERNAME": "your-username",
-        "NAVIDROME_PASSWORD": "your-password",
-        "LASTFM_API_KEY": "your-api-key",
-        "RADIO_BROWSER_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
-        "LYRICS_PROVIDER": "lrclib",
-        "LRCLIB_USER_AGENT": "Navidrome-MCP/1.0 (+https://github.com/Blakeem/Navidrome-MCP)",
-        "DEBUG": "true"
-      }
-    }
-  }
-}
-```
-
-This will output additional diagnostic information when the server starts.
+Enable **Verbose debug logging** (`advanced.debug`) in the settings page (`navidrome-config`), then restart Claude Desktop. The server then logs extra diagnostic information at startup.
 
 ### Checking Claude Desktop Logs
 
@@ -189,8 +156,8 @@ If you're still experiencing problems:
    node --version
    which node
    
-   # Test the server with debug mode
-   DEBUG=true node /path/to/navidrome-mcp/dist/index.js
+   # Test the server with Verbose debug logging enabled in the settings page
+   node /path/to/navidrome-mcp/dist/index.js
    ```
 
 2. **Check Recent Changes:**
@@ -221,7 +188,6 @@ If you're still experiencing problems:
 
 - **Fixed `uv_cwd` Error:** The server no longer crashes when `process.cwd()` is unavailable
 - **Improved Error Handling:** Better diagnostic output for troubleshooting startup issues
-- **Conditional .env Loading:** Only attempts to load `.env` file when environment variables are missing
 
 To get these fixes:
 ```bash

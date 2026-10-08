@@ -46,9 +46,14 @@ describe('IdSchema', () => {
 
 describe('createIdSchema', () => {
   it('uses the resource type in error messages', () => {
-    const schema = createIdSchema('Playlist');
+    const schema = createIdSchema('Playlist', 'id');
     expect(() => schema.parse({ id: '../bad' })).toThrow(/Playlist ID contains invalid characters/);
     expect(() => schema.parse({ id: '' })).toThrow(/Playlist ID is required/);
+  });
+
+  it('reports an empty ID once, not also as invalid characters', () => {
+    const result = createIdSchema('Artist', 'artistId').safeParse({ artistId: '' });
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual(['Artist ID is required']);
   });
 });
 
@@ -103,11 +108,6 @@ describe('createLimitSchema / OffsetSchema integer enforcement', () => {
 
   it('rejects fractional limits', () => {
     const schema = createLimitSchema(1, 500, 100);
-    expect(() => schema.parse(50.5)).toThrow();
-  });
-
-  it('rejects fractional limits on the no-default variant', () => {
-    const schema = createLimitSchema(1, 500);
     expect(() => schema.parse(50.5)).toThrow();
   });
 

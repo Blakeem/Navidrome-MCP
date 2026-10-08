@@ -16,16 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/**
- * Manages one-time messages for LLM assistants.
- *
- * State is a process-wide singleton (see getInstance), so tips, reminders, and
- * helpful messages are shown only once per process. Under the stdio transport
- * that is one process per client session, so it reads as "once per session".
- * Under the multi-session HTTP transport all concurrent sessions share this
- * state, so once any session consumes a tip no other session in that process
- * sees it — accepted trade-off (a helper tip not repeating is cosmetic).
- */
+/** One-time LLM tips tracked process-wide. Under HTTP all sessions share shown state,
+ *  accepted because a missed tip is cosmetic. */
 export class MessageManager {
   private static instance: MessageManager | null = null;
   private readonly shownMessages: Set<string>;
@@ -37,136 +29,36 @@ export class MessageManager {
     this.initializeMessages();
   }
 
-  /**
-   * Get the singleton instance of MessageManager
-   */
   public static getInstance(): MessageManager {
     MessageManager.instance ??= new MessageManager();
     return MessageManager.instance;
   }
 
-  /**
-   * Initialize predefined message templates
-   */
   private initializeMessages(): void {
-    // Radio validation reminder
-    this.messageTemplates.set('radio.validation_reminder', `
-STREAM VALIDATION RECOMMENDED
-   Use 'validate_radio_stream' tool first to test your URL
-   Many internet radio URLs change frequently
-   Validation checks: accessibility, audio format, streaming headers
-
-   TIP: Find reliable streams at radio-browser.info or somafm.com`);
-
-    // Radio list tip
     this.messageTemplates.set('radio.list_tip',
       "TIP: Use 'validate_radio_stream' to test station URLs if playback issues occur");
-
-    // Radio creation success
-    this.messageTemplates.set('radio.creation_success',
-      "Station created successfully. Remember to validate streams periodically as URLs may change.");
-
-    // General validation advice
-    this.messageTemplates.set('radio.validation_advice',
-      "Pro tip: Radio streams can go offline. Validate regularly for best experience.");
-
-    // Add more message templates as needed
-    this.messageTemplates.set('general.welcome',
-      "Welcome to Navidrome MCP. Type 'test_connection' to verify your setup.");
   }
 
-  /**
-   * Get a message if it hasn't been shown yet
-   * @param messageKey The unique key for the message
-   * @param customMessage Optional custom message to use instead of template
-   * @returns The message if not shown before, null otherwise
-   */
-  public getMessage(messageKey: string, customMessage?: string): string | null {
-    // Check if message was already shown
+  public getMessage(messageKey: string): string | null {
     if (this.shownMessages.has(messageKey)) {
       return null;
     }
 
-    // Resolve the message first — custom message takes precedence over template.
-    const resolved =
-      customMessage !== undefined && customMessage !== ''
-        ? customMessage
-        : (this.messageTemplates.get(messageKey) ?? null);
-
-    // Only consume the one-time slot when a real message is actually returned;
-    // probing an unknown key (no template, no custom message) must not silence
-    // a later call that does supply a custom message.
-    if (resolved !== null && resolved !== '') {
-      this.shownMessages.add(messageKey);
-      return resolved;
+    const template = this.messageTemplates.get(messageKey);
+    if (template === undefined) {
+      return null;
     }
 
-    return null;
-  }
-
-  /**
-   * Check if a message has been shown
-   * @param messageKey The unique key for the message
-   */
-  public hasShownMessage(messageKey: string): boolean {
-    return this.shownMessages.has(messageKey);
-  }
-
-  /**
-   * Manually mark a message as shown without returning it
-   * @param messageKey The unique key for the message
-   */
-  public markAsShown(messageKey: string): void {
     this.shownMessages.add(messageKey);
+    return template;
   }
 
-  /**
-   * Reset all shown messages (useful for testing)
-   */
+  /** Lets tests isolate cases, since the instance is process-wide. */
   public reset(): void {
     this.shownMessages.clear();
   }
-
-  /**
-   * Get all available message keys (for debugging)
-   */
-  public getAvailableMessageKeys(): string[] {
-    return Array.from(this.messageTemplates.keys());
-  }
-
-  /**
-   * Add a new message template at runtime
-   * @param key The unique key for the message
-   * @param message The message content
-   */
-  public addMessageTemplate(key: string, message: string): void {
-    this.messageTemplates.set(key, message);
-  }
-
-  /**
-   * Format a message with dynamic values
-   * @param messageKey The message key
-   * @param values Object with key-value pairs to replace in message
-   */
-  public getFormattedMessage(
-    messageKey: string, 
-    values: Record<string, string | number>,
-    customMessage?: string
-  ): string | null {
-    const message = this.getMessage(messageKey, customMessage);
-    if (message === null || message === '') return null;
-
-    let formatted = message;
-    for (const [key, value] of Object.entries(values)) {
-      // Plain split/join avoids a RegExp built from a caller-controlled key,
-      // which could throw a SyntaxError or over-match on regex metacharacters.
-      formatted = formatted.split(`{{${key}}}`).join(String(value));
-    }
-    return formatted;
-  }
 }
 
-// Export singleton getter for convenience
 export function getMessageManager(): MessageManager {
   return MessageManager.getInstance();
 }

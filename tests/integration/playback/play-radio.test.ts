@@ -72,8 +72,7 @@ describePlayback('play_radio_station + radio/songs mutual exclusion (live)', () 
     const entry = queue.items[0]!;
     // The defining radio signal: stream URL doesn't carry a Navidrome songId
     expect(entry.songId).toBeNull();
-    // `filename` is intentionally NOT on the LLM-facing shape — the engine
-    // retains it internally for hasRadioStream() / now_playing() detection.
+    // No stream URL reaches the LLM-facing shape, since it would disclose the LAN host.
     expect(entry).not.toHaveProperty('filename');
     expect(entry.isCurrent).toBe(true);
   });

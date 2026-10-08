@@ -65,7 +65,6 @@ interface NavidromeJwtClaims {
  * Returns `null` on:
  *   - malformed JWT structure (not three dot-separated segments)
  *   - empty payload segment
- *   - base64url decode failure (Buffer.from is permissive but can produce empty)
  *   - JSON.parse failure (truncated / invalid JSON)
  *   - missing or non-string `uid` claim
  *
@@ -92,21 +91,8 @@ export function decodeJwtPayload(token: string): NavidromeJwtClaims | null {
     return null;
   }
 
-  // Phase 2: base64url → utf-8
-  // Buffer.from(_, 'base64url') is built-in since Node 16. It accepts both
-  // padded and unpadded base64url. On invalid characters it silently produces
-  // a shorter buffer rather than throwing — that gets caught by JSON.parse
-  // below.
-  let payloadJson: string;
-  try {
-    payloadJson = Buffer.from(payloadSegment, 'base64url').toString('utf8');
-  } catch (error) {
-    logger.error(
-      'JWT decode failed: base64url decode threw — token format may have changed',
-      error,
-    );
-    return null;
-  }
+  // Invalid characters yield a shorter buffer, which the empty check and JSON.parse below catch.
+  const payloadJson = Buffer.from(payloadSegment, 'base64url').toString('utf8');
 
   if (payloadJson.length === 0) {
     logger.error('JWT decode failed: decoded payload is empty');

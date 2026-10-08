@@ -18,7 +18,8 @@ vi.mock('node:dns/promises', () => ({
 import { resolveSrv } from 'node:dns/promises';
 import {
   getRadioBrowserBase,
-  resetRadioBrowserResolverCache,
+  invalidateRadioBrowserBase,
+  resetRadioBrowserResolverCacheForTests,
   RADIO_BROWSER_FALLBACK_BASE,
 } from '../../../src/utils/radio-browser-resolver.js';
 
@@ -26,18 +27,24 @@ const mockedResolveSrv = vi.mocked(resolveSrv);
 
 describe('getRadioBrowserBase', () => {
   beforeEach(() => {
-    resetRadioBrowserResolverCache();
+    resetRadioBrowserResolverCacheForTests();
     mockedResolveSrv.mockReset();
   });
 
   afterEach(() => {
-    resetRadioBrowserResolverCache();
+    resetRadioBrowserResolverCacheForTests();
   });
 
   it('returns the override verbatim and never hits DNS', async () => {
     const result = await getRadioBrowserBase('https://my-pinned-mirror.test');
 
     expect(result).toBe('https://my-pinned-mirror.test');
+    expect(mockedResolveSrv).not.toHaveBeenCalled();
+  });
+
+  it('strips trailing slashes from the override so `${base}/json/...` never doubles the slash', async () => {
+    expect(await getRadioBrowserBase('https://x.example/')).toBe('https://x.example');
+    expect(await getRadioBrowserBase('https://x.example//')).toBe('https://x.example');
     expect(mockedResolveSrv).not.toHaveBeenCalled();
   });
 
@@ -142,5 +149,20 @@ describe('getRadioBrowserBase', () => {
     const result = await getRadioBrowserBase();
 
     expect(result).toMatch(/^https:\/\/(de1|us1|fr1)\.api\.radio-browser\.info$/);
+  });
+
+  it('keeps the cached mirror when a late failure names an older mirror', async () => {
+    mockedResolveSrv.mockResolvedValue([
+      { name: 'us1.api.radio-browser.info', port: 443, priority: 1, weight: 1 },
+    ]);
+    await getRadioBrowserBase();
+
+    invalidateRadioBrowserBase('https://dead.api.radio-browser.info');
+    expect(await getRadioBrowserBase()).toBe('https://us1.api.radio-browser.info');
+    expect(mockedResolveSrv).toHaveBeenCalledTimes(1);
+
+    invalidateRadioBrowserBase('https://us1.api.radio-browser.info');
+    await getRadioBrowserBase();
+    expect(mockedResolveSrv).toHaveBeenCalledTimes(2);
   });
 });

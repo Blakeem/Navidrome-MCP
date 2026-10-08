@@ -24,10 +24,10 @@ import { logger } from '../utils/logger.js';
 async function main(): Promise<void> {
   const { url, close } = await startConfigServer();
 
-  // Standalone CLI context (NOT MCP stdio) — printing to stdout is correct and
+  // Standalone CLI context (NOT MCP stdio), so printing to stdout is correct and
   // is the guaranteed fallback if the browser can't be opened automatically.
   process.stdout.write(
-    `\n  Navidrome MCP — Settings\n  Open this in your browser:  ${url}\n  (attempting to open it for you…)  Press Ctrl-C when you're done.\n\n`,
+    `\n  Navidrome MCP Settings\n  Open this in your browser:  ${url}\n  (attempting to open it for you…)  Press Ctrl-C when you're done.\n\n`,
   );
   openBrowser(url);
 

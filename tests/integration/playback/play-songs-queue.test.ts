@@ -304,14 +304,12 @@ describePlayback('play_songs + queue manipulation (live)', () => {
 
     const after = await getPlayQueue();
     expect(after.length).toBe(5);
-    // mpv inserts the moved entry BEFORE the entry currently at `to` when
-    // from < to, so for from:0 to:4 in a 5-track queue the moved (current)
-    // track lands at index 3.
+    // `to` is the final index, so from:0 to:4 in a 5-track queue lands the moved (current) track last.
     const current = after.items.find((e) => e.isCurrent);
-    // Same track still playing — the play head was never hijacked.
+    // Same track still playing. The play head was never hijacked.
     expect(current?.songId).toBe(wasPlayingSongId);
-    expect(after.currentIndex).toBe(3);
-    expect(after.items[3]?.songId).toBe(wasPlayingSongId);
+    expect(after.currentIndex).toBe(4);
+    expect(after.items[4]?.songId).toBe(wasPlayingSongId);
     // The formerly-idx-1 track bubbled up to the top but is NOT playing.
     expect(after.items[0]?.songId).toBe(wasIdx1SongId);
     expect(after.items[0]?.isCurrent).toBe(false);
@@ -320,6 +318,10 @@ describePlayback('play_songs + queue manipulation (live)', () => {
   itPlayback('move_in_play_queue out of range throws via ErrorFormatter', async () => {
     // mpv rejects out-of-range indices; we surface that as a thrown error.
     await expect(moveInPlayQueue({ from: 99, to: 0 })).rejects.toThrow();
+  });
+
+  itPlayback('move_in_play_queue rejects a to past the last index', async () => {
+    await expect(moveInPlayQueue({ from: 0, to: 5 })).rejects.toThrow(/past the last queue index/);
   });
 
   itPlayback('move_in_play_queue from:2 to:4 leaves currentIndex unchanged', async () => {
@@ -336,11 +338,9 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     // post-move state.
     const after = await getPlayQueue();
     expect(after.length).toBe(5);
-    // mpv forward-move semantics put the entry BEFORE `to`, so for from:2,
-    // to:4 the moved entry lands at index 3.
+    // `to` is the final index, so from:2 to:4 lands the moved entry at index 4.
     const movedIndex = after.items.findIndex((e) => e.songId === movingId);
-    expect(movedIndex).toBeGreaterThan(2);
-    expect(movedIndex).toBeLessThanOrEqual(4);
+    expect(movedIndex).toBe(4);
     // currentIndex unchanged (lazy is correct when neither index is 0)
     expect(after.currentIndex).toBe(0);
   });

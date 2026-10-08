@@ -24,23 +24,23 @@ export interface LibraryDTO {
   name: string;
   path: string;
   isActive: boolean;
+  /** Null when Navidrome supplied no stats for this library, which is the case for a non-admin account. */
   stats: {
-    songs: number;
-    albums: number;
-    artists: number;
+    totalSongs: number;
+    totalAlbums: number;
+    totalArtists: number;
     totalSize: number;
     totalDuration: number;
-  };
+  } | null;
+  /** Null under the same condition as stats. */
   scanInfo: {
     lastScanAt: string | null;
     lastScanStartedAt: string | null;
     fullScanInProgress: boolean;
-  };
-  /** ISO 8601 timestamp when the library was created; `null` if the server
-   * never populated it (Go zero-time sentinel mapped to null). */
+  } | null;
+  /** ISO 8601 creation time. Null when the server sent the Go zero-time. */
   createdAt: string | null;
-  /** ISO 8601 timestamp when the library was last updated; `null` if the
-   * server never populated it (Go zero-time sentinel mapped to null). */
+  /** ISO 8601 last-update time. Null when the server sent the Go zero-time. */
   updatedAt: string | null;
 }
 

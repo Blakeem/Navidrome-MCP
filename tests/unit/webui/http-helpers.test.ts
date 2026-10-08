@@ -11,8 +11,11 @@ import { readJsonBody } from '../../../src/webui/http-helpers.js';
 
 /** Minimal IncomingMessage stand-in: emits the given chunks, then `end`. */
 function fakeReq(chunks: Buffer[]): IncomingMessage {
-  const emitter = new EventEmitter() as IncomingMessage & { destroy: () => void };
-  emitter.destroy = (): void => { emitter.emit('error', new Error('destroyed')); };
+  const emitter = new EventEmitter() as IncomingMessage;
+  emitter.destroy = (): IncomingMessage => {
+    emitter.emit('error', new Error('destroyed'));
+    return emitter;
+  };
   queueMicrotask(() => {
     for (const c of chunks) emitter.emit('data', c);
     emitter.emit('end');

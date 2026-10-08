@@ -1,6 +1,7 @@
 # MCP 2.0 migration review — `navidrome-mcp` v2.2.0 → spec revision `2026-07-28`
 
-**Status:** planning document. Nothing implemented, nothing staged.
+**Status:** planning document. M9 and F5 have landed. Every other item is still planned.
+**Citations:** `file.ts:line` citations refer to tag `v2.2.0`. Claims that changed after that tag say so.
 **Written:** 2026-08-12
 **Doc set this is built against:** [`docs/mcp-2.0/INDEX.md`](mcp-2.0/INDEX.md) — 102 verbatim spec/SDK/blog files, fidelity spot-check 5/5 passed.
 **Repo facts** come from three independent read-only audits of `src/` (protocol surface, server state, tool schemas). Every claim below cites either `file.ts:line` (repo) or a doc-set path (spec).
@@ -73,7 +74,7 @@ Drawn once. Every later claim names a part of this.
    │                                                                                 │
    │  B1  tool results          {content:[text]}  → + resultType, isError  [M7]      │
    │  B2  list results          → REQUIRED ttlMs + cacheScope              [M8]      │
-   │  B3  errors                everything -32603 → protocol vs execution  [M9]      │
+   │  B3  errors                protocol vs execution split, done          [M9]      │
    │  B4  resources             -32002 → -32602                            [M10]     │
    │  B5  inputSchema           hand-written JSON Schema, 12 drifts        [M11]     │
    │  B6  HTTP headers          + Mcp-Method, Mcp-Name required            [M12]     │
@@ -116,7 +117,7 @@ And, decisively for this project:
 
 **Blast radius: 24 tools.** State at `library-manager.ts:66`, written only by `set_active_libraries` (`library.ts:126`), read via `navidrome-client.ts:146-150` which appends `library_id=N` to every filtered request.
 
-`search_songs`, `search_albums`, `search_artists`, `search_all`, `get_song`, `get_album`, `get_artist`, `get_song_playlists`, `list_recently_played`, `list_most_played`, `list_starred_items`, `list_top_rated`, `search_by_tags`, `get_tag_distribution`, `list_playlists` (only when `onlyWithPlayableTracks=true`, `playlist-crud.ts:74`), `play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `play_playlist`, `get_play_queue`, `now_playing`, `get_artist_albums`, `get_user_details`.
+`search_songs`, `search_albums`, `search_artists`, `search_all`, `get_song`, `get_album`, `get_artist`, `get_song_playlists`, `list_recently_played`, `list_most_played`, `list_starred_items`, `list_top_rated`, `list_tag_values`, `get_tag_distribution`, `list_playlists` (only when `onlyWithPlayableTracks=true`, `playlist-crud.ts:74`), `play_songs`, `play_albums`, `play_albums_search`, `play_songs_search`, `play_playlist`, `get_play_queue`, `now_playing`, `get_artist_albums`, `get_user_details`.
 
 **The spec's prescribed replacement** (`spec-2026-07-28/server/tools.md` §Stateful Tools — flagged non-normative): a creation tool returns an explicit handle; subsequent calls take it as an ordinary argument. *"The model is responsible for carrying `basket_id` forward."*
 
@@ -128,11 +129,11 @@ And, decisively for this project:
 | A2 | Opaque `scope` handle, minted by a creation tool (the spec's own pattern) | Medium; handle is opaque, model must carry it | Conformant; adds a concept for a feature most users don't need |
 | A7 | **Delete the tool; config-only via `library.defaultLibraryIds`** | Lowest — removes 1 tool | Conformant by removal |
 
-**Recommendation: A7 + a narrow A1.** Delete `set_active_libraries`. Add optional `libraryIds` to the **5 tools where multi-library users actually need per-call scope** — `search_songs`, `search_albums`, `search_artists`, `search_all`, `search_by_tags`. The other 19 readers use the config default (`applyDefaultConfiguration`, `library-manager.ts:255-271`, already "all libraries" when unset). Keep `get_user_details` as read-only discovery of what's available.
+**Recommendation: A7 + a narrow A1.** Delete `set_active_libraries`. Add optional `libraryIds` to the **5 tools where multi-library users actually need per-call scope** — `search_songs`, `search_albums`, `search_artists`, `search_all`, `list_tag_values`. The other 19 readers use the config default (`applyDefaultConfiguration`, `library-manager.ts:255-271`, already "all libraries" when unset). Keep `get_user_details` as read-only discovery of what's available.
 
 **Rationale:** threading an array through 24 schemas spends context on every single call to serve a minority configuration. A2 is the spec's blessed pattern but introduces a handle lifecycle for something that is, for most deployments, a static config value.
 
-**Coupled change:** the filter caches (`filter-cache-manager.ts:57-70`) are loaded *through* the library filter (`:180,222`), so any per-call `libraryIds` needs a matching per-scope cache key — otherwise filter vocabulary stays silently scoped to whatever the process loaded at startup. Note this is already a latent staleness bug: `set_active_libraries` does **not** trigger a filter-cache reload today.
+**Coupled change:** the filter caches (`filter-cache-manager.ts:57-70`) are loaded *through* the library filter (`:180,222`), so any per-call `libraryIds` needs a matching per-scope cache key — otherwise filter vocabulary stays silently scoped to whatever the process loaded at startup. Since v2.2.0, `set_active_libraries` reloads the filter caches after it changes the active set, so only a per-call `libraryIds` needs the per-scope cache key.
 
 ---
 
@@ -150,9 +151,10 @@ Under a stateless HTTP fleet:
 
 Write tools call `ensureRunning()` (`playback-engine.ts:308`) which **lazy-spawns**. Read tools call `ensureAttached()` (`:294-299`) which degrades silently — `now_playing` returns `{engineRunning:false}` (`playback.ts:1271-1273`), indistinguishable from "nothing is playing" while audio plays on another machine.
 
-**Two data items are permanently lost on a fresh attach**, not reconstructible from mpv or Navidrome:
-- radio station **name** (`S16`, `playback-engine.ts:183`) — already documented as a post-restart edge at `:608-611`
+**One data item is permanently lost on a fresh attach**, not reconstructible from mpv or Navidrome:
 - `queueGeneration` (`S17`, `:190`) — restarts at 0, so two processes mint **colliding** `now_playing` repair keys (`playback.ts:1345-1348`)
+
+The radio station name (`S16`) is not lost. Since v2.2.0, `now_playing` finds it among the saved Navidrome stations by stream URL, and only an unsaved stream reads "Unknown station".
 
 **Does the spec offer per-tool affinity?** **No.** There is no protocol-level affinity mechanism. The Stateful Tools pattern assumes the server can look state up "under that key" — which presumes a shared store. An audio device is not a shared store.
 
@@ -165,7 +167,7 @@ Write tools call `ensureRunning()` (`playback-engine.ts:308`) which **lazy-spawn
 | P4 | **`navidrome-web` becomes sole mpv owner; MCP replicas proxy to it** | High, but **half-built already** | The only design where "any process serves any request" is true |
 | P3/P5 | Externalize queue to Navidrome `/queue`, or state to Redis | Very high | **Reject** — neither fixes the audio-device problem |
 
-**Recommendation: P2 for 3.0.0-next, P4 as the 3.x goal.** Restrict playback registration to stdio (extend the existing `config.features.playback` gate at `registry.ts:122`) plus an explicit opt-in for single-owner HTTP deployments. Then build P4 — the ownership election (`index.ts:159-174`), the web child (`web/spawn.ts:130`), and the `/healthz` probe (`web/acquire.ts:48`) already exist. P4 also fixes the N-scrobblers problem for free, since today's election only distinguishes MCP-vs-web, not MCP-1-vs-MCP-2 (`scrobble-tracker.ts:294-309`).
+**Recommendation: P2 for 3.0.0-next, P4 as the 3.x goal.** Restrict playback registration to stdio (extend the existing `config.features.playback` gate at `registry.ts:122`) plus an explicit opt-in for single-owner HTTP deployments. Then build P4 — the ownership election (`index.ts:159-174`), the web child (`web/spawn.ts:130`), and the `/healthz` probe (`web/acquire.ts:48`) already exist. P4 also fixes the N-scrobblers problem for free, since today's election only distinguishes MCP-vs-web, not MCP-1-vs-MCP-2 (`scrobble-tracker.ts:294-309`). Since v2.2.0, an mpv `script-message` claim picks one submitter per play across any number of processes.
 
 **Do not attempt P3/P5.** `S15` metadata and `S16` station name are re-fetchable from Navidrome anyway; externalizing them buys nothing the audio-device constraint doesn't immediately take back.
 
@@ -176,7 +178,7 @@ Write tools call `ensureRunning()` (`playback-engine.ts:308`) which **lazy-spawn
 **Changelog item 2** (`spec-2026-07-28/changelog.md:16`): *"Make MCP stateless: remove the `initialize`/`notifications/initialized` handshake."*
 **Changelog item 1** (`:14`): *"Remove protocol-level sessions and the `Mcp-Session-Id` header."*
 
-Current code (`src/transport/http.ts:222-225`):
+Code at v2.2.0 (`src/transport/http.ts:222-225`). Since then the gate is `!isInitializeRequest(body)` alone, with the same consequence:
 
 ```
 if (sessionId !== undefined || !isInitializeRequest(body))  →  400, code -32000
@@ -221,7 +223,7 @@ Ordered by dependency. None require design decisions.
 | **M6** | `setRequestHandler(XRequestSchema,…)` → method strings | `registry.ts:130,134`; `resources/index.ts:40,45`; `degraded-tools.ts:55,57` | `setRequestHandler('tools/list', …)`. 7 sites. Low-level `Server` **survives** — the registry architecture can stay |
 | **M7** | `resultType` on every result | `registry.ts:70-79` | All results carry required `resultType: "complete"`. Single encoder ⇒ one place to change |
 | **M8** | **`ttlMs` + `cacheScope` required** on list results | `registry.ts:130`, `resources/index.ts:40,45` | Minor item 5 — required on `tools/list`, `resources/list`, `resources/read`. SDK `cacheHints` defaults to `ttlMs:0` + `private`, which is safe. §5 lists the tools where a non-zero TTL would be *wrong* |
-| **M9** | Error model split | `registry.ts:134-138`, `error-formatter.ts` | **Behavioral change across all 71 tools.** Today everything throws → `-32603`. Spec wants: protocol errors for unknown-tool/malformed (`-32602`), **`isError:true` tool results** for execution failures so the model can self-correct |
+| **M9** | Error model split | `registry.ts`, `error-formatter.ts` | **Done.** An unknown tool is a `-32602` protocol error. Every execution failure, including invalid arguments, is an `isError: true` tool result the model can correct |
 | **M10** | Resource-not-found `-32002` → `-32602` | `src/resources/index.ts` | Minor item 6 |
 | **M11** | `inputSchema` drift | `src/tools/handlers/*`, `src/schemas/*` | 12 verified divergences. §5 |
 | **M12** | `Mcp-Method` / `Mcp-Name` request headers | HTTP path | Minor item 4 — required on Streamable HTTP POST. Handled by the SDK, but custom middleware in front of the endpoint must not strip them |
@@ -244,11 +246,11 @@ This is currently harmless *because* clients treat `inputSchema` as advisory. Mi
 | Wire too restrictive | `star_item`/`unstar_item`/`set_rating` declare `enum:['song','album','artist']` while `ItemTypeSchema` accepts **6** values incl. plurals (`common.ts:59-66`) — a deliberate LLM-error tolerance invisible on the wire |
 | Unexpressible | 5 tools with `superRefine` cross-field rules (e.g. `add_tracks_to_playlist` needs ≥1 of 4 ID arrays, `validation.ts:67-79`) |
 | **Security-relevant** | `ID_PATTERN` (`/^[A-Za-z0-9_-]+$/`, `common.ts:26`) — the URL-injection guard — appears in **zero** declared schemas |
-| Known + partially patched | 9 of 11 `year` fields declare `type:'number'` with no maximum; only the 2 playback search tools were fixed (`playback-handlers.ts:243-248`). The hazard is documented in-repo at `playback-handlers.ts:68-73` |
+| Fixed after v2.2.0 | At v2.2.0, 9 of 11 `year` fields declared `type:'number'` with no maximum (`playback-handlers.ts:243-248`, `:68-73`). Every `year` field now declares `type:'integer'` with `maximum: MAX_YEAR` |
 
 **Recommendation: generate `inputSchema` from the zod schemas as part of the migration.** zod ≥4.2 (already required by M2) exposes `~standard.jsonSchema`, and v2's `registerTool` accepts Standard Schema directly (`sdk-v2/servers-tools.md`, `sdk-v2/advanced-schema-libraries.md`). This deletes the second artifact entirely rather than fixing 12 instances of drift in a system that will drift again.
 
-**Structured output (`outputSchema` / `structuredContent`) — defer.** All 71 configured tools funnel through one encoder that JSON-stringifies into a single `text` block; nothing declares `outputSchema` or `structuredContent`. Adopting it is 71 new schemas, and the `verbose` flag flips `SongDTO` between 7 and 20 fields on the same tool name (`song-transformer.ts:60-141`), so a single schema per tool would mark 13 of 20 fields optional and be nearly non-discriminating. Not required by the revision. **Out of scope for 3.0.0.**
+**Structured output (`outputSchema` / `structuredContent`) — defer.** All 72 configured tools funnel through one encoder that JSON-stringifies into a single `text` block; nothing declares `outputSchema` or `structuredContent`. Adopting it is 72 new schemas, and the `verbose` flag flips `SongDTO` between 7 and 20 fields on the same tool name (`song-transformer.ts:60-141`), so a single schema per tool would mark 13 of 20 fields optional and be nearly non-discriminating. Not required by the revision. **Out of scope for 3.0.0.**
 
 **Cacheable lists — default to `ttlMs: 0`.** Seven hazards make a naive args-keyed cache silently wrong: `sort:'random'` without `randomSeed`; the one-time `tip` on the first `list_radio_stations` (`radio.ts:213-224`); the process-global library filter; mutation invalidation with no dependency edge; `list_top_rated`'s `partial:true` lower-bound totals; and `click_station`'s per-session message. Opt individual tools in later, deliberately.
 
@@ -262,9 +264,9 @@ These are wrong on 2.2.0 now. Fix them on `main` before or alongside the 3.0 bra
 |---|---|---|---|
 | **F1** | Degraded mode advertises the `resources` capability but registers **no** resource handlers — `resources/list` passes the SDK capability assertion, then fails "Method not found" | `src/index.ts:98-102` vs `src/capabilities.ts:23-26` | Found independently by two audits. Gets worse when `server/discover` becomes the authoritative server description. Fix = split `MCP_CAPABILITIES` into full + degraded |
 | **F2** | JWT expiry is **guessed** from `config.tokenExpiry` (24h default) instead of read from the token's `exp` claim — which `jwt-decode.ts:151` already decodes | `auth-manager.ts:117` | If Navidrome's real TTL is shorter, every process serves 401s until the retry-once path repairs it. ~5 lines |
-| **F3** | `durationRepairedForKey` / `notRadioConfirmedForKey` are module-level `let`s, correct only because exactly one process exists | `playback.ts:1247,1253` | Move onto `PlaybackEngine` next to `queueGeneration` (`playback-engine.ts:190`). ~20 lines. Do this regardless of which playback option wins |
+| **F3** | The `now_playing` repair cache is module-level state, correct only because exactly one process exists. At v2.2.0 it was `durationRepairedForKey` / `notRadioConfirmedForKey`. Today it is one `repairCache` `let` in `src/tools/playback.ts` | `playback.ts:1247,1253` | Move onto `PlaybackEngine` next to `queueGeneration` (`playback-engine.ts:190`). ~20 lines. Do this regardless of which playback option wins |
 | **F4** | `get_radio_station` returns "not found" for a station that demonstrably exists, when the 300s cache is stale | `radio.ts:517-521` | On cache-miss failure, retry via the uncached path the create flow already uses (`:396`). ~5 lines |
-| **F5** | `test_connection` returns `{success:false}` at protocol-success — the exact pattern `library.ts:143-147` documents as misleading to an LLM | `src/tools/test.ts:123-128` | Aligns with M9 |
+| **F5** | `test_connection` returned `{success:false}` at protocol-success | `src/tools/test.ts` | **Done** with M9. A failed check is now an `isError` result |
 | **F6** | mpv IPC socket path interpolated into an error reaching LLM context | `mpv-ipc.ts:124` | Low severity; internal infrastructure detail |
 | **F7** | `filterCacheManager.initialize()` failure leaves the process permanently throwing on filtered searches | `filter-cache-manager.ts:119` vs `:322` | Make it soft-fail with lazy retry, matching `LibraryManager` (`library-manager.ts:112-117`) |
 | **F8** | `discover_radio_stations` accepts `offset`/`limit` but returns no total or more-pages signal | `src/types/radio.ts:115-131` | Caller cannot distinguish a full page from the last one |

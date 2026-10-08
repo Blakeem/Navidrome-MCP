@@ -16,50 +16,42 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-/**
- * Per-session, per-station dedup for Radio Browser vote/click endpoints.
- *
- * Why: Radio Browser deduplicates votes server-side per IP per day, and
- * popularity-counter clicks are similarly rate-limited. An LLM in a loop
- * (e.g., "vote for every station you find") would generate hundreds of
- * rejected requests and risk getting our shared User-Agent banned by the
- * upstream — the user explicitly asked for "once per session" enforcement.
- *
- * Scope: per process lifetime. Sets are cleared only on restart, which is
- * the simplest correct interpretation of "session". No TTL, no global
- * rate cap — just "you already did this for this UUID, here's a friendly
- * no-op response".
- *
- * Vote and click are tracked separately so a user can do one of each per
- * station per session. They're independent endpoints with different
- * server-side semantics (vote is a one-shot per-IP-per-day vote tally;
- * click is a popularity counter), so coupling them adds no value.
- */
+// Per-process dedup for Radio Browser vote and click. Upstream accepts one vote per IP per station every 10 minutes
+// and counts one click per day, and an LLM looping over stations would pile up repeats that risk a ban on the shared User-Agent.
 
-const votedUuids = new Set<string>();
-const clickedUuids = new Set<string>();
+const VOTE_WINDOW_MS = 10 * 60 * 1000;
+const CLICK_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+const voteMarkedAt = new Map<string, number>();
+// The stream URL is kept so a deduped click still hands the caller a playable URL.
+const clicks = new Map<string, { streamUrl: string; markedAt: number }>();
 
 export function hasRecentlyVoted(uuid: string): boolean {
-  return votedUuids.has(uuid);
+  const markedAt = voteMarkedAt.get(uuid);
+  if (markedAt === undefined) return false;
+  if (Date.now() - markedAt < VOTE_WINDOW_MS) return true;
+  voteMarkedAt.delete(uuid);
+  return false;
 }
 
 export function markVoted(uuid: string): void {
-  votedUuids.add(uuid);
+  voteMarkedAt.set(uuid, Date.now());
 }
 
-export function hasRecentlyClicked(uuid: string): boolean {
-  return clickedUuids.has(uuid);
+export function getClickedStreamUrl(uuid: string): string | undefined {
+  const click = clicks.get(uuid);
+  if (click === undefined) return undefined;
+  if (Date.now() - click.markedAt < CLICK_WINDOW_MS) return click.streamUrl;
+  clicks.delete(uuid);
+  return undefined;
 }
 
-export function markClicked(uuid: string): void {
-  clickedUuids.add(uuid);
+export function markClicked(uuid: string, streamUrl: string): void {
+  clicks.set(uuid, { streamUrl, markedAt: Date.now() });
 }
 
-/**
- * Test-only reset. Production code never calls this — sets persist for the
- * full process lifetime, mirroring the "once per session" guarantee.
- */
-export function resetRadioBrowserRateLimit(): void {
-  votedUuids.clear();
-  clickedUuids.clear();
+/** Production entries expire after their upstream window, 10 minutes for a vote and a day for a click. */
+export function resetRadioBrowserRateLimitForTests(): void {
+  voteMarkedAt.clear();
+  clicks.clear();
 }

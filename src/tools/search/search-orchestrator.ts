@@ -17,12 +17,12 @@
  */
 
 import type { NavidromeClient } from '../../client/navidrome-client.js';
-import type { Config } from '../../config.js';
+import type { TransformOptions } from '../../transformers/shared-transformers.js';
 import type { SongDTO, AlbumDTO, ArtistDTO } from '../../types/index.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { SearchAllSchema } from '../../schemas/index.js';
-import { resolveTextFilters } from './filter-resolver.js';
+import { hasArtistUnsupportedFilter, resolveTextFilters } from './filter-resolver.js';
 import {
   buildContentTypeParams,
   aggregateSearchResults,
@@ -32,46 +32,24 @@ import {
 } from './result-aggregator.js';
 
 /**
- * Search across all content types (artists, albums, songs) with enhanced filtering
- * Uses parallel requests for optimal performance and supports text-based filters
- *
- * This is the main search orchestrator that coordinates multiple search types,
- * resolves text-based filters to IDs, and aggregates results from parallel API calls.
- *
- * @param client - Navidrome client for API requests
- * @param _config - Configuration object (unused but kept for API consistency)
- * @param args - Search parameters including query, counts, filters, and sorting options
- * @returns Promise resolving to aggregated search results across all content types
+ * Search songs, albums and artists in parallel with one shared set of filters. `transformOptions` lets a
+ * non-MCP caller such as the web remote force-keep a field like the numeric duration.
  */
-export async function searchAll(client: NavidromeClient, _config: Config, args: unknown): Promise<{
+export async function searchAll(client: NavidromeClient, args: unknown, transformOptions: TransformOptions = {}): Promise<{
   artists: ArtistDTO[];
   albums: AlbumDTO[];
   songs: SongDTO[];
-  totalArtists: number;
-  totalAlbums: number;
-  totalSongs: number;
+  totalArtists?: number;
+  totalAlbums?: number;
+  totalSongs?: number;
   totalResults: number;
   appliedFilters?: AppliedFiltersByType;
 }> {
   try {
-    // Data collection - parse and validate input parameters
     const params = SearchAllSchema.parse(args);
-    logger.debug('Tool searchAll called with args:', params);
+    logger.debug('Tool search_all called with args:', params);
 
-    // Processing - resolve text-based filters to IDs (may refresh from Navidrome when cache is disabled)
     const { resolvedFilters, appliedFilters } = await resolveTextFilters(params);
-
-    // resolveTextFilters only reports the tag/genre filters; year/starred are
-    // applied to the sub-fetches (buildContentTypeParams) but not reported, so
-    // fold them into the display map here using the keys the aggregator's
-    // stripUnsupportedFilters recognizes (`year` is dropped for the artist slice;
-    // `starred` is kept for all three). appliedFilters is a fresh Record, so
-    // mutating it is safe.
-    if (params.year !== undefined) appliedFilters['year'] = String(params.year);
-    if (params.starred !== undefined) appliedFilters['starred'] = String(params.starred);
-
-    // Build enhanced query parameters for each content type. Same offset
-    // applied to all 3 types — see SearchAllSchema for rationale.
     const contentTypeParams = buildContentTypeParams({
       artistCount: params.artistCount,
       albumCount: params.albumCount,
@@ -83,8 +61,13 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
       randomSeed: params.randomSeed,
       resolvedFilters,
       year: params.year,
-      starred: params.starred
+      starred: params.starred,
     });
+    // A zero count skips its fetch because `_start=N&_end=N` with N > 0 is a SQL error in Navidrome.
+    const fetchSongs = params.songCount > 0;
+    const fetchAlbums = params.albumCount > 0;
+    // An unfiltered artist page would be reported as matches for a tag or year filter.
+    const fetchArtists = params.artistCount > 0 && !hasArtistUnsupportedFilter(appliedFilters);
 
     logger.debug('Enhanced search parameters:', {
       songParams: contentTypeParams.songParams,
@@ -94,29 +77,20 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
       appliedFilters,
     });
 
-    // Make parallel requests using the client's library filtering. The *Meta
-    // variant gives us X-Total-Count for each type so the LLM can tell
-    // "page-of-3 with 200 songs available" from "page-of-3 with 3 total".
-    //
-    // Skip the fetch entirely when a count is 0 — sending `_start=N&_end=N`
-    // (LIMIT 0 OFFSET N) trips a SQL error in Navidrome for offset>0. Saves
-    // a round-trip too: if the LLM didn't ask for artists, we shouldn't
-    // hit /api/artist at all. Each empty placeholder uses a fresh array
-    // so future downstream code can mutate without aliasing across types.
-    const empty = (): { data: unknown[]; total: null } => ({ data: [], total: null });
+    // A skipped slice has no total, which keeps it apart from a header-absent null.
+    const skipped = (): { data: unknown[]; total: undefined } => ({ data: [], total: undefined });
     const [songs, albums, artists] = await Promise.all([
-      params.songCount > 0
+      fetchSongs
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/song?${contentTypeParams.songParams}`)
-        : Promise.resolve(empty()),
-      params.albumCount > 0
+        : Promise.resolve(skipped()),
+      fetchAlbums
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/album?${contentTypeParams.albumParams}`)
-        : Promise.resolve(empty()),
-      params.artistCount > 0
+        : Promise.resolve(skipped()),
+      fetchArtists
         ? client.requestWithLibraryFilterAndMeta<unknown[]>(`/artist?${contentTypeParams.artistParams}&role=maincredit`)
-        : Promise.resolve(empty()),
+        : Promise.resolve(skipped()),
     ]);
 
-    // Prepare responses for aggregation
     const responses: ParallelSearchResponses = {
       songsResponse: songs.data,
       albumsResponse: albums.data,
@@ -128,11 +102,8 @@ export async function searchAll(client: NavidromeClient, _config: Config, args: 
       artistsTotal: artists.total,
     };
 
-    // Output construction - aggregate results from all search types
-    const result = aggregateSearchResults(responses, totals, appliedFilters, params.verbose);
-
-    return result;
+    return aggregateSearchResults(responses, totals, appliedFilters, { ...transformOptions, verbose: params.verbose });
   } catch (error) {
-    throw new Error(ErrorFormatter.toolExecution('searchAll', error));
+    throw new Error(ErrorFormatter.toolExecution('search_all', error));
   }
 }

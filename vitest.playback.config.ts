@@ -5,14 +5,12 @@
  *
  * Why a separate config:
  *   - These tests require a real mpv binary AND a reachable Navidrome
- *     instance. They are skipped cleanly via describePlayback when either
- *     is missing, but the default `pnpm test:run` excludes them entirely
- *     so contributors aren't required to install mpv to run the unit suite.
+ *     instance. describePlayback skips them when mpv is not found or a skip
+ *     flag is set. The default `pnpm test:run` excludes them so contributors
+ *     need no mpv for the unit suite.
  *   - File-level parallelism is disabled here because every test file
  *     drives the same singleton mpv process; running concurrent files
  *     would produce non-deterministic queue manipulations.
- *   - The default test timeout is bumped to 15s to absorb mpv's async
- *     property-update latency plus Navidrome HTTP round-trips.
  */
 
 import { defineConfig } from 'vitest/config';

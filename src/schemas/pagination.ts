@@ -18,20 +18,7 @@
 
 import { z } from 'zod';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
-import { createLimitSchema, ID_PATTERN, ItemListTypeSchema, OffsetSchema, OrderSchema, VerboseSchema } from './common.js';
-
-// Base pagination schema factory
-export const createPaginationSchema = (
-  limitDefault: number,
-  maxLimit = 500,
-  sortDefault = 'name'
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory; return type inferred by zod, explicit annotation would be unwieldy
-) => z.object({
-  limit: createLimitSchema(1, maxLimit, limitDefault),
-  offset: OffsetSchema,
-  sort: z.string().optional().default(sortDefault),
-  order: OrderSchema,
-});
+import { createLimitSchema, ItemListTypeSchema, OffsetSchema, OrderSchema, PlaylistIdSchema, VerboseSchema } from './common.js';
 
 // Specific pagination schemas for different resources.
 //
@@ -39,23 +26,27 @@ export const createPaginationSchema = (
 // when true, `list_playlists` returns only playlists with >=1 track in the
 // currently active libraries. Default false preserves the full management view
 // (so the LLM can still add songs to empty/other-library playlists).
-export const PlaylistPaginationSchema = createPaginationSchema(
-  DEFAULT_VALUES.PLAYLISTS_LIMIT,
-  500,
-  'name'
-).extend({
+export const PlaylistPaginationSchema = z.object({
+  limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAYLISTS_LIMIT),
+  offset: OffsetSchema,
+  sort: z.enum(['name', 'songCount', 'duration', 'createdAt', 'updatedAt']).optional().default('name'),
+  order: OrderSchema,
   onlyWithPlayableTracks: z.boolean().optional().default(false),
 });
 
-export const PlaylistTracksPaginationSchema = z.object({
-  playlistId: z.string().min(1, 'Playlist ID is required').regex(ID_PATTERN, 'Playlist ID contains invalid characters'),
+export const PlaylistTracksPaginationSchema = PlaylistIdSchema.extend({
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAYLIST_TRACKS_LIMIT),
   offset: OffsetSchema,
   format: z.enum(['json', 'm3u']).optional().default('json'),
   verbose: VerboseSchema,
 });
 
-// User preferences pagination — type accepts singular or plural (see ItemListTypeSchema in common.ts)
+export const PlayQueuePaginationSchema = z.strictObject({
+  limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAY_QUEUE_LIMIT),
+  offset: OffsetSchema,
+});
+
+// User preferences pagination. The type accepts singular or plural (see ItemListTypeSchema in common.ts)
 export const StarredItemsPaginationSchema = z.object({
   type: ItemListTypeSchema,
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.STARRED_ITEMS_LIMIT),
@@ -68,6 +59,7 @@ export const TopRatedItemsPaginationSchema = z.object({
   minRating: z.number().int().min(1).max(5).optional().default(4),
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.TOP_RATED_LIMIT),
   offset: OffsetSchema,
+  verbose: VerboseSchema,
 });
 
 // Listening history pagination

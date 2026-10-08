@@ -38,18 +38,12 @@ export class Cache<T> {
   }
 
   private startAutoCleanup(): void {
-    // Clear any existing interval first
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-    }
-    
-    // Set up periodic cleanup
     this.cleanupInterval = setInterval(() => {
       this.cleanup();
     }, this.cleanupIntervalMs);
-    
-    // Ensure cleanup runs when process exits
-    this.cleanupInterval.unref(); // Don't keep process alive just for cleanup
+
+    // The cleanup timer must not keep the MCP process alive.
+    this.cleanupInterval.unref();
   }
 
   private cleanup(): void {
@@ -89,7 +83,6 @@ export class Cache<T> {
   }
 
   destroy(): void {
-    // Clean up resources when cache is no longer needed
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = undefined;

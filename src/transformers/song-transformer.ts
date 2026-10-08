@@ -17,8 +17,16 @@
  */
 
 import type { SongDTO } from '../types/index.js';
-import { parseLocalLyrics } from '../tools/lyrics.js';
-import { formatDuration, extractGenre, extractAllGenres, shouldEmit, type TransformOptions } from './shared-transformers.js';
+import { parseLocalLyrics } from './lyrics-tag.js';
+import {
+  formatDuration,
+  extractGenre,
+  extractAllGenres,
+  shouldEmit,
+  starredFields,
+  transformObjectRows,
+  type TransformOptions,
+} from './shared-transformers.js';
 
 /**
  * Raw song data from Navidrome API
@@ -45,7 +53,7 @@ export interface RawSong {
   createdAt?: string;
   path?: string;
   lyrics?: string;
-  [key: string]: unknown; // Allow other fields we don't use
+  [key: string]: unknown;
 }
 
 
@@ -53,7 +61,7 @@ export interface RawSong {
  * Transform a raw song from Navidrome API to a clean DTO
  * @param rawSong Raw song data from API
  * @param options Verbosity controls (see {@link TransformOptions}). Default
- *   compact: only the identity block below is emitted; verbose/keep restore
+ *   compact: only the identity block below is emitted. Verbose/keep restore
  *   the secondary fields.
  * @returns Clean song DTO for LLM consumption
  */
@@ -62,7 +70,7 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
   // text itself would put a full lyric sheet on every row of every listing.
   const localLyrics = parseLocalLyrics(rawSong.lyrics);
 
-  // Identity block — always emitted (these are what makes a song actionable).
+  // Identity block, always emitted (these are what makes a song actionable).
   const dto: SongDTO = {
     id: rawSong.id,
     title: rawSong.title || '',
@@ -71,16 +79,10 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     album: rawSong.album || '',
     albumId: rawSong.albumId,
     durationFormatted: formatDuration(rawSong.duration),
-    ...(localLyrics !== null ? { lyrics: localLyrics.hasSynced ? 'synced' as const : 'plain' as const } : {}),
+    ...(localLyrics !== null ? { lyrics: localLyrics.hasSynced ? 'synced' as const : 'unsynced' as const } : {}),
   };
 
-  // Secondary fields — emitted only in verbose mode (or when force-kept). Each
-  // is still added only if the source actually provides a value.
-
-  // Only emit addedDate when the source actually provides it. Navidrome's REST
-  // API always supplies `createdAt`; omitting (rather than fabricating `now`)
-  // keeps the value honest for any row that doesn't, matching every other
-  // optional field below.
+  // A fabricated timestamp would mislead, so addedDate is omitted when the row lacks createdAt.
   if (shouldEmit('addedDate', options) && rawSong.createdAt !== undefined && rawSong.createdAt !== '') {
     dto.addedDate = rawSong.createdAt;
   }
@@ -99,11 +101,15 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     }
   }
 
+  if (shouldEmit('duration', options) && rawSong.duration !== undefined) {
+    dto.duration = rawSong.duration;
+  }
+
   if (shouldEmit('year', options) && rawSong.year !== undefined && rawSong.year > 0) {
     dto.year = rawSong.year;
   }
 
-  if (shouldEmit('path', options) && rawSong.path !== undefined) {
+  if (shouldEmit('path', options) && rawSong.path !== undefined && rawSong.path !== '') {
     dto.path = rawSong.path;
   }
 
@@ -111,28 +117,16 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     dto.trackNumber = rawSong.trackNumber;
   }
 
-  if (shouldEmit('playCount', options) && rawSong.playCount !== undefined) {
-    dto.playCount = rawSong.playCount;
+  // Navidrome omits playCount for never-played rows, so an explicit 0 separates never played from unavailable.
+  if (shouldEmit('playCount', options)) {
+    dto.playCount = rawSong.playCount ?? 0;
   }
 
   if (shouldEmit('rating', options) && rawSong.rating !== undefined && rawSong.rating > 0) {
     dto.rating = rawSong.rating;
   }
 
-  // The `starred` boolean is authoritative. Navidrome retains `starredAt`
-  // as a "last starred at" history field even after unstarring, so a
-  // populated timestamp alone does NOT mean the item is currently starred.
-  // Only echo `starredAt` when the boolean confirms the starred state.
-  if (shouldEmit('starred', options)) {
-    if (rawSong.starred === true) {
-      dto.starred = true;
-      if (rawSong.starredAt !== undefined) {
-        dto.starredAt = rawSong.starredAt;
-      }
-    } else if (rawSong.starred === false) {
-      dto.starred = false;
-    }
-  }
+  Object.assign(dto, starredFields(rawSong, options));
 
   if (shouldEmit('playDate', options) && rawSong.playDate !== undefined && rawSong.playDate !== '') {
     dto.playDate = rawSong.playDate;
@@ -157,16 +151,6 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
  * @returns Array of clean song DTOs
  */
 export function transformSongsToDTO(rawSongs: unknown, options?: TransformOptions): SongDTO[] {
-  if (!Array.isArray(rawSongs)) {
-    return [];
-  }
-
-  // Guard each element: Navidrome can return null / non-object entries on
-  // certain API errors. The `as RawSong` cast would pass TS but crash the
-  // single-item transformer at runtime, aborting the whole batch. Drop the
-  // bad rows instead so one malformed entry doesn't lose every good one.
-  return rawSongs
-    .filter((song): song is RawSong => typeof song === 'object' && song !== null)
-    .map((song) => transformToSongDTO(song, options));
+  return transformObjectRows(rawSongs, (song: RawSong) => transformToSongDTO(song, options));
 }
 

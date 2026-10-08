@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { Config } from './config.js';
+import { readSavedWebuiSettings, type Config } from './config.js';
 import { NavidromeClient } from './client/navidrome-client.js';
 import { libraryManager } from './services/library-manager.js';
 import { filterCacheManager } from './services/filter-cache-manager.js';
@@ -29,27 +29,15 @@ import { logger } from './utils/logger.js';
  * caches and the playback engine are module singletons configured as a side
  * effect of this call, so they don't need to be returned.
  */
-interface Runtime {
+export interface Runtime {
   config: Config;
   client: NavidromeClient;
 }
 
 /**
- * Shared startup sequence used by both the MCP server (`src/index.ts`) and,
- * later, the standalone web server. Resolves config, authenticates the client,
- * primes the library/filter caches, and configures the playback engine so any
- * transport-agnostic tool impl can run identically regardless of who launched
- * the process.
- *
- * Deliberately does NOT attach the scrobbler — scrobbling ownership is
- * process-conditional (the playback survivor scrobbles; see the standalone-web
- * spec §6.4), so each entry point wires it itself after calling this.
- *
- * `config` is REQUIRED, and deliberately so: every entry point already resolves
- * it via `resolveConfigState()` (the only resolver that includes the env-var
- * fallback for headless/container deployments). An optional parameter defaulting
- * to a bare `loadConfig()` would silently re-read the store — which is
- * store-only — and throw on the env-var path, so the type now forbids it.
+ * Shared startup for src/index.ts and src/web/main.ts. Scrobbler wiring is left
+ * to each entry point, because scrobble ownership depends on the process.
+ * `config` is required because only resolveConfigState() includes the env fallback.
  */
 export async function createRuntime(config: Config): Promise<Runtime> {
   logger.setDebug(config.debug);
@@ -57,17 +45,18 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   const client = new NavidromeClient(config);
   await client.initialize();
 
-  // Initialize library manager with user data and configuration.
   await libraryManager.initialize(client, config);
-
-  // Initialize filter cache manager for enhanced search functionality.
   await filterCacheManager.initialize(client, config);
 
   // Configure the singleton engine with the loaded config so tools can
   // lazy-spawn mpv on first invocation. Gated on the playback feature (mpv
-  // detected) — `buildStreamUrl()` and every play_* tool depend on it.
+  // detected), since `buildStreamUrl()` and every play_* tool depend on it.
   if (config.features.playback) {
     playbackEngine.configure(config);
+    // Read when this process spawns mpv, so a toggle the web player saved after this process started applies.
+    playbackEngine.setVisualizerSource(
+      () => config.webui.enabled && (readSavedWebuiSettings()?.visualizer ?? config.webui.visualizer),
+    );
   }
 
   return { config, client };

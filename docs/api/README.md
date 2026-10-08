@@ -91,7 +91,7 @@ Navidrome supports multiple filtering approaches:
 const url = `/api/album?genre_id=abc123&library_id=1&_sort=recently_added&_order=DESC`
 
 // Multiple filters with role-based filtering
-const url = `/api/album?role_producer_id=xyz789&media_id=vinyl456&starred=true`
+const url = `/api/album?role_producer_id=xyz789&media=vinyl456&starred=true`
 ```
 
 **Legacy JSON Filtering:**
@@ -107,8 +107,8 @@ const url = `/api/song?filter=${encodeURIComponent(JSON.stringify(filter))}`
 **Available Filter Types:**
 - `library_id` - Filter by music library
 - `genre_id` - Filter by genre
-- `mood_id` - Filter by mood
-- `{tag_name}_id` - Filter by any tag type
+- `mood` - Filter by mood
+- `{tag_name}` - Filter by any other tag type (the bare tag name, not `{tag_name}_id`)
 - `role_{role}_id` - Filter by participant roles
 - `starred` - Boolean filters
 - `has_rating` - Content with ratings
@@ -235,7 +235,7 @@ async search(query, type = 'song', libraryId = null) {
 async getAlbumsByGenreAndMood(genreId, moodId, libraryId) {
   const params = new URLSearchParams({
     genre_id: genreId,
-    mood_id: moodId,
+    mood: moodId,
     library_id: libraryId,
     _sort: 'recently_added',
     _order: 'DESC'

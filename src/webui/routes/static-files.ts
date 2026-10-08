@@ -24,25 +24,15 @@ import { fileURLToPath } from 'node:url';
 import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
-/**
- * Resolve the absolute directory holding the web UI static assets.
- *
- * The public directory is always a sibling of this file's containing folder
- * regardless of whether we're running from `src/webui/` (dev via tsx) or
- * `dist/webui/` (production via tsc). The build pipeline (scripts/build-webui.mjs)
- * copies `src/webui/public/` to `dist/webui/public/` so the sibling lookup
- * succeeds in both contexts.
- */
+// scripts/build-webui.mjs copies src/webui/public to dist/webui/public, so the folder is a sibling of routes/ in both trees.
 function resolvePublicDir(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const fromRoutes = resolve(here, '..', 'public');
-  if (existsSync(fromRoutes)) return fromRoutes;
-  // Fallback: a sibling of THIS file (i.e. routes/public) — unlikely but
-  // covers reorganization without re-running the build.
-  return resolve(here, 'public');
+  return resolve(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 }
 
-const PUBLIC_DIR: string = resolvePublicDir();
+export const PUBLIC_DIR: string = resolvePublicDir();
+if (!existsSync(PUBLIC_DIR)) {
+  logger.error(`webui: static asset folder ${PUBLIC_DIR} is missing, so every page answers 404. pnpm build copies it there.`);
+}
 
 /**
  * Every directive is named so none of them silently inherits `default-src`.
@@ -61,12 +51,7 @@ const CONTENT_SECURITY_POLICY: string = [
   "object-src 'none'",
 ].join('; ');
 
-/**
- * MIME-type table for the asset shapes we actually ship. Anything outside
- * the table falls back to `application/octet-stream` — but since the only
- * files in `public/` are .html/.css/.js/.svg/.ico, that branch should never
- * fire in practice.
- */
+// Covers the asset types the public folders ship. Anything else is served as application/octet-stream.
 const MIME_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -78,25 +63,23 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
 };
 
 /**
- * Resolve a request URL pathname to an absolute file path inside PUBLIC_DIR,
+ * Resolve a request URL pathname to an absolute file path inside `publicDir`,
  * or null if the request escapes the directory (path traversal).
  *
- * `/` maps to `/index.html` so the panel loads on a bare visit. Hidden files
- * (anything with `/.`) are rejected to keep dotfiles from leaking even when
- * the public folder accidentally contains them.
+ * `/` maps to `/index.html` so the panel loads on a bare visit. Any path segment
+ * that starts with a dot is rejected, so dotfiles and dot-folders never leak even
+ * when the public folder accidentally contains them.
  */
-function resolveStaticPath(pathname: string): string | null {
+function resolveStaticPath(pathname: string, publicDir: string): string | null {
   let rel = pathname === '/' ? '/index.html' : pathname;
-  // Strip leading slash; normalize collapses any `..` segments.
+  // normalize collapses any `..` segments once the leading slashes are gone.
   rel = normalize(rel.replace(/^\/+/, ''));
   if (rel.includes(`..${sep}`) || rel === '..') return null;
-  // Reject any path SEGMENT that begins with a dot. Checking the post-strip
-  // `rel` for `/.` would miss root-level dotfiles (e.g. `/.env` -> `.env`),
-  // so split on the separator and reject leading dots in any segment.
+  // A `/.` substring check would miss a root-level dotfile such as `/.env`, so every segment is checked.
   if (rel.split(sep).some((s) => s.startsWith('.'))) return null;
-  const abs = join(PUBLIC_DIR, rel);
-  // Defense-in-depth: confirm the resolved path is still inside PUBLIC_DIR.
-  if (!abs.startsWith(PUBLIC_DIR + sep) && abs !== PUBLIC_DIR) return null;
+  const abs = join(publicDir, rel);
+  // Defense-in-depth: confirm the resolved path is still inside publicDir.
+  if (!abs.startsWith(publicDir + sep) && abs !== publicDir) return null;
   return abs;
 }
 
@@ -108,12 +91,16 @@ function mimeFor(path: string): string {
 }
 
 /**
- * GET <static-asset> — serves files out of PUBLIC_DIR. Returns 404 for
- * unknown paths so the API surface above is the canonical 4xx handler;
- * static serving is deliberately not the catch-all.
+ * GET <static-asset> serves files out of `publicDir`, the web remote's by default, so
+ * the settings page shares this CSP. Returns 404 for unknown paths, since static
+ * serving is deliberately not the catch-all.
  */
-export async function handleStatic(res: ServerResponse, pathname: string): Promise<void> {
-  const filePath = resolveStaticPath(pathname);
+export async function handleStatic(
+  res: ServerResponse,
+  pathname: string,
+  publicDir: string = PUBLIC_DIR,
+): Promise<void> {
+  const filePath = resolveStaticPath(pathname, publicDir);
   if (filePath === null) {
     writeError(res, 400, 'Invalid path');
     return;
@@ -123,12 +110,7 @@ export async function handleStatic(res: ServerResponse, pathname: string): Promi
     res.writeHead(200, {
       'Content-Type': mimeFor(filePath),
       'Content-Length': body.byteLength.toString(),
-      // No persistent caching for any webui asset. The panel is served to
-      // LAN clients, all files are KB-scale, and aggressive caching on
-      // app.js/styles.css had been silently locking users on stale JS
-      // (volume-icon state machine missing from cached bundle even after
-      // a hard refresh). Browsers will still revalidate cheaply via
-      // If-Modified-Since.
+      // no-cache so a LAN client never runs a stale app.js after an upgrade.
       'Cache-Control': 'no-cache, must-revalidate',
       'Content-Security-Policy': CONTENT_SECURITY_POLICY,
     });

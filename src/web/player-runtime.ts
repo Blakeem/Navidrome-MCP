@@ -17,24 +17,23 @@
  */
 
 /**
- * Mutable runtime state for the standalone player process, plus the pure
- * decision helpers that drive UI affordances. Split out so the lifecycle logic
- * is unit-testable without a running HTTP server / mpv.
+ * Mutable runtime state for the standalone player process. Split out so the
+ * lifecycle state is unit-testable without a running HTTP server or mpv.
  *
  * The persist flag governs whether a player spawned by the MCP server keeps
- * running after the MCP server exits (spec: webui.persistAfterMcpExit). It's
+ * running after the MCP server exits (webui.persistAfterMcpExit). It's
  * initialized from config at startup and can be toggled live from the player's
- * loopback-only settings modal.
+ * loopback-only settings modal. The theme and the visualizer follow the same seed-then-toggle path,
+ * and a null theme leaves each device on its own light or dark setting.
  */
 
+import type { WebuiTheme } from '../constants/defaults.js';
+
 let persist = false;
+let theme: WebuiTheme | null = null;
+let visualizer = true;
 
-/** Seed the flag from config at process startup. */
-export function initPersist(value: boolean): void {
-  persist = value;
-}
-
-/** Toggle the flag at runtime (the player's settings modal). */
+/** Seeds the flag from config at startup and toggles it at runtime. */
 export function setPersist(value: boolean): void {
   persist = value;
 }
@@ -43,37 +42,28 @@ export function getPersist(): boolean {
   return persist;
 }
 
-/**
- * Whether this process still has a live IPC parent (the MCP server that spawned
- * it). `process.connected` is true only when spawned with an `ipc` channel AND
- * the parent is still alive; it flips to false on `disconnect`. A standalone
- * `navidrome-web` (no IPC channel) is always false → treated as independent.
- */
-export function hasLiveParent(): boolean {
-  return process.connected;
+export function setTheme(value: WebuiTheme | null): void {
+  theme = value;
 }
 
-export interface PlayerFlags {
-  /** Settings modal is allowed (loopback callers only). */
-  canEditSettings: boolean;
-  /** Power button is allowed: local AND the server won't be auto-closed by MCP. */
-  canPowerOff: boolean;
+export function getTheme(): WebuiTheme | null {
+  return theme;
 }
 
-/**
- * Pure UI-affordance decision (spec lifecycle table):
- * - settings are local-only;
- * - power is offered only to a local caller AND only when the server is NOT
- *   going to be torn down by an MCP exit — i.e. it has no live parent
- *   (standalone, or MCP already gone) OR persistence is on.
- */
-export function computePlayerFlags(input: {
-  isLocal: boolean;
-  hasLiveParent: boolean;
+export function setVisualizer(value: boolean): void {
+  visualizer = value;
+}
+
+export function getVisualizer(): boolean {
+  return visualizer;
+}
+
+/** An MCP-launched player stops once no MCP uses it: its spawner is gone and no lease is open. */
+export function shouldStopForMcpExit(state: {
+  launchedByMcp: boolean;
+  parentConnected: boolean;
+  openLeases: number;
   persist: boolean;
-}): PlayerFlags {
-  return {
-    canEditSettings: input.isLocal,
-    canPowerOff: input.isLocal && (!input.hasLiveParent || input.persist),
-  };
+}): boolean {
+  return state.launchedByMcp && !state.parentConnected && state.openLeases === 0 && !state.persist;
 }

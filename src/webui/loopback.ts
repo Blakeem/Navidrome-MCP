@@ -18,21 +18,26 @@
 
 import type { IncomingMessage } from 'node:http';
 
-/**
- * Loopback guard (defense-in-depth on top of any bind address). Accepts the
- * IPv4-mapped form `::ffff:127.0.0.1` too, which is what a dual-stack Linux host
- * presents for a local connection — a naive exact match would reject the user's
- * own browser. Used to keep sensitive surfaces (settings, shutdown, /healthz
- * when exposed) local even when the player is bound on the LAN.
- */
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+// Matches all of 127/8 and its ::ffff: mapped form, since a dual-stack host reports a local browser that way.
 export function isLoopbackPeer(req: IncomingMessage): boolean {
   const addr = req.socket.remoteAddress ?? '';
-  // The whole 127.0.0.0/8 range is loopback (and its IPv4-mapped IPv6 form),
-  // plus IPv6 ::1. Matching the range (not just .0.0.1) avoids rejecting a
-  // local user on an exotic loopback alias.
   return (
     addr === '::1' ||
     addr.startsWith('127.') ||
     addr.startsWith('::ffff:127.')
   );
+}
+
+// Port is ignored: a client omits a default port such as 80, and DNS rebinding controls only the hostname.
+export function isLoopbackHostHeader(hostHeader: string | undefined): boolean {
+  if (hostHeader === undefined) return false;
+  const hostname = hostHeader.toLowerCase().replace(/:\d+$/, '');
+  return LOOPBACK_HOSTNAMES.has(hostname);
+}
+
+// A page rebound to 127.0.0.1 connects from loopback but sends its own hostname, so peer and Host must both be local.
+export function isLocalRequest(req: IncomingMessage): boolean {
+  return isLoopbackPeer(req) && isLoopbackHostHeader(req.headers.host);
 }

@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { listMostPlayed } from '../../../src/tools/listening-history.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import type { AlbumDTO, ArtistDTO, SongDTO } from '../../../src/types/index.js';
 
 // Minimal raw song row as Navidrome returns it
 function makeSong(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -86,7 +87,7 @@ describe('listMostPlayed — songs', () => {
     expect(Array.isArray(result.items)).toBe(true);
     expect(result.items).toHaveLength(2);
 
-    const first = result.items[0]!;
+    const first = result.items[0] as SongDTO;
     expect(typeof first.id).toBe('string');
     expect(typeof first.title).toBe('string');
     expect(typeof first.artist).toBe('string');
@@ -111,75 +112,67 @@ describe('listMostPlayed — songs', () => {
     expect(result.items[0]!.playCount).toBeGreaterThanOrEqual(5);
   });
 
-  it('respects the limit', async () => {
-    const songs = Array.from({ length: 10 }, (_, i) =>
-      makeSong({ id: `s${i}`, playCount: 10 - i })
-    );
-    mockClient.requestWithLibraryFilter.mockResolvedValue(songs);
+  it('requests only the limit-sized page from the server', async () => {
+    mockClient.requestWithLibraryFilter.mockResolvedValue([]);
 
-    const result = await listMostPlayed(mockClient as unknown as NavidromeClient, {
+    await listMostPlayed(mockClient as unknown as NavidromeClient, {
       type: 'songs',
       limit: 3,
       minPlayCount: 1,
     });
 
-    expect(result.count).toBe(3);
-    expect(result.items).toHaveLength(3);
+    const [endpoint] = mockClient.requestWithLibraryFilter.mock.calls[0]!;
+    expect(endpoint).toContain('_start=0');
+    expect(endpoint).toContain('_end=3');
   });
 });
 
-// ---- pagination honesty -----------------------------------------------------
+// ---- pagination --------------------------------------------------------------
 
-describe('listMostPlayed — pagination honesty', () => {
+describe('listMostPlayed - pagination', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
     mockClient = createMockClient();
   });
 
-  // minPlayCount is applied client-side AFTER the fetch, so the server must NOT
-  // pre-skip with _start=offset (that would permanently drop qualifying
-  // high-playCount rows in global positions 0..offset-1). Fetch from _start=0
-  // and apply the offset in memory after filtering.
-  it('fetches from _start=0 (not _start=offset) and over-fetches (offset+limit)*3', async () => {
+  // The fetch sorts on playCount, the field minPlayCount tests, so the server offset is exact.
+  it('requests exactly the offset..offset+limit window', async () => {
     mockClient.requestWithLibraryFilter.mockResolvedValue([]);
 
     await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'songs', limit: 10, offset: 20 });
 
     const [endpoint] = mockClient.requestWithLibraryFilter.mock.calls[0]!;
-    expect(endpoint).toContain('_start=0');
-    expect(endpoint).not.toContain('_start=20');
-    // _end = (20 + 10) * 3 = 90
-    expect(endpoint).toContain('_end=90');
+    expect(endpoint).toContain('_start=20');
+    expect(endpoint).toContain('_end=30');
   });
 
-  it('applies offset AFTER the minPlayCount filter so page 2 continues past page 1', async () => {
-    // 6 songs all above the minPlayCount threshold, sorted playCount DESC.
-    const songs = Array.from({ length: 6 }, (_, i) => makeSong({ id: `s${i}`, playCount: 10 - i }));
-    mockClient.requestWithLibraryFilter.mockResolvedValue(songs);
-
-    const page0 = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'songs', limit: 2, offset: 0, minPlayCount: 1 });
-    const page1 = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'songs', limit: 2, offset: 2, minPlayCount: 1 });
-
-    expect(page0.items.map(i => i.id)).toEqual(['s0', 's1']);
-    expect(page1.items.map(i => i.id)).toEqual(['s2', 's3']);
-  });
-
-  it('offset is applied to the FILTERED set, not the raw rows', async () => {
-    // s0 has playCount below threshold and must not consume an offset slot.
+  it('reports hasMore when every row of a full page qualifies', async () => {
     mockClient.requestWithLibraryFilter.mockResolvedValue([
-      makeSong({ id: 's0', playCount: 1 }),  // filtered out by minPlayCount: 5
-      makeSong({ id: 's1', playCount: 10 }),
-      makeSong({ id: 's2', playCount: 9 }),
-      makeSong({ id: 's3', playCount: 8 }),
+      makeSong({ id: 's2', playCount: 8 }),
+      makeSong({ id: 's3', playCount: 7 }),
     ]);
 
     const result = await listMostPlayed(mockClient as unknown as NavidromeClient, {
-      type: 'songs', limit: 1, offset: 1, minPlayCount: 5,
+      type: 'songs', limit: 2, offset: 2, minPlayCount: 1,
     });
 
-    // Filtered set is [s1, s2, s3]; offset 1 -> s2.
-    expect(result.items.map(i => i.id)).toEqual(['s2']);
+    expect(result.items.map(i => i.id)).toEqual(['s2', 's3']);
+    expect(result.hasMore).toBe(true);
+  });
+
+  it('reports no more pages once a row falls below minPlayCount', async () => {
+    mockClient.requestWithLibraryFilter.mockResolvedValue([
+      makeSong({ id: 's1', playCount: 10 }),
+      makeSong({ id: 's2', playCount: 1 }),
+    ]);
+
+    const result = await listMostPlayed(mockClient as unknown as NavidromeClient, {
+      type: 'songs', limit: 2, offset: 0, minPlayCount: 5,
+    });
+
+    expect(result.items.map(i => i.id)).toEqual(['s1']);
+    expect(result.hasMore).toBe(false);
   });
 });
 
@@ -210,7 +203,7 @@ describe('listMostPlayed — albums', () => {
     const result = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'albums', limit: 5 });
 
     expect(result.count).toBe(1);
-    const item = result.items[0]!;
+    const item = result.items[0] as AlbumDTO;
     expect(typeof item.id).toBe('string');
     expect(typeof item.name).toBe('string');
     expect(typeof item.artist).toBe('string');
@@ -245,7 +238,7 @@ describe('listMostPlayed — artists', () => {
     const result = await listMostPlayed(mockClient as unknown as NavidromeClient, { type: 'artists', limit: 5 });
 
     expect(result.count).toBe(1);
-    const item = result.items[0]!;
+    const item = result.items[0] as ArtistDTO;
     expect(typeof item.id).toBe('string');
     expect(typeof item.name).toBe('string');
     expect(typeof item.playCount).toBe('number');

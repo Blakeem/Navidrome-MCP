@@ -8,7 +8,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { listRadioStations, getRadioStation, deleteRadioStation, resetRadioStationCacheForTesting } from '../../../src/tools/radio.js';
+import { listRadioStations, getRadioStation, deleteRadioStation } from '../../../src/tools/radio.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
@@ -34,7 +34,6 @@ describe('listRadioStations', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
-    resetRadioStationCacheForTesting();
     mockClient = createMockClient();
   });
 
@@ -120,7 +119,7 @@ describe('listRadioStations', () => {
 
     await listRadioStations(mockClient as unknown as NavidromeClient, {});
 
-    expect(mockClient.request).toHaveBeenCalledWith(expect.stringMatching(/^\/radio\?/));
+    expect(mockClient.request).toHaveBeenCalledWith('/radio?_start=0&_end=10000');
   });
 });
 
@@ -130,7 +129,6 @@ describe('getRadioStation', () => {
   let mockClient: MockNavidromeClient;
 
   beforeEach(() => {
-    resetRadioStationCacheForTesting();
     mockClient = createMockClient();
   });
 
@@ -156,7 +154,19 @@ describe('getRadioStation', () => {
 
     await expect(
       getRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-999' })
-    ).rejects.toThrow();
+    ).rejects.toThrow('Radio station not found: st-999');
+  });
+
+  it('reads the station list fresh on every lookup', async () => {
+    mockClient.request
+      .mockResolvedValueOnce(makeRestList([{ id: 'st-1', name: 'Old', streamUrl: 'http://old.test/' }]))
+      .mockResolvedValueOnce(makeRestList([{ id: 'st-1', name: 'Edited', streamUrl: 'http://new.test/' }]));
+
+    await getRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-1' });
+    const edited = await getRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-1' });
+
+    expect(mockClient.request).toHaveBeenCalledTimes(2);
+    expect(edited.streamUrl).toBe('http://new.test/');
   });
 
   it('throws when id is missing', async () => {
@@ -173,6 +183,9 @@ describe('deleteRadioStation', () => {
 
   beforeEach(() => {
     mockClient = createMockClient();
+    mockClient.request.mockResolvedValue(
+      makeRestList([{ id: 'st-1', name: 'WBEZ', streamUrl: 'http://wbez.test/' }])
+    );
   });
 
   it('returns success: true and calls /deleteInternetRadioStation with the id', async () => {
@@ -181,10 +194,19 @@ describe('deleteRadioStation', () => {
     const result = await deleteRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-1' });
 
     expect(result.success).toBe(true);
+    expect(mockClient.request).toHaveBeenCalledWith(expect.stringMatching(/^\/radio\?/));
     expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
       '/deleteInternetRadioStation',
-      { id: 'st-1' }
+      { id: 'st-1' },
+      { retryPolicy: 'never' }
     );
+  });
+
+  it('throws not-found without deleting when no station has the id', async () => {
+    await expect(
+      deleteRadioStation(mockClient as unknown as NavidromeClient, { stationId: 'st-999' })
+    ).rejects.toThrow('Radio station not found: st-999. Call list_radio_stations for current station ids.');
+    expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
   });
 
   it('throws when id is missing', async () => {

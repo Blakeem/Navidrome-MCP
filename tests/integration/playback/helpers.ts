@@ -7,8 +7,7 @@
  * Architecture:
  *   - Live Navidrome reads via the shared singleton client (auth-token reuse)
  *   - Live mpv writes via the real `playbackEngine` singleton
- *   - Tests are skipped cleanly when Navidrome isn't reachable OR mpv isn't
- *     installed; never hard-fail in those environments
+ *   - Tests skip when Navidrome is unconfigured or mpv isn't installed
  *
  * IMPORTANT: helpers in this file MUST NOT modify Navidrome data. All Navidrome
  * calls go through search/get endpoints (read-only). All write side effects
@@ -18,7 +17,6 @@
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { loadConfig } from '../../../src/config.js';
-import { detectMpvBinary } from '../../../src/services/playback/mpv-process.js';
 import {
   playbackEngine,
   type PlaybackStatus,
@@ -47,7 +45,7 @@ import {
   playRadioStation as playRadioStationTool,
 } from '../../../src/tools/radio.js';
 import { searchAlbums, searchSongs } from '../../../src/tools/search/index.js';
-import { shouldSkipLiveTests } from '../../helpers/env-detection.js';
+import { isMpvAvailable, shouldSkipLiveTests } from '../../helpers/env-detection.js';
 import { getSharedLiveClient } from '../../factories/shared-client.js';
 
 /* ------------------------------------------------------------------------- */
@@ -58,10 +56,10 @@ import { getSharedLiveClient } from '../../factories/shared-client.js';
  * mpv binary detection is cached for the test run. Tests that rely on mpv
  * skip when this is null.
  */
-const mpvAvailable: boolean = detectMpvBinary() !== null;
+const mpvAvailable: boolean = isMpvAvailable();
 
 /**
- * Combined skip predicate: live tests skipped when Navidrome is unavailable
+ * Combined skip predicate: live tests skipped when Navidrome is unconfigured
  * (per shared env-detection) OR when mpv isn't installed.
  */
 function shouldSkipPlaybackTests(): boolean {
@@ -73,7 +71,7 @@ function shouldSkipPlaybackTests(): boolean {
  */
 function getPlaybackSkipReason(): string {
   if (!mpvAvailable) {
-    return 'mpv binary not found on PATH (set MPV_PATH or install mpv)';
+    return 'mpv not found (install mpv on PATH or set playback.mpvPath in settings.json)';
   }
   return 'live tests disabled (no Navidrome config or CI without server)';
 }
@@ -145,7 +143,7 @@ export async function getTestSongIds(count: number): Promise<string[]> {
     throw new Error('getTestSongIds: count must be >= 1');
   }
   const ctx = await setupClientAndConfig();
-  const result = await searchSongs(ctx.client, ctx.config, {
+  const result = await searchSongs(ctx.client, {
     query: '',
     sort: 'random',
     limit: count,
@@ -174,7 +172,7 @@ export async function getTestAlbumIds(count: number): Promise<string[]> {
 
   // Over-fetch and filter for non-empty albums. Most albums in a real
   // library are non-empty so over-fetch ratio of 2x is plenty.
-  const result = await searchAlbums(ctx.client, ctx.config, {
+  const result = await searchAlbums(ctx.client, {
     query: '',
     sort: 'random',
     limit: Math.max(count * 2, 10),
@@ -280,7 +278,8 @@ export async function playSongs(args: {
 export async function playAlbums(args: {
   albumIds: string[];
   mode?: 'replace' | 'append';
-  shuffle?: 'none' | 'albums' | 'songs';
+  shuffleAlbums?: boolean;
+  shuffleSongs?: boolean;
 }): Promise<Awaited<ReturnType<typeof playAlbumsTool>>> {
   const { client } = await ctx();
   return playAlbumsTool(client, args);
@@ -288,15 +287,14 @@ export async function playAlbums(args: {
 
 /**
  * Run a filter-driven album search and pipe the matched albums into the
- * live play queue. Args mirror `search_albums` plus `mode` and `shuffle`
- * (which is the album-level shuffle enum, not a boolean — matches the
- * production tool signature).
+ * live play queue. Args mirror `search_albums` plus `mode`, `shuffleAlbums`
+ * and `shuffleSongs`.
  */
 export async function playAlbumsSearch(
   args: Record<string, unknown>
 ): Promise<Awaited<ReturnType<typeof playAlbumsSearchTool>>> {
-  const { client, config } = await ctx();
-  return playAlbumsSearchTool(client, config, args);
+  const { client } = await ctx();
+  return playAlbumsSearchTool(client, args);
 }
 
 /**
@@ -307,16 +305,27 @@ export async function playAlbumsSearch(
 export async function playSongsSearch(
   args: Record<string, unknown>
 ): Promise<Awaited<ReturnType<typeof playSongsSearchTool>>> {
-  const { client, config } = await ctx();
-  return playSongsSearchTool(client, config, args);
+  const { client } = await ctx();
+  return playSongsSearchTool(client, args);
 }
 
 export async function getPlayQueue(): Promise<Awaited<ReturnType<typeof getPlayQueueTool>>> {
-  return getPlayQueueTool({});
+  const { client } = await ctx();
+  return getPlayQueueTool(client, {});
 }
 
 export async function clearPlayQueue(): Promise<Awaited<ReturnType<typeof clearPlayQueueTool>>> {
   return clearPlayQueueTool({});
+}
+
+/** Clears the queue and waits until it reads empty. A stopped engine counts as
+ * empty, since clear_play_queue never spawns mpv. */
+export async function clearQueueAndWait(): Promise<void> {
+  await clearPlayQueue();
+  await waitFor(async () => {
+    const np = await nowPlayingTool({});
+    return np.engineRunning === false || np.queueLength === 0;
+  });
 }
 
 export async function shufflePlayQueue(): Promise<Awaited<ReturnType<typeof shufflePlayQueueTool>>> {
@@ -365,8 +374,10 @@ export async function setVolume(args: {
   return setVolumeTool(args);
 }
 
+/** Passes the client like the MCP handler does, so radio station names resolve. */
 export async function nowPlaying(): Promise<Awaited<ReturnType<typeof nowPlayingTool>>> {
-  return nowPlayingTool({});
+  const { client } = await ctx();
+  return nowPlayingTool({}, client);
 }
 
 export async function playbackStatus(): Promise<PlaybackStatus> {

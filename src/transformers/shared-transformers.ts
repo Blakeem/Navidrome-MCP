@@ -17,17 +17,34 @@
  */
 
 /**
- * Common interfaces shared across transformers
- */
-
-/**
  * Base interface for entities with genre information
  */
 interface RawEntityWithGenres {
   genre?: string;
-  genres?: Array<{ id: string; name: string }>;
+  genres?: Array<{ name: string }>;
   [key: string]: unknown;
 }
+
+// Every gate name a transformer checks, so a `keep` entry that no transformer gates on fails to compile.
+type TransformField =
+  | 'addedDate'
+  | 'albumArtist'
+  | 'albumArtistId'
+  | 'biography'
+  | 'bitRate'
+  | 'compilation'
+  | 'duration'
+  | 'genre'
+  | 'genres'
+  | 'path'
+  | 'playCount'
+  | 'playDate'
+  | 'playlistId'
+  | 'rating'
+  | 'releaseYear'
+  | 'starred'
+  | 'trackNumber'
+  | 'year';
 
 /**
  * Controls how much per-item detail a transformer emits. The default
@@ -35,32 +52,55 @@ interface RawEntityWithGenres {
  * recognized and acted on (ids, title/name, artist, album, durationFormatted),
  * keeping large array responses well under the tool-result token cap. Verbose
  * mode restores every field. `keep` force-emits specific fields in compact mode
- * for tools whose entire purpose is a particular metric — e.g. `playCount` for
- * list_most_played, `starred`/`starredAt` for list_starred_items.
+ * for tools whose entire purpose is a particular metric, e.g. `playCount` for
+ * list_most_played, `starred` for list_starred_items.
  */
 export interface TransformOptions {
   /** When true, emit all fields. Default false (compact). */
   verbose?: boolean;
   /** Field names to force-emit even in compact mode. */
-  keep?: readonly string[];
+  keep?: readonly TransformField[];
 }
 
 /**
- * Decide whether an optional/secondary field should be emitted given the
- * transform options. A field is emitted when verbose is on OR it is explicitly
- * named in `keep`. Identity fields never go through this gate — they are always
- * emitted directly by each transformer.
- *
- * NOTE: `keep` must name the field a transformer actually gates on. For coupled
- * fields that is the gate field, not the dependent one: `starredAt` is emitted
- * inside the `shouldEmit('starred', …)` block, so force-keeping the starred
- * state needs `keep: ['starred']`; `keep: ['starredAt']` alone emits nothing.
+ * Identity fields bypass this gate, since each transformer emits them directly.
+ * Dependent fields such as `starredAt` are emitted under their gate field (`starred`).
  */
-export function shouldEmit(field: string, options?: TransformOptions): boolean {
+export function shouldEmit(field: TransformField, options?: TransformOptions): boolean {
   if (options?.verbose === true) {
     return true;
   }
   return options?.keep?.includes(field) ?? false;
+}
+
+/**
+ * Navidrome omits `starred` when false, so only `true` marks a star.
+ * `starredAt` outlives an unstar, so it is echoed only with `starred: true`.
+ */
+export function starredFields(
+  raw: { starred?: boolean | null; starredAt?: string },
+  options?: TransformOptions,
+): { starred?: boolean; starredAt?: string } {
+  if (!shouldEmit('starred', options)) {
+    return {};
+  }
+  if (raw.starred === true) {
+    return raw.starredAt !== undefined ? { starred: true, starredAt: raw.starredAt } : { starred: true };
+  }
+  return { starred: false };
+}
+
+/**
+ * Navidrome can return null or non-object rows on some API errors. A row cast would crash the
+ * single-item transformer and lose the whole batch, so non-object rows are dropped instead.
+ */
+export function transformObjectRows<T, R>(raw: unknown, transform: (row: T) => R): R[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .filter((row): row is T => typeof row === 'object' && row !== null)
+    .map((row) => transform(row));
 }
 
 /**
@@ -107,14 +147,12 @@ export function formatDuration(seconds?: number): string {
  * @returns The primary genre name or undefined
  */
 export function extractGenre(entity: RawEntityWithGenres): string | undefined {
-  // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
     const first = entity.genres.find(g => g.name !== '');
     if (first) {
       return first.name;
     }
   }
-  // Fall back to genre string
   if (entity.genre !== undefined && entity.genre !== '') {
     return entity.genre;
   }
@@ -127,12 +165,12 @@ export function extractGenre(entity: RawEntityWithGenres): string | undefined {
  * @returns Array of genre names or undefined
  */
 export function extractAllGenres(entity: RawEntityWithGenres): string[] | undefined {
-  // Try genres array first (newer format)
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
     const names = entity.genres.map(g => g.name).filter(Boolean);
-    return names.length > 0 ? names : undefined;
+    if (names.length > 0) {
+      return names;
+    }
   }
-  // Fall back to single genre string as array
   if (entity.genre !== undefined && entity.genre !== '') {
     return [entity.genre];
   }

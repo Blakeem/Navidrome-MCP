@@ -25,7 +25,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 import { createMockClient } from '../../factories/mock-client.js';
-import { getLyrics, parseLocalLyrics, LAST_LINE_FALLBACK_MS } from '../../../src/tools/lyrics.js';
+import { buildLyricsLookup, resolveLyricsByMetadata } from '../../../src/tools/lyrics.js';
+import { parseLocalLyrics, LAST_LINE_FALLBACK_MS } from '../../../src/transformers/lyrics-tag.js';
 
 const config = makeTestConfig({ lrclibUserAgent: 'TestAgent/1.0', lrclibBase: 'https://lrclib.net' });
 
@@ -71,7 +72,7 @@ describe('LRCLIB retry ladder', () => {
       .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
       .mockResolvedValueOnce(makeResponse(200, []));
 
-    const result = await getLyrics(config, { title: 'Ghost', artist: 'Nobody' });
+    const result = await resolveLyricsByMetadata(config, { title: 'Ghost', artist: 'Nobody' });
 
     const urls = requestedUrls();
     expect(urls).toHaveLength(2);
@@ -90,7 +91,7 @@ describe('LRCLIB retry ladder', () => {
       .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
       .mockResolvedValueOnce(makeResponse(200, []));
 
-    await getLyrics(config, { title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000 });
+    await resolveLyricsByMetadata(config, { title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000 });
 
     const urls = requestedUrls();
     expect(urls).toHaveLength(4);
@@ -113,26 +114,12 @@ describe('LRCLIB retry ladder', () => {
     expect(urls[3]).not.toContain('duration=');
   });
 
-  it('looks a known record id up as a path segment before the metadata rungs', async () => {
-    global.fetch = vi.fn()
-      .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
-      .mockResolvedValueOnce(makeResponse(200, { syncedLyrics: '[00:03.00]From metadata' }));
-
-    const result = await getLyrics(config, { title: 'Track', artist: 'Band', id: '3396226' });
-
-    const urls = requestedUrls();
-    expect(urls[0]).toContain('/api/get/3396226');
-    expect(urls[0]).not.toContain('id=');
-    expect(urls[1]).toContain('track_name=Track');
-    expect(result.hasSynced).toBe(true);
-  });
-
   it('falls through a 404 to the next rung', async () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
       .mockResolvedValueOnce(makeResponse(200, { syncedLyrics: '[00:02.00]Later' }));
 
-    const result = await getLyrics(config, {
+    const result = await resolveLyricsByMetadata(config, {
       title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000,
     });
 
@@ -145,7 +132,7 @@ describe('LRCLIB retry ladder', () => {
     global.fetch = vi.fn().mockResolvedValueOnce(makeResponse(503, null, 'Service Unavailable'));
 
     await expect(
-      getLyrics(config, { title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000 })
+      resolveLyricsByMetadata(config, { title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000 })
     ).rejects.toThrow();
 
     expect(global.fetch).toHaveBeenCalledTimes(1);
@@ -159,7 +146,7 @@ describe('LRCLIB retry ladder', () => {
         plainLyrics: 'plain from rung two',
       }));
 
-    const result = await getLyrics(config, {
+    const result = await resolveLyricsByMetadata(config, {
       title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000,
     });
 
@@ -169,6 +156,41 @@ describe('LRCLIB retry ladder', () => {
     expect(result.unsynced).toBe('plain from rung two');
   });
 
+  it('keeps a plain hit from an earlier rung when a later rung fails, without trying further rungs', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(makeResponse(200, { plainLyrics: 'plain from rung one' }))
+      .mockResolvedValueOnce(makeResponse(503, null, 'Service Unavailable'));
+
+    const result = await resolveLyricsByMetadata(config, {
+      title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000,
+    });
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(result.provider).toBe('lrclib');
+    expect(result.unsynced).toBe('plain from rung one');
+  });
+
+  it('skips a null row in a search body instead of failing the lookup', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
+      .mockResolvedValueOnce(makeResponse(200, [null, { trackName: 'T', artistName: 'A', syncedLyrics: '[00:01.00]x' }]));
+
+    const result = await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' });
+
+    expect(result.hasSynced).toBe(true);
+    expect(result.synced?.[0]?.text).toBe('x');
+  });
+
+  it('rounds a fractional LRCLIB duration to whole milliseconds', async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      makeResponse(200, { syncedLyrics: '[00:00.50]Short', duration: 1.001 })
+    );
+
+    const result = await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' });
+
+    expect(result.track.durationMs).toBe(1001);
+  });
+
   it('returns the retained plain result when no rung has synced lyrics', async () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce(makeResponse(200, { plainLyrics: 'plain only' }))
@@ -176,7 +198,7 @@ describe('LRCLIB retry ladder', () => {
       .mockResolvedValueOnce(makeResponse(200, {}))
       .mockResolvedValueOnce(makeResponse(200, []));
 
-    const result = await getLyrics(config, {
+    const result = await resolveLyricsByMetadata(config, {
       title: 'Track', artist: 'Band', album: 'Record', durationMs: 200_000,
     });
 
@@ -200,7 +222,7 @@ describe('LyricsLine endMs', () => {
       makeResponse(200, { syncedLyrics: '[00:01.00]One\n[00:03.50]Two' })
     );
 
-    const result = await getLyrics(config, { title: 'T', artist: 'A' });
+    const result = await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' });
 
     expect(result.synced).toHaveLength(2);
     expect(result.synced?.[0]).toMatchObject({ timeMs: 1000, endMs: 3500, text: 'One' });
@@ -211,7 +233,7 @@ describe('LyricsLine endMs', () => {
       makeResponse(200, { syncedLyrics: '[00:01.00]One\n[00:04.00]', duration: 300 })
     );
 
-    const result = await getLyrics(config, { title: 'T', artist: 'A' });
+    const result = await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' });
 
     expect(result.synced).toHaveLength(1);
     expect(result.synced?.[0]).toMatchObject({ timeMs: 1000, endMs: 4000, text: 'One' });
@@ -222,7 +244,7 @@ describe('LyricsLine endMs', () => {
       makeResponse(200, { syncedLyrics: '[00:01.00]Only line', duration: 300 })
     );
 
-    const result = await getLyrics(config, { title: 'T', artist: 'A' });
+    const result = await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' });
 
     expect(result.synced).toHaveLength(1);
     expect(result.synced?.[0]?.endMs).toBe(300_000);
@@ -233,7 +255,7 @@ describe('LyricsLine endMs', () => {
       makeResponse(200, { syncedLyrics: '[00:01.00]Only line' })
     );
 
-    const result = await getLyrics(config, { title: 'T', artist: 'A' });
+    const result = await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' });
 
     expect(result.synced).toHaveLength(1);
     expect(result.synced?.[0]?.endMs).toBe(1000 + LAST_LINE_FALLBACK_MS);
@@ -244,7 +266,7 @@ describe('LyricsLine endMs', () => {
       makeResponse(200, { syncedLyrics: '[00:01.00] [00:05.00]Chorus' })
     );
 
-    const result = await getLyrics(config, { title: 'T', artist: 'A' });
+    const result = await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' });
 
     expect(result.synced).toHaveLength(2);
     expect(result.synced?.[0]).toMatchObject({ timeMs: 1000, endMs: 5000, text: 'Chorus' });
@@ -267,10 +289,10 @@ describe('local file lyrics source', () => {
     const client = createMockClient();
     client.requestWithLibraryFilter.mockResolvedValue({ lyrics: JSON.stringify([localEntry()]) });
 
-    const result = await getLyrics(
+    const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1', allowLrclib: false }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' }, allowLrclib: false }
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -281,13 +303,13 @@ describe('local file lyrics source', () => {
     expect(result.synced?.[0]).toMatchObject({ timeMs: 1000, endMs: 4000 });
   });
 
-  it('does not look up local lyrics when no songId is supplied', async () => {
+  it('does not look up local lyrics when no local source is supplied', async () => {
     global.fetch = vi.fn()
       .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
       .mockResolvedValueOnce(makeResponse(200, []));
     const client = createMockClient();
 
-    await getLyrics(config, { title: 'T', artist: 'A' }, { client: client as unknown as NavidromeClient });
+    await resolveLyricsByMetadata(config, { title: 'T', artist: 'A' }, {});
 
     expect(client.requestWithLibraryFilter).not.toHaveBeenCalled();
   });
@@ -298,10 +320,10 @@ describe('local file lyrics source', () => {
     const client = createMockClient();
     client.requestWithLibraryFilter.mockResolvedValue({ lyrics: JSON.stringify([localEntry()]) });
 
-    const result = await getLyrics(
+    const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -319,10 +341,10 @@ describe('local file lyrics source', () => {
       ]),
     });
 
-    const result = await getLyrics(
+    const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('lrclib');
@@ -340,15 +362,70 @@ describe('local file lyrics source', () => {
       ]),
     });
 
-    const result = await getLyrics(
+    const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('local');
     expect(result.hasSynced).toBe(false);
     expect(result.unsynced).toBe('A plain local line that is definitely long enough');
+  });
+
+  it('returns plain file lyrics when LRCLIB answers 503', async () => {
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(503, null, 'Service Unavailable'));
+    const client = createMockClient();
+    client.requestWithLibraryFilter.mockResolvedValue({
+      lyrics: JSON.stringify([
+        localEntry({ synced: false, line: [{ value: 'A plain local line that is definitely long enough' }] }),
+      ]),
+    });
+
+    const result = await resolveLyricsByMetadata(
+      config,
+      { title: 'T', artist: 'A' },
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
+    );
+
+    expect(result.provider).toBe('local');
+    expect(result.unsynced).toBe('A plain local line that is definitely long enough');
+  });
+
+  it('credits the file, not LRCLIB, for an empty answer when LRCLIB was never asked', async () => {
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy;
+    const client = createMockClient();
+    client.requestWithLibraryFilter.mockResolvedValue({});
+
+    const result = await resolveLyricsByMetadata(
+      config,
+      { title: 'T', artist: 'A' },
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' }, allowLrclib: false }
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.hasSynced).toBe(false);
+    expect(result.unsynced).toBeUndefined();
+    expect(result.provider).toBe('local');
+    expect(result.attribution.url).not.toContain('lrclib');
+  });
+
+  it('credits LRCLIB for an empty answer when LRCLIB was asked', async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(makeResponse(404, null, 'Not Found'))
+      .mockResolvedValueOnce(makeResponse(200, []));
+    const client = createMockClient();
+    client.requestWithLibraryFilter.mockResolvedValue({});
+
+    const result = await resolveLyricsByMetadata(
+      config,
+      { title: 'T', artist: 'A' },
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
+    );
+
+    expect(result.provider).toBe('lrclib');
+    expect(result.attribution.url).toBe('https://lrclib.net');
   });
 
   it('falls through to LRCLIB when the song row fetch fails', async () => {
@@ -358,10 +435,10 @@ describe('local file lyrics source', () => {
     const client = createMockClient();
     client.requestWithLibraryFilter.mockRejectedValue(new Error('Navidrome API error: 404 Not Found'));
 
-    const result = await getLyrics(
+    const result = await resolveLyricsByMetadata(
       config,
       { title: 'T', artist: 'A' },
-      { client: client as unknown as NavidromeClient, songId: 'song-1' }
+      { local: { client: client as unknown as NavidromeClient, songId: 'song-1' } }
     );
 
     expect(result.provider).toBe('lrclib');
@@ -467,5 +544,44 @@ describe('parseLocalLyrics', () => {
     const result = parseLocalLyrics([localEntry()]);
 
     expect(result?.hasSynced).toBe(true);
+  });
+});
+
+// The MCP get_lyrics path and the web remote's lyrics route share this one rule set.
+describe('buildLyricsLookup', () => {
+  it('trims the fields and converts the duration to milliseconds', () => {
+    const lookup = buildLyricsLookup({ title: ' Song ', artist: ' Band ', album: ' Record ', duration: 199.4 });
+
+    expect(lookup).toEqual({
+      metadata: { title: 'Song', artist: 'Band', album: 'Record', durationMs: 199400 },
+      searchable: true,
+    });
+  });
+
+  it.each([0, -1, Number.NaN, '199', undefined])('drops the unknown duration %j', (duration) => {
+    const lookup = buildLyricsLookup({ title: 'Song', artist: 'Band', album: undefined, duration });
+
+    expect(lookup.metadata).not.toHaveProperty('durationMs');
+  });
+
+  it('fills a missing title or artist with a placeholder that never reaches LRCLIB', () => {
+    const lookup = buildLyricsLookup({ title: '  ', artist: undefined, album: '', duration: undefined });
+
+    expect(lookup.metadata).toEqual({ title: 'Unknown', artist: 'Unknown' });
+    expect(lookup.searchable).toBe(false);
+  });
+
+  it.each(['[Unknown Artist]', '[unknown artist]'])('treats Navidrome\'s %s placeholder as no artist', (artist) => {
+    const lookup = buildLyricsLookup({ title: 'Hello', artist, album: undefined, duration: undefined });
+
+    expect(lookup.metadata.artist).toBe('Unknown');
+    expect(lookup.searchable).toBe(false);
+  });
+
+  it('drops Navidrome\'s [Unknown Album] placeholder', () => {
+    const lookup = buildLyricsLookup({ title: 'Hello', artist: 'Band', album: '[Unknown Album]', duration: undefined });
+
+    expect(lookup.metadata).not.toHaveProperty('album');
+    expect(lookup.searchable).toBe(true);
   });
 });

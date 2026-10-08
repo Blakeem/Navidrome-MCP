@@ -26,13 +26,23 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { SseBroadcaster } from './broadcaster.js';
-import { writeError } from './http-helpers.js';
+import { isJsonContentType, writeError } from './http-helpers.js';
+import { isLoopbackHostHeader } from './loopback.js';
+import { isLanReachable } from './network.js';
 import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
 import { handleHealth } from './routes/health.js';
+import {
+  handleLibraryAlbumSongs,
+  handleLibraryArtistAlbums,
+  handleLibraryFavorites,
+  handleLibraryPlay,
+  handleLibraryRecent,
+  handleLibrarySearch,
+} from './routes/library.js';
 import { handleLyrics } from './routes/lyrics.js';
 import { handleNetworkInfo } from './routes/network-info.js';
-import { handleListPlaylists, handlePlayPlaylist, handlePlayStarredAlbums, handlePlayStarredSongs } from './routes/playlists.js';
+import { handleListPlaylists } from './routes/playlists.js';
 import {
   handleClear,
   handleNext,
@@ -41,35 +51,39 @@ import {
   handlePrevious,
   handleResume,
   handleSeek,
+  handleShuffle,
   handleVolume,
 } from './routes/controls.js';
 import {
   handleGetPlayerSettings,
+  handleMcpLease,
   handlePlayerState,
   handleSetPlayerSettings,
   handleShutdown,
+  MCP_LEASE_PATH,
+  type McpLeaseCounter,
 } from './routes/player.js';
-import { handleNowPlaying, handleQueue } from './routes/snapshot.js';
 import { handleStatic } from './routes/static-files.js';
+import { handleVisualizerModes } from './routes/visualizer-modes.js';
+import type { VisualizerHub } from './visualizer-hub.js';
 
 interface ServerDeps {
   config: Config;
   client: NavidromeClient;
   broadcaster: SseBroadcaster;
-  /** Tear down the player (stop mpv + exit) — invoked by POST /api/shutdown. */
+  visualizer: Pick<VisualizerHub, 'addClient'>;
+  /** Tear down the player (stop mpv + exit). POST /api/shutdown invokes it. */
   shutdown: () => void;
+  leases: McpLeaseCounter;
 }
 
 /**
- * Build the underlying HTTP server. Listen/close lifecycle is owned by the
- * caller (`acquireOrAttach` in `src/web/acquire.ts`, driven by the standalone
- * `navidrome-web` entry) — this factory returns an unstarted instance so the
- * acquire/port-as-lock logic can bind it (or discard it) as needed.
+ * Build the underlying HTTP server. The caller (`acquireOrAttach` in `src/web/acquire.ts`)
+ * owns the listen and close lifecycle, so this factory returns an unstarted instance the
+ * port-as-lock logic can bind or discard.
  *
- * The dispatcher is a flat if-chain rather than a route table: ten endpoints
- * is below the threshold where pattern abstraction pays for itself, and a
- * linear read of the chain is the most reviewable form for security-sensitive
- * code (every accepted path is in plain sight).
+ * The dispatcher is a flat if-chain rather than a route table, because a linear read is
+ * the most reviewable form for security-sensitive code (every accepted path is in plain sight).
  */
 export function createServer(deps: ServerDeps): Server {
   return createHttpServer((req, res) => {
@@ -88,6 +102,15 @@ export function createServer(deps: ServerDeps): Server {
   });
 }
 
+// A malformed percent sequence (e.g. %GG) is a client error, not a 500, so a URIError maps to null.
+function decodePathParam(path: string, prefix: string): string | null {
+  try {
+    return decodeURIComponent(path.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -98,8 +121,7 @@ async function handleRequest(
     return;
   }
 
-  // The base is irrelevant — we only consume pathname + searchParams. Use a
-  // placeholder hostname so the URL parser doesn't reject relative inputs.
+  // Only pathname and searchParams are read, so a placeholder base lets the URL parser accept a relative input.
   let parsed: URL;
   try {
     parsed = new URL(req.url, 'http://localhost');
@@ -110,24 +132,33 @@ async function handleRequest(
   const path = parsed.pathname;
   const method = req.method ?? 'GET';
 
+  // DNS-rebinding guard for a loopback bind, the same model as the MCP transport's Host allowlist.
+  if (!isLanReachable(deps.config.webui.host) && !isLoopbackHostHeader(req.headers.host)) {
+    writeError(res, 403, 'Forbidden host');
+    return;
+  }
+
+  // A cross-site page cannot send this header without a CORS preflight, which this server never approves.
+  if (method === 'POST' && !isJsonContentType(req.headers['content-type'])) {
+    writeError(res, 415, 'Content-Type must be application/json');
+    return;
+  }
+
   // --- Health signature (port-as-lock coexistence) ---
   if (method === 'GET' && path === '/healthz') {
     handleHealth(req, res, deps.config);
     return;
   }
 
-  // --- API: snapshot reads ---
-  if (method === 'GET' && path === '/api/now-playing') {
-    return handleNowPlaying(res, deps.client);
-  }
-  if (method === 'GET' && path === '/api/queue') {
-    return handleQueue(res, deps.client);
-  }
-
   // --- API: SSE stream ---
   if (method === 'GET' && path === '/api/events') {
     return handleEvents(res, deps.broadcaster);
   }
+  if (method === 'GET' && path === '/api/visualizer') {
+    deps.visualizer.addClient(res);
+    return;
+  }
+  if (method === 'GET' && path === '/api/visualizer/modes') return handleVisualizerModes(res);
 
   // --- API: control actions ---
   if (method === 'POST' && path === '/api/controls/pause')    return handlePause(res);
@@ -138,6 +169,7 @@ async function handleRequest(
   if (method === 'POST' && path === '/api/controls/volume')     return handleVolume(req, res);
   if (method === 'POST' && path === '/api/controls/play-index') return handlePlayQueueIndex(req, res);
   if (method === 'POST' && path === '/api/controls/clear')      return handleClear(res);
+  if (method === 'POST' && path === '/api/controls/shuffle')    return handleShuffle(res);
 
   // --- API: network info ---
   if (method === 'GET' && path === '/api/network-info') {
@@ -146,39 +178,37 @@ async function handleRequest(
   }
 
   // --- API: playlists ---
-  if (method === 'GET'  && path === '/api/playlists')      return handleListPlaylists(res, deps.client);
-  if (method === 'POST' && path === '/api/playlists/play') return handlePlayPlaylist(req, res, deps.client);
-  if (method === 'POST' && path === '/api/starred/songs/play') return handlePlayStarredSongs(req, res, deps.client);
-  if (method === 'POST' && path === '/api/starred/albums/play') return handlePlayStarredAlbums(req, res, deps.client);
+  if (method === 'GET' && path === '/api/playlists') return handleListPlaylists(res, deps.client);
+
+  // --- API: library browse ---
+  if (method === 'GET' && path === '/api/library/recent')        return handleLibraryRecent(res, deps.client);
+  if (method === 'GET' && path === '/api/library/search')        return handleLibrarySearch(res, deps.client, parsed.searchParams.get('q'));
+  if (method === 'GET' && path === '/api/library/artist-albums') return handleLibraryArtistAlbums(res, deps.client, parsed.searchParams.get('id'));
+  if (method === 'GET' && path === '/api/library/album-songs')   return handleLibraryAlbumSongs(res, deps.client, parsed.searchParams.get('id'));
+  if (method === 'GET' && path === '/api/library/favorites')     return handleLibraryFavorites(res, deps.client);
+  if (method === 'POST' && path === '/api/library/play')         return handleLibraryPlay(req, res, deps.client);
 
   // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
   if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res, deps.config); return; }
-  if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res); return; }
-  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res);
+  if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res, deps.config); return; }
+  if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res, deps.config, deps.broadcaster);
   if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
+  if (method === 'POST' && path === MCP_LEASE_PATH)          { handleMcpLease(req, res, deps.leases); return; }
 
   // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {
-    // A malformed percent-sequence (e.g. /api/cover/%GG) makes
-    // decodeURIComponent throw a URIError; that's a client error, not a 500.
-    let id: string;
-    try {
-      id = decodeURIComponent(path.slice('/api/cover/'.length));
-    } catch {
+    const id = decodePathParam(path, '/api/cover/');
+    if (id === null) {
       writeError(res, 400, 'Malformed cover id');
       return;
     }
-    return handleCover(res, deps.config, id);
+    return handleCover(res, deps.config, id, parsed.searchParams.get('size'));
   }
 
   // --- API: lyrics for one live-queue entry ---
   if (method === 'GET' && path.startsWith('/api/lyrics/')) {
-    // A malformed percent-sequence makes decodeURIComponent throw a URIError;
-    // that's a client error, not a 500.
-    let songId: string;
-    try {
-      songId = decodeURIComponent(path.slice('/api/lyrics/'.length));
-    } catch {
+    const songId = decodePathParam(path, '/api/lyrics/');
+    if (songId === null) {
       writeError(res, 400, 'Malformed lyrics id');
       return;
     }

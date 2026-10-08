@@ -16,16 +16,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { PlaylistDTO } from '../types/index.js';
-import { formatDuration } from './shared-transformers.js';
+import type { PlaylistDTO, PlaylistTrackDTO } from '../types/index.js';
+import { logger } from '../utils/logger.js';
+import {
+  extractGenre,
+  formatDuration,
+  shouldEmit,
+  transformObjectRows,
+  type TransformOptions,
+} from './shared-transformers.js';
 
 /**
- * Raw playlist data from Navidrome API.
- *
- * Navidrome's `/api/playlist` returns the owner as `ownerName` + `ownerId`,
- * not `owner`. We retain `owner` here as a fallback for older deployments or
- * fixtures that still emit the legacy field — the transformer prefers
- * `ownerName` when both are present.
+ * Raw playlist data from Navidrome API. Older Navidrome releases emit the owner
+ * as `owner`, and `ownerName` wins when both are present.
  */
 export interface RawPlaylist {
   id: string;
@@ -43,25 +46,47 @@ export interface RawPlaylist {
 }
 
 /**
+ * Raw playlist track data from Navidrome API
+ */
+interface RawPlaylistTrack {
+  id: string;
+  mediaFileId?: string;
+  playlistId: string;
+  title?: string;
+  album?: string;
+  artist?: string;
+  albumArtist?: string;
+  duration?: number;
+  bitRate?: number;
+  path?: string;
+  trackNumber?: number;
+  year?: number;
+  genre?: string;
+  genres?: Array<{ name: string }>;
+  [key: string]: unknown;
+}
+
+/**
  * Transform a raw playlist from Navidrome API to a clean DTO
  * @param rawPlaylist Raw playlist data from API
+ * @param options `keep: ['duration']` adds the numeric total duration
  * @returns Clean playlist DTO for LLM consumption
  */
-export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
-  // Owner field naming: live Navidrome (>=0.50) emits `ownerName` /
-  // `ownerId`; older mocks / fixtures still ship `owner` as a string.
-  // Prefer the real-world shape but accept the legacy one so existing test
-  // fixtures keep working.
+export function transformToPlaylistDTO(rawPlaylist: RawPlaylist, options?: TransformOptions): PlaylistDTO {
   const owner = rawPlaylist.ownerName ?? rawPlaylist.owner ?? '';
 
   const dto: PlaylistDTO = {
-    playlistId: rawPlaylist.id,
+    id: rawPlaylist.id,
     name: rawPlaylist.name || '',
     public: rawPlaylist.public || false,
     songCount: rawPlaylist.songCount || 0,
     durationFormatted: formatDuration(rawPlaylist.duration),
     owner,
   };
+
+  if (shouldEmit('duration', options) && rawPlaylist.duration !== undefined) {
+    dto.duration = rawPlaylist.duration;
+  }
 
   if (rawPlaylist.ownerId !== undefined && rawPlaylist.ownerId !== '') {
     dto.ownerId = rawPlaylist.ownerId;
@@ -85,18 +110,84 @@ export function transformToPlaylistDTO(rawPlaylist: RawPlaylist): PlaylistDTO {
 /**
  * Transform an array of raw playlists to DTOs
  * @param rawPlaylists Array of raw playlist data
+ * @param options Forwarded to each item (see {@link transformToPlaylistDTO})
  * @returns Array of clean playlist DTOs
  */
-export function transformPlaylistsToDTO(rawPlaylists: unknown): PlaylistDTO[] {
-  if (!Array.isArray(rawPlaylists)) {
-    return [];
+export function transformPlaylistsToDTO(rawPlaylists: unknown, options?: TransformOptions): PlaylistDTO[] {
+  return transformObjectRows(rawPlaylists, (playlist: RawPlaylist) => transformToPlaylistDTO(playlist, options));
+}
+
+/**
+ * Compact output keeps only what identifies and acts on a track (`position` for reorder and remove,
+ * `songId` for playback), so large playlists stay under the token cap.
+ */
+export function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, options?: TransformOptions): PlaylistTrackDTO {
+  const mediaFileId = rawTrack.mediaFileId ?? '';
+  const hasMediaFileId = mediaFileId !== '';
+  const songId = hasMediaFileId ? mediaFileId : rawTrack.id;
+
+  // The fallback is a playlist position, not a song id, so a later lookup by it resolves
+  // the wrong song. Warn so the substitution never corrupts downstream lookups silently.
+  if (!hasMediaFileId) {
+    logger.warn(
+      `Playlist track missing mediaFileId (playlistId=${rawTrack.playlistId}, position=${rawTrack.id}); ` +
+        `using playlist-position id as a fallback. Possible Navidrome API contract violation.`
+    );
   }
 
-  // Guard each element: Navidrome can return null / non-object entries on
-  // certain API errors. The `as RawPlaylist` cast would pass TS but crash the
-  // single-item transformer at runtime, aborting the whole batch. Drop the
-  // bad rows instead so one malformed entry doesn't lose every good one.
-  return rawPlaylists
-    .filter((playlist): playlist is RawPlaylist => typeof playlist === 'object' && playlist !== null)
-    .map((playlist) => transformToPlaylistDTO(playlist));
+  const dto: PlaylistTrackDTO = {
+    position: rawTrack.id,
+    songId,
+    title: rawTrack.title ?? '',
+    album: rawTrack.album ?? '',
+    artist: rawTrack.artist ?? '',
+    durationFormatted: formatDuration(rawTrack.duration),
+  };
+
+  if (shouldEmit('playlistId', options)) {
+    dto.playlistId = rawTrack.playlistId;
+  }
+
+  if (shouldEmit('duration', options) && rawTrack.duration !== undefined) {
+    dto.duration = rawTrack.duration;
+  }
+
+  if (shouldEmit('albumArtist', options) && rawTrack.albumArtist !== undefined && rawTrack.albumArtist !== '') {
+    dto.albumArtist = rawTrack.albumArtist;
+  }
+
+  if (shouldEmit('bitRate', options) && rawTrack.bitRate !== undefined) {
+    dto.bitRate = rawTrack.bitRate;
+  }
+
+  if (shouldEmit('path', options) && rawTrack.path !== undefined && rawTrack.path !== '') {
+    dto.path = rawTrack.path;
+  }
+
+  if (shouldEmit('trackNumber', options) && rawTrack.trackNumber !== undefined) {
+    dto.trackNumber = rawTrack.trackNumber;
+  }
+
+  if (shouldEmit('year', options) && rawTrack.year !== undefined && rawTrack.year > 0) {
+    dto.year = rawTrack.year;
+  }
+
+  if (shouldEmit('genre', options)) {
+    const genre = extractGenre(rawTrack);
+    if (genre !== undefined) {
+      dto.genre = genre;
+    }
+  }
+
+  return dto;
+}
+
+/**
+ * Transform an array of raw playlist tracks to DTOs
+ * @param rawTracks Array of raw playlist track data
+ * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
+ * @returns Array of clean playlist track DTOs
+ */
+export function transformPlaylistTracksToDTO(rawTracks: unknown, options?: TransformOptions): PlaylistTrackDTO[] {
+  return transformObjectRows(rawTracks, (track: RawPlaylistTrack) => transformToPlaylistTrackDTO(track, options));
 }

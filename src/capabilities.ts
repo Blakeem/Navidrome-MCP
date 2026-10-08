@@ -25,3 +25,5 @@ export const MCP_CAPABILITIES: ServerCapabilities = {
     listChanged: false,
   },
 };
+
+export const SETUP_CAPABILITIES: ServerCapabilities = { tools: {} };

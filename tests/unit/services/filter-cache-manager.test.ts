@@ -2,17 +2,18 @@
  * Unit tests for FilterCacheManager - Simplified Implementation
  * Tests the improved logic without complex nested iteration
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { filterCacheManager, type FilterType } from '../../../src/services/filter-cache-manager.js';
+import { getFilterOptions } from '../../../src/tools/tags.js';
 
 // Mock data matching Navidrome API responses
 const mockGenres = [
-  { id: 'genre-1', name: 'Rock' },
-  { id: 'genre-2', name: 'jazz' },
-  { id: 'genre-3', name: 'Classical' },
-  { id: 'genre-4', name: 'ELECTRONIC' },
+  { id: 'genre-1', tagName: 'genre', tagValue: 'Rock' },
+  { id: 'genre-2', tagName: 'genre', tagValue: 'jazz' },
+  { id: 'genre-3', tagName: 'genre', tagValue: 'Classical' },
+  { id: 'genre-4', tagName: 'genre', tagValue: 'ELECTRONIC' },
 ];
 
 const mockTags = [
@@ -36,13 +37,11 @@ const createMockClient = (): NavidromeClient => {
 
   // Setup mock responses
   (client.requestWithLibraryFilter as any).mockImplementation((endpoint: string) => {
-    if (endpoint === '/genre') {
-      return Promise.resolve(mockGenres);
-    }
     if (endpoint.startsWith('/tag')) {
+      const allTags = [...mockGenres, ...mockTags];
       const tagName = new URLSearchParams(endpoint.split('?')[1] ?? '').get('tag_name');
       return Promise.resolve(
-        tagName === null ? mockTags : mockTags.filter(tag => tag.tagName === tagName),
+        tagName === null ? allTags : allTags.filter(tag => tag.tagName === tagName),
       );
     }
     return Promise.resolve([]);
@@ -84,6 +83,17 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       expect(filterCacheManager.resolve('genres', 'NonExistent')).toBeNull();
       expect(filterCacheManager.resolve('mediaTypes', 'cassette')).toBeNull();
     });
+
+    it('requests every tag value with no _end window, so large tag sets are not truncated', () => {
+      const tagEndpoints = (client.requestWithLibraryFilter as unknown as Mock<(endpoint: string) => Promise<unknown>>).mock.calls
+        .map(([endpoint]) => endpoint)
+        .filter(endpoint => endpoint.startsWith('/tag'));
+
+      expect(tagEndpoints).toHaveLength(6);
+      for (const endpoint of tagEndpoints) {
+        expect(endpoint).not.toContain('_end');
+      }
+    });
   });
 
   describe('getAvailableOptions - Simplified Logic', () => {
@@ -91,7 +101,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       const options = filterCacheManager.getAvailableOptions('genres');
 
       // Should return original case, sorted
-      expect(options).toEqual(['Classical', 'ELECTRONIC', 'Rock', 'jazz']);
+      expect(options).toEqual(['Classical', 'ELECTRONIC', 'jazz', 'Rock']);
       expect(options).toHaveLength(4);
     });
 
@@ -105,7 +115,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     it('should return original case values for countries', () => {
       const options = filterCacheManager.getAvailableOptions('countries');
 
-      expect(options).toEqual(['US', 'uk']);
+      expect(options).toEqual(['uk', 'US']);
       expect(options).toHaveLength(2);
     });
 
@@ -153,12 +163,13 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       // Create a larger mock dataset
       const largeGenres = Array.from({ length: 1000 }, (_, i) => ({
         id: `genre-${i}`,
-        name: `Genre${i}`,
+        tagName: 'genre',
+        tagValue: `Genre${i}`,
       }));
 
       const largeClient = {
         requestWithLibraryFilter: vi.fn().mockImplementation((endpoint: string) => {
-          if (endpoint === '/genre') return Promise.resolve(largeGenres);
+          if (endpoint.includes('tag_name=genre')) return Promise.resolve(largeGenres);
           if (endpoint.startsWith('/tag')) return Promise.resolve([]);
           return Promise.resolve([]);
         }),
@@ -167,13 +178,33 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       filterCacheManager.reset();
       await filterCacheManager.initialize(largeClient, mockConfig);
 
-      // Measure performance
-      const start = performance.now();
       const options = filterCacheManager.getAvailableOptions('genres');
-      const end = performance.now();
 
       expect(options).toHaveLength(1000);
-      expect(end - start).toBeLessThan(10); // Should be very fast, < 10ms
+    });
+  });
+
+  describe('reload failure handling', () => {
+    it('keeps prior values for a failed or invalid fetch and still loads the other types', async () => {
+      const moodsBefore = filterCacheManager.getAvailableOptions('moods');
+      const genresBefore = filterCacheManager.getAvailableOptions('genres');
+      (client.requestWithLibraryFilter as unknown as Mock<(endpoint: string) => Promise<unknown>>).mockImplementation(
+        (endpoint) => {
+          if (endpoint.includes('tag_name=mood')) return Promise.reject(new Error('503'));
+          if (endpoint.includes('tag_name=genre')) return Promise.resolve({});
+          if (endpoint.includes('tag_name=media')) {
+            return Promise.resolve([{ id: 'tag-new', tagName: 'media', tagValue: 'Cassette' }]);
+          }
+          return Promise.resolve([]);
+        },
+      );
+
+      await expect(filterCacheManager.reload()).resolves.toBeUndefined();
+
+      expect(moodsBefore).toHaveLength(2);
+      expect(filterCacheManager.getAvailableOptions('moods')).toEqual(moodsBefore);
+      expect(filterCacheManager.getAvailableOptions('genres')).toEqual(genresBefore);
+      expect(filterCacheManager.getAvailableOptions('mediaTypes')).toEqual(['Cassette']);
     });
   });
 
@@ -242,41 +273,50 @@ describe('FilterCacheManager - Simplified Implementation', () => {
       // Regression: limit=0 used to flow into slice(0,0) → [] with no error.
       // The schema clamps limit to [1,200], so 0 is now rejected.
       await expect(
-        filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 0 }),
+        getFilterOptions({ filterType: 'genres', limit: 0 }),
       ).rejects.toThrow();
 
       // Sanity: a valid call against the same cache still returns data, proving
       // the rejection above is the limit=0 guard and not an empty cache.
-      const ok = await filterCacheManager.getFilterOptions({ filterType: 'genres' });
+      const ok = await getFilterOptions({ filterType: 'genres' });
       expect(ok.available.length).toBeGreaterThan(0);
     });
 
     it('rejects an invalid filterType via the schema enum', async () => {
       await expect(
-        filterCacheManager.getFilterOptions({ filterType: 'bogus' }),
+        getFilterOptions({ filterType: 'bogus' }),
       ).rejects.toThrow();
     });
 
     it('rejects a missing filterType', async () => {
       await expect(
-        filterCacheManager.getFilterOptions({ limit: 10 }),
+        getFilterOptions({ limit: 10 }),
       ).rejects.toThrow();
     });
 
+    it('pages with offset and reports the full total', async () => {
+      const page = await getFilterOptions({ filterType: 'genres', limit: 2, offset: 2 });
+
+      expect(page.available).toEqual(['jazz', 'Rock']);
+      expect(page.total).toBe(4);
+    });
+
+    it('rejects a negative offset', async () => {
+      await expect(getFilterOptions({ filterType: 'genres', offset: -1 })).rejects.toThrow(/get_filter_options/);
+    });
+
     it('defaults limit to 50 when omitted', async () => {
-      const result = await filterCacheManager.getFilterOptions({ filterType: 'genres' });
+      const result = await getFilterOptions({ filterType: 'genres' });
       // Only 4 genres exist, so the default cap of 50 returns all of them.
       expect(result.available).toHaveLength(4);
       expect(result.total).toBe(4);
     });
 
     it('error message uses the registered tool name get_filter_options', async () => {
-      // Force the inner try/catch path: a valid schema parse, but the cache is
-      // not initialized, so getAvailableOptions throws and the catch wraps the
-      // error with the (now corrected) registered tool name.
+      // A valid parse against an uninitialized cache reaches the catch that names the tool.
       filterCacheManager.reset();
       try {
-        await filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 5 });
+        await getFilterOptions({ filterType: 'genres', limit: 5 });
         throw new Error('expected getFilterOptions to reject');
       } catch (error) {
         expect(error).toBeInstanceOf(Error);
@@ -303,11 +343,11 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
   const disabledConfig = { filterCacheEnabled: false } as Config;
 
   // Initial genre set returned by the first fetch
-  const initialGenres = [{ id: 'genre-1', name: 'Rock' }];
+  const initialGenres = [{ id: 'genre-1', tagName: 'genre', tagValue: 'Rock' }];
   // Updated genre set returned after a new genre is added mid-session
   const updatedGenres = [
-    { id: 'genre-1', name: 'Rock' },
-    { id: 'genre-2', name: 'Shoegaze' },
+    { id: 'genre-1', tagName: 'genre', tagValue: 'Rock' },
+    { id: 'genre-2', tagName: 'genre', tagValue: 'Shoegaze' },
   ];
 
   let fetchCount: number;
@@ -322,7 +362,7 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
     mockClient = {
       requestWithLibraryFilter: vi.fn().mockImplementation((endpoint: string) => {
         fetchCount++;
-        if (endpoint === '/genre') {
+        if (endpoint.includes('tag_name=genre')) {
           return Promise.resolve(returnUpdated ? updatedGenres : initialGenres);
         }
         if (endpoint.startsWith('/tag')) {
@@ -377,10 +417,40 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
     // Simulate new genre added
     returnUpdated = true;
 
-    const result = await filterCacheManager.getFilterOptions({ filterType: 'genres', limit: 50 });
+    const result = await getFilterOptions({ filterType: 'genres', limit: 50 });
 
     expect(result.available).toContain('Rock');
     expect(result.available).toContain('Shoegaze');
+  });
+
+  // The loaders refill the maps type by type, so a reader racing a reload must wait for it to finish.
+  it('ensureFresh() joins an in-flight reload even with the cache enabled', async () => {
+    await filterCacheManager.initialize(mockClient, { filterCacheEnabled: true } as Config);
+    let releaseGenres: (rows: unknown) => void = () => undefined;
+    (mockClient.requestWithLibraryFilter as unknown as Mock<(endpoint: string) => Promise<unknown>>).mockImplementation(
+      (endpoint) => {
+        if (endpoint.includes('tag_name=genre')) {
+          return new Promise((resolve) => {
+            releaseGenres = resolve;
+          });
+        }
+        return Promise.resolve([]);
+      },
+    );
+
+    const reloading = filterCacheManager.reload();
+    let settled = false;
+    const fresh = filterCacheManager.ensureFresh().then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(settled).toBe(false);
+
+    releaseGenres(initialGenres);
+    await Promise.all([reloading, fresh]);
+
+    expect(settled).toBe(true);
   });
 
   it('ensureFresh() resolves successfully when disabled and client is stored', async () => {

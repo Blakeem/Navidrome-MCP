@@ -64,6 +64,12 @@ describe('network-safety', () => {
       expect(isHttpUrlScheme(`http://example.com/live${String.fromCharCode(127)}`)).toBe(false);
     });
 
+    it('rejects surrounding spaces the URL parser would silently trim', () => {
+      expect(isHttpUrlScheme(' http://example.com/live')).toBe(false);
+      expect(isHttpUrlScheme('http://example.com/live ')).toBe(false);
+      expect(new URL(' http://example.com/live ').href).toBe('http://example.com/live');
+    });
+
     it('confirms the parser really does normalize those away', () => {
       // Guards the reason the check above exists: if this ever stops being true,
       // the control-char guard is no longer load-bearing.
@@ -123,6 +129,7 @@ describe('network-safety', () => {
       expect(isPrivateOrLocalIp('999.999.999.999')).toBe(true);
       expect(isPrivateOrLocalIp('10.0.0')).toBe(true);
       expect(isPrivateOrLocalIp('10.0.0.0.0')).toBe(true);
+      expect(isPrivateOrLocalIp('not:an:ip')).toBe(true);
     });
   });
 

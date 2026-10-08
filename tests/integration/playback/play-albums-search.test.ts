@@ -16,7 +16,7 @@
 
 import { beforeAll, beforeEach, expect, it } from 'vitest';
 import {
-  clearPlayQueue,
+  clearQueueAndWait,
   describePlayback,
   getPlayQueue,
   getTestSongIds,
@@ -42,8 +42,7 @@ import { filterCacheManager } from '../../../src/services/filter-cache-manager.j
  */
 async function findSeedArtistName(): Promise<string | null> {
   const client = await getSharedLiveClient();
-  const config = await loadConfig();
-  const seed = await searchAlbums(client, config, {
+  const seed = await searchAlbums(client, {
     query: '',
     sort: 'random',
     limit: 20,
@@ -76,11 +75,7 @@ describePlayback('play_albums_search (live)', () => {
   beforeEach(async () => {
     // Each test starts with a known empty queue so the search-driven load
     // is unambiguous. Append-mode tests build their own preamble queue.
-    await clearPlayQueue();
-    await waitFor(async () => {
-      const np = await nowPlaying();
-      return np.queueLength === 0;
-    });
+    await clearQueueAndWait();
   });
 
   // ---------------------------------------------------------------------
@@ -157,25 +152,23 @@ describePlayback('play_albums_search (live)', () => {
   });
 
   // ---------------------------------------------------------------------
-  // shuffle: 'albums'
+  // shuffleAlbums: true
   // ---------------------------------------------------------------------
 
-  it('shuffle:albums preserves per-album track order; album order may swap', async (ctx) => {
+  it('shuffleAlbums preserves per-album track order; album order may swap', async (ctx) => {
     const artistName = await findSeedArtistName();
     if (artistName === null) {
-      logger.info('skipping shuffle:albums test: no seed album with a usable artist string');
+      logger.info('skipping shuffleAlbums test: no seed album with a usable artist string');
       ctx.skip();
     }
 
     // Capture a no-shuffle baseline so we can compare album order later.
-    await clearPlayQueue();
-    await waitFor(async () => (await nowPlaying()).queueLength === 0);
+    await clearQueueAndWait();
     const baseline = await playAlbumsSearch({
       query: artistName,
       sort: 'year',
       order: 'ASC',
       limit: 10,
-      shuffle: 'none',
     });
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -186,15 +179,14 @@ describePlayback('play_albums_search (live)', () => {
       .map((e) => e.songId)
       .filter((id): id is string => id !== null);
 
-    // Now run the same query with shuffle:'albums'.
-    await clearPlayQueue();
-    await waitFor(async () => (await nowPlaying()).queueLength === 0);
+    // Now run the same query with shuffleAlbums.
+    await clearQueueAndWait();
     const shuffled = await playAlbumsSearch({
       query: artistName,
       sort: 'year',
       order: 'ASC',
       limit: 10,
-      shuffle: 'albums',
+      shuffleAlbums: true,
     });
 
     expect(shuffled.success).toBe(true);
@@ -227,13 +219,13 @@ describePlayback('play_albums_search (live)', () => {
   });
 
   // ---------------------------------------------------------------------
-  // shuffle: 'songs'
+  // shuffleSongs: true
   // ---------------------------------------------------------------------
 
-  it('shuffle:songs interleaves tracks across album boundaries', async (ctx) => {
+  it('shuffleSongs interleaves tracks across album boundaries', async (ctx) => {
     const artistName = await findSeedArtistName();
     if (artistName === null) {
-      logger.info('skipping shuffle:songs test: no seed album with a usable artist string');
+      logger.info('skipping shuffleSongs test: no seed album with a usable artist string');
       ctx.skip();
     }
 
@@ -242,7 +234,7 @@ describePlayback('play_albums_search (live)', () => {
       sort: 'year',
       order: 'ASC',
       limit: 10,
-      shuffle: 'songs',
+      shuffleSongs: true,
     });
 
     expect(result.success).toBe(true);
@@ -266,7 +258,7 @@ describePlayback('play_albums_search (live)', () => {
     // Probabilistic check: with N≥10 tracks across ≥2 albums, the first N
     // tracks should NOT all collapse to the same album. We can't tell which
     // album each track belongs to from just the queue, so the cleanest
-    // signal is: with shuffle:'songs' and ≥2 source albums, the resulting
+    // signal is: with shuffleSongs and ≥2 source albums, the resulting
     // ID list should differ from the deterministic 'none' result we'd get
     // with the same query. Allow ONE retry on the rare same-order outcome.
     if (result.albumCount < 2 || result.trackCount < 10) {
@@ -276,14 +268,12 @@ describePlayback('play_albums_search (live)', () => {
     }
 
     // Get the deterministic baseline once.
-    await clearPlayQueue();
-    await waitFor(async () => (await nowPlaying()).queueLength === 0);
+    await clearQueueAndWait();
     const baseline = await playAlbumsSearch({
       query: artistName,
       sort: 'year',
       order: 'ASC',
       limit: 10,
-      shuffle: 'none',
     });
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -298,15 +288,14 @@ describePlayback('play_albums_search (live)', () => {
       a.length === b.length && a.every((id, i) => id === b[i]);
 
     if (orderEqual(ids, baselineIds)) {
-      // Retry once. Re-run shuffle:'songs' from scratch.
-      await clearPlayQueue();
-      await waitFor(async () => (await nowPlaying()).queueLength === 0);
+      // Retry once. Re-run shuffleSongs from scratch.
+      await clearQueueAndWait();
       result = await playAlbumsSearch({
         query: artistName,
         sort: 'year',
         order: 'ASC',
         limit: 10,
-        shuffle: 'songs',
+        shuffleSongs: true,
       });
       await waitFor(async () => {
         const np = await nowPlaying();
@@ -381,7 +370,7 @@ describePlayback('play_albums_search (live)', () => {
 
     // Live queue should remain empty (beforeEach cleared it).
     const np = await nowPlaying();
-    expect(np.queueLength).toBe(0);
+    expect(np.queueLength ?? 0).toBe(0);
   });
 
   // ---------------------------------------------------------------------
@@ -411,8 +400,7 @@ describePlayback('play_albums_search (live)', () => {
         ) {
           throw err;
         }
-        await clearPlayQueue();
-        await waitFor(async () => (await nowPlaying()).queueLength === 0);
+        await clearQueueAndWait();
       }
     }
 

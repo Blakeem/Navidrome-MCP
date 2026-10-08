@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0f17" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0f17" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f6fb" />
   <meta name="color-scheme" content="dark light" />
-  <title>Navidrome MCP MPV Remote</title>
+  <title>Navidrome Remote</title>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='22'%3E%F0%9F%8E%B5%3C/text%3E%3C/svg%3E" />
 </head>
@@ -15,35 +16,35 @@
        href="https://github.com/Blakeem/Navidrome-MCP"
        target="_blank"
        rel="noopener noreferrer"
-       aria-label="Open Navidrome MCP project on GitHub (opens in a new tab)">
-      <h1 class="title">Navidrome MCP MPV Remote</h1>
+       aria-label="Navidrome Remote, open the project on GitHub (opens in a new tab)">
+      <h1 class="title">Navidrome Remote</h1>
     </a>
     <div class="topbar-actions">
       <span class="conn" data-state="connecting" aria-live="polite">
         <span class="conn-dot"></span>
         <span class="conn-label">Connecting&hellip;</span>
       </span>
-      <button type="button" class="ghost-btn" id="open-lyrics" aria-label="Show lyrics">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-          <path fill="currentColor" d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+      <button type="button" class="ghost-btn" id="open-lyrics" aria-label="Show lyrics" data-tip="Lyrics">
+        <svg viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M160-320v-480 480ZM80-80v-720q0-33 23.5-56.5T160-880h440q33 0 56.5 23.5T680-800v17q-24 11-44 27t-36 36v-80H160v480h440v-160q16 20 36 36t44 27v97q0 33-23.5 56.5T600-240H240L80-80Zm160-320h160v-80H240v80Zm520-80q-50 0-85-35t-35-85q0-50 35-85t85-35q11 0 21 2t19 5v-207h160v80h-80v240q0 50-35 85t-85 35Zm-520-40h280v-80H240v80Zm0-120h280v-80H240v80Z"/>
         </svg>
       </button>
-      <button type="button" class="ghost-btn" id="open-playlists" aria-label="Play a playlist">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-          <path fill="currentColor" d="M3 6h12v2H3zm0 4h12v2H3zm0 4h8v2H3zm12-.5V8h4V6h-6v8.05A3.5 3.5 0 1 0 15 17.5z"/>
+      <button type="button" class="ghost-btn" id="open-play-dialog" aria-label="Browse and play music" data-tip="Play music">
+        <svg viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M480-120q-66 0-113-47t-47-113q0-66 47-113t113-47q23 0 42.5 5.5T560-418v-422h240v160H640v400q0 66-47 113t-113 47ZM280-520v-120H160v-80h120v-120h80v120h120v80H360v120h-80Z"/>
         </svg>
       </button>
-      <button type="button" class="ghost-btn" id="open-network-info" aria-label="Show network info">
+      <button type="button" class="ghost-btn" id="open-network-info" aria-label="Show network info" data-tip="Network info">
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm-1 17.93A8 8 0 0 1 4.07 13H7a14 14 0 0 0 1.46 6.93ZM11 11H4.07A8 8 0 0 1 11 4.07Zm0-6.93V11H8.5C8.61 8.34 9.5 5.85 11 4.07ZM13 4.07c1.5 1.78 2.39 4.27 2.5 6.93H13Zm0 8.93h2.5c-.11 2.66-1 5.15-2.5 6.93Zm0 8.93V13h2.93A14 14 0 0 1 13 19.93ZM19.93 13H17a14 14 0 0 0-1.46-6.93A8 8 0 0 1 19.93 13Zm0-2H17V4.07A8 8 0 0 1 19.93 11Z"/>
         </svg>
       </button>
-      <button type="button" class="ghost-btn" id="open-settings" aria-label="Player settings" hidden>
+      <button type="button" class="ghost-btn" id="open-settings" aria-label="Settings" data-tip="Settings" hidden>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.24-1.12.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.42.32.61.22l2.39-.96c.5.38 1.04.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.24 1.12-.56 1.62-.94l2.39.96c.19.1.47.02.61-.22l1.92-3.32a.5.5 0 0 0-.12-.64ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
         </svg>
       </button>
-      <button type="button" class="ghost-btn danger" id="power-btn" aria-label="Stop and shut down the player" hidden>
+      <button type="button" class="ghost-btn danger" id="power-btn" aria-label="Stop and shut down the player" data-tip="Shut down player" hidden>
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M13 3h-2v10h2V3zm4.83 2.17-1.42 1.42A6.99 6.99 0 0 1 19 12a7 7 0 1 1-11.41-5.41L6.17 5.17A9 9 0 1 0 21 12a8.98 8.98 0 0 0-3.17-6.83z"/>
         </svg>
@@ -65,6 +66,9 @@
         <p class="track-album" id="track-album"></p>
         <p class="queue-pos" id="queue-pos"></p>
       </div>
+      <button type="button" class="visualizer" id="visualizer" hidden>
+        <canvas id="visualizer-canvas" aria-hidden="true"></canvas>
+      </button>
     </section>
 
     <section class="progress-section" aria-label="Progress">
@@ -108,8 +112,10 @@
       </button>
     </section>
 
+    <p class="control-status" id="control-status" aria-live="polite"></p>
+
     <section class="volume-section" aria-label="Volume">
-      <button type="button" class="volume-icon" id="btn-mute" aria-label="Toggle mute">
+      <button type="button" class="volume-icon" id="btn-mute" aria-label="Mute" aria-pressed="false">
         <svg id="icon-vol-high" viewBox="0 0 24 24" aria-hidden="true">
           <path fill="currentColor" d="M3 9v6h4l5 5V4L7 9zm13.5 3c0-1.77-1-3.29-2.5-4.03v8.06A4.49 4.49 0 0 0 16.5 12zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4-.91 7-4.49 7-8.77S18 4.14 14 3.23z"/>
         </svg>
@@ -139,7 +145,12 @@
     <section class="queue" aria-label="Play queue">
       <header class="queue-header">
         <h3>Queue <span class="queue-count" id="queue-count">0</span></h3>
-        <button type="button" class="ghost-btn small" id="clear-queue" aria-label="Clear the queue and stop playback">
+        <button type="button" class="ghost-btn small" id="shuffle-queue" aria-label="Shuffle the queue and start from the top" data-tip="Shuffle from top" disabled>
+          <svg viewBox="0 -960 960 960" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M560-160v-80h104L537-367l57-57 126 126v-102h80v240H560Zm-344 0-56-56 504-504H560v-80h240v240h-80v-104L216-160Zm151-377L160-744l56-56 207 207-56 56Z"/>
+          </svg>
+        </button>
+        <button type="button" class="ghost-btn small" id="clear-queue" aria-label="Clear the queue and stop playback" data-tip="Clear queue" disabled>
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
             <path fill="currentColor" d="M6 7h12v2H6zm2 3h8l-.7 9.07A1 1 0 0 1 14.3 20H9.7a1 1 0 0 1-1-.93L8 10zm2-6h4l1 2h3v2H5V6h3l1-2z"/>
           </svg>
@@ -149,6 +160,7 @@
     </section>
   </main>
 
+  <div class="lyrics-backdrop" id="lyrics-backdrop" hidden></div>
   <section class="lyrics-view" id="lyrics-view" aria-label="Lyrics" hidden>
     <header class="lyrics-header">
       <button type="button" class="ghost-btn" id="lyrics-back" aria-label="Close lyrics">
@@ -156,6 +168,11 @@
           <path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20z"/>
         </svg>
       </button>
+      <div class="cover lyrics-thumb" id="lyrics-thumb" aria-hidden="true">
+        <svg class="cover-placeholder" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3Z"/>
+        </svg>
+      </div>
       <div class="lyrics-heading">
         <p class="lyrics-title" id="lyrics-title">No track loaded</p>
         <p class="lyrics-artist" id="lyrics-artist"></p>
@@ -176,7 +193,20 @@
             </svg>
           </button>
         </div>
+        <button type="button" class="ghost-btn" id="lyrics-view-toggle" aria-label="Show lyrics in a window" data-tip="Window">
+          <svg id="lyrics-icon-window" viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
+            <path fill="currentColor" d="m136-80-56-56 264-264H160v-80h320v320h-80v-184L136-80Zm344-400v-320h80v184l264-264 56 56-264 264h184v80H480Z"/>
+          </svg>
+          <svg id="lyrics-icon-full" viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true" hidden>
+            <path fill="currentColor" d="M120-120v-320h80v184l504-504H520v-80h320v320h-80v-184L256-200h184v80H120Z"/>
+          </svg>
+        </button>
       </div>
+      <button type="button" class="modal-close" id="lyrics-close" aria-label="Close lyrics" hidden>
+        <svg viewBox="0 -960 960 960" aria-hidden="true">
+          <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+        </svg>
+      </button>
     </header>
 
     <div class="lyrics-aside">
@@ -187,8 +217,8 @@
       </div>
     </div>
 
-    <div class="lyrics-scroll" id="lyrics-scroll">
-      <p class="lyrics-status" id="lyrics-status"></p>
+    <div class="lyrics-scroll" id="lyrics-scroll" tabindex="0">
+      <p class="lyrics-status" id="lyrics-status" aria-live="polite"></p>
       <ol class="lyrics-lines" id="lyrics-lines"></ol>
     </div>
 
@@ -221,103 +251,145 @@
     </footer>
   </section>
 
-  <dialog id="lyrics-settings-dialog" class="modal">
+  <dialog id="lyrics-settings-dialog" class="modal" aria-labelledby="lyrics-settings-title">
     <form method="dialog" class="modal-content">
-      <h2>Lyrics Settings</h2>
+      <header class="modal-header">
+        <h2 id="lyrics-settings-title">Lyrics Settings</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
       <p class="modal-help">The sync offset applies to this device, for every song.</p>
       <div class="lyrics-offset-row">
-        <button type="button" class="btn-secondary" id="lyrics-offset-down" aria-label="Decrease the lyrics sync offset">&minus;100 ms</button>
-        <span class="lyrics-offset-value" id="lyrics-offset-value">0.0 s</span>
-        <button type="button" class="btn-secondary" id="lyrics-offset-up" aria-label="Increase the lyrics sync offset">+100 ms</button>
+        <button type="button" class="btn-secondary" id="lyrics-offset-down" aria-label="Decrease sync offset by 100 ms">&minus;100 ms</button>
+        <span class="lyrics-offset-value" id="lyrics-offset-value" role="status">0.0 s</span>
+        <button type="button" class="btn-secondary" id="lyrics-offset-up" aria-label="Increase sync offset by 100 ms">+100 ms</button>
       </div>
       <p class="modal-hint">A positive offset runs the words ahead of the audio.</p>
-      <menu class="modal-actions">
-        <button type="submit" class="primary-btn">Close</button>
-      </menu>
     </form>
   </dialog>
 
-  <dialog id="settings-dialog" class="modal">
+  <dialog id="settings-dialog" class="modal" aria-labelledby="settings-title">
     <form method="dialog" class="modal-content">
-      <h2>Player Settings</h2>
-      <p class="modal-help">These apply to this local machine only.</p>
-      <label class="check">
-        <input type="checkbox" id="set-persist" />
-        <span>Keep playing after the MCP server closes <span class="modal-hint">the player + mpv survive when you close the AI; otherwise they stop with it</span></span>
-      </label>
-      <label class="check">
-        <input type="checkbox" id="set-autoopen" />
-        <span>Open in browser when the MCP server starts <span class="modal-hint">applies on next start</span></span>
-      </label>
-      <p class="modal-hint" id="settings-status"></p>
-      <menu class="modal-actions">
-        <button type="button" class="btn-secondary" id="settings-save">Save</button>
-        <button type="submit" class="primary-btn">Close</button>
-      </menu>
+      <header class="modal-header">
+        <h2 id="settings-title">Settings</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
+      <fieldset class="settings-group">
+        <legend class="settings-heading">Theme</legend>
+        <div class="mode-toggle theme-toggle">
+          <input type="radio" class="visually-hidden" name="theme" id="theme-light" value="light" />
+          <label for="theme-light" class="mode-toggle-btn">Light</label>
+          <input type="radio" class="visually-hidden" name="theme" id="theme-dark" value="dark" />
+          <label for="theme-dark" class="mode-toggle-btn">Dark</label>
+          <input type="radio" class="visually-hidden" name="theme" id="theme-system" value="system" />
+          <label for="theme-system" class="mode-toggle-btn">System</label>
+        </div>
+        <p class="modal-hint">Light or Dark applies to every device viewing the player. System lets each device follow its own setting.</p>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend class="settings-heading">Player</legend>
+        <label class="check">
+          <input type="checkbox" id="set-persist" />
+          <span>Keep playing after the MCP server closes <span class="modal-hint">the player and mpv survive when you close the AI. Unchecked, they stop with the last AI client using them.</span></span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="set-autoopen" />
+          <span>Open in browser when the MCP server starts <span class="modal-hint">applies on next start</span></span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="set-visualizer" />
+          <span>Show the visualizer <span class="modal-hint">beside the track info. Off also removes its audio analysis from mpv. While a track plays, a change waits for the next track or a pause.</span>
+            <span class="modal-hint" id="set-visualizer-unsupported" hidden>mpv could not run the visualizer. The server log has the reason.</span></span>
+        </label>
+      </fieldset>
+      <p class="modal-hint" id="settings-status" aria-live="polite"></p>
     </form>
   </dialog>
 
-  <dialog id="playlists-dialog" class="modal">
+  <dialog id="play-dialog" class="modal modal-full" aria-labelledby="play-dialog-title">
     <form method="dialog" class="modal-content">
-      <h2>Play a Playlist</h2>
-      <div class="modal-tabs" role="tablist">
-        <button type="button" class="modal-tab is-active" id="pl-tab-playlists" data-tab="playlists">Playlists</button>
-        <button type="button" class="modal-tab" id="pl-tab-starred" data-tab="starred">Starred Songs</button>
-        <button type="button" class="modal-tab" id="pl-tab-albums" data-tab="albums">Starred Albums</button>
+      <header class="modal-header">
+        <h2 id="play-dialog-title">Play Music</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
+      <div class="modal-tabs" id="play-tabs" role="tablist">
+        <button type="button" class="modal-tab is-active" id="play-tab-search" data-tab="search" role="tab" aria-selected="true" aria-controls="play-pane-search">Search</button>
+        <button type="button" class="modal-tab" id="play-tab-playlists" data-tab="playlists" role="tab" aria-selected="false" aria-controls="play-pane-playlists">Playlists</button>
+        <button type="button" class="modal-tab" id="play-tab-favorites" data-tab="favorites" role="tab" aria-selected="false" aria-controls="play-pane-favorites">Favorites</button>
       </div>
-      <div class="modal-pane" id="pl-pane-playlists">
-        <div class="playlist-options">
-          <fieldset class="pl-mode">
-            <label><input type="radio" name="pl-mode" value="replace" checked /> <span>Replace queue</span></label>
-            <label><input type="radio" name="pl-mode" value="append" /> <span>Add to queue</span></label>
-          </fieldset>
-          <label class="pl-shuffle"><input type="checkbox" id="pl-shuffle" /> <span>Shuffle</span></label>
-        </div>
-        <p class="modal-hint" id="playlists-status"></p>
-        <ul class="network-list playlist-list" id="playlists-list"></ul>
+      <div class="play-toolbar">
+        <fieldset class="mode-toggle">
+          <legend class="visually-hidden">Queue mode</legend>
+          <input type="radio" class="visually-hidden" name="play-mode" id="play-mode-append" value="append" checked />
+          <label for="play-mode-append" class="mode-toggle-btn" data-tip="Add to queue">
+            <svg viewBox="0 -960 960 960" aria-hidden="true">
+              <path fill="currentColor" d="M367-167q-47-47-47-113t47-113q47-47 113-47 23 0 42.5 5.5T560-418v-422h240v160H640v400q0 66-47 113t-113 47q-66 0-113-47Zm-87-353v-120H160v-80h120v-120h80v120h120v80H360v120h-80Z"/>
+            </svg>
+            <span class="visually-hidden">Add to queue</span>
+          </label>
+          <input type="radio" class="visually-hidden" name="play-mode" id="play-mode-replace" value="replace" />
+          <label for="play-mode-replace" class="mode-toggle-btn" data-tip="Replace queue">
+            <svg viewBox="0 -960 960 960" aria-hidden="true">
+              <path fill="currentColor" d="M140-640q38-109 131.5-174.5T480-880q82 0 155.5 35T760-746v-134h80v240H600v-80h76q-39-39-90-59.5T480-800q-81 0-149.5 43T227-640h-87Zm181 519q-41-41-41-99t41-99q41-41 99-41 16 0 31 3t29 10v-213h200v80H560v260q0 58-41 99t-99 41q-58 0-99-41Z"/>
+            </svg>
+            <span class="visually-hidden">Replace queue</span>
+          </label>
+        </fieldset>
+        <button type="button" class="shuffle-toggle" id="shuffle-songs-toggle" aria-pressed="false" aria-label="Shuffle songs" data-tip="Shuffle songs">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="M560-160v-80h104L537-367l57-57 126 126v-102h80v240H560Zm-344 0-56-56 504-504H560v-80h240v240h-80v-104L216-160Zm151-377L160-744l56-56 207 207-56 56Z"/>
+          </svg>
+        </button>
+        <button type="button" class="shuffle-toggle" id="shuffle-albums-toggle" aria-pressed="false" aria-label="Shuffle albums" data-tip="Shuffle albums">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="M320-440v-287L217-624l-57-56 200-200 200 200-57 56-103-103v287h-80ZM600-80 400-280l57-56 103 103v-287h80v287l103-103 57 56L600-80Z"/>
+          </svg>
+        </button>
       </div>
-      <div class="modal-pane" id="pl-pane-starred" hidden>
-        <div class="playlist-options">
-          <fieldset class="pl-mode">
-            <label><input type="radio" name="starred-mode" value="replace" checked /> <span>Replace queue</span></label>
-            <label><input type="radio" name="starred-mode" value="append" /> <span>Add to queue</span></label>
-          </fieldset>
+      <div class="modal-pane" id="play-pane-search" role="tabpanel" aria-labelledby="play-tab-search">
+        <div class="lib-search">
+          <input type="search" id="lib-query" placeholder="Search artists, albums and songs" aria-label="Search artists, albums and songs" autocomplete="off" enterkeyhint="search" />
+          <button type="button" class="primary-btn" id="lib-search-btn">Search</button>
         </div>
-        <p class="modal-hint" id="starred-status">Play all of your hearted songs, least-recently-played first.</p>
-        <div class="starred-actions">
-          <button type="button" class="primary-btn" id="starred-play-order">Play in order</button>
-          <button type="button" class="btn-secondary" id="starred-play-shuffle">Shuffle</button>
-        </div>
+        <p class="modal-hint" id="lib-caption" aria-live="polite"></p>
+        <p class="modal-hint" id="lib-status" aria-live="polite"></p>
+        <div id="lib-results"></div>
       </div>
-      <div class="modal-pane" id="pl-pane-albums" hidden>
-        <div class="playlist-options">
-          <fieldset class="pl-mode">
-            <label><input type="radio" name="albums-mode" value="replace" checked /> <span>Replace queue</span></label>
-            <label><input type="radio" name="albums-mode" value="append" /> <span>Add to queue</span></label>
-          </fieldset>
-        </div>
-        <p class="modal-hint" id="albums-status">Play all of your hearted albums, least-recently-played first.</p>
-        <div class="starred-actions">
-          <button type="button" class="primary-btn" id="albums-play-order">Play in order</button>
-          <button type="button" class="btn-secondary" id="albums-play-shuffle-albums">Shuffle albums</button>
-          <button type="button" class="btn-secondary" id="albums-play-shuffle-songs">Shuffle all songs</button>
-        </div>
+      <div class="modal-pane" id="play-pane-playlists" role="tabpanel" aria-labelledby="play-tab-playlists" hidden>
+        <p class="modal-hint" id="playlists-status" aria-live="polite"></p>
+        <ul class="lib-list" id="playlists-list"></ul>
       </div>
-      <menu class="modal-actions">
-        <button type="submit" class="primary-btn">Close</button>
-      </menu>
+      <div class="modal-pane" id="play-pane-favorites" role="tabpanel" aria-labelledby="play-tab-favorites" hidden>
+        <p class="modal-hint" id="favorites-status" aria-live="polite"></p>
+        <ul class="lib-list" id="favorites-list"></ul>
+      </div>
     </form>
   </dialog>
 
-  <dialog id="network-info-dialog" class="modal">
+  <dialog id="network-info-dialog" class="modal" aria-labelledby="network-info-title">
     <form method="dialog" class="modal-content">
-      <h2>Network Info</h2>
+      <header class="modal-header">
+        <h2 id="network-info-title">Network Info</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
       <p class="modal-help" id="network-info-help"></p>
       <ul class="network-list" id="network-info-list"></ul>
       <p class="modal-hint" id="network-info-hint"></p>
-      <menu class="modal-actions">
-        <button type="submit" class="primary-btn">Close</button>
-      </menu>
     </form>
   </dialog>
 

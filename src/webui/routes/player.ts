@@ -18,17 +18,40 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
-import { readSettings, writeSettings, SettingsFileSchema } from '../../config/store.js';
+import type { WebuiTheme } from '../../constants/defaults.js';
+import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../../config/store.js';
+import { PlayerSettingsPatchSchema } from '../../schemas/index.js';
+import { playbackEngine } from '../../services/playback/playback-engine.js';
 import { logger } from '../../utils/logger.js';
-import { getPersist, setPersist } from '../../web/player-runtime.js';
-import { readJsonBody, writeError, writeJson } from '../http-helpers.js';
-import { isLoopbackPeer } from '../loopback.js';
+import { getPersist, getTheme, getVisualizer, setPersist, setTheme, setVisualizer } from '../../web/player-runtime.js';
+import type { SseBroadcaster } from '../broadcaster.js';
+import { readValidBody, writeError, writeJson } from '../http-helpers.js';
+import { isLocalRequest } from '../loopback.js';
+
+interface PlayerSettingsBody {
+  persistAfterMcpExit: boolean;
+  autoOpenBrowser: boolean;
+  theme: WebuiTheme | null;
+  visualizer: boolean;
+  visualizerUnsupported: boolean;
+}
+
+/** Live flags report live state. `autoOpenBrowser` has no live state, so each caller supplies it. */
+function playerSettingsBody(autoOpenBrowser: boolean): PlayerSettingsBody {
+  return {
+    persistAfterMcpExit: getPersist(),
+    autoOpenBrowser,
+    theme: getTheme(),
+    visualizer: getVisualizer(),
+    visualizerUnsupported: playbackEngine.isVisualizerUnsupported(),
+  };
+}
 
 /**
- * GET /api/player-state — per-peer flags the frontend needs at load to decide
- * whether to render the local-only affordances (gear/power). `isLocal` reflects
- * THIS request's peer; combined client-side with the SSE `player` snapshot
- * (hasLiveParent/persist) to compute the power button's visibility live.
+ * GET /api/player-state returns per-peer flags the frontend needs at load. `isLocal` reflects
+ * THIS request's peer and decides the local-only affordances (settings gear, power).
+ *
+ * `theme` is the live color theme every peer renders, or null to follow each device.
  *
  * `lyrics.lrclibEnabled` only shapes the lyrics overlay's empty-state message.
  * The overlay itself still opens when the flag is false, because a song can
@@ -36,104 +59,126 @@ import { isLoopbackPeer } from '../loopback.js';
  */
 export function handlePlayerState(req: IncomingMessage, res: ServerResponse, config: Config): void {
   writeJson(res, 200, {
-    isLocal: isLoopbackPeer(req),
+    isLocal: isLocalRequest(req),
+    theme: getTheme(),
     lyrics: { lrclibEnabled: config.features.lyrics },
   });
 }
 
 /**
- * GET /api/player/settings — current player-scoped settings (loopback-only).
- * `persistAfterMcpExit` reflects the LIVE flag (toggled this session);
- * `autoOpenBrowser` is the stored value (only affects the next launch).
+ * GET /api/player/settings returns the player-scoped settings (loopback-only).
+ * `persistAfterMcpExit` reflects the LIVE flag (toggled this session).
+ * `autoOpenBrowser` only affects the next launch, so it is the stored value, or the resolved
+ * launch config when no store exists.
  */
-export function handleGetPlayerSettings(req: IncomingMessage, res: ServerResponse): void {
-  if (!isLoopbackPeer(req)) {
+export function handleGetPlayerSettings(req: IncomingMessage, res: ServerResponse, config: Config): void {
+  if (!isLocalRequest(req)) {
     writeError(res, 404, 'Not found');
     return;
   }
-  const stored = readSettings()?.webui ?? {};
-  writeJson(res, 200, {
-    persistAfterMcpExit: getPersist(),
-    autoOpenBrowser: stored.autoOpenBrowser ?? false,
-  });
+  const storedAutoOpen = readSettings()?.webui?.autoOpenBrowser;
+  writeJson(res, 200, playerSettingsBody(storedAutoOpen ?? config.webui.autoOpenBrowser));
 }
 
 /**
- * POST /api/player/settings — update player-scoped settings (loopback-only).
- * Body `{ persistAfterMcpExit?: boolean, autoOpenBrowser?: boolean }`.
- * `persistAfterMcpExit` takes effect immediately (governs the disconnect
- * decision) AND is persisted; `autoOpenBrowser` is persisted for next launch.
- * Only the webui keys are touched (read-merge-write) so other settings — and
- * credentials — are never clobbered.
+ * POST /api/player/settings updates player-scoped settings (loopback-only).
+ * Body `{ persistAfterMcpExit?: boolean, autoOpenBrowser?: boolean, theme?: WebuiTheme, visualizer?: boolean }`.
+ * `persistAfterMcpExit`, `theme` and `visualizer` take effect immediately AND are persisted,
+ * and the snapshot broadcast carries them to every open remote. mpv's filter follows `visualizer`
+ * at once when idle or paused, otherwise at the next track start or pause.
+ * `autoOpenBrowser` is persisted for next launch.
+ * `persisted` is false when settings.json was not written, so the change holds for this session only.
+ * Only the webui keys are touched (read-merge-write), so other settings and
+ * credentials are never clobbered.
  */
 export async function handleSetPlayerSettings(
   req: IncomingMessage,
   res: ServerResponse,
+  config: Config,
+  broadcaster: Pick<SseBroadcaster, 'broadcastNow'>,
 ): Promise<void> {
-  if (!isLoopbackPeer(req)) {
+  if (!isLocalRequest(req)) {
     writeError(res, 404, 'Not found');
     return;
   }
 
-  let body: unknown;
-  try {
-    body = await readJsonBody(req);
-  } catch (err) {
-    writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
-    return;
-  }
-  // Narrow the unknown JSON body to a plain object before reading fields.
-  // A non-object body (array, string, number, null) carries no settings keys,
-  // so we treat it as an empty patch rather than indexing into it blindly.
-  const input: { persistAfterMcpExit?: unknown; autoOpenBrowser?: unknown } =
-    typeof body === 'object' && body !== null && !Array.isArray(body) ? body : {};
+  const input = await readValidBody(req, res, PlayerSettingsPatchSchema);
+  if (input === null) return;
+  let persistedWebui: NonNullable<SettingsFile['webui']> | null = null;
 
-  // Apply the live flag first (this is the part that matters for the running
-  // process); persistence to disk is best-effort below.
-  if (typeof input.persistAfterMcpExit === 'boolean') {
+  // The live flags matter for the running process, so they apply before the best-effort write below.
+  if (input.persistAfterMcpExit !== undefined) {
     setPersist(input.persistAfterMcpExit);
+  }
+  if (input.theme !== undefined) {
+    setTheme(input.theme);
+  }
+  if (input.visualizer !== undefined) {
+    setVisualizer(input.visualizer);
+    void playbackEngine.syncVisualizerFilter();
   }
 
   const current = readSettings();
   if (current === null) {
-    // No store on disk (shouldn't happen for a configured, running server).
-    // Don't write a near-empty file that would clobber config — apply live only.
+    // No usable store is normal in env-fallback mode (or a corrupt file). Writing a near-empty
+    // file here would replace that config, so the change applies live only.
     logger.warn('player settings: settings.json missing; applied for this session only');
   } else {
     const webui = { ...(current.webui ?? {}) };
-    if (typeof input.persistAfterMcpExit === 'boolean') webui.persistAfterMcpExit = input.persistAfterMcpExit;
-    if (typeof input.autoOpenBrowser === 'boolean') webui.autoOpenBrowser = input.autoOpenBrowser;
+    if (input.persistAfterMcpExit !== undefined) webui.persistAfterMcpExit = input.persistAfterMcpExit;
+    if (input.autoOpenBrowser !== undefined) webui.autoOpenBrowser = input.autoOpenBrowser;
+    if (input.theme !== undefined) webui.theme = input.theme;
+    if (input.visualizer !== undefined) webui.visualizer = input.visualizer;
     const merged = { ...current, webui };
-    // Defense-in-depth: never persist a file that wouldn't parse back. We only
-    // ever flip two booleans on an already-valid file, so this should always
-    // pass — but validating keeps this writer honest alongside the config-app one.
+    // Never persist a file that would not parse back, the same guard the config-app writer keeps.
     const check = SettingsFileSchema.safeParse(merged);
     if (!check.success) {
       logger.warn('player settings: merged settings failed validation; not writing (applied live only)');
     } else {
       try {
         writeSettings(merged);
+        persistedWebui = webui;
       } catch (err) {
         logger.warn('player settings: failed to persist to settings.json:', err);
       }
     }
   }
 
-  // Build the response from values already in hand rather than re-reading
-  // settings.json — a concurrent writer (e.g. the config-app) could change the
-  // file in the window after writeSettings, and a caught write failure above
-  // would make a re-read report stale/un-persisted values as if applied.
+  const storedWebui = persistedWebui ?? current?.webui;
   writeJson(res, 200, {
-    persistAfterMcpExit: getPersist(),
-    autoOpenBrowser:
-      typeof input.autoOpenBrowser === 'boolean'
-        ? input.autoOpenBrowser
-        : (current?.webui?.autoOpenBrowser ?? false),
+    ...playerSettingsBody(storedWebui?.autoOpenBrowser ?? config.webui.autoOpenBrowser),
+    persisted: persistedWebui !== null,
   });
+  broadcaster.broadcastNow();
+}
+
+/** The kept-open route an MCP holds while it uses this player. src/web/lease.ts posts to it. */
+export const MCP_LEASE_PATH = '/api/mcp-lease';
+
+/** Counts the MCP processes holding a lease. The entry point decides what a close means. */
+export interface McpLeaseCounter {
+  open(): void;
+  close(): void;
 }
 
 /**
- * POST /api/shutdown — power button (loopback-only). Stops mpv and exits the
+ * POST /api/mcp-lease (loopback-only) keeps its response open while the MCP lives. The OS closes
+ * the socket when that MCP dies, so the player counts every MCP using it, not only its spawner.
+ */
+export function handleMcpLease(req: IncomingMessage, res: ServerResponse, leases: McpLeaseCounter): void {
+  if (!isLocalRequest(req)) {
+    writeError(res, 404, 'Not found');
+    return;
+  }
+  req.resume();
+  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.flushHeaders();
+  leases.open();
+  res.once('close', () => leases.close());
+}
+
+/**
+ * POST /api/shutdown is the power button (loopback-only). Stops mpv and exits the
  * web server via the injected shutdown callback. Responds 200 first so the
  * browser sees success before the server closes.
  */
@@ -142,7 +187,7 @@ export function handleShutdown(
   res: ServerResponse,
   shutdown: () => void,
 ): void {
-  if (!isLoopbackPeer(req)) {
+  if (!isLocalRequest(req)) {
     writeError(res, 404, 'Not found');
     return;
   }

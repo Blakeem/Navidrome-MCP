@@ -17,14 +17,9 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { z } from 'zod';
 
-/**
- * Default body-size cap for control-route JSON payloads. Our largest web-UI body
- * is a seek (`{seconds, mode}`) — well under a hundred bytes. Anything bigger is
- * a misconfigured client or a malicious one, and we'd rather fail fast than
- * buffer arbitrary input on a localhost-default server. Callers handling larger
- * payloads (e.g. the MCP transport) pass a bigger, still-bounded cap.
- */
+// A bounded body lets a misbehaving client fail fast instead of making the server buffer arbitrary input.
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
 
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {
@@ -41,11 +36,28 @@ export function writeError(res: ServerResponse, status: number, message: string)
   writeJson(res, status, { error: message });
 }
 
+/** Opens a server-sent events response. The retry directive goes first, so the browser learns it even if the stream drops at once. */
+export function openSseStream(res: ServerResponse, retryMs: number): void {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // Hint to reverse proxies (nginx in particular) not to buffer the
+    // stream. Harmless when no proxy is in the loop.
+    'X-Accel-Buffering': 'no',
+  });
+  res.write(`retry: ${retryMs}\n\n`);
+}
+
+export function isJsonContentType(contentType: string | undefined): boolean {
+  const baseType = contentType?.split(';')[0]?.trim().toLowerCase();
+  return baseType === 'application/json';
+}
+
 /**
  * Run a route action and map its result to an HTTP response with consistent
  * error-to-status handling. Errors from the engine or the reused Zod schemas
- * flow through as 500 with their message preserved. Shared by control and
- * playlist routes so every web action behaves identically.
+ * flow through as 500 with their message preserved, so every web action behaves identically.
  */
 export async function runAction(res: ServerResponse, action: () => Promise<unknown>): Promise<void> {
   try {
@@ -58,10 +70,8 @@ export async function runAction(res: ServerResponse, action: () => Promise<unkno
 
 /**
  * Read a JSON request body with a hard size cap. Empty bodies resolve to
- * `null` so caller can distinguish "no body provided" from "{}" — useful for
- * routes that accept no input. Beyond `maxBytes` (defaults to
- * `DEFAULT_MAX_BODY_BYTES`), the connection is destroyed (no partial JSON parse)
- * and the promise rejects.
+ * `null` so the caller can tell "no body provided" from "{}". Beyond `maxBytes`
+ * the connection is destroyed (no partial JSON parse) and the promise rejects.
  */
 export async function readJsonBody(
   req: IncomingMessage,
@@ -98,4 +108,26 @@ export async function readJsonBody(
       if (!aborted) reject(err);
     });
   });
+}
+
+/**
+ * Invalid input returns 400 here because runAction maps every thrown error, the impls' own ZodErrors included, to 500.
+ * Resolves to null once the 400 response is written.
+ */
+export async function readValidBody<T>(req: IncomingMessage, res: ServerResponse, schema: z.ZodType<T>): Promise<T | null> {
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (err) {
+    writeError(res, 400, err instanceof Error ? err.message : 'invalid JSON body');
+    return null;
+  }
+
+  const validation = schema.safeParse(body);
+  if (!validation.success) {
+    const message = validation.error.issues.map((issue) => issue.message).join('; ');
+    writeError(res, 400, message !== '' ? message : 'invalid request body');
+    return null;
+  }
+  return validation.data;
 }

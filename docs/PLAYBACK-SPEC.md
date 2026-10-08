@@ -11,14 +11,14 @@ Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-
 | Decision | Choice | Rationale |
 |---|---|---|
 | Playback engine | **mpv** controlled via JSON-IPC | One binary on every platform, gapless playback, observable property stream, ~50 lines of Node to talk to it |
-| Decoding | Server-side via Navidrome `?format=mp3` | Navidrome+FFmpeg handle every source codec; mpv just opens an HTTP URL |
+| Decoding | Original file by default (`playback.transcodeFormat: raw`). Navidrome transcodes server-side only when that key names a codec. | The original file gives the best quality and reliable seeking. A codec helps on slow or metered links. |
 | Queue source of truth | **mpv's playlist** (in-memory only) | No SQLite, no Navidrome-queue mirror, no persistence across MCP restarts |
 | Navidrome `/api/queue` sync | **Not implemented** | Bidirectional sync is a bug factory; revisit if real demand emerges |
 | Engine startup | **Lazy** — mpv spawns on first playback tool call | No cost when feature is unused |
-| mpv lifecycle | **Survives MCP restart** via stable per-uid IPC path; new MCP servers attach to existing mpv | A `/mcp` reconnect doesn't kill audio |
+| mpv lifecycle | **Quit when the last MCP exits, by default** | The web player counts its spawning MCP plus one kept-open `POST /api/mcp-lease` per other MCP, and quits mpv when the last one closes. It keeps mpv alive across an MCP exit when `webui.persistAfterMcpExit` is on or when it was launched standalone. A new MCP server then attaches over the stable per-uid IPC path |
 | Volume control | **mpv internal volume only** (0–100), exposed as a tool | System mixer is OS-specific; mpv's own volume is sufficient |
 | Failure mode | **Fail fast, surface to AI** | Not fault-tolerant; resilience can be added once the happy path is proven |
-| Scrobbling | Subsonic `/scrobble` driven by mpv `start-file` / `end-file` events | Not yet wired up — see "Open work" below |
+| Scrobbling | Subsonic `/scrobble` from `ScrobbleTracker` (`src/services/playback/scrobble-tracker.ts`), driven by playback-engine state changes | Now-playing on track start. One submission per play after half the duration or 240 s, whichever comes first. Tracks under 30 s never submit. Every process attached to mpv tracks plays. At the threshold, a process that counted the play broadcasts a claim with mpv `script-message`, and the first claim mpv delivers submits. |
 
 ## Architecture
 
@@ -32,7 +32,7 @@ Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-
 │  src/services/playback/playback-engine.ts                        │
 │       ├── lazy-spawns mpv on first call                          │
 │       ├── owns observed-property cache (now-playing snapshot)    │
-│       ├── exposes: enqueue / pause / next / getPlaylist / etc.   │
+│       ├── exposes: enqueue / pause / next / getQueue / etc.      │
 │       └── emits internal events (scrobbler hookup point)         │
 │       │                                                          │
 │       ├──► src/services/playback/mpv-process.ts                  │
@@ -47,7 +47,7 @@ Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-
                  ▼
             ┌─────────┐         HTTP GET /rest/stream         ┌─────────────┐
             │   mpv   │ ───────────────────────────────────►  │  Navidrome  │
-            │ (audio) │ ◄──────  transcoded MP3 bytes ──────  │   (server)  │
+            │ (audio) │ ◄──────────  audio bytes  ──────────  │   (server)  │
             └─────────┘                                       └─────────────┘
 ```
 
@@ -55,9 +55,11 @@ Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-
 
 ```
 src/services/playback/
-├── mpv-process.ts        # spawn, binary detection, stable IPC path, line logging
+├── mpv-process.ts        # spawn, binary detection, stable IPC path
 ├── mpv-ipc.ts            # JSON-IPC client (net socket + line framing, request_id correlation)
-└── playback-engine.ts    # high-level facade; the only thing handlers use
+├── playback-engine.ts    # high-level facade; the only thing handlers use
+├── visualizer-filter.ts  # the visualizer's mpv audio filter, its validation run and install rule
+└── visualizer-log.ts     # groups the filter's log lines into level records
 
 src/tools/
 ├── playback.ts           # tool function impls (mirror existing pattern)
@@ -69,19 +71,19 @@ Mirrors how Last.fm and lyrics features are organized.
 
 ## Configuration
 
-### Detection (no env var needed)
+### Detection
 
-At MCP startup the engine resolves an mpv binary via `MPV_PATH` env override or `command -v mpv` / `where mpv`. If no binary is found, `config.features.playback === false` and no playback tools are registered. Result: install mpv → restart MCP → tools appear.
+At startup the engine uses `playback.mpvPath` from settings.json when it is set and executable, otherwise a PATH lookup (`command -v mpv` / `where mpv`). If no binary is found, `config.features.playback === false` and no playback tools are registered. Result: install mpv → restart MCP → tools appear.
 
-### Env vars
+### Settings
 
-| Var | Default | Purpose |
+| Setting | Default | Purpose |
 |---|---|---|
-| `MPV_PATH` | resolved on PATH | Override binary location (Windows users with non-standard installs) |
-| `PLAYBACK_TRANSCODE_FORMAT` | `mp3` | Stream format requested from Navidrome |
-| `PLAYBACK_TRANSCODE_BITRATE` | `192` | Max bitrate kbps |
+| `playback.mpvPath` | `null` (auto-detect) | Binary location |
+| `playback.transcodeFormat` | `raw` | Stream format requested from Navidrome. `raw` streams the original file. |
+| `playback.transcodeBitrate` | `192` | Max kbps, applied only when a codec is set |
 
-All optional. Sensible defaults work out of the box.
+`MPV_PATH`, `PLAYBACK_TRANSCODE_FORMAT` and `PLAYBACK_TRANSCODE_BITRATE` are read only by the env fallback when no usable store exists, and to pre-fill the first-run settings form.
 
 ## mpv Process Flags
 
@@ -94,21 +96,23 @@ mpv \
   --load-scripts=no            # no user scripts
   --gapless-audio=weak         # docs-recommended for HTTP streams (more tolerant than 'yes')
   --prefetch-playlist=yes      # pre-buffer next track to minimize HTTP gap
+  --cache=yes                  # prebuffer HTTP streams against network jitter
+  --cache-secs=30
+  --demuxer-readahead-secs=20
   --input-ipc-server=<PATH>    # the IPC endpoint
   --volume=80                  # initial; tools can change it
   --audio-display=no           # don't display cover art
   --ytdl=no                    # disable yt-dlp wrapper (security + reliability)
   --vo=null                    # belt + suspenders for headless
-  --msg-level=all=info         # log verbosity (Node logger filters from there)
 ```
 
 stdout/stderr from mpv are line-forwarded to `logger.debug()` so they never pollute the MCP stdio channel.
 
 ### IPC path
 
-Per-uid (POSIX) / per-username (Windows), **not** per-PID. This lets a fresh MCP server attach to a running mpv after restart instead of spawning a new instance — so `/mcp` reconnects don't interrupt audio.
+Per-uid (POSIX) / per-username (Windows), **not** per-PID. This lets a new MCP server attach to an mpv that a persisting web player kept alive, and lets several MCP servers share one mpv.
 
-- Linux/macOS: `/tmp/navidrome-mcp-mpv-<uid>.sock`
+- Linux/macOS: `$XDG_RUNTIME_DIR/navidrome-mcp-mpv-<uid>.sock` when `XDG_RUNTIME_DIR` is set, otherwise `/tmp/navidrome-mcp-mpv-<uid>.sock`
 - Windows: `\\.\pipe\navidrome-mcp-mpv-<USERNAME>`
 
 Multiple MCP servers for the same user share the same mpv (otherwise simultaneous AIs would fight over audio output).
@@ -123,7 +127,7 @@ mpv's IPC is newline-delimited JSON, bidirectional. Every command gets a respons
 { "command": ["loadfile", "<url>", "append"], "request_id": 2 }
 { "command": ["playlist-clear"], "request_id": 3 }
 { "command": ["playlist-next", "force"], "request_id": 4 }
-{ "command": ["playlist-prev", "force"], "request_id": 5 }
+{ "command": ["playlist-prev"], "request_id": 5 }
 { "command": ["playlist-remove", 2], "request_id": 6 }
 { "command": ["playlist-move", 0, 3], "request_id": 7 }
 { "command": ["playlist-shuffle"], "request_id": 8 }
@@ -147,7 +151,7 @@ mpv's IPC is newline-delimited JSON, bidirectional. Every command gets a respons
 - `eof-reached` — end of file
 - Lifecycle events: `start-file`, `end-file`, `playback-restart` (logged; not yet acted on)
 
-The IPC client maintains a property cache so `now_playing` is a synchronous local read. The full `playlist` property is fetched on-demand by `get_play_queue` rather than observed (would be noisy during loadfile loops).
+The IPC client maintains a property cache so `now_playing` reads the cache first. It falls back to a `getQueue` IPC and Navidrome lookups for radio naming, duration repair and metadata repair, and a per-file cache skips the repeat on later polls. The full `playlist` property is fetched on-demand by `get_play_queue` rather than observed (would be noisy during loadfile loops).
 
 ## Tool Surface
 
@@ -163,55 +167,57 @@ The codebase has three distinct queue-like concepts. Their tool names are kept u
 
 The `play_` verb prefix consistently means "affect what's audibly coming out of the speakers right now." The `_play_queue` noun suffix means "operate on the live mpv playlist as a whole."
 
-### Implemented tools (17 playback + 1 radio)
+### Implemented tools (19 playback + 1 radio)
 
 #### Playback start
 
 | Tool | Args | Effect |
 |---|---|---|
-| `play_songs` | `{ songIds: string[], mode?: 'replace' \| 'append', shuffle?: boolean }` (defaults `'replace'`, `false`) | Play one or many songs. `replace` clears the play queue and unpauses; `append` adds to the end without clearing or unpausing. `shuffle: true` Fisher-Yates the new batch only. |
-| `play_albums` | `{ albumIds: string[], mode?: 'replace' \| 'append', shuffle?: 'none' \| 'albums' \| 'songs' }` (defaults `'replace'`, `'none'`) | Play one or many albums. Shuffle modes: `none` = input album order + natural track order; `albums` = random album order, natural track order within each; `songs` = fully randomize all tracks across all albums. Empty albums silently skipped; all-empty throws. |
+| `play_songs` | `{ songIds: string[], mode?: 'replace' \| 'append', shuffle?: boolean }` (defaults `'replace'`, `false`) | Play one or many songs. `replace` clears the play queue and unpauses; `append` adds to the end without clearing or unpausing. When no track is current (the queue is empty, finished, or mpv just started), `append` loads the first new track paused. `shuffle: true` Fisher-Yates the new batch only. |
+| `play_albums` | `{ albumIds: string[], mode?: 'replace' \| 'append', shuffleAlbums?: boolean, shuffleSongs?: boolean }` (defaults `'replace'`, `false`, `false`) | Play one or many albums. With neither flag, albums play in input order with natural track order. `shuffleAlbums` randomizes the album order, and each album keeps its track order. `shuffleSongs` alone shuffles every track across all albums. Both together shuffle the album order and the tracks within each album. Empty albums silently skipped; all-empty throws. |
+| `play_playlist` | `{ playlistId: string, mode?: 'replace' \| 'append', shuffle?: boolean }` | Load a saved playlist's tracks into the play queue. |
 
 #### Search-driven playback
 
 | Tool | Args | Effect |
 |---|---|---|
-| `play_albums_search` | All `search_albums` args (`query`, `limit`, `offset`, `genre`, `mediaType`, `country`, `releaseType`, `recordLabel`, `mood`, `sort`, `order`, `randomSeed`, `year`, `starred`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) and `shuffle?: 'none' \| 'albums' \| 'songs'` (default `'none'`) | Run `search_albums` with the given filters → resolve each matching album's tracks → apply shuffle → enqueue. Empty search result throws `"No albums matched the search filters"`. Empty albums silently skipped; if every match resolves to zero tracks, throws `"Found albums but none had any tracks"`. Headline use case: `{ starred: true, sort: 'random', limit: 5 }` plays 5 random starred albums. Returns `{ matchCount, albumCount, trackCount, mode, shuffle, appliedFilters? }`. |
-| `play_songs_search` | All `search_songs` args (same filter set as above; `sort` enum is `'title' \| 'artist' \| 'album' \| 'year' \| 'duration' \| 'playCount' \| 'rating' \| 'recently_added' \| 'starred_at' \| 'random'`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) and `shuffle?: boolean` (default `false`) | Run `search_songs` with the given filters → optionally Fisher-Yates the matched IDs → enqueue. Empty search result throws `"No songs matched the search filters"`. Headline use case: `{ starred: true, limit: 500 }` plays every starred song. Returns `{ count, mode, shuffled, appliedFilters? }`. |
+| `play_albums_search` | All `search_albums` args (`query`, `limit`, `offset`, `genre`, `mediaType`, `country`, `releaseType`, `recordLabel`, `mood`, `sort`, `order`, `randomSeed`, `year`, `starred`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) plus `shuffleAlbums?: boolean` and `shuffleSongs?: boolean` (both default `false`) | Run `search_albums` with the given filters → resolve each matching album's tracks → apply shuffle → enqueue. Empty search result throws `"No albums matched the search filters"`. Empty albums silently skipped; if every match resolves to zero tracks, throws `"No tracks found across all albums"`. Headline use case: `{ starred: true, sort: 'random', limit: 5 }` plays 5 random starred albums. Returns `{ success, matchCount, albumCount, trackCount, appliedFilters?, demoted? }`. |
+| `play_songs_search` | All `search_songs` args (same filter set as above; `sort` enum is `'title' \| 'artist' \| 'album' \| 'year' \| 'duration' \| 'playCount' \| 'rating' \| 'recently_added' \| 'starred_at' \| 'random'`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) and `shuffle?: boolean` (default `false`) | Run `search_songs` with the given filters → optionally Fisher-Yates the matched IDs → enqueue. Empty search result throws `"No songs matched the search filters"`. Headline use case: `{ starred: true, limit: 500 }` plays every starred song. Returns `{ success, count, appliedFilters?, demoted? }`. |
 
 #### Transport / control
 
 | Tool | Args | Effect |
 |---|---|---|
-| `pause` / `resume` | — | Toggle playback (lazy-spawns mpv on first call) |
-| `next` / `previous` | — | Skip (uses mpv `force` flag so it advances even at playlist end) |
-| `seek` | `{ seconds, mode: 'absolute' \| 'relative' }` (default `'relative'`) | Move within the current track |
-| `set_volume` | `{ level }` (0–100) | mpv internal volume |
+| `pause` / `resume` | — | Pause or resume playback. Attach-only, so they return `{ success: false, message }` when no mpv runs. |
+| `next` / `previous` | — | `next` sends `playlist-next force`, which stops playback on the last entry, and the result then carries `stopped: true`. `previous` sends `playlist-prev`, and on the first entry it restarts the current track. |
+| `seek` | `{ seconds, mode: 'absolute' \| 'relative' }` (default `'relative'`) | Move within the current track. An absolute target must be 0 or more, since mpv reads a negative one as an offset from the end. A target past the end skips to the next track. |
+| `set_volume` | `{ level }` (any finite number) | mpv internal volume. The engine clamps the level to 0-100. |
 
 #### Queue management
 
 | Tool | Args | Effect |
 |---|---|---|
-| `get_play_queue` | — | Returns ordered list `[{ index, songId, filename, title?, isCurrent, isPlaying }, ...]` plus `currentIndex` and `length`. Returns `{ items: [], length: 0 }` when mpv isn't running. Read-only; does not spawn mpv. |
+| `get_play_queue` | `{ limit?: number, offset?: number }` (defaults `100`, `0`, `limit` max 500) | Returns one page as `items: [{ index, songId, isCurrent, isPlaying, title?, artist?, album?, duration? }, ...]` plus `offset`, `limit`, `length` (the full queue count) and `currentIndex` (absolute). Returns empty `items` and `length: 0` when mpv isn't running. Read-only; does not spawn mpv. |
 | `clear_play_queue` | — | mpv `stop` (clears playlist + halts playback). Idempotent on idle queue. |
-| `shuffle_play_queue` | — | mpv `playlist-shuffle` followed by `set_property playlist-pos 0`. Randomizes existing queue and resets the play head to the new top so it plays (active-queue behavior). Pause state preserved. |
-| `move_in_play_queue` | `{ from: number, to: number }` | mpv `playlist-move`. Reorder by index. When the move involves index 0 (source or destination), the play head is reset to 0 so the new top plays (active-queue behavior). Short-circuits with `{ success: true, noop: true }` when `from === to`. Out-of-range surfaces mpv error via `ErrorFormatter`. |
+| `shuffle_play_queue` | — | mpv `playlist-shuffle`, then `playlist-move` of the current track to index 0. The current track keeps playing at the top. Pause state preserved. |
+| `move_in_play_queue` | `{ from: number, to: number }` | mpv `playlist-move`. The entry ends at index `to`, so a forward move passes `to + 1` to mpv. The play head stays on the same track. Short-circuits with `{ success: true, noop: true }` when `from === to`. A `to` past the last index is rejected. |
 | `remove_from_play_queue` | `{ index: number }` | mpv `playlist-remove`. Removes one entry; mpv auto-advances if the removed entry was currently playing. |
+| `play_queue_index` | `{ index: number }` | Jump to the queue entry at `index`. Does not reorder. |
 
 #### Read state
 
 | Tool | Returns |
 |---|---|
-| `now_playing` | `{ engineRunning, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength?, isRadio?, radioStation? }` (synchronous from cache; does NOT spawn mpv) |
+| `now_playing` | `{ engineRunning, songId?, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength?, isRadio?, radioStation? }` (cache first, see above. Does NOT spawn mpv). `paused` is omitted when no entry is current, and `duration` is omitted for radio. |
 | `playback_status` | `{ engineRunning, mpvPath, mpvVersion, volume, idle }` (does NOT spawn mpv) |
 
-`now_playing` returns real-time playback state (current title, position, paused). It is **distinct from** `get_play_queue`: "now playing" answers *"what's happening right this second?"*; `get_play_queue` answers *"what's the full ordered list of tracks that are queued up?"*. Same underlying mpv playlist, different granularities and very different payload sizes. When a radio stream is loaded, `now_playing` adds `isRadio: true` and (if the radio was started in the current MCP session) `radioStation: { name }`.
+`now_playing` returns real-time playback state (current title, position, paused). It is **distinct from** `get_play_queue`: "now playing" answers *"what's happening right this second?"*; `get_play_queue` answers *"what's the full ordered list of tracks that are queued up?"*. Same underlying mpv playlist, different granularities and very different payload sizes. When a radio stream is loaded, `now_playing` adds `isRadio: true` and `radioStation: { name }`.
 
 #### Radio playback (lives in the radio category, plays through mpv)
 
 | Tool | Args | Effect |
 |---|---|---|
-| `play_radio_station` | `{ id: string }` | Play a saved Navidrome radio station through the local mpv player. Always replaces the entire play queue with the single radio stream (radio is mutually exclusive with songs/albums — see below). |
+| `play_radio_station` | `{ stationId: string }` | Play a saved Navidrome radio station through the local mpv player. Always replaces the entire play queue with the single radio stream (radio is mutually exclusive with songs/albums — see below). |
 
 ##### Radio / songs mutual exclusion
 
@@ -223,7 +229,7 @@ A radio stream is infinite; songs and albums are finite. Mixing them in one mpv 
 
 The recognition primitive is the queue entry's `songId` field: when a stream URL doesn't carry a Navidrome `?id=...` query parameter (i.e., it's an arbitrary URL like a SomaFM Icecast stream), `parseSongIdFromStreamUrl` returns `null` and the entry is treated as a radio stream. `playbackEngine.hasRadioStream()` exposes this check; `enqueue` calls it to decide whether to demote append → replace.
 
-The engine separately tracks the station name passed to `enqueueRadio(streamUrl, stationName?)` so `now_playing` can surface a human-readable header. This name is session-scoped — if the MCP server restarts and attaches to a running mpv, the new server can still detect `isRadio` from queue inspection, but `radioStation.name` will be `undefined` until the next `play_radio_station` call.
+`radioStation.name` is the saved station whose stream URL matches mpv's `path` or `playlist-path`, or "Unknown station" when none matches. Saved stations can share a stream URL, so `play_radio_station` writes the station ID to mpv's `user-data/navidrome-mcp/radio-station-id` before the load, and that station wins among the matches. Any process attached to mpv resolves it the same way. An mpv older than 0.36 has no `user-data`, and the first matching station wins.
 
 #### Why search-driven tools are separate from `play_albums` / `play_songs`
 
@@ -254,247 +260,47 @@ Fail fast. Every error surfaces a structured message via `ErrorFormatter`:
 | mpv not on PATH | Feature is gated off at startup; tools don't appear in `tools/list` |
 | mpv exits unexpectedly | Tool call returns error; engine clears IPC state; next call re-attaches or spawns |
 | IPC socket disconnects | Engine clears state; next call attempts re-attach |
-| Navidrome stream URL 4xx/5xx | mpv emits `end-file` with reason `error`; surfaces in `now_playing` and via tool errors |
-| Out-of-range index for `move_in_play_queue` / `remove_from_play_queue` | mpv error surfaced via `ErrorFormatter.toolExecution` |
+| Navidrome stream URL 4xx/5xx | mpv emits `end-file` with reason `error`, the engine logs it at debug, and mpv moves to the next entry. No tool result or `now_playing` field reports it. |
+| Out-of-range index for `move_in_play_queue` / `remove_from_play_queue` / `play_queue_index` | `move_in_play_queue` rejects a `to` past the last index, and `play_queue_index` rejects an index past the end, each with a bound message, since mpv accepts both without an error. An out-of-range `from` or `remove_from_play_queue` index fails with a message that names the index and points to `get_play_queue`. |
 
 No retry loops, no auto-recovery beyond re-attach.
 
-## Open work
+## Visualizer Filter
 
-### Scrobbling
+The web remote's visualizer reads band levels that mpv measures, since the browser receives no audio.
 
-Hook into mpv `start-file` / `end-file` events to call Subsonic `/scrobble`. Not yet wired up.
-
-| Event | Action |
-|---|---|
-| `start-file` | Subsonic `/scrobble?id=<X>&submission=false` (now-playing) |
-| `end-file` with `>50%` or `>240s` played | Subsonic `/scrobble?id=<X>&submission=true` (count it) |
-| `end-file` early skip | No scrobble |
-
-Existing `list_recently_played` / `list_most_played` will benefit immediately once wired.
+- **Filter.** `@navidrome-viz` is a `lavfi` graph. Its main path is `asplit` then `anull`, so the audio passes through unchanged in any channel layout. Its side path resamples a mono copy to 44.1 kHz, splits it into 16 log-spaced `bandpass` bands from 40 Hz to 16 kHz, measures each with `astats` every 1024 samples, prints the result with `ametadata=mode=print`, and ends in `anullsink`. It costs about 2.5% of one core while audio plays.
+- **Validation.** mpv accepts a broken graph while idle, then fails every track. So the engine first runs the configured binary headless on 0.2 s of generated silence with the filter, and installs only when that run exits 0. It also reads `mpv --version` and installs only into a running mpv that reports the same mpv and FFmpeg versions, since an mpv started from another binary may lack what the graph needs. A rejection is cached per binary for the process lifetime. A run that timed out or failed to start runs again after 60 s.
+- **Install timing.** A filter change during a track dropped about 40 ms of audio when measured, and a change at a gapless track start showed no measurable gap. Every engine adds the filter to an mpv it spawns, before the first load. It waits at most 1 s for the check, and a slower check leaves the first track without the filter. After spawn only the web player's engine changes the filter. It acts on attach when mpv is idle or paused, and otherwise at the next `start-file`, pause or idle. A `start-file` sync that waited in line past mpv's `playback-restart` counts as mid-track. The web player checks again at every `start-file`, since mpv disables a filter whose graph fails for one track and keeps playing.
+- **Setting.** `webui.visualizer` (default `true`) decides whether the filter belongs in mpv. An MCP process reads the saved value when it spawns mpv, so the first track follows a toggle saved after that process started. The web player reads its live flag, which the snapshot and the settings dialog also report. In env-only mode an MCP process can read a different value than the web player's session toggle, which is why only the web player changes the filter after spawn. The snapshot hides the visualizer while the filter cannot run on the current mpv. With `webui.enabled` false no process installs it.
+- **Level feed.** The web player opens a second IPC connection while a remote shows the visualizer and sends `request_log_messages v`. mpv forwards FFmpeg's info lines at level `v` as `Parsed_ametadata_N: frame:… pts_time:T` followed by one `lavfi.astats.K.RMS_level=V` line per band. The connection is separate because mpv finishes each write to a client before the next, so a slow log reader would stall commands on its connection.
+- **Delivery.** `GET /api/visualizer` streams `levels` events every 100 ms as `[segment, ptsMs, ...levelsDb]` rows. Measurements arrive about 0.28 s before the sound. A segment changes when timestamps restart, which marks a new file, and the browser matches `pts` to its playback clock.
+- **Heights.** Band medians ranged from -50 dB on a classical track to -21 dB on a pop master when measured, so a fixed dB range pinned loud masters at full height. The browser maps the top 24 dB under a reference that follows the loudest band instead. The reference rises within about 0.3 s, falls 2 dB a second, and restarts with each segment, so every track fills the height and a quieter passage still shows lower.
+- **Modes.** Each drawing mode is a file in `src/webui/public/visualizers/`. `GET /api/visualizer/modes` lists them, so a new file joins the cycle after a build and a page reload. `_template.js` states the contract, and `tests/unit/webui/visualizer-plugins.test.ts` checks it on every file. Each mode draws on a layer of its own, so a crossfade never mixes their compositing, and a mode that throws leaves the cycle.
+- **Limits.** mpv's IPC docs warn that log text can change between releases. A changed format leaves the visualizer at rest without affecting audio. At a gapless change the new file's first levels show during the old file's last 0.28 s.
 
 ## Out of Scope
 
-- SQLite / persistence across MCP restart (the stable-IPC-path design covers the common case)
+- SQLite / queue persistence across MCP restart. mpv itself outlives an MCP exit only through a persisting web player.
+- Shared mpv lifetime with `webui.enabled` false. No web player holds the MCP leases, so an exiting MCP that played music quits mpv even while another MCP plays through it.
 - Navidrome `/api/queue` bidirectional sync
 - Crossfade / replay gain
 - Multiple simultaneous playback engines
 - Remote/network playback (Chromecast, AirPlay, MPRIS)
 - System volume mixer
-- Browser-based control surface
 - Auto-recovery from mpv crashes beyond the re-attach pattern
 
 Each is a future iteration if real demand emerges.
 
 ## Future Hooks (kept in mind, not built)
 
-1. **Browser controls.** A small HTTP/WS layer in front of `playback-engine` exposes the same commands to a web UI. Clean addition because the engine is the only thing handlers ever talk to.
-2. **Voice / Pi.** The engine has no MCP-specific assumptions; it could be reused by a different transport.
-3. **Persistence.** If we later want survive-restart for the queue contents (not just the mpv process), snapshot the playlist + position to disk on every change and restore on spawn.
+1. **Voice / Pi.** The engine has no MCP-specific assumptions; it could be reused by a different transport.
+2. **Persistence.** If we later want survive-restart for the queue contents (not just the mpv process), snapshot the playlist + position to disk on every change and restore on spawn.
 
 ## Quality Gates
 
 All existing project rules apply: `pnpm check:all` zero issues, dead-code clean, `ErrorFormatter` for messages, `logger` (never `console.log`), shared schemas, lazy initialization following existing conditional-feature pattern.
 
----
+## Tests
 
-## Unit Test Plan
-
-These are local-only tests; CI does not run them because contributors aren't required to install mpv. Run via `pnpm test:playback` or similar dedicated script.
-
-### Test environment requirements
-
-- A real Navidrome instance reachable per `.env.test` (already in use)
-- mpv binary available on the test host
-- Tests share one mpv instance per file run; each test calls `clear_play_queue` in `beforeEach` to reset state
-
-### Shared helpers
-
-```ts
-// Pulls N song IDs from a stable source (starred items or fixed search)
-async function getTestSongIds(count: number): Promise<string[]>
-// Pulls N album IDs
-async function getTestAlbumIds(count: number): Promise<string[]>
-// Polls now_playing until predicate matches (mpv has a small async delay)
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void>
-```
-
-### Per-tool tests
-
-#### `play_songs`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Replace mode (default) | empty queue | `get_play_queue.length === N`, `currentIndex === 0`, `now_playing.title` matches first input ID |
-| Replace overrides existing queue | queue with M unrelated tracks | length === N (M discarded) |
-| Append to empty queue | empty | length === N (mpv auto-plays first track) |
-| Append to populated queue | queue with M, current at idx 0 | length === M+N, `currentIndex === 0` unchanged, current track unchanged |
-| `shuffle: true` reorders | input length ≥ 5 (so coincidental same-order is rare) | output is permutation of input, content set equal, order differs (retry once if same — Fisher-Yates can land on input order) |
-| `shuffle: true` with append | queue with M existing | only the appended N are shuffled; first M positions untouched |
-| Empty `songIds` | — | schema validation rejects |
-
-#### `play_albums`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Single album, `shuffle: 'none'` | one album with K tracks | length === K, tracks in API natural order |
-| Single album, `shuffle: 'songs'` | one album K ≥ 5 | length === K, content equal, order may differ |
-| Two albums, `shuffle: 'none'` | albums A (a tracks), B (b tracks) | length === a+b, idx 0..a-1 from A in API order, idx a..a+b-1 from B in API order |
-| Two albums, `shuffle: 'albums'` | A and B | length === a+b, either A-then-B or B-then-A, within each natural order preserved (deterministic content checks: idx 0 ∈ A.first ∪ B.first) |
-| Two albums, `shuffle: 'songs'` | A and B, both ≥ 3 tracks | content set equal to union, no contiguous a-length block of A IDs (probabilistic; allow retry once) |
-| Append mode preserves current | populated queue, current at idx 0 | current track unchanged after append |
-| Empty album silently skipped | one valid album, one all-empty album | length === valid album track count |
-| All albums empty | albums that resolve to zero tracks | tool throws with "No tracks found across all albums" |
-
-#### `play_albums_search`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Empty search result | filter set known to match nothing (e.g., `query: 'NoSuchAlbum_zxqv'`) | tool throws with `"No albums matched the search filters"`; live queue unchanged |
-| Headline random albums | `{ starred: true, sort: 'random', limit: 3 }` against a library with ≥3 starred albums | `matchCount === 3`; queue length equals total tracks across the 3 albums; first track playing |
-| All search filters pass through | every filter from `search_albums` set to a known-matching value | `appliedFilters` round-trips genre/mediaType/etc. resolutions; matched album set is identical to the equivalent `search_albums` call |
-| `shuffle: 'none'` | 2-album result | tracks appear in result-album order, natural disc/track order within each album (matches `play_albums` shuffle:'none') |
-| `shuffle: 'albums'` | 2-album result, both ≥ 3 tracks | length === a+b, either A-then-B or B-then-A, natural order within each (matches `play_albums` shuffle:'albums') |
-| `shuffle: 'songs'` | 2-album result, both ≥ 3 tracks | content set equal to union, no contiguous a-length block of A IDs (probabilistic; allow retry once) |
-| All matched albums empty | filter set whose results all resolve to 0 tracks (rare; may need fixture albums) | tool throws with `"Found albums but none had any tracks"` |
-| Some empty, some populated | mixed result set | empty albums silently skipped; `albumCount` reflects non-empty count, `matchCount` reflects raw search count |
-| `mode: 'append'` preserves current | populated queue, current at idx 0; append-mode search call | length grows, currentIndex unchanged, current track unchanged |
-| `appliedFilters` round-trip | filter with text→ID resolution (e.g., `genre: 'Rock'`) | `appliedFilters.genre` is the resolved ID, not the input string |
-
-#### `play_songs_search`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Empty search result | filter set known to match nothing (e.g., `query: 'NoSuchSong_zxqv'`) | tool throws with `"No songs matched the search filters"`; live queue unchanged |
-| Headline starred songs | `{ starred: true, limit: 10 }` against a library with ≥10 starred songs | `count === 10`; queue length === 10; first track playing; default sort is `title` ASC |
-| All search filters pass through | every filter from `search_songs` set to a known-matching value | `appliedFilters` round-trips resolutions; matched song set is identical to the equivalent `search_songs` call |
-| `shuffle: false` (default) | filter result of N≥5 with deterministic sort | songs appear in search-result order (matches `play_songs` shuffle:false) |
-| `shuffle: true` | filter result of N≥5 | content set equal, order may differ; `shuffled: true` in result; matches `play_songs` shuffle:true semantics (Fisher-Yates) |
-| `shuffle: true` with append | populated queue M; append-mode shuffled search call | only the appended N are shuffled; first M positions untouched |
-| `mode: 'append'` preserves current | populated queue, current at idx 0 | length grows, currentIndex unchanged, current track unchanged |
-| `appliedFilters` round-trip | filter with text→ID resolution (e.g., `genre: 'Jazz'`) | `appliedFilters.genre` is the resolved ID, not the input string |
-
-#### `get_play_queue`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Engine cold | no prior playback this run | `{ items: [], length: 0 }` (no `currentIndex`) |
-| Populated queue | after `play_songs` of N IDs | `length === N`, every item has `index` matching position, `songId` correctly parsed from `filename` URL, exactly one item has `isCurrent: true`, `currentIndex` matches that item's index |
-| `songId: null` for non-stream URL | manually load file via direct mpv IPC (test-only escape hatch) | item appears with `songId: null`, no throw |
-
-#### `clear_play_queue`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Non-empty queue | populated | after: `length === 0`, `now_playing.queueLength === 0`, `now_playing.queueIndex === -1` |
-| Empty/idle queue | empty | call returns `{ success: true }`, no throw |
-
-#### `shuffle_play_queue`
-
-| Case | Setup | Assert |
-|---|---|---|
-| N ≥ 5 items | populated | length unchanged, content set equal, order may differ; `now_playing.queueIndex === 0` (active-queue: play head reset to top); pause state preserved |
-| Single item | populated with 1 | call succeeds, no error |
-| Empty queue | empty | call succeeds, no error (set-pos guarded on count) |
-| Preserves pause | populated, paused before shuffle | after: still paused, but `queueIndex === 0` |
-
-#### `move_in_play_queue`
-
-| Case | Setup | Assert |
-|---|---|---|
-| `from === to` | populated | returns `{ success: true, noop: true }`, queue unchanged |
-| Valid `from < to`, neither is 0 | current at idx 0, move 2 → 4 | source entry now at idx **3** (mpv's `playlist-move` removes from source first, then inserts before original `to`, so forward moves land at `to - 1`); intermediates between source and dest shift **down** by 1; `currentIndex` unchanged (lazy is correct here) |
-| Valid `from > to`, neither is 0 | current at idx 0, move 4 → 2 | source entry now at idx 2 (backward moves are exact since source removal doesn't shift the destination); `currentIndex` unchanged |
-| `to === 0` triggers active play | populated, current at idx 0, move 3 → 0 | source entry now at idx 0 AND `now_playing.queueIndex === 0` AND playing the moved track |
-| `from === 0` triggers active play | populated, current at idx 0, move 0 → 4 | the originally-current track is now at idx **3** (per mpv's forward-move semantics — see `from < to` row above), and `now_playing.queueIndex === 0` (the new top, formerly idx 1, is now playing) |
-| Pause preserved across active move | populated, paused, move 3 → 0 | after: queueIndex 0, still paused |
-| Out of range `from` | populated, from = length+10 | throws via `ErrorFormatter` (MCP error) |
-
-#### `remove_from_play_queue`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Remove non-current | populated, current at idx 0, remove idx 2 | length -1, current track unchanged |
-| Remove current track | populated, current at idx 0 | length -1, mpv auto-advanced to former idx 1, `now_playing` reflects new track |
-| Remove last (only) item | queue with 1 item | length === 0, queue idle |
-| Out of range | index = length+10 | throws via `ErrorFormatter` |
-
-#### `pause` / `resume`
-
-| Case | Assert |
-|---|---|
-| Pause while playing | `now_playing.paused === true` |
-| Resume while paused | `now_playing.paused === false` |
-| Pause when already paused | idempotent, no error |
-| Resume when already playing | idempotent, no error |
-
-#### `set_volume`
-
-| Case | Assert |
-|---|---|
-| Set 50 | `playback_status.volume === 50` |
-| Set 0 | `playback_status.volume === 0` |
-| Set 100 | `playback_status.volume === 100` |
-| Below 0 | schema rejects (current Zod min(0)) |
-| Above 100 | schema rejects (current Zod max(100)) |
-
-#### `next` / `previous`
-
-| Case | Setup | Assert |
-|---|---|---|
-| `next` mid-queue | current at idx 0 of N≥2 | after: `queueIndex === 1`, different track playing |
-| `next` at last entry | current at idx N-1 | mpv `force` flag behavior — document actual: stops or wraps |
-| `previous` mid-queue | current at idx 1 | after: `queueIndex === 0` |
-| `previous` at idx 0 | current at idx 0 | document actual mpv behavior |
-
-#### `seek`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Relative +30 | mid-track | position increases by ~30s |
-| Relative -10 | position > 10 | position decreases by ~10s |
-| Absolute 60 | mid-track | position ≈ 60s |
-| Beyond duration | absolute beyond track end | mpv advances to next track or clamps; document actual |
-
-#### `now_playing`
-
-| Case | Assert |
-|---|---|
-| Engine cold | `{ engineRunning: false }` only |
-| Engine running, queue populated | full payload with title/artist/album/position/duration/queueIndex/queueLength |
-| After pause | `paused: true` |
-| After clear | `queueIndex === -1`, `queueLength === 0` |
-
-#### `playback_status`
-
-| Case | Assert |
-|---|---|
-| Engine cold | `engineRunning: false`, `mpvPath` set, `mpvVersion: null`, `volume: null`, `idle: null` |
-| Engine running | `engineRunning: true`, `mpvVersion` populated, `volume` populated, `idle` boolean |
-
-#### `play_radio_station`
-
-| Case | Setup | Assert |
-|---|---|---|
-| Loads radio as single-entry queue | empty queue | `result.success === true`, `result.station.{id,name,streamUrl}` present; `get_play_queue.length === 1`; the one entry has `songId: null` (recognition signal) and `filename === streamUrl` |
-| `now_playing` surfaces radio context | radio loaded | `isRadio === true`, `radioStation.name` matches `result.station.name` |
-| `play_songs { mode: 'replace' }` while radio plays → radio replaced | radio loaded | new queue length matches songs count, every entry has non-null `songId`, `now_playing.isRadio` undefined |
-| `play_songs { mode: 'append' }` while radio plays → demoted to replace; radio gone | radio loaded | queue length === songs count (NOT songs.count + 1, which would mean append wasn't demoted), no entry has null `songId` |
-| `play_radio_station` while songs play → songs replaced | songs loaded | queue length === 1, `songId === null`, `isRadio === true` |
-| Invalid station ID throws via `ErrorFormatter` | — | promise rejects with error message |
-
-### Cross-tool integration
-
-A small set of "the queue actually works as a system" tests:
-
-1. `play_songs` 5 tracks → `now_playing.queueIndex === 0` → `next` → `queueIndex === 1` → `pause` → `paused === true` → `resume` → `paused === false` → `clear_play_queue` → `length === 0`
-2. `play_albums` 2 albums → `get_play_queue` confirms expected length → `move_in_play_queue` random valid pair → `get_play_queue` confirms reorder → `shuffle_play_queue` → length unchanged, content equal
-3. `play_songs` 5 → `move_in_play_queue { from: 4, to: 0 }` → `now_playing.title` matches the song that was at idx 4 (active-queue verification)
-
-### Notes for whoever writes the actual tests
-
-- Every test should `clear_play_queue` in `beforeEach` and `afterEach` — leftover state across tests is a debugging nightmare.
-- Use `waitFor` (poll `now_playing`) rather than fixed `setTimeout` — mpv's response timing varies on different hosts.
-- For shuffle assertions, allow one retry on the rare same-order coincidence (5! = 120 permutations means ~0.8% false-fail rate per run on N=5).
-- Tests that verify "currently playing" should use `get_play_queue.items.find(i => i.isCurrent)` rather than `currentIndex` directly — it's slightly more robust to mpv state transitions.
-- Active-queue tests (`move_in_play_queue` with `to: 0` or `from: 0`, and `shuffle_play_queue`) verify both the structural reorder AND the play-head reset to idx 0.
+The playback tests live in `tests/unit/services/playback/` and `tests/integration/playback/`. `tests/CLAUDE.md` describes how each suite runs.

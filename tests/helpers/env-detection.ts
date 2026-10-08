@@ -1,3 +1,6 @@
+import { readSettings } from '../../src/config/store.js';
+import { resolveMpvBinary } from '../../src/services/playback/mpv-process.js';
+
 /**
  * Environment Detection Utilities for Testing
  * 
@@ -20,15 +23,15 @@ function isCI(): boolean {
   );
 }
 
-/**
- * Check if Navidrome test configuration is available
- */
+/** Runtime config comes from the seeded settings store, so the gate reads the same source. */
 function hasNavidromeConfig(): boolean {
-  return !!(
-    process.env.NAVIDROME_URL &&
-    process.env.NAVIDROME_USERNAME &&
-    process.env.NAVIDROME_PASSWORD
-  );
+  const navidrome = readSettings()?.navidrome;
+  return [navidrome?.url, navidrome?.username, navidrome?.password].every((value) => (value ?? '') !== '');
+}
+
+/** Mirrors the runtime mpv resolution, so an explicit playback.mpvPath enables the playback suites. */
+export function isMpvAvailable(): boolean {
+  return resolveMpvBinary(readSettings()?.playback?.mpvPath) !== null;
 }
 
 /**

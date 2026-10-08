@@ -2,11 +2,12 @@
  * Unit tests for the settings store reader/writer (read / atomic write).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readSettings, writeSettings, type SettingsFile } from '../../../src/config/store.js';
+import { logger } from '../../../src/utils/logger.js';
 
 describe('settings store read/write', () => {
   let dir: string;
@@ -35,9 +36,19 @@ describe('settings store read/write', () => {
     });
 
     it('returns null when the schema is violated', () => {
-      // webui.port must be an integer in range; a string fails validation.
+      // webui.port must be a number, so a string fails validation.
       writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { port: 'nope' } }));
       expect(readSettings()).toBeNull();
+    });
+
+    it('keeps the store when webui.theme is null', () => {
+      writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { theme: null } }));
+      expect(readSettings()).not.toBeNull();
+    });
+
+    it('keeps the store when a port is out of range, leaving the range to the runtime schema', () => {
+      writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { port: 70000 } }));
+      expect(readSettings()).not.toBeNull();
     });
 
     it('parses a valid (partial) store', () => {
@@ -46,6 +57,35 @@ describe('settings store read/write', () => {
         JSON.stringify({ navidrome: { url: 'http://x:4533' } }),
       );
       expect(readSettings()?.navidrome?.url).toBe('http://x:4533');
+    });
+
+    it('parses a store that starts with a UTF-8 BOM', () => {
+      writeFileSync(
+        process.env['NAVIDROME_CONFIG_PATH']!,
+        `\uFEFF${JSON.stringify({ navidrome: { url: 'http://bom:4533' } })}`,
+      );
+      expect(readSettings()).toEqual({ navidrome: { url: 'http://bom:4533' } });
+    });
+
+    it('warns with the path and code when the store is unreadable, not absent', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      mkdirSync(process.env['NAVIDROME_CONFIG_PATH']!);
+      try {
+        expect(readSettings()).toBeNull();
+        expect(warn).toHaveBeenCalledWith(expect.stringMatching(/settings\.json at .+ is unreadable \(EISDIR\)/));
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('stays silent when the store is absent', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      try {
+        expect(readSettings()).toBeNull();
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 
@@ -84,6 +124,16 @@ describe('settings store read/write', () => {
       // No leftover *.tmp siblings from the temp-then-rename.
       const leftovers = readdirSync(dir).filter((f) => f.endsWith('.tmp'));
       expect(leftovers).toEqual([]);
+    });
+
+    // renameSync onto a directory throws (EISDIR on POSIX, EPERM on Windows) after the temp file holds the credentials.
+    it('removes the temp file when the final rename fails', () => {
+      const occupied = join(dir, 'occupied');
+      mkdirSync(occupied);
+      process.env['NAVIDROME_CONFIG_PATH'] = occupied;
+
+      expect(() => writeSettings(sample)).toThrow();
+      expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
     });
   });
 });

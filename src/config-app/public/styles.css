@@ -1,14 +1,15 @@
-/* Navidrome MCP — Settings styles. System fonts, no assets, dark/light aware. */
+/* Navidrome MCP Settings styles. System fonts, no assets, dark/light aware. */
 :root {
   --bg: #f5f6f8;
   --card: #ffffff;
   --fg: #1c1e21;
-  --muted: #6b7280;
+  --muted: #5d6470;
   --border: #d9dce1;
-  --accent: #3b6ef5;
+  --field-border: #8a8f98;
+  --accent: #2f5fe0;
   --accent-fg: #ffffff;
-  --ok: #1a7f37;
-  --err: #c1382b;
+  --ok: #116329;
+  --err: #a8281c;
   --warn: #9a6700;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,8 +19,9 @@
     --fg: #e7e9ee;
     --muted: #9aa1ac;
     --border: #333842;
+    --field-border: #6b7280;
     --accent: #5b86f7;
-    --accent-fg: #ffffff;
+    --accent-fg: #0b1020;
     --ok: #4ac26b;
     --err: #f1796b;
     --warn: #e3b341;
@@ -82,7 +84,7 @@ input[type="text"], input[type="url"], input[type="password"], input[type="numbe
   font-size: 0.92rem;
   color: var(--fg);
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid var(--field-border);
   border-radius: 8px;
 }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
@@ -117,6 +119,7 @@ label.check span { font-weight: 400; }
   border-radius: 8px;
   font-size: 0.88rem;
   border: 1px solid var(--border);
+  white-space: pre-line;
 }
 .status.show { display: block; }
 .status.info { color: var(--muted); }

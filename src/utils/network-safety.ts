@@ -17,7 +17,8 @@
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { Agent, buildConnector, fetch as undiciFetch } from 'undici';
+import { isIP } from 'node:net';
+import { Agent, buildConnector, fetch as undiciFetch, type Dispatcher } from 'undici';
 
 const ALLOWED_VALIDATOR_SCHEMES: readonly string[] = ['http:', 'https:'];
 
@@ -37,15 +38,17 @@ export function hasControlChars(value: string): boolean {
 }
 
 /**
- * True iff the URL parses and uses http:// or https:// — the only schemes
+ * True iff the URL parses and uses http:// or https://. Those are the only schemes
  * Node's fetch can probe. Other valid radio stream protocols (mms://,
  * rtsp://, rtmp://) are perfectly playable by mpv but cannot be validated
- * by the radio-stream validator; this helper exists so callers can fail
+ * by the radio-stream validator. This helper exists so callers can fail
  * such inputs upfront with a useful message instead of letting fetch
  * throw an opaque error deep in the stack.
  */
 export function isHttpUrlScheme(url: string): boolean {
   if (hasControlChars(url)) return false;
+  // The URL parser also trims surrounding spaces, so a padded string would parse but not play.
+  if (url !== url.trim()) return false;
   try {
     return ALLOWED_VALIDATOR_SCHEMES.includes(new URL(url).protocol);
   } catch {
@@ -60,13 +63,13 @@ export function isHttpUrlScheme(url: string): boolean {
  *
  * Coverage:
  *  - IPv4 0/8 (this-network), 10/8 (RFC1918), 100.64/10 (CGNAT),
- *    127/8 (loopback), 169.254/16 (link-local; includes the cloud
+ *    127/8 (loopback), 169.254/16 (link-local, including the cloud
  *    metadata IP 169.254.169.254), 172.16/12 (RFC1918), 192.168/16
  *    (RFC1918), 224/4 (multicast), 240/4 (reserved + 255.255.255.255).
  *  - IPv6 ::1 / ::, fc00::/7 (unique local), fe80::/10 (link-local).
  *  - IPv4-mapped IPv6 (::ffff:a.b.c.d) is unwrapped and re-evaluated.
  *
- * Returns true (i.e. "treat as unsafe") for unparseable input — callers
+ * Returns true ("treat as unsafe") for unparseable input. Callers
  * use this to fail closed.
  */
 export function isPrivateOrLocalIp(ip: string): boolean {
@@ -96,6 +99,7 @@ export function isPrivateOrLocalIp(ip: string): boolean {
     ? (trimmed.split('%')[0] ?? trimmed)
     : trimmed;
 
+  if (isIP(withoutZone) === 0) return true;
   if (withoutZone.includes(':')) return isPrivateOrLocalIpv6(withoutZone);
   return isPrivateOrLocalIpv4(withoutZone);
 }
@@ -146,7 +150,7 @@ function isPrivateOrLocalIpv6(ip: string): boolean {
 /**
  * Resolve a hostname (or pass-through an IP literal) and return true if
  * any resolved address is in a private/local range. Throws on DNS
- * failure — callers should treat that as "unsafe to follow."
+ * failure. Callers should treat that as "unsafe to follow."
  *
  * Bracketed IPv6 hosts (`[::1]`) and IPv4 literals bypass DNS.
  */
@@ -173,11 +177,23 @@ function isLikelyIpLiteral(host: string): boolean {
 }
 
 /**
- * Shared undici connector that establishes the connection normally (so DNS
- * resolution, the Host header, and TLS SNI all use the original hostname —
- * no IP pinning, so vhost/CDN routing is unaffected) and then inspects the
- * ACTUAL peer the socket connected to. If that address is private/local the
- * socket is destroyed before any request bytes are written.
+ * Marker phrase shared by every private/local refusal message (the dispatcher
+ * below and the validator's redirect gate). The recommendation engine matches
+ * on it to distinguish a deliberate SSRF refusal from a network hiccup. Keep
+ * all producers and consumers on this constant so a reword can't silently
+ * break that detection.
+ */
+export const PRIVATE_ADDRESS_REFUSAL = 'private/local address';
+
+// The plain connector with no address check, wrapped by privateIpBlockingDispatcher.
+const baseConnector = buildConnector({});
+
+/**
+ * Dispatcher that connects normally (so DNS resolution, the Host header, and
+ * TLS SNI all use the original hostname, with no IP pinning, so vhost/CDN
+ * routing is unaffected) and then inspects the ACTUAL peer the socket
+ * connected to. If that address is private/local the socket is destroyed
+ * before any request bytes are written.
  *
  * This closes the DNS-rebinding TOCTOU that a pre-fetch `hostResolvesToPrivateIp`
  * check cannot: the pre-check and `fetch()` resolve DNS independently, so a
@@ -185,17 +201,6 @@ function isLikelyIpLiteral(host: string): boolean {
  * connection. Here the address we validate IS the address we're connected to,
  * so there is no window between the two.
  */
-const baseConnector = buildConnector({});
-
-/**
- * Marker phrase shared by every private/local refusal message (the dispatcher
- * below and the validator's redirect gate). The recommendation engine matches
- * on it to distinguish a deliberate SSRF refusal from a network hiccup — keep
- * all producers and consumers on this constant so a reword can't silently
- * break that detection.
- */
-export const PRIVATE_ADDRESS_REFUSAL = 'private/local address';
-
 const privateIpBlockingDispatcher = new Agent({
   connect(options, callback): void {
     baseConnector(options, (err, socket) => {
@@ -215,12 +220,31 @@ const privateIpBlockingDispatcher = new Agent({
   },
 });
 
+// Guards cause-chain walks against circular chains.
+const MAX_CAUSE_DEPTH = 8;
+
+/**
+ * Marker phrase for a response undici's strict parser rejected. The recommendation engine
+ * matches on it, since that failure is deterministic and a retry never helps.
+ */
+export const NON_STANDARD_HTTP_RESPONSE = 'server sent a non-standard HTTP/ICY response';
+
+/** True when the cause chain holds undici's HTTPParserError, which carries no `code` to match on. */
+export function isHttpParserError(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH && current instanceof Error; depth++) {
+    if (current.name === 'HTTPParserError') return true;
+    current = current.cause;
+  }
+  return false;
+}
+
 /**
  * Best human-readable message for a failed fetch. undici wraps every
- * connection-level failure — including the private-IP refusal from the
- * dispatcher above — in a generic `TypeError: fetch failed` whose real reason
- * lives in `.cause` (sometimes nested; multi-address connect failures arrive
- * as an AggregateError with an empty message of its own). Callers surfacing
+ * connection-level failure, including the private-IP refusal from the
+ * dispatcher above, in a generic `TypeError: fetch failed` whose real reason
+ * lives in `.cause`. The cause is sometimes nested. Multi-address connect failures arrive
+ * as an AggregateError with an empty message of its own. Callers surfacing
  * fetch errors to users should report this instead of `err.message`, so
  * "Refusing connection to private/local address (127.0.0.1)" or
  * "getaddrinfo ENOTFOUND host" isn't flattened to "fetch failed".
@@ -230,8 +254,8 @@ export function describeFetchError(err: unknown): string {
 
   let best = err.message;
   let cause: unknown = err.cause;
-  // Depth cap guards against circular cause chains; deeper = more specific.
-  for (let depth = 0; depth < 8 && cause instanceof Error; depth++) {
+  // Deeper causes are more specific.
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cause instanceof Error; depth++) {
     if (cause.message !== '') {
       best = cause.message;
     } else if (cause instanceof AggregateError) {
@@ -245,24 +269,32 @@ export function describeFetchError(err: unknown): string {
 }
 
 /**
+ * Node's bundled fetch rejects an external undici dispatcher, so a custom dispatcher needs undici's own fetch.
+ * Its RequestInit and Response are distinct copies of the same WHATWG shapes, hence the casts through `unknown`.
+ */
+export async function fetchWithDispatcher(
+  url: string,
+  init: RequestInit,
+  dispatcher: Dispatcher,
+): Promise<Response> {
+  type UndiciInit = NonNullable<Parameters<typeof undiciFetch>[1]>;
+  const response = await undiciFetch(url, { ...(init as unknown as UndiciInit), dispatcher });
+  return response as unknown as Response;
+}
+
+/**
  * `fetch` for UNTRUSTED outbound URLs (radio-stream validation/discovery).
- * Identical to global fetch except every connection — the initial request AND
- * every redirect hop — is refused if it lands on a private/local IP, defeating
- * SSRF via redirects or DNS rebinding. Callers still get a standard `Response`,
- * so no downstream code changes.
+ * Identical to global fetch except every connection is refused if it lands on a
+ * private/local IP. That covers the initial request AND every redirect hop, which
+ * defeats SSRF via redirects or DNS rebinding.
+ *
+ * Deliberately stays off the HTTP_PROXY path that `fetchWithTimeout`'s
+ * `respectProxy` option takes. Behind a proxy the socket peer is the proxy, so
+ * the connector below would validate the proxy's address instead of the target's
+ * and the SSRF guard would pass everything. Untrusted URLs are unreachable on a
+ * proxy-only host as a result, which is the safe side of that trade.
  */
 export async function safeFetch(url: string, init: RequestInit): Promise<Response> {
-  // Use undici's OWN fetch: Node's bundled fetch rejects an externally-installed
-  // undici dispatcher (version-skewed internals). undici's RequestInit/Response
-  // and the global (undici-types) ones are the same WHATWG shape but nominally
-  // distinct copies, so the boundary is bridged through `unknown`; the only
-  // fields we pass (method/headers/signal/redirect) are identical in both. A
-  // rebinding/redirect refusal surfaces as a rejected fetch whose `.cause` is
-  // the connector Error above.
-  type UndiciInit = NonNullable<Parameters<typeof undiciFetch>[1]>;
-  const response = await undiciFetch(url, {
-    ...(init as unknown as UndiciInit),
-    dispatcher: privateIpBlockingDispatcher,
-  });
-  return response as unknown as Response;
+  // A rebinding or redirect refusal surfaces as a rejected fetch whose `.cause` is the connector Error above.
+  return fetchWithDispatcher(url, init, privateIpBlockingDispatcher);
 }

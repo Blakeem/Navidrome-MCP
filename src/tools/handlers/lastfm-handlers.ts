@@ -22,22 +22,29 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-// Import tool functions
 import {
   getSimilarArtists,
   getSimilarTracks,
   getArtistInfo,
   getTopTracksByArtist,
   getTrendingMusic,
-  getArtistAlbums,
-  getAlbumInfo,
 } from '../lastfm-discovery.js';
+import { getArtistAlbums, getAlbumInfo } from '../artist-discography.js';
 
-// Tool definitions for LastFM discovery category
+const LASTFM_CATALOG_NOTE =
+  "Results come from Last.fm's global catalog, not the Navidrome library, and carry no Navidrome IDs. " +
+  'Resolve names with search_artists or search_songs before playing them or adding them to a playlist.';
+
+const LASTFM_URL_VERBOSE_PROPERTY = {
+  type: 'boolean',
+  description: 'Add the Last.fm URL to each row. No extra requests.',
+  default: false,
+};
+
 const tools: Tool[] = [
   {
     name: 'get_similar_artists',
-    description: 'Get similar artists using Last.fm API',
+    description: `Get similar artists using Last.fm API. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -46,19 +53,20 @@ const tools: Tool[] = [
           description: 'Name of the artist to find similar artists for',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of similar artists to return (1-100)',
           minimum: 1,
           maximum: 100,
           default: 100,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['artist'],
     },
   },
   {
     name: 'get_similar_tracks',
-    description: 'Get similar tracks using Last.fm API',
+    description: `Get similar tracks using Last.fm API. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -71,12 +79,13 @@ const tools: Tool[] = [
           description: 'Name of the track',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of similar tracks to return (1-100)',
           minimum: 1,
           maximum: 100,
           default: 100,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['artist', 'track'],
     },
@@ -93,8 +102,13 @@ const tools: Tool[] = [
         },
         lang: {
           type: 'string',
-          description: 'Language for the biography (ISO 639 code)',
+          description: 'Language for the biography (ISO 639-1 code). Falls back to English when Last.fm has no biography in that language.',
           default: 'en',
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'Add the Last.fm artist URL. No extra requests.',
+          default: false,
         },
       },
       required: ['artist'],
@@ -102,7 +116,7 @@ const tools: Tool[] = [
   },
   {
     name: 'get_top_tracks_by_artist',
-    description: 'Get top tracks for an artist from Last.fm',
+    description: `Get top tracks for an artist from Last.fm. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -111,19 +125,20 @@ const tools: Tool[] = [
           description: 'Name of the artist',
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of top tracks to return (1-50)',
           minimum: 1,
           maximum: 50,
           default: 10,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['artist'],
     },
   },
   {
     name: 'get_trending_music',
-    description: 'Get trending music charts from Last.fm',
+    description: `Get trending music charts from Last.fm. ${LASTFM_CATALOG_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -133,18 +148,19 @@ const tools: Tool[] = [
           enum: ['artists', 'tracks', 'tags'],
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of items to return (1-100)',
           minimum: 1,
           maximum: 100,
           default: 100,
         },
         page: {
-          type: 'number',
+          type: 'integer',
           description: 'Page number for pagination',
           minimum: 1,
           default: 1,
         },
+        verbose: LASTFM_URL_VERBOSE_PROPERTY,
       },
       required: ['type'],
     },
@@ -152,7 +168,7 @@ const tools: Tool[] = [
   {
     name: 'get_artist_albums',
     description:
-      "Get an artist's full discography with release types/years (MusicBrainz), genres and popularity " +
+      "Get an artist's full discography with release types, years, and genres (MusicBrainz), popularity " +
       '(Last.fm), and an inLibrary flag for each album (Navidrome). Answers "what full albums by X am I ' +
       'missing?" in one call (use onlyMissing). Defaults to studio albums only; for electronic/synthwave ' +
       'artists where EPs are first-class releases consider includeTypes: ["album","ep"].',
@@ -210,8 +226,9 @@ const tools: Tool[] = [
     description:
       'Deep-dive on ONE album: full tracklist with durations, release year/type, genres, wiki summary, ' +
       "Last.fm popularity, and whether it's in the Navidrome library. The natural follow-up to " +
-      "get_artist_albums — pass that result's album mbid (a MusicBrainz release-group ID) or artist+album " +
-      'names. Works for albums NOT in the library (the discovery case); for owned albums get_album works too.',
+      "get_artist_albums. For a row with source 'musicbrainz', pass its mbid (a MusicBrainz release-group ID). " +
+      "For a row with source 'lastfm-only', which carries no mbid, pass artist and album names. " +
+      'Works for albums NOT in the library (the discovery case). For owned albums get_album works too.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -225,7 +242,7 @@ const tools: Tool[] = [
         },
         mbid: {
           type: 'string',
-          description: 'MusicBrainz release-group MBID (UUID) — e.g. the mbid field from get_artist_albums output.',
+          description: "MusicBrainz release-group MBID (UUID), e.g. the mbid of a get_artist_albums row with source 'musicbrainz'. Not valid for 'lastfm-only' rows.",
         },
         verbose: {
           type: 'boolean',
@@ -238,7 +255,8 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating LastFM tool category with dependencies
+export const LASTFM_TOOL_NAMES = tools.map((tool) => tool.name);
+
 export function createLastFmToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,
@@ -259,7 +277,7 @@ export function createLastFmToolCategory(client: NavidromeClient, config: Config
         case 'get_album_info':
           return await getAlbumInfo(client, config, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`Last.fm ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

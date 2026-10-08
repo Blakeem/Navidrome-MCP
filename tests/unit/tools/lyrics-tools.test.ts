@@ -144,6 +144,15 @@ describe('get_lyrics identity inputs', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('reads the song row once for a songId lookup', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilter.mockResolvedValue(songRow({ lyrics: syncedTag() }));
+
+    await category.handleToolCall('get_lyrics', { songId: 'song-1' });
+
+    expect(client.requestWithLibraryFilter).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to LRCLIB using the metadata of the song row', async () => {
     const { category, client } = makeCategory();
     client.requestWithLibraryFilter.mockResolvedValue(songRow());
@@ -190,6 +199,57 @@ describe('get_lyrics identity inputs', () => {
       /503/,
     );
   });
+
+  it('rejects songId and lrclibId together instead of silently dropping one', async () => {
+    const { category, client } = makeCategory();
+
+    await expect(
+      category.handleToolCall('get_lyrics', { songId: 'song-1', lrclibId: '12345' }),
+    ).rejects.toThrow(/Pass songId or lrclibId, not both/);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(client.requestWithLibraryFilter).not.toHaveBeenCalled();
+  });
+
+  it('returns timed lines without a duplicate plain copy on the songId path', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilter.mockResolvedValue(songRow({ lyrics: syncedTag() }));
+
+    const result = (await category.handleToolCall('get_lyrics', { songId: 'song-1' })) as LyricsDTO;
+
+    expect(result.hasSynced).toBe(true);
+    expect(result.synced).toHaveLength(2);
+    expect(result.unsynced).toBeUndefined();
+  });
+
+  it('returns timed lines without a duplicate plain copy on the lrclibId path', async () => {
+    const { category } = makeCategory();
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, lrclibRecord()));
+
+    const result = (await category.handleToolCall('get_lyrics', { lrclibId: '12345' })) as LyricsDTO;
+
+    expect(result.hasSynced).toBe(true);
+    expect(result.unsynced).toBeUndefined();
+  });
+
+  it('keeps the plain text when the source has no timed lines', async () => {
+    const { category } = makeCategory();
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, lrclibRecord({ syncedLyrics: undefined })));
+
+    const result = (await category.handleToolCall('get_lyrics', { lrclibId: '12345' })) as LyricsDTO;
+
+    expect(result.hasSynced).toBe(false);
+    expect(result.unsynced).toBe('When you were here before');
+  });
+
+  it('sends no duration for a song row whose duration is 0', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilter.mockResolvedValue(songRow({ duration: 0 }));
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, lrclibRecord()));
+
+    await category.handleToolCall('get_lyrics', { songId: 'song-1' });
+
+    expect(requestedUrls()[0]).not.toContain('duration=');
+  });
 });
 
 // ============================================================================
@@ -230,6 +290,7 @@ describe('search_lyrics candidates', () => {
       albumName: 'Pablo Honey',
       durationMs: 238000,
       hasSynced: true,
+      isInstrumental: false,
     });
     expect(result.candidates[1]?.hasSynced).toBe(false);
     expect(result.librarySong).toBeUndefined();
@@ -250,6 +311,102 @@ describe('search_lyrics candidates', () => {
 
     expect(result.librarySong).toEqual({ songId: 'song-1', lyrics: 'synced' });
     expect(result.candidates).toHaveLength(1);
+  });
+
+  it('flags an instrumental LRCLIB record on its candidate', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+    global.fetch = vi.fn().mockResolvedValue(
+      makeResponse(200, [lrclibRecord({ instrumental: true, plainLyrics: undefined, syncedLyrics: undefined })]),
+    );
+
+    const result = (await category.handleToolCall('search_lyrics', {
+      title: 'Creep',
+      artist: 'Radiohead',
+    })) as LyricsSearchDTO;
+
+    expect(result.candidates[0]).toMatchObject({ hasSynced: false, isInstrumental: true });
+  });
+
+  it('prefers the exact library title over an instrumental variant listed first', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({
+      data: [
+        songRow({ id: 'song-instrumental', title: 'Scrape (Instrumental)', artist: 'Band' }),
+        songRow({ id: 'song-original', title: 'Scrape', artist: 'Band' }),
+      ],
+      total: 2,
+    });
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, []));
+
+    const result = (await category.handleToolCall('search_lyrics', {
+      title: 'Scrape',
+      artist: 'Band',
+    })) as LyricsSearchDTO;
+
+    expect(result.librarySong?.songId).toBe('song-original');
+  });
+
+  it('searches the library with the title and artist terms together', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, []));
+
+    await category.handleToolCall('search_lyrics', { title: 'Home', artist: 'Depeche Mode' });
+
+    const [endpoint] = client.requestWithLibraryFilterAndMeta.mock.calls[0] ?? [];
+    expect(new URLSearchParams(String(endpoint).split('?')[1]).get('title')).toBe('Home Depeche Mode');
+  });
+
+  it('matches library rows across Unicode punctuation variants', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({
+      data: [songRow({ id: 'song-jay', title: 'Don\u2019t Gotta Go Home', artist: 'Jay\u2010Z feat. Kid Cudi' })],
+      total: 1,
+    });
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, []));
+
+    const result = (await category.handleToolCall('search_lyrics', {
+      title: "Don't Gotta Go Home",
+      artist: 'Jay-Z',
+    })) as LyricsSearchDTO;
+
+    expect(result.librarySong?.songId).toBe('song-jay');
+  });
+
+  it('does not accept a different song whose title merely contains the wanted title', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({
+      data: [songRow({ id: 'song-other', title: '11 Never Can Say Goodbye To Home', artist: 'Michael Jackson' })],
+      total: 1,
+    });
+    global.fetch = vi.fn().mockResolvedValue(makeResponse(200, []));
+
+    const result = (await category.handleToolCall('search_lyrics', {
+      title: 'Home',
+      artist: 'Michael Jackson',
+    })) as LyricsSearchDTO;
+
+    expect(result.librarySong).toBeUndefined();
+  });
+
+  it('ranks the row whose album matches first when title and artist tie', async () => {
+    const { category, client } = makeCategory();
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+    global.fetch = vi.fn().mockResolvedValue(
+      makeResponse(200, [
+        lrclibRecord({ id: 1, albumName: 'Live at the BBC' }),
+        lrclibRecord({ id: 2, albumName: 'Pablo Honey' }),
+      ]),
+    );
+
+    const result = (await category.handleToolCall('search_lyrics', {
+      title: 'Creep',
+      artist: 'Radiohead',
+      album: 'Pablo Honey',
+    })) as LyricsSearchDTO;
+
+    expect(result.candidates.map((candidate) => candidate.lrclibId)).toEqual(['2', '1']);
   });
 
   it('omits the library song when nothing in the library matches the artist', async () => {
@@ -338,7 +495,7 @@ describe('lyrics category with LRCLIB disabled', () => {
     const { category } = makeCategory(localOnlyConfig);
 
     await expect(category.handleToolCall('get_lyrics', { lrclibId: '12345' })).rejects.toThrow(
-      /lyricsProvider/,
+      /lyricsProvider and features\.lrclibUserAgent/,
     );
     expect(global.fetch).not.toHaveBeenCalled();
   });
@@ -348,7 +505,7 @@ describe('lyrics category with LRCLIB disabled', () => {
 
     await expect(
       category.handleToolCall('search_lyrics', { title: 'Creep', artist: 'Radiohead' }),
-    ).rejects.toThrow(/lyricsProvider/);
+    ).rejects.toThrow(/lyricsProvider and features\.lrclibUserAgent/);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });

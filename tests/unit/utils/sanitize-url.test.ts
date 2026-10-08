@@ -4,12 +4,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { sanitizeFilename } from '../../../src/utils/sanitize-url.js';
+import { stripSubsonicAuthParams } from '../../../src/utils/sanitize-url.js';
 
-describe('sanitizeFilename', () => {
+describe('stripSubsonicAuthParams', () => {
   it('strips Subsonic auth params (u, p, s, t) from a URL', () => {
     const raw = 'http://nav:4533/rest/stream?id=abc&u=user&p=plain&s=salt&t=token&v=1.16.1&c=client&f=json';
-    const out = sanitizeFilename(raw);
+    const out = stripSubsonicAuthParams(raw);
     expect(out).not.toContain('u=user');
     expect(out).not.toContain('p=plain');
     expect(out).not.toContain('s=salt');
@@ -23,19 +23,19 @@ describe('sanitizeFilename', () => {
 
   it('returns URLs without auth params verbatim (no allocation)', () => {
     const raw = 'http://nav:4533/rest/stream?id=abc&format=mp3';
-    expect(sanitizeFilename(raw)).toBe(raw);
+    expect(stripSubsonicAuthParams(raw)).toBe(raw);
   });
 
   it('returns non-URL strings unchanged', () => {
-    expect(sanitizeFilename('/local/path/file.mp3')).toBe('/local/path/file.mp3');
-    expect(sanitizeFilename('not a url at all')).toBe('not a url at all');
-    expect(sanitizeFilename('')).toBe('');
+    expect(stripSubsonicAuthParams('/local/path/file.mp3')).toBe('/local/path/file.mp3');
+    expect(stripSubsonicAuthParams('not a url at all')).toBe('not a url at all');
+    expect(stripSubsonicAuthParams('')).toBe('');
   });
 
   it('strips ALL leaked auth shapes (plaintext + salted) from same URL', () => {
     // Defense-in-depth: even if a future code path mixes both, both get gone.
     const raw = 'http://nav:4533/rest/stream?id=abc&u=user&p=plain&s=salt&t=token';
-    const out = sanitizeFilename(raw);
+    const out = stripSubsonicAuthParams(raw);
     expect(out).toBe('http://nav:4533/rest/stream?id=abc');
   });
 });

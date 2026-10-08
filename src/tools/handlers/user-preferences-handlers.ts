@@ -22,7 +22,6 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-// Import tool functions
 import {
   starItem,
   unstarItem,
@@ -31,7 +30,6 @@ import {
   listTopRated,
 } from '../user-preferences.js';
 
-// Tool definitions for user preferences category
 const tools: Tool[] = [
   {
     name: 'star_item',
@@ -108,14 +106,14 @@ const tools: Tool[] = [
           enum: ['songs', 'albums', 'artists'],
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of items to return (1-500)',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Number of items to skip for pagination',
           minimum: 0,
           default: 0,
@@ -148,17 +146,22 @@ const tools: Tool[] = [
           default: 4,
         },
         limit: {
-          type: 'number',
+          type: 'integer',
           description: 'Maximum number of items to return (1-500)',
           minimum: 1,
           maximum: 500,
           default: 100,
         },
         offset: {
-          type: 'number',
+          type: 'integer',
           description: 'Number of items to skip for pagination',
           minimum: 0,
           default: 0,
+        },
+        verbose: {
+          type: 'boolean',
+          description: 'When false (default) each item carries only identity fields (plus its rating) to save context. Set true for full per-item metadata (genres, year, starred, path, etc.).',
+          default: false,
         },
       },
       required: ['type'],
@@ -166,24 +169,23 @@ const tools: Tool[] = [
   },
 ];
 
-// Factory function for creating user preferences tool category with dependencies  
-export function createUserPreferencesToolCategory(client: NavidromeClient, config: Config): ToolCategory {
+export function createUserPreferencesToolCategory(client: NavidromeClient, _config: Config): ToolCategory {
   return {
     tools,
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       switch (name) {
         case 'star_item':
-          return await starItem(client, config, args);
+          return await starItem(client, args);
         case 'unstar_item':
-          return await unstarItem(client, config, args);
+          return await unstarItem(client, args);
         case 'set_rating':
-          return await setRating(client, config, args);
+          return await setRating(client, args);
         case 'list_starred_items':
           return await listStarredItems(client, args);
         case 'list_top_rated':
           return await listTopRated(client, args);
         default:
-          throw new Error(ErrorFormatter.toolUnknown(`user preference ${name}`));
+          throw new Error(ErrorFormatter.toolUnknown(name));
       }
     }
   };

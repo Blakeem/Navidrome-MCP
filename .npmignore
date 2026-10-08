@@ -11,7 +11,6 @@ tests/
 .prettierrc.*
 tsconfig.json
 vitest.config.ts
-nodemon.json
 
 # Environment and temp files
 .env

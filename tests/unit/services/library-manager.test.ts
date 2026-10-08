@@ -247,14 +247,11 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockRejectedValue(new Error('HTTP 500'));
 
-      // ErrorFormatter.toolExecution dedupes nested wrapping (see
-      // src-tools-3-1): loadUserLibraries already wraps the HTTP 500 with its
-      // own tool-name prefix, so the outer initialize() wrapper preserves that
-      // innermost meaningful message rather than stacking a second prefix. The
-      // caller still sees a clear, rethrown error naming the failure site.
+      // The outermost wrapper's name replaces the inner loadUserLibraries
+      // prefix, so exactly one prefix reaches the caller.
       await expect(
         libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
-      ).rejects.toThrow(/Tool 'loadUserLibraries' failed: HTTP 500/);
+      ).rejects.toThrow("Tool 'LibraryManager.initialize' failed: HTTP 500");
 
       expect(libraryManager.isInitialized()).toBe(false);
     });
@@ -275,6 +272,58 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       // on the user payload).
       expect(mockClient.getCurrentToken).toHaveBeenCalledTimes(1);
       expect(mockClient.request).toHaveBeenCalledTimes(2);
+    });
+
+    it('concurrent initialize() calls share one load', async () => {
+      mockClient.getCurrentToken.mockResolvedValue(makeJwt({ uid: 'user-1' }));
+      mockClient.request.mockResolvedValue(makeUserInfo());
+
+      await Promise.all([
+        libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
+        libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
+      ]);
+
+      // One /user/{uid} and one /library request, the same as a single initialize().
+      expect(mockClient.getCurrentToken).toHaveBeenCalledTimes(1);
+      expect(mockClient.request).toHaveBeenCalledTimes(2);
+      expect(libraryManager.isInitialized()).toBe(true);
+    });
+  });
+
+  // /api/user/{uid} zeros the per-library stats, so only /api/library supplies them.
+  describe('library stats enrichment', () => {
+    function libraryById(id: number) {
+      return libraryManager.getAvailableLibraries().find((lib) => lib.id === id);
+    }
+
+    it('merges /library stats and scan time into the matching user library', async () => {
+      mockClient.getCurrentToken.mockResolvedValue(makeJwt({ uid: 'user-1' }));
+      mockClient.request.mockImplementation((endpoint: string) =>
+        Promise.resolve(
+          endpoint === '/library'
+            ? [{ id: 1, totalSongs: 999, lastScanAt: '2026-01-01T00:00:00Z' }]
+            : makeUserInfo(),
+        ),
+      );
+
+      await libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig());
+
+      expect(libraryById(1)).toMatchObject({ totalSongs: 999, lastScanAt: '2026-01-01T00:00:00Z' });
+      expect(libraryById(2)).toMatchObject({ totalSongs: 50 });
+    });
+
+    it('still initializes with the user stats when /library fails', async () => {
+      mockClient.getCurrentToken.mockResolvedValue(makeJwt({ uid: 'user-1' }));
+      mockClient.request.mockImplementation((endpoint: string) =>
+        endpoint === '/library' ? Promise.reject(new Error('500')) : Promise.resolve(makeUserInfo()),
+      );
+
+      await expect(
+        libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
+      ).resolves.toBeUndefined();
+
+      expect(libraryManager.isInitialized()).toBe(true);
+      expect(libraryById(1)).toMatchObject({ totalSongs: 100 });
     });
   });
 });

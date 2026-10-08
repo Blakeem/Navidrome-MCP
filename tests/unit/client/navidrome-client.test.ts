@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
-import { NavidromeClient } from '../../../src/client/navidrome-client.js';
+import { NavidromeClient, NavidromeNotFoundError } from '../../../src/client/navidrome-client.js';
 import { FetchTimeoutError } from '../../../src/utils/fetch-with-timeout.js';
 import type { Config } from '../../../src/config.js';
 
@@ -19,7 +19,7 @@ global.fetch = mockFetch;
  * Mirrors how native fetch behaves on a server that accepts the connection
  * but never replies.
  */
-function hangingFetchImpl(_url: string, init?: RequestInit): Promise<Response> {
+function hangingFetchImpl(_url: unknown, init?: RequestInit): Promise<Response> {
   return new Promise<Response>((_resolve, reject) => {
     const signal = init?.signal;
     if (signal === undefined || signal === null) return;
@@ -106,13 +106,87 @@ describe('NavidromeClient', () => {
       expect(mockFetch).toHaveBeenCalledTimes(4);
     });
 
+    it('maps a 500 with the data-not-found body on a read to a wrong-ID error', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ error: 'data not found' }, 500));
+
+      const client = new NavidromeClient(makeConfig());
+      const failure = client.request('/song/missing?library_id=1');
+
+      await expect(failure).rejects.toBeInstanceOf(NavidromeNotFoundError);
+      await expect(failure).rejects.toThrow(/^Song not found: missing$/);
+    });
+
+    it('maps a 404 on a read to a wrong-ID error', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/album/missing')).rejects.toBeInstanceOf(NavidromeNotFoundError);
+    });
+
+    it('names the playlist for a 404 on a write', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ error: 'playlist not found' }, 404));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/playlist/missing', { method: 'PUT', body: '{}' })).rejects.toThrow(/^Playlist not found: missing$/);
+    });
+
+    it('names the playlist for a plain-text data-not-found 400 on a track write', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('data not found\n', { status: 400 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/playlist/missing/tracks', { method: 'POST', body: '{}' })).rejects.toThrow(/^Playlist not found: missing$/);
+    });
+
+    it('keeps the request label when the endpoint names no item', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/queue')).rejects.toThrow('Navidrome GET /queue found no item. The ID is probably wrong.');
+    });
+
+    it('keeps the HTTP error for a 404 on a write to a path that names no item', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('Not Found', { status: 404 }));
+
+      const client = new NavidromeClient(makeConfig());
+      const failure = client.request('/playlist', { method: 'POST', body: '{}' });
+
+      await expect(failure).rejects.not.toBeInstanceOf(NavidromeNotFoundError);
+      await expect(failure).rejects.toThrow(/Navidrome POST \/playlist - 404/);
+    });
+
+    it('keeps the HTTP error for a 400 that is not a missing item', async () => {
+      mockFetch
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(new Response('invalid request', { status: 400 }));
+
+      const client = new NavidromeClient(makeConfig());
+
+      await expect(client.request('/playlist/abc/tracks', { method: 'POST', body: '{}' })).rejects.toThrow(/Navidrome POST \/playlist\/abc\/tracks - 400/);
+    });
+
     it('non-401 errors do not trigger retry', async () => {
       mockFetch
         .mockResolvedValueOnce(tokenResponse('first'))
         .mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500));
 
       const client = new NavidromeClient(makeConfig());
-      await expect(client.request('/album/123')).rejects.toThrow();
+      await expect(client.request('/album/123')).rejects.toThrow(/Navidrome GET \/album\/123 - 500/);
       // login + one request only — 500 is not retried.
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
@@ -375,6 +449,15 @@ describe('NavidromeClient', () => {
       await expect(client.request('https://evil.example/api')).rejects.toThrow(/path, not an absolute URL/);
     });
 
+    it('accepts an ellipsis in the query string', async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse([]));
+      await expect(client.request('/album?name=...And+Justice+for+All')).resolves.toEqual([]);
+    });
+
+    it('still rejects traversal in the path when a query string follows', async () => {
+      await expect(client.request('/album/../user?x=1')).rejects.toThrow(/path-traversal/);
+    });
+
     it('also guards subsonicRequest', async () => {
       await expect(client.subsonicRequest('/../auth/login')).rejects.toThrow(/path-traversal/);
     });
@@ -475,6 +558,8 @@ describe('NavidromeClient', () => {
 
       const result = await settled;
       expect(result).toBeInstanceOf(FetchTimeoutError);
+      // A read has no side effect, so its timeout carries no write note.
+      expect((result as Error).message).not.toContain('may already have been applied');
       // login + 2 attempts = 3 fetches total.
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
@@ -503,6 +588,9 @@ describe('NavidromeClient', () => {
       const result = await settled;
       expect(result).toBeInstanceOf(FetchTimeoutError);
       expect((result as FetchTimeoutError).attempts).toBe(1);
+      expect((result as Error).message).toContain(
+        'The change may already have been applied. Check the current state before retrying.',
+      );
       // login + single POST attempt = 2 fetches. No retry.
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });

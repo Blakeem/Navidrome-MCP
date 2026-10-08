@@ -19,12 +19,7 @@
 import type { ServerResponse } from 'node:http';
 import type { SseBroadcaster } from '../broadcaster.js';
 
-/**
- * GET /api/events — SSE stream. Handing the response to the broadcaster
- * also writes the headers + initial retry directive + first snapshot.
- * Returns once registration is complete; the response stays open until
- * the client disconnects.
- */
+// GET /api/events. The SSE response stays open after this returns, until the client disconnects.
 export async function handleEvents(
   res: ServerResponse,
   broadcaster: SseBroadcaster,

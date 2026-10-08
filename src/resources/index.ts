@@ -20,41 +20,42 @@ import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import {
   ListResourcesRequestSchema,
+  McpError,
   ReadResourceRequestSchema,
   type Resource,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
+const STATUS_RESOURCE_URI = 'navidrome://server/status';
+
+// MCP spec code for an unknown resource. SDK 1.17 ErrorCode has no member for it.
+const RESOURCE_NOT_FOUND = -32002;
+
 export function registerResources(server: Server, client: NavidromeClient): void {
-  // Define available resources
   const resources: Resource[] = [
     {
-      uri: 'navidrome://server/status',
+      uri: STATUS_RESOURCE_URI,
       name: 'Server Status',
       description: 'Navidrome server connection status',
       mimeType: 'application/json',
     },
   ];
 
-  // Register list resources handler
   server.setRequestHandler(ListResourcesRequestSchema, () => ({
     resources,
   }));
 
-  // Register read resource handler
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
 
-    // Parse URI to handle query parameters
     const baseUri = uri.split('?')[0] ?? uri;
 
-
-    if (baseUri === 'navidrome://server/status') {
+    if (baseUri === STATUS_RESOURCE_URI) {
       try {
-        // Test connectivity using our working /song endpoint with minimal request
+        // A one-row /song listing proves auth and reachability at minimal cost.
         const queryParams = new URLSearchParams({
           _start: '0',
-          _end: '1', // Just get 1 song to test connectivity
+          _end: '1',
         });
 
         await client.request(`/song?${queryParams.toString()}`);
@@ -88,9 +89,7 @@ export function registerResources(server: Server, client: NavidromeClient): void
                   server: 'Navidrome',
                   timestamp: new Date().toISOString(),
                   error: 'Failed to connect to Navidrome server',
-                  // Resource handler context (not an MCP tool): keep raw error
-                  // message rather than wrapping with ErrorFormatter.toolExecution,
-                  // which would produce a misleading "Tool '...' failed:" prefix.
+                  // A resource is not a tool, so the raw message skips the "Tool failed" prefix of toolExecution.
                   message: error instanceof Error ? error.message : 'Unknown error',
                 },
                 null,
@@ -102,6 +101,6 @@ export function registerResources(server: Server, client: NavidromeClient): void
       }
     }
 
-    throw new Error(ErrorFormatter.unknownResource(baseUri));
+    throw new McpError(RESOURCE_NOT_FOUND, ErrorFormatter.unknownResource(baseUri));
   });
 }

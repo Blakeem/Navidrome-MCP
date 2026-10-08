@@ -16,23 +16,25 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
-import type { ToolCategory } from './handlers/registry.js';
 import { getPackageVersion } from '../utils/version.js';
 import { TestConnectionSchema } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
+import { LASTFM_TOOL_NAMES } from './handlers/lastfm-handlers.js';
+import { LRCLIB_TOOL_NAMES } from './handlers/lyrics-handlers.js';
+import { PLAYBACK_TOOL_NAMES } from './handlers/playback-handlers.js';
+import { RADIO_BROWSER_TOOL_NAMES, RADIO_PLAYBACK_TOOL_NAMES } from './handlers/radio-handlers.js';
 
 interface TestConnectionResult {
-  success: boolean;
+  success: true;
   message: string;
   serverInfo?: {
     url: string;
     authenticated: boolean;
     timestamp: string;
-    version: string;
+    mcpServerVersion: string;
     features?: {
       lastfm: {
         enabled: boolean;
@@ -49,6 +51,11 @@ interface TestConnectionResult {
         description: string;
         tools: string[];
       };
+      playback: {
+        enabled: boolean;
+        description: string;
+        tools: string[];
+      };
     };
   };
 }
@@ -58,15 +65,13 @@ export async function testConnection(
   config: Config,
   args: unknown
 ): Promise<TestConnectionResult> {
-  const params = TestConnectionSchema.parse(args);
-
-  logger.debug('Tool testConnection called with args:', params);
-
   try {
-    // Try to make a simple API call to verify authentication using working /song endpoint
+    const params = TestConnectionSchema.parse(args);
+    logger.debug('Tool testConnection called with args:', params);
+
     const queryParams = new URLSearchParams({
       _start: '0',
-      _end: '1', // Just get 1 song to test connectivity
+      _end: '1',
     });
 
     await client.request(`/song?${queryParams.toString()}`);
@@ -77,43 +82,44 @@ export async function testConnection(
     };
 
     if (params.includeServerInfo) {
-      // Use feature flags from config
       const hasLastFm = config.features.lastfm;
       const hasRadioBrowser = config.features.radioBrowser;
       const hasLyrics = config.features.lyrics;
+      const hasPlayback = config.features.playback;
 
       result.serverInfo = {
         url: config.navidromeUrl,
         authenticated: true,
         timestamp: new Date().toISOString(),
-        version: getPackageVersion(),
+        mcpServerVersion: getPackageVersion(),
         features: {
           lastfm: {
             enabled: hasLastFm,
             description: hasLastFm
               ? 'Last.fm integration enabled - music discovery and recommendations available'
               : 'Last.fm integration disabled - set features.lastFmApiKey in settings.json (run navidrome-config to edit)',
-            tools: hasLastFm 
-              ? ['get_similar_artists', 'get_similar_tracks', 'get_artist_info', 'get_top_tracks_by_artist', 'get_trending_music']
-              : []
+            tools: hasLastFm ? [...LASTFM_TOOL_NAMES] : []
           },
           radioBrowser: {
             enabled: hasRadioBrowser,
             description: hasRadioBrowser
               ? 'Radio Browser integration enabled - internet radio station discovery available'
               : 'Radio Browser integration disabled - set features.radioBrowserUserAgent in settings.json (run navidrome-config to edit)',
-            tools: hasRadioBrowser
-              ? ['discover_radio_stations', 'get_radio_filters', 'get_station_by_uuid', 'click_station', 'vote_station']
-              : []
+            tools: hasRadioBrowser ? [...RADIO_BROWSER_TOOL_NAMES] : []
           },
           lyrics: {
             enabled: hasLyrics,
             description: hasLyrics
               ? 'Lyrics integration enabled via LRCLIB - synced and unsynced lyrics available'
               : 'Lyrics integration disabled - get_lyrics still reads the lyrics stored in the audio file. Set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json (run navidrome-config to edit)',
-            tools: hasLyrics
-              ? ['search_lyrics']
-              : []
+            tools: hasLyrics ? [...LRCLIB_TOOL_NAMES] : []
+          },
+          playback: {
+            enabled: hasPlayback,
+            description: hasPlayback
+              ? 'Local playback enabled - mpv was found, so the play tools drive the local speakers'
+              : 'Local playback disabled - mpv was not found. Install mpv or set playback.mpvPath in settings.json (run navidrome-config to edit)',
+            tools: hasPlayback ? [...PLAYBACK_TOOL_NAMES, ...RADIO_PLAYBACK_TOOL_NAMES] : []
           }
         }
       };
@@ -121,40 +127,7 @@ export async function testConnection(
 
     return result;
   } catch (error) {
-    return {
-      success: false,
-      message: ErrorFormatter.toolExecution('test_connection', error),
-    };
+    // A failed check is a tool error, so the agent sees the failure flagged instead of a success-shaped result.
+    throw new Error(ErrorFormatter.toolExecution('test_connection', error));
   }
-}
-
-// Tool definitions
-const tools: Tool[] = [
-  {
-    name: 'test_connection',
-    description: 'Test the connection to the Navidrome server',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        includeServerInfo: {
-          type: 'boolean',
-          description: 'Include detailed server information in the response',
-          default: false,
-        },
-      },
-    },
-  },
-];
-
-// Factory function for creating tool category with dependencies
-export function createTestToolCategory(client: NavidromeClient, config: Config): ToolCategory {
-  return {
-    tools,
-    async handleToolCall(name: string, args: unknown): Promise<unknown> {
-      if (name === 'test_connection') {
-        return await testConnection(client, config, args);
-      }
-      throw new Error(ErrorFormatter.toolUnknown(name));
-    }
-  };
 }

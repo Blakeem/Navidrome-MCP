@@ -128,6 +128,15 @@ describe('redact()', () => {
       expect(result.config.password).toBe('<REDACTED>');
     });
 
+    it('redacts keys that end in a sensitive name, such as the runtime Config secrets', () => {
+      const input = { navidromePassword: 'a', authToken: 'b', lastFmApiKey: 'c' };
+      expect(redact(input)).toEqual({
+        navidromePassword: '<REDACTED>',
+        authToken: '<REDACTED>',
+        lastFmApiKey: '<REDACTED>',
+      });
+    });
+
     it('passes through non-sensitive object keys unchanged', () => {
       // Only keys matching the sensitive-name set are redacted; ordinary keys
       // (even ones whose value happens to contain the word "password") survive.
@@ -160,7 +169,7 @@ describe('redact()', () => {
       // (s=) and salted-MD5 token (t=) — the actual replay-credential pair
       // we send. Now `[upst]=` covers all four. This case feeds a string
       // fragment NOT parseable as a URL (e.g., embedded in JSON or stderr
-      // mpv forwarding), so sanitizeFilename can't help — only the regex.
+      // mpv forwarding), so stripSubsonicAuthParams can't help. Only the regex can.
       const input = 'mpv stderr: requesting ?id=abc&u=user&t=hashtoken99&s=randomsalt&v=1.16.1 fragment';
       const result = redact(input) as string;
       expect(result).not.toContain('t=hashtoken99');
@@ -171,7 +180,7 @@ describe('redact()', () => {
       expect(result).toContain('id=abc');
     });
 
-    it('sanitizeFilename strips s=/t= Subsonic params from well-formed URL strings', () => {
+    it('strips s=/t= Subsonic params from well-formed URL strings', () => {
       const input = 'http://host:4533/rest/stream?id=abc&u=user&t=hashtoken&s=salt&v=1.16.1';
       const result = redact(input) as string;
       expect(result).not.toContain('t=hashtoken');
@@ -255,6 +264,11 @@ describe('redact()', () => {
       const input = 'api-token: sk-abcdefghijklmnop failed to authenticate';
       const result = redact(input) as string;
       expect(result).not.toContain('sk-abcdefghijklmnop');
+    });
+
+    it('redacts an authToken JSON value', () => {
+      const result = redact('{"authToken":"abc"}') as string;
+      expect(result).not.toContain('abc');
     });
 
     it('does NOT over-redact past the value boundary in JSON-flat strings', () => {

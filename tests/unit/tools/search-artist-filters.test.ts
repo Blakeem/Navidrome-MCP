@@ -2,36 +2,39 @@
  * Navidrome MCP Server - artist filter-strip tests
  * Copyright (C) 2025
  *
- * Pins the fix for two api-contract defects:
- *  - searchAll: buildContentTypeParams must NOT append tag/year filters to the
- *    /api/artist sub-fetch (Navidrome silently ignores them; sending them is a
- *    dead no-op that also makes appliedFilters misleading for the artist slice).
- *  - searchArtists: buildEnhancedSearchParams must neither send tag filters to
- *    /api/artist nor report them in appliedFilters over an unfiltered artist set.
+ * /api/artist ignores tag and year filters. These tests pin that:
+ *  - searchAll never sends them to the artist sub-fetch, and skips that fetch when one is set.
+ *  - search_artists rejects them at parse instead of returning unfiltered artists.
+ *  - appliedFilters only claims the filters each slice honored.
  *
- * These are pure / module-mocked tests — no live server, no real cache.
+ * These are pure / module-mocked tests. No live server, no real cache.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Mock the filter cache manager so resolveTextFilters resolves text filters to
 // deterministic IDs without touching Navidrome.
+const { resolveMock, ensureFreshMock } = vi.hoisted(() => ({
+  ensureFreshMock: vi.fn().mockResolvedValue(undefined),
+  resolveMock: vi.fn((type: string): string | null => {
+    // Return a stable fake UUID per filter type.
+    const map: Record<string, string> = {
+      genres: 'genre-uuid',
+      moods: 'mood-uuid',
+      countries: 'country-uuid',
+      releaseTypes: 'releasetype-uuid',
+      recordLabels: 'recordlabel-uuid',
+      mediaTypes: 'media-uuid',
+    };
+    return map[type] ?? null;
+  }),
+}));
+
 vi.mock('../../../src/services/filter-cache-manager.js', () => ({
   filterCacheManager: {
-    ensureFresh: vi.fn().mockResolvedValue(undefined),
-    resolve: vi.fn((type: string): string | null => {
-      // Return a stable fake UUID per filter type.
-      const map: Record<string, string> = {
-        genres: 'genre-uuid',
-        moods: 'mood-uuid',
-        countries: 'country-uuid',
-        releaseTypes: 'releasetype-uuid',
-        recordLabels: 'recordlabel-uuid',
-        mediaTypes: 'media-uuid',
-      };
-      return map[type] ?? null;
-    }),
-    findSimilar: vi.fn(() => []),
+    ensureFresh: ensureFreshMock,
+    resolve: resolveMock,
+    findSimilar: vi.fn(() => ['IT', 'AT', 'ES']),
   },
 }));
 
@@ -43,41 +46,50 @@ import {
 } from '../../../src/tools/search/result-aggregator.js';
 import {
   buildEnhancedSearchParams,
-  stripUnsupportedFilters,
+  resolveTextFilters,
+  stripUnsupportedAppliedFilters,
+  stripUnsupportedUrlParams,
 } from '../../../src/tools/search/filter-resolver.js';
 import { searchAll } from '../../../src/tools/search/search-orchestrator.js';
-import type { Config } from '../../../src/config.js';
+import { searchArtists } from '../../../src/tools/search/single-type-search.js';
+import { SearchArtistsSchema } from '../../../src/schemas/index.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
-describe('stripUnsupportedFilters', () => {
-  it('drops tag/year keys for the artist endpoint (resolved keys)', () => {
+describe('stripUnsupportedUrlParams / stripUnsupportedAppliedFilters', () => {
+  it('drops tag keys for the artist endpoint (URL params)', () => {
     const resolved = {
-      genre_id: 'g', mood_id: 'm', releasecountry_id: 'c',
-      releasetype_id: 'rt', recordlabel_id: 'rl', media_id: 'md',
-      year: '2000', starred: 'true',
+      genre_id: 'g', mood: 'm', releasecountry: 'c',
+      releasetype: 'rt', recordlabel: 'rl', media: 'md',
+      starred: 'true',
     };
-    const out = stripUnsupportedFilters(resolved, 'artist', false);
-    expect(out).toEqual({ starred: 'true' });
+    expect(stripUnsupportedUrlParams(resolved, 'artist')).toEqual({ starred: 'true' });
   });
 
-  it('drops tag/year keys for the artist endpoint (applied display keys)', () => {
+  it('drops tag and year keys for the artist endpoint (applied display keys)', () => {
     const applied = {
       genre: 'Rock', mood: 'Happy', country: 'US',
       releaseType: 'album', recordLabel: 'Label', mediaType: 'Digital',
-      year: '2000',
+      year: '2000', starred: 'true',
     };
-    const out = stripUnsupportedFilters(applied, 'artist', true);
-    expect(out).toEqual({});
+    expect(stripUnsupportedAppliedFilters(applied, 'artist')).toEqual({ starred: 'true' });
   });
 
-  it('passes everything through unchanged for song/album endpoints', () => {
-    const resolved = { genre_id: 'g', year: '2000' };
-    expect(stripUnsupportedFilters(resolved, 'song', false)).toEqual(resolved);
-    expect(stripUnsupportedFilters(resolved, 'album', false)).toEqual(resolved);
+  it('returns an equal copy, never the input, for song/album endpoints', () => {
+    const resolved = { genre_id: 'g' };
+    const applied = { genre: 'Rock', year: '2000' };
+
+    for (const endpoint of ['song', 'album'] as const) {
+      const urlOut = stripUnsupportedUrlParams(resolved, endpoint);
+      const appliedOut = stripUnsupportedAppliedFilters(applied, endpoint);
+      expect(urlOut).toEqual(resolved);
+      expect(urlOut).not.toBe(resolved);
+      expect(appliedOut).toEqual(applied);
+      expect(appliedOut).not.toBe(applied);
+    }
   });
 });
 
-describe('buildContentTypeParams (searchAll) — artist params', () => {
+describe('buildContentTypeParams (searchAll) - artist params', () => {
   it('omits resolved tag filters and year from the artist sub-fetch only', () => {
     const { songParams, albumParams, artistParams } = buildContentTypeParams({
       artistCount: 5,
@@ -85,73 +97,66 @@ describe('buildContentTypeParams (searchAll) — artist params', () => {
       songCount: 5,
       query: '',
       offset: 0,
-      resolvedFilters: { genre_id: 'genre-uuid', mood_id: 'mood-uuid' },
+      resolvedFilters: { genre_id: 'genre-uuid', mood: 'mood-uuid' },
       year: 2000,
     });
 
-    // Songs + albums DO carry the filters (Navidrome honors them there).
     expect(songParams).toContain('genre_id=genre-uuid');
     expect(songParams).toContain('year=2000');
     expect(albumParams).toContain('genre_id=genre-uuid');
     expect(albumParams).toContain('year=2000');
 
-    // Artists must NOT carry them — Navidrome ignores them, so they are dead params.
     expect(artistParams).not.toContain('genre_id');
-    expect(artistParams).not.toContain('mood_id');
+    expect(artistParams).not.toContain('mood=');
     expect(artistParams).not.toContain('year=2000');
   });
 });
 
-describe('buildContentTypeParams (searchAll) — cross-type sort field mapping', () => {
-  it("maps sort:'title' to _sort=name for album/artist and _sort=title for song", () => {
-    const { songParams, albumParams, artistParams } = buildContentTypeParams({
-      artistCount: 5,
-      albumCount: 5,
-      songCount: 5,
-      query: '',
-      offset: 0,
-      resolvedFilters: {},
-      sort: 'title',
-    });
+describe('buildContentTypeParams (searchAll) - cross-type sort field mapping', () => {
+  const sortParams = (sort: string): ReturnType<typeof buildContentTypeParams> => buildContentTypeParams({
+    artistCount: 5,
+    albumCount: 5,
+    songCount: 5,
+    query: '',
+    offset: 0,
+    resolvedFilters: {},
+    sort,
+  });
 
+  it("maps sort:'title' to _sort=name for album/artist and _sort=title for song", () => {
+    const { songParams, albumParams, artistParams } = sortParams('title');
     expect(songParams).toContain('_sort=title');
     expect(albumParams).toContain('_sort=name');
     expect(artistParams).toContain('_sort=name');
   });
 
   it("maps sort:'album' to _sort=name for album/artist and _sort=album for song", () => {
-    const { songParams, albumParams, artistParams } = buildContentTypeParams({
-      artistCount: 5,
-      albumCount: 5,
-      songCount: 5,
-      query: '',
-      offset: 0,
-      resolvedFilters: {},
-      sort: 'album',
-    });
-
+    const { songParams, albumParams, artistParams } = sortParams('album');
     expect(songParams).toContain('_sort=album');
     expect(albumParams).toContain('_sort=name');
     expect(artistParams).toContain('_sort=name');
   });
 
   it("maps sort:'year' to _sort=maxYear for album and _sort=year for song", () => {
-    const { songParams, albumParams } = buildContentTypeParams({
-      artistCount: 5,
-      albumCount: 5,
-      songCount: 5,
-      query: '',
-      offset: 0,
-      resolvedFilters: {},
-      sort: 'year',
-    });
-
+    const { songParams, albumParams } = sortParams('year');
     expect(songParams).toContain('_sort=year');
     expect(albumParams).toContain('_sort=maxYear');
   });
+
+  it.each(['year', 'duration', 'artist', 'recently_added', 'random'])(
+    "falls back to _sort=name on the artist endpoint for sort:'%s'",
+    (sort) => {
+      const { artistParams } = sortParams(sort);
+      expect(artistParams).toContain('_sort=name');
+    },
+  );
+
+  it('keeps artist-supported sort keys on the artist endpoint', () => {
+    expect(sortParams('playCount').artistParams).toContain('_sort=playCount');
+  });
 });
 
-describe('aggregateSearchResults (searchAll) — per-type appliedFilters truthfulness', () => {
+describe('aggregateSearchResults (searchAll) - per-type appliedFilters truthfulness', () => {
   const emptyResponses: ParallelSearchResponses = {
     songsResponse: [],
     albumsResponse: [],
@@ -169,8 +174,6 @@ describe('aggregateSearchResults (searchAll) — per-type appliedFilters truthfu
     expect(result.appliedFilters).toEqual({
       songs: { genre: 'Rock', mood: 'Happy', year: '2000' },
       albums: { genre: 'Rock', mood: 'Happy', year: '2000' },
-      // No `artists` key: /api/artist honors none of these, so the slice
-      // must not claim them.
     });
     expect(result.appliedFilters?.artists).toBeUndefined();
   });
@@ -181,7 +184,6 @@ describe('aggregateSearchResults (searchAll) — per-type appliedFilters truthfu
       starred: 'true',
     });
 
-    // genre applies to songs/albums only; starred applies everywhere.
     expect(result.appliedFilters).toEqual({
       songs: { genre: 'Rock', starred: 'true' },
       albums: { genre: 'Rock', starred: 'true' },
@@ -194,46 +196,96 @@ describe('aggregateSearchResults (searchAll) — per-type appliedFilters truthfu
     expect(result.appliedFilters).toBeUndefined();
   });
 
-  it('omits appliedFilters when only artist-unsupported filters were requested and there are no song/album filters left', () => {
-    // Edge: every requested filter is artist-unsupported, but it still applies
-    // to songs/albums, so those slices report it; artists is omitted.
-    const result = aggregateSearchResults(emptyResponses, totals, { genre: 'Rock' });
-    expect(result.appliedFilters).toEqual({
-      songs: { genre: 'Rock' },
-      albums: { genre: 'Rock' },
-    });
-    expect(result.appliedFilters?.artists).toBeUndefined();
+  it('gives each slice its own appliedFilters object', () => {
+    const result = aggregateSearchResults(emptyResponses, totals, { starred: 'true' });
+    expect(result.appliedFilters?.songs).not.toBe(result.appliedFilters?.albums);
+    expect(result.appliedFilters?.songs).not.toBe(result.appliedFilters?.artists);
   });
 });
 
-describe('searchAll — year/starred reported in appliedFilters', () => {
-  // A minimal client whose meta-fetch returns empty pages; searchAll's
-  // appliedFilters is derived from the requested filters, not the results.
-  const mockClient = {
-    requestWithLibraryFilterAndMeta: vi
-      .fn()
-      .mockResolvedValue({ data: [], total: 0 }),
-  } as unknown as NavidromeClient;
+describe('searchAll - artist slice under tag/year filters', () => {
+  let requestMock: ReturnType<typeof vi.fn>;
+  let client: NavidromeClient;
+
+  beforeEach(() => {
+    requestMock = vi.fn().mockResolvedValue({ data: [], total: 7 });
+    client = { requestWithLibraryFilterAndMeta: requestMock } as unknown as NavidromeClient;
+  });
+
+  const requestedPaths = (): string[] => requestMock.mock.calls.map(call => String(call[0]));
 
   it('folds year+starred into the per-type appliedFilters map', async () => {
-    const result = await searchAll(mockClient, {} as Config, {
-      query: '',
-      year: 2000,
-      starred: true,
-    });
+    const result = await searchAll(client, { query: '', year: 2000, starred: true });
 
-    // year is artist-unsupported (dropped for artists); starred applies to all
-    // three. Pre-fix, searchAll never reported either, so the artist slice was
-    // omitted and songs/albums lost the year/starred keys entirely.
     expect(result.appliedFilters).toEqual({
       songs: { year: '2000', starred: 'true' },
       albums: { year: '2000', starred: 'true' },
       artists: { starred: 'true' },
     });
   });
+
+  it.each([
+    ['genre', { genre: 'Rock' }],
+    ['year', { year: 2000 }],
+  ])('skips the artist fetch and reports no artist total when a %s filter is set', async (_label, filter) => {
+    const result = await searchAll(client, { query: '', ...filter });
+
+    expect(requestedPaths().some(path => path.startsWith('/artist'))).toBe(false);
+    expect(result.artists).toEqual([]);
+    expect(result.totalArtists).toBeUndefined();
+    expect(result.totalResults).toBe(14);
+  });
+
+  it('still fetches artists when only artist-honored filters are set', async () => {
+    const result = await searchAll(client, { query: '', starred: true });
+
+    expect(requestedPaths().some(path => path.startsWith('/artist'))).toBe(true);
+    expect(result.totalArtists).toBe(7);
+  });
+
+  it('reports no total for a slice skipped by a zero count', async () => {
+    const result = await searchAll(client, { query: '', songCount: 0 });
+
+    expect(requestedPaths().some(path => path.startsWith('/song'))).toBe(false);
+    expect(result.totalSongs).toBeUndefined();
+    expect(result.totalAlbums).toBe(7);
+    expect(result.totalResults).toBe(14);
+  });
+
+  it('names search_all in a wrapped failure', async () => {
+    requestMock.mockRejectedValue(new Error('boom'));
+    await expect(searchAll(client, { query: '' })).rejects.toThrow(/search_all/);
+  });
 });
 
-describe('buildEnhancedSearchParams (searchArtists) — endpoint=artist', () => {
+describe('search_artists - tag and year filters are rejected', () => {
+  const client = {
+    requestWithLibraryFilterAndMeta: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+  } as unknown as NavidromeClient;
+
+  it.each([
+    ['genre', 'Rock'],
+    ['mediaType', 'CD'],
+    ['country', 'US'],
+    ['releaseType', 'album'],
+    ['recordLabel', 'Label'],
+    ['mood', 'Happy'],
+    ['year', 2000],
+  ])('rejects %s with a pointer to the tag-filtered tools', async (field, value) => {
+    await expect(searchArtists(client, { [field]: value }))
+      .rejects.toThrow(/search_artists.*search_albums or search_songs.*list_tag_values/s);
+  });
+
+  it('still accepts starred', async () => {
+    await expect(searchArtists(client, { starred: true })).resolves.toHaveProperty('artists');
+  });
+
+  it('rejects sort random, which /api/artist ignores', () => {
+    expect(SearchArtistsSchema.safeParse({ sort: 'random' }).success).toBe(false);
+  });
+});
+
+describe('buildEnhancedSearchParams - endpoint-specific filters', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -246,10 +298,8 @@ describe('buildEnhancedSearchParams (searchArtists) — endpoint=artist', () => 
       'artist'
     );
 
-    // No tag IDs in the URL the artist endpoint can't honor.
     expect(searchParams).not.toContain('genre_id');
-    expect(searchParams).not.toContain('mood_id');
-    // appliedFilters must not claim filters that didn't apply.
+    expect(searchParams).not.toContain('mood=');
     expect(appliedFilters).toEqual({});
   });
 
@@ -263,5 +313,77 @@ describe('buildEnhancedSearchParams (searchArtists) — endpoint=artist', () => 
 
     expect(searchParams).toContain('genre_id=genre-uuid');
     expect(appliedFilters).toEqual({ genre: 'Rock' });
+  });
+
+  it('sends non-genre tag UUIDs under the bare tag name, the only form /api/album and /api/song filter on', async () => {
+    const { searchParams } = await buildEnhancedSearchParams(
+      { query: '', limit: 10, mediaType: 'CD', country: 'US', releaseType: 'ep', recordLabel: 'Label', mood: 'Happy' },
+      'name',
+      'name',
+      'album'
+    );
+    const params = new URLSearchParams(searchParams);
+
+    expect(params.get('media')).toBe('media-uuid');
+    expect(params.get('releasecountry')).toBe('country-uuid');
+    expect(params.get('releasetype')).toBe('releasetype-uuid');
+    expect(params.get('recordlabel')).toBe('recordlabel-uuid');
+    expect(params.get('mood')).toBe('mood-uuid');
+    expect(searchParams).not.toMatch(/(media|releasecountry|releasetype|recordlabel|mood)_id=/);
+  });
+
+  it('reports year and starred for a single-type song search, as search_all does', async () => {
+    const { searchParams, appliedFilters } = await buildEnhancedSearchParams(
+      { query: '', limit: 10, year: 1999, starred: true },
+      'title',
+      'title',
+      'song'
+    );
+
+    expect(searchParams).toContain('year=1999');
+    expect(searchParams).toContain('starred=true');
+    expect(appliedFilters).toEqual({ year: '1999', starred: 'true' });
+  });
+});
+
+describe('resolveTextFilters - filter cache refresh', () => {
+  beforeEach(() => {
+    ensureFreshMock.mockClear();
+  });
+
+  it('skips the refresh when no tag filter is set', async () => {
+    await resolveTextFilters({ year: 2000, starred: true });
+    expect(ensureFreshMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes before resolving a tag filter', async () => {
+    await resolveTextFilters({ genre: 'Rock' });
+    expect(ensureFreshMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('resolveTextFilters - not-found messages', () => {
+  it('asks for an ISO code instead of suggesting substring matches for an unknown country', async () => {
+    resolveMock.mockReturnValueOnce(null);
+
+    const failure = resolveTextFilters({ country: 'United States' });
+
+    await expect(failure).rejects.toThrow(
+      "Country 'United States' not found. Use an ISO 3166-1 alpha-2 code such as US, GB or DE. Call get_filter_options with filterType \"countries\" to list the codes in this library.",
+    );
+  });
+
+  it('keeps the did-you-mean suggestion for other filters', async () => {
+    resolveMock.mockReturnValueOnce(null);
+
+    await expect(resolveTextFilters({ genre: 'Rok' })).rejects.toThrow("Genre 'Rok' not found. Did you mean: IT, AT, ES?");
+  });
+
+  it('names get_filter_options as the recovery step for a non-country filter', async () => {
+    resolveMock.mockReturnValueOnce(null);
+
+    await expect(resolveTextFilters({ mood: 'Gloomy' })).rejects.toThrow(
+      'Call get_filter_options with filterType "moods" to list the values in this library.',
+    );
   });
 });

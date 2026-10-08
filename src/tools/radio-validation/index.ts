@@ -16,10 +16,5 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Public API for the radio-validation module. Only `validateRadioStream` is
-// consumed outside this directory (by radio-discovery, radio-handlers, radio).
-// The internal helpers (stream-detector / network-validator /
-// recommendation-engine) are imported directly by validation-core where
-// needed; re-exporting them here surfaced them as unused public exports
-// (ts-unused-exports), so they are intentionally NOT re-exported.
+// Helpers stay unexported because ts-unused-exports fails CI on unused public exports.
 export { validateRadioStream } from './validation-core.js';

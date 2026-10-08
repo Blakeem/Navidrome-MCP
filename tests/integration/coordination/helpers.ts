@@ -6,24 +6,29 @@
  * MCP server) to exercise behaviors the single-process unit suite cannot:
  * port-as-lock ownership, attach-not-bind, and survive-MCP-close (spec §4.10).
  *
- * Gated like the live playback suite: skipped when Navidrome is unreachable
+ * Gated like the live playback suite: skipped when Navidrome is unconfigured
  * (the children call `createRuntime` which authenticates) or when the build
  * artifact is missing (these run the COMPILED `dist/web/main.js` — the prod
  * path). They manipulate only local ports + mpv, never Navidrome data.
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe } from 'vitest';
 
 import { getSettingsStorePath } from '../../../src/config/store-path.js';
+import { MAX_AUTH_RATE_LIMIT_WAIT_MS } from '../../../src/constants/timeouts.js';
 import { getDefaultIpcPath } from '../../../src/services/playback/mpv-process.js';
 import { shouldSkipLiveTests } from '../../helpers/env-detection.js';
 
 const DIST_WEB_MAIN = join(process.cwd(), 'dist', 'web', 'main.js');
+
+/** Every spawned player logs in at startup, and back-to-back runs exceed Navidrome's login rate limit,
+ * so a startup wait must outlast one Retry-After wait plus the startup itself. */
+export const PLAYER_STARTUP_TIMEOUT_MS = MAX_AUTH_RATE_LIMIT_WAIT_MS + 10_000;
 const IPC_PARENT_HARNESS = join(
   process.cwd(),
   'tests',
@@ -32,6 +37,7 @@ const IPC_PARENT_HARNESS = join(
   'fixtures',
   'ipc-parent.mjs',
 );
+const LEASE_HOLDER_HARNESS = join(process.cwd(), 'tests', 'integration', 'coordination', 'fixtures', 'lease-holder.mjs');
 
 function buildMissing(): boolean {
   return !existsSync(DIST_WEB_MAIN);
@@ -68,6 +74,9 @@ export function randomPort(): number {
   return port;
 }
 
+// Each store copies the real credentials, so teardown removes every one.
+const tempStoreDirs: string[] = [];
+
 /**
  * Write a throwaway settings.json cloned from the test's seeded store (so
  * credentials work) but with an isolated webui port. Children read it via
@@ -84,6 +93,7 @@ export function makeTempStore(port: number, webuiOverrides: Record<string, unkno
     ...webuiOverrides,
   };
   const dir = mkdtempSync(join(tmpdir(), 'ndmcp-coord-'));
+  tempStoreDirs.push(dir);
   const path = join(dir, 'settings.json');
   writeFileSync(path, JSON.stringify(base));
   return path;
@@ -93,13 +103,34 @@ export function makeTempStore(port: number, webuiOverrides: Record<string, unkno
  * Spawn the IPC-parent harness (mimics MCP): it spawns `navidrome-web` over an
  * IPC channel and stays alive until killed. Killing the harness is how we
  * simulate "the MCP server exited" so the web child's disconnect path runs.
+ * `exitAfterSpawn` exits the harness right after the spawn, during the child's startup.
  */
-export function spawnIpcParent(storePath: string): ChildProcess {
-  const child = spawn(process.execPath, [IPC_PARENT_HARNESS, DIST_WEB_MAIN, storePath], {
-    stdio: 'ignore',
-  });
+export function spawnIpcParent(
+  storePath: string,
+  { exitAfterSpawn = false }: { exitAfterSpawn?: boolean } = {},
+): ChildProcess {
+  const args = [IPC_PARENT_HARNESS, DIST_WEB_MAIN, storePath];
+  if (exitAfterSpawn) args.push('exit-after-spawn');
+  const child = spawn(process.execPath, args, { stdio: 'ignore' });
   children.push(child);
   return child;
+}
+
+/**
+ * Spawn the lease-holder harness (mimics a second MCP that finds the running player). Resolves once
+ * it holds a lease, or null when it exits first.
+ */
+export function spawnLeaseHolder(storePath: string): Promise<ChildProcess | null> {
+  const child = spawn(process.execPath, [LEASE_HOLDER_HARNESS, DIST_WEB_MAIN, storePath], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  children.push(child);
+  return new Promise((resolve) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (chunk.toString().includes('lease-held')) resolve(child);
+    });
+    child.once('exit', () => resolve(null));
+  });
 }
 
 const children: ChildProcess[] = [];
@@ -115,6 +146,20 @@ export function spawnWeb(storePath: string, extraEnv: NodeJS.ProcessEnv = {}): C
   return child;
 }
 
+/**
+ * Spawn a compiled `navidrome-web` against a store that does not exist, with stdout
+ * piped so the test can read the settings URL. Untracked, since setup mode never
+ * binds the web port or touches mpv and its test owns the teardown.
+ */
+export function spawnUnconfiguredWeb(storePath: string): ChildProcess {
+  const env: NodeJS.ProcessEnv = { ...process.env, NAVIDROME_CONFIG_PATH: storePath, NAVIDROME_WEB_AUTO_OPEN: '0' };
+  // The env fallback would configure the child from these and skip setup mode.
+  delete env['NAVIDROME_URL'];
+  delete env['NAVIDROME_USERNAME'];
+  delete env['NAVIDROME_PASSWORD'];
+  return spawn(process.execPath, [DIST_WEB_MAIN], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+}
+
 /** Tear down everything a test started. Call in afterEach. Robust against
  * detached grandchildren (which we can't kill by handle) and orphaned mpv:
  * (1) ask any web server on a used port to shut down via its loopback power
@@ -122,7 +167,11 @@ export function spawnWeb(storePath: string, extraEnv: NodeJS.ProcessEnv = {}): C
  * (3) quit any mpv still lingering. Keeps each test self-contained. */
 export async function killAllChildren(): Promise<void> {
   for (const port of usedPorts.splice(0)) {
-    await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: 'POST' }).catch(() => undefined);
+    await fetch(`http://127.0.0.1:${port}/api/shutdown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }).catch(() => undefined);
   }
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
@@ -134,6 +183,13 @@ export async function killAllChildren(): Promise<void> {
   if (await mpvAlive()) {
     await quitMpvForTests();
     await delay(200);
+  }
+  for (const dir of tempStoreDirs.splice(0)) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+      // Best-effort: a child still holding the file must not fail the teardown.
+    }
   }
   // Space tests out so child auth logins don't burst (Navidrome rate-limits
   // logins) and OS ports fully release before the next test spawns.
@@ -180,13 +236,10 @@ export async function healthz(port: number): Promise<HealthSignature | null> {
   }
 }
 
-/** Poll `predicate` until it resolves truthy or the timeout elapses. Default
- * timeout is generous because these tests spawn real authenticating child
- * processes whose startup (Navidrome login + filter-cache load) slows under the
- * load of several siblings in one fork. */
+/** Poll `predicate` until it resolves truthy or the timeout elapses. The default covers a player startup. */
 export async function waitFor(
   predicate: () => Promise<boolean>,
-  { timeoutMs = 30000, intervalMs = 250 }: { timeoutMs?: number; intervalMs?: number } = {},
+  { timeoutMs = PLAYER_STARTUP_TIMEOUT_MS, intervalMs = 250 }: { timeoutMs?: number; intervalMs?: number } = {},
 ): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -231,7 +284,7 @@ export function mpvAlive(timeoutMs = 800): Promise<boolean> {
 }
 
 /** Resolve with the child's exit code (or null on timeout). */
-export function waitForExit(child: ChildProcess, timeoutMs = 20000): Promise<number | null> {
+export function waitForExit(child: ChildProcess, timeoutMs = PLAYER_STARTUP_TIMEOUT_MS): Promise<number | null> {
   return new Promise((resolve) => {
     if (child.exitCode !== null) {
       resolve(child.exitCode);

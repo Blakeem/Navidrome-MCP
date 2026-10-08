@@ -2,11 +2,11 @@
  * Navidrome MCP Server - playAlbums pagination tests
  * Copyright (C) 2025
  *
- * Covers M4 from docs/review/02-playback-deep-review.md: fetchAlbumTrackIds
+ * Covers M4 from docs/review/02-playback-deep-review.md: fetchAlbumSongs
  * used to hardcode a 500-track ceiling and silently truncate. The fix
  * paginates via X-Total-Count so multi-disc boxsets play through completely.
  *
- * `fetchAlbumTrackIds` is module-private; we exercise it through `playAlbums`
+ * `fetchAlbumSongs` is module-private; we exercise it through `playAlbums`
  * with the playbackEngine module mocked so no real mpv is touched.
  */
 
@@ -21,7 +21,6 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
     enqueue: enqueueMock,
     ensureRunning: ensureRunningMock,
     isRunning: () => true,
-    getCurrentRadioStation: () => null,
   },
 }));
 
@@ -31,7 +30,7 @@ function trackPage(start: number, count: number): unknown[] {
   return Array.from({ length: count }, (_, i) => ({ id: `track-${start + i}` }));
 }
 
-describe('fetchAlbumTrackIds pagination (M4)', () => {
+describe('fetchAlbumSongs pagination (M4)', () => {
   let client: MockNavidromeClient;
 
   beforeEach(() => {
@@ -44,13 +43,12 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
     vi.clearAllMocks();
   });
 
-  it('makes a single request for an album with <= MAX_ALBUM_TRACKS tracks', async () => {
+  it('makes a single request for an album with <= QUEUE_READ_PAGE_SIZE tracks', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
 
     const result = await playAlbums(client as never, {
       albumIds: ['album-1'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -77,7 +75,6 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
     const result = await playAlbums(client as never, {
       albumIds: ['boxset-1'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -108,7 +105,6 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
     const result = await playAlbums(client as never, {
       albumIds: ['album-no-total'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -125,7 +121,6 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
     const result = await playAlbums(client as never, {
       albumIds: ['album-small'],
       mode: 'replace',
-      shuffle: 'none',
     });
 
     expect(result.success).toBe(true);
@@ -140,7 +135,6 @@ describe('fetchAlbumTrackIds pagination (M4)', () => {
       playAlbums(client as never, {
         albumIds: ['empty-album'],
         mode: 'replace',
-        shuffle: 'none',
       }),
     ).rejects.toThrow(/No tracks found/);
 

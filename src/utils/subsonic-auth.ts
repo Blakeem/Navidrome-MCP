@@ -26,10 +26,9 @@ import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../constants/default
  * `extraParams` are merged on top so callers can pass endpoint-specific
  * keys (`id`, `streamUrl`, `name`, `format`, `maxBitRate`, etc.).
  *
- * Returns a URLSearchParams that can be appended to a GET URL OR passed
- * verbatim as a `application/x-www-form-urlencoded` POST body — either
- * keeps the secret out of any URL we control. POST is preferred; the
- * stream endpoint is the only place we still need GET (mpv loads URLs).
+ * The params work as a GET query or a form-encoded POST body. POST keeps the
+ * replay-grade `t`/`s` pair out of URLs. A GET URL carries the pair, so it
+ * must pass stripSubsonicAuthParams before it is logged or returned.
  */
 export function buildSubsonicAuthParams(
   username: string,

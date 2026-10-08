@@ -16,34 +16,36 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { z } from 'zod';
 import { ErrorFormatter } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { ConfigSchema, type Config } from './config/schema.js';
 import { readSettings, type SettingsFile } from './config/store.js';
 import { mapStoreToConfig } from './config/map-config.js';
 import { getSettingsStorePath } from './config/store-path.js';
-import { buildEnvRuntimeSettings } from './config/seed.js';
+import { buildEnvRuntimeSettings } from './config/env-settings.js';
+import { resolveMpvBinary } from './services/playback/mpv-process.js';
 
 export type { Config } from './config/schema.js';
 
 /**
- * Resolve the runtime configuration from the canonical `settings.json` store.
- *
- * `settings.json` is the single source of truth (no env layering): config is
- * collected once through the settings GUI and persisted to disk. Throws when
- * the store is absent or incomplete — callers that need to branch into a
- * first-run/degraded flow should use {@link resolveConfigState} instead.
- *
- * @param settings - Optional already-read settings snapshot. When provided, it
- *   is parsed directly instead of re-reading from disk; this lets a caller that
- *   has already performed a presence check (e.g. {@link resolveConfigState})
- *   parse the SAME snapshot, closing the TOCTOU window where a concurrent
- *   settings save between two independent `readSettings()` disk reads could make
- *   the guard and the parse disagree. When omitted, behaves exactly as before
- *   (reads from disk).
+ * Validate a store snapshot against the runtime schema. Shared by startup and the settings
+ * Save and Test routes, so each reports the same `path: message` issue list.
  */
-// eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function; body is intentionally sync (ConfigSchema.parse + readSettings are synchronous)
+export function validateMappedSettings(
+  settings: SettingsFile,
+  mpvPath: string | null,
+): { ok: true; config: Config } | { ok: false; messages: string[] } {
+  const result = ConfigSchema.safeParse(mapStoreToConfig(settings, mpvPath));
+  if (result.success) return { ok: true, config: result.data };
+  const messages = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+  return { ok: false, messages };
+}
+
+/**
+ * Validate a settings snapshot into the runtime config. A caller that already read the store
+ * passes that snapshot, so its guard and this parse see the same file.
+ */
+// eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function. The body is synchronous.
 export async function loadConfig(settings?: SettingsFile): Promise<Config> {
   settings ??= readSettings() ?? undefined;
   if (settings === undefined) {
@@ -55,25 +57,17 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
     );
   }
 
-  try {
-    return ConfigSchema.parse(mapStoreToConfig(settings));
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      const messages = error.issues.map((e) => `${e.path.join('.')}: ${e.message}`);
-      throw new Error(ErrorFormatter.configValidation(messages));
-    }
-    throw error;
+  const mpvPath = resolveMpvBinary(settings.playback?.mpvPath);
+  const result = validateMappedSettings(settings, mpvPath);
+  if (!result.ok) {
+    throw new Error(ErrorFormatter.configValidation(result.messages));
   }
+  return result.config;
 }
 
 /**
- * Discriminated config state for the entry point to branch into normal vs.
- * first-run/degraded operation WITHOUT poisoning the `Config` type with a union
- * (every `config.navidromeUrl` site stays non-optional under ultra-strict TS).
- *
- * "configured" requires a present, non-empty Navidrome URL AND a fully valid
- * mapped config. A corrupt or incomplete `settings.json` resolves to
- * `configured: false` (open the GUI to fix) rather than throwing at startup.
+ * Lets the entry point branch into setup mode without turning `Config` into a union,
+ * so every `Config` field stays non-optional.
  */
 type ConfigState =
   | { configured: true; config: Config }
@@ -83,33 +77,23 @@ export async function resolveConfigState(): Promise<ConfigState> {
   const settings = readSettings();
   const url = settings?.navidrome?.url;
   if (settings === null || url === undefined || url.trim() === '') {
-    // No usable store → try the environment fallback before giving up. This is
-    // the headless/container path (Docker `-e`, compose `environment`, an MCP
-    // client's `env` block), where the settings GUI is unreachable and env vars
-    // are the only practical channel. The store, once created, always wins.
     return await resolveEnvFallbackState();
   }
 
   try {
-    // Reuse the single `settings` snapshot already read above for the URL guard
-    // instead of letting loadConfig re-read from disk — a second independent
-    // read could observe a concurrent settings save and disagree with the guard.
+    // Reuse the snapshot the URL guard read, since a second read could see a concurrent save.
     return { configured: true, config: await loadConfig(settings) };
   } catch (err) {
-    // Present but invalid → treat as unconfigured so the entry point opens the
-    // settings GUI instead of crashing. Log the specific reason so a malformed
-    // hand-edited store doesn't silently look like a fresh first run.
+    // An invalid store opens the settings GUI instead of crashing. The logged reason
+    // keeps a malformed hand-edited store from looking like a fresh first run.
     logger.warn('settings.json is present but invalid; entering setup mode:', err);
     return { configured: false };
   }
 }
 
 /**
- * Environment-variable fallback for a missing/unusable store. Configured IFF
- * `NAVIDROME_URL` is set and the env-derived config passes `ConfigSchema` —
- * a present-but-broken env config logs WHY it was rejected (the reported
- * container failure mode was env vars being silently ignored) and then falls
- * through to setup mode.
+ * Env fallback for a missing or unusable store, configured only when `NAVIDROME_URL` is set and validates.
+ * A broken env config logs its rejection reason before setup mode, so set env vars are never silently ignored.
  */
 async function resolveEnvFallbackState(): Promise<ConfigState> {
   const envSettings = buildEnvRuntimeSettings();
@@ -121,8 +105,8 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
   try {
     const config = await loadConfig(envSettings);
     logger.info(
-      `No settings.json at ${getSettingsStorePath()} — running from environment variables ` +
-      '(NAVIDROME_URL et al.). A settings.json created later takes precedence.'
+      `No usable settings.json at ${getSettingsStorePath()}. Running from environment variables ` +
+      '(NAVIDROME_URL et al.). A usable settings.json takes precedence.'
     );
     return { configured: true, config };
   } catch (err) {
@@ -132,4 +116,21 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
     );
     return { configured: false };
   }
+}
+
+/**
+ * The webui settings settings.json holds now, so a running process sees what the web player or the
+ * config app saved after it started. Null when the store is absent or invalid.
+ */
+export function readSavedWebuiSettings(): Config['webui'] | null {
+  const settings = readSettings();
+  if (settings === null) return null;
+  const result = validateMappedSettings(settings, null);
+  return result.ok ? result.config.webui : null;
+}
+
+/** A spawned or re-run web player binds the saved endpoint, not the one this process started with. */
+export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
+  const webui = readSavedWebuiSettings();
+  return webui === null ? null : { port: webui.port, host: webui.host };
 }

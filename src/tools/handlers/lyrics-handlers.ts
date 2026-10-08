@@ -22,15 +22,14 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-// Import tool functions
-import { getLyricsByIdentity, searchLyricsCandidates } from '../lyrics.js';
+import { getLyricsByIdentity, LRCLIB_CONFIG_KEYS, searchLyricsCandidates } from '../lyrics.js';
 
 function buildGetLyricsTool(hasLrclib: boolean): Tool {
   const properties: Record<string, unknown> = {
     songId: {
       type: 'string',
       description: hasLrclib
-        ? 'Navidrome song ID. Reads the lyrics stored in the audio file, then falls back to LRCLIB using the metadata of that song. Required unless lrclibId is given.'
+        ? "Navidrome song ID. Returns timed lyrics from the audio file, then timed lyrics from LRCLIB found with that song's metadata, then plain lyrics from the file, then plain lyrics from LRCLIB. Pass songId or lrclibId, not both."
         : 'Navidrome song ID. Reads the lyrics stored in the audio file.',
     },
   };
@@ -38,15 +37,15 @@ function buildGetLyricsTool(hasLrclib: boolean): Tool {
   if (hasLrclib) {
     properties['lrclibId'] = {
       type: 'string',
-      description: 'LRCLIB record ID, as returned by search_lyrics. Fetches that record directly. Required unless songId is given.',
+      description: 'LRCLIB record ID, as returned by search_lyrics. Fetches that record directly. Pass lrclibId or songId, not both.',
     };
   }
 
   return {
     name: 'get_lyrics',
     description: hasLrclib
-      ? 'Get the lyrics of ONE song, identified by a Navidrome song ID or by an LRCLIB record ID. Returns timed lines for karaoke-style display when the source carries them (hasSynced). To look lyrics up from a title and an artist name, call search_lyrics first.'
-      : 'Get the lyrics of ONE song from its own audio file, identified by a Navidrome song ID. Returns timed lines for karaoke-style display when the file carries them (hasSynced).',
+      ? 'Get the lyrics of ONE song, identified by a Navidrome song ID or by an LRCLIB record ID. The result carries timed lines (synced) when the source has them and plain text (unsynced) otherwise. To look lyrics up from a title and an artist name, call search_lyrics first.'
+      : 'Get the lyrics of ONE song from its own audio file, identified by a Navidrome song ID. The result carries timed lines (synced) when the file has them and plain text (unsynced) otherwise.',
     inputSchema: {
       type: 'object',
       properties,
@@ -58,7 +57,7 @@ function buildGetLyricsTool(hasLrclib: boolean): Tool {
 function buildSearchLyricsTool(): Tool {
   return {
     name: 'search_lyrics',
-    description: 'Search LRCLIB for the lyrics of a track by title and artist. Returns candidate records, each with an lrclibId to pass to get_lyrics. Also returns the matching library song when there is one, so its own file lyrics can be used instead.',
+    description: 'Search LRCLIB for the lyrics of a track by title and artist. Returns candidate records, each with an lrclibId to pass to get_lyrics. Also returns the matching library song and the kind of lyrics its file carries.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -85,7 +84,8 @@ function buildSearchLyricsTool(): Tool {
   };
 }
 
-// Factory function for creating lyrics tool category with dependencies
+export const LRCLIB_TOOL_NAMES = [buildSearchLyricsTool().name];
+
 export function createLyricsToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   const hasLrclib = config.features.lyrics;
   // Without LRCLIB the category still serves the lyrics stored in the audio
@@ -102,7 +102,7 @@ export function createLyricsToolCategory(client: NavidromeClient, config: Config
           return await getLyricsByIdentity(config, client, args);
         case 'search_lyrics':
           if (!hasLrclib) {
-            throw new Error(ErrorFormatter.configMissing('LRCLIB lyrics', 'features.lyricsProvider'));
+            throw new Error(ErrorFormatter.configMissing('LRCLIB lyrics', LRCLIB_CONFIG_KEYS));
           }
           return await searchLyricsCandidates(config, client, args);
         default:
