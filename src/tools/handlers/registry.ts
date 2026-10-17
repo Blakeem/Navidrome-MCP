@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Tool Handler Registry
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -105,8 +93,7 @@ export function buildToolRegistry(client: NavidromeClient, config: Config): Tool
   registry.register(createListeningHistoryToolCategory(client, config));
   registry.register(createRadioToolCategory(client, config));
   registry.register(createTagToolCategory(client, config));
-  // Unconditional: the category serves the lyrics stored in the audio files
-  // with no LRCLIB, and drops its LRCLIB search when features.lyrics is off.
+  // Registers without LRCLIB, since the lyrics stored in the audio files need no external service.
   registry.register(createLyricsToolCategory(client, config));
 
   if (config.features.lastfm) {
@@ -114,7 +101,8 @@ export function buildToolRegistry(client: NavidromeClient, config: Config): Tool
   }
 
   if (config.features.playback) {
-    // createRuntime() configures the engine and the entry point attaches the scrobbler, since both outlive tool registration.
+    // createRuntime() configures the engine and each entry point attaches the scrobbler, since
+    // both outlive tool registration.
     registry.register(createPlaybackToolCategory(client, config));
   }
 

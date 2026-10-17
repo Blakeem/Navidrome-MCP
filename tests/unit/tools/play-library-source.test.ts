@@ -1,9 +1,9 @@
 /**
  * Navidrome MCP Server - playLibrarySource tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The playbackEngine is mocked so no real mpv is touched. End-to-end mpv
- * behavior is covered by the playback integration suite.
+ * The playback engine is mocked here, since the playback integration suite covers live mpv.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';

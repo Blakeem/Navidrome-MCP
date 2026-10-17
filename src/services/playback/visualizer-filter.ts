@@ -1,25 +1,12 @@
 /**
  * Navidrome MCP Server - Visualizer analysis filter
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * The mpv audio filter behind the web remote's visualizer. The main path passes the audio through
- * untouched in any channel layout. A side path measures a mono copy in log-spaced bands and prints
- * each measurement to the FFmpeg log, which mpv forwards to IPC clients that request log messages.
+ * The web remote's visualizer reads band levels from the FFmpeg log, which mpv forwards to IPC
+ * clients that request log messages. The filter's main path passes the audio through untouched.
  */
 
 import { spawn } from 'node:child_process';
@@ -35,8 +22,8 @@ const BAND_STEP = (HIGHEST_BAND_HZ / LOWEST_BAND_HZ) ** (1 / (VISUALIZER_BAND_CO
 const BAND_WIDTH_OCTAVES = Math.log2(BAND_STEP).toFixed(3);
 // About 23 ms at the analysis rate, which tested at 43 distinct updates per second.
 const MEASUREMENT_SAMPLES = 1024;
-// One fixed rate keeps the top band below Nyquist for a 22.05 kHz stream, where a bandpass biquad turns
-// unstable. A list of rates instead failed FFmpeg's format negotiation at the band merge.
+// One fixed rate keeps the top band below Nyquist for a 22.05 kHz stream, where a bandpass biquad
+// turns unstable. A list of rates failed FFmpeg's format negotiation at the band merge.
 const ANALYSIS_SAMPLE_RATE = 44100;
 
 export const VISUALIZER_BAND_CENTERS_HZ: readonly number[] = Array.from(
@@ -45,14 +32,14 @@ export const VISUALIZER_BAND_CENTERS_HZ: readonly number[] = Array.from(
 );
 
 /**
- * `build` names the mpv and FFmpeg versions that passed, so a running mpv of another build is never trusted.
- * `retry` marks a run that timed out or failed to start, which says nothing about the filter itself.
+ * `build` names the mpv and FFmpeg versions that passed, so a running mpv of another build is never
+ * trusted. `retry` marks a run that timed out or failed to start, which says nothing of the filter.
  */
 export type VisualizerValidation = { ok: true; build: string } | { ok: false; reason: string; retry: boolean };
 
 type VisualizerAction = 'install' | 'remove' | 'defer' | 'none';
 
-/** How a run ended. `failure` is set when it timed out or never started, and then `code` means nothing. */
+/** `failure` is set when the run timed out or never started, and then `code` means nothing. */
 interface MpvRun {
   code: number | null;
   output: string;
@@ -92,12 +79,11 @@ function buildVisualizerGraph(): string {
   ].join('');
 }
 
-/** The `af add` argument. mpv's %length% quoting carries the graph's brackets and commas verbatim. */
+/** mpv's %length% quoting carries the graph's brackets and commas verbatim. */
 export function visualizerFilterSpec(): string {
   return `@${VISUALIZER_FILTER_LABEL}:lavfi=graph=%${VISUALIZER_GRAPH.length}%${VISUALIZER_GRAPH}`;
 }
 
-/** Names a build from the `mpv-version` and `ffmpeg-version` a running mpv reports. */
 export function mpvBuildId(mpvVersion: unknown, ffmpegVersion: unknown): string | null {
   if (typeof mpvVersion !== 'string' || typeof ffmpegVersion !== 'string') return null;
   if (mpvVersion === '' || ffmpegVersion === '') return null;
@@ -149,7 +135,7 @@ async function runValidation(mpvBinary: string): Promise<VisualizerValidation> {
   return { ok: true, build };
 }
 
-// The first line opens with the `mpv-version` property's value, and a later line carries `ffmpeg-version`'s.
+// Line one starts with the `mpv-version` value. A later line holds the `ffmpeg-version` value.
 function parseVersionOutput(output: string): string | null {
   const lines = output.split(/\r?\n/);
   const mpvVersion = /^(mpv \S+)/.exec(lines[0] ?? '')?.[1];
@@ -190,8 +176,8 @@ export function decideVisualizerAction(state: { wanted: boolean; installed: bool
 }
 
 /**
- * Whether mpv's `af` list holds a working visualizer filter. mpv disables a filter whose graph fails to
- * configure for a track and keeps playing, so a disabled entry counts as missing and gets re-added.
+ * mpv disables a filter whose graph fails to configure for a track and keeps playing, so a disabled
+ * entry counts as missing and gets re-added.
  */
 export function hasVisualizerFilter(filters: unknown): boolean {
   return Array.isArray(filters) && filters.some((filter: unknown) => {

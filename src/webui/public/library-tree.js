@@ -1,5 +1,3 @@
-// Rows of the Play Music dialog. An artist row expands into its albums and an album row into its songs.
-
 import { getJson } from './api.js';
 import { buildIcon, ICON_PLAY } from './dom.js';
 import { FAVORITE_SOURCES } from './favorite-sources.js';
@@ -21,7 +19,6 @@ let childListSeq = 0;
 
 // `status` is the pane's status line, so a row's play feedback stays in the pane that lists it.
 export function buildLibraryNode(kind, item, depth, status) {
-  // INPUT
   const fields = libraryRowFields(kind, item, depth);
   const childSource = CHILD_SOURCES[kind];
   const node = document.createElement('li');
@@ -32,7 +29,6 @@ export function buildLibraryNode(kind, item, depth, status) {
   const meta = document.createElement('span');
   const action = document.createElement('button');
 
-  // PROCESS
   node.className = 'lib-node';
   node.dataset.kind = kind;
   row.className = 'lib-row';
@@ -49,7 +45,6 @@ export function buildLibraryNode(kind, item, depth, status) {
   labelLibraryAction(action, playMode());
   action.addEventListener('click', () => void playLibraryItem(action, kind, item.id, fields.name, status));
 
-  // OUTPUT
   text.append(name, meta);
   if (fields.thumb) main.appendChild(fields.glyph === undefined ? buildLibraryThumb(fields.coverId) : buildThumbPlaceholder(fields.glyph));
   main.appendChild(text);
@@ -73,13 +68,12 @@ function countLabel(count, noun) {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
-// The numeric seconds go through formatTime, so a row reads like the queue and the transport past one hour.
 function durationLabel(seconds) {
   return typeof seconds === 'number' && seconds > 0 ? formatTime(seconds) : '';
 }
 
-// Artist and playlist cover ids carry the `ar-` and `pl-` prefixes, and a song shows its album's cover.
-// A nested row omits what its parent row already shows: an album its artist, a song its album and cover.
+// Navidrome cover ids for artists and playlists carry the `ar-` and `pl-` prefixes.
+// A nested row omits what its parent row shows, such as an album's artist or a song's cover.
 function libraryRowFields(kind, item, depth) {
   const nested = depth > 0;
   const favorite = FAVORITE_SOURCES[kind];
@@ -141,7 +135,6 @@ function labelLibraryToggle(toggle, noun, name, expanded) {
 
 // The chevron is the keyboard control. A click on the row's main area is a pointer shortcut.
 function bindLibraryExpander({ node, row, main, source, id, name, depth, status }) {
-  // INPUT
   const list = document.createElement('ul');
   const toggle = document.createElement('button');
   let loadState = 'idle';
@@ -155,7 +148,6 @@ function bindLibraryExpander({ node, row, main, source, id, name, depth, status 
     loadState = (await loadLibraryChildren({ node, list, source, id, depth, status })) ? 'loaded' : 'idle';
   };
 
-  // PROCESS
   childListSeq += 1;
   list.id = `lib-children-${childListSeq}`;
   list.className = 'lib-children';
@@ -169,26 +161,22 @@ function bindLibraryExpander({ node, row, main, source, id, name, depth, status 
   toggle.addEventListener('click', () => void onToggle());
   main.addEventListener('click', () => void onToggle());
 
-  // OUTPUT
   row.appendChild(toggle);
   node.appendChild(list);
 }
 
 // Resolves true once the children are rendered, false when the next expand must fetch again.
 async function loadLibraryChildren({ node, list, source, id, depth, status }) {
-  // INPUT
   const url = `${source.url}?id=${encodeURIComponent(id)}`;
   let data = null;
   let items = null;
 
-  // PROCESS
   list.replaceChildren(buildLibraryNotice('Loading…'));
   data = await getJson(url);
   // A new search replaced the results while this load was in flight.
   if (!node.isConnected) return false;
   items = data !== null && Array.isArray(data[source.key]) ? data[source.key] : null;
 
-  // OUTPUT
   if (items === null) {
     list.replaceChildren(buildLibraryNotice(`Could not load ${source.noun}.`));
     return false;

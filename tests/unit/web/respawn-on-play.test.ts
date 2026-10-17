@@ -1,28 +1,11 @@
 /**
  * Navidrome MCP Server - respawn-on-play tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-/**
- * Covers `ensureWebForPlayback`, which runs at MCP startup and on every play.
- * It must probe `/healthz` FRESH every call, so a player powered off
- * mid-session is brought back on the next play. Tests
- * drive the probe/spawn decision through the injected `RespawnDeps` seam, so no
- * real sockets or child processes are touched.
- */
+// ensureWebForPlayback probes on every call, so a player powered off mid-session comes back on
+// the next play.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProbeOutcome, WebOwnerProbe } from '../../../src/web/acquire.js';
@@ -109,7 +92,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
   });
 
   it('coalesces concurrent calls into a single probe+spawn', async () => {
-    // A slow probe so both calls overlap on the same in-flight promise.
+    // The probe stays pending until both calls are in flight.
     let resolveProbe!: (o: WebOwnerProbe) => void;
     const deps: RespawnDeps = {
       probe: vi.fn().mockReturnValue(new Promise<WebOwnerProbe>((r) => { resolveProbe = r; })),
@@ -129,9 +112,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
   });
 
   it('clears the in-flight latch when the probe throws (next call can retry)', async () => {
-    // A throwing probe must not leave a stuck in-flight promise — otherwise
-    // every later play would await a rejected promise. Verify the rejection
-    // propagates once, then a fresh call probes again and succeeds.
+    // A stuck in-flight promise would make every later play await the same rejection.
     const boom: RespawnDeps = {
       probe: vi.fn().mockRejectedValueOnce(new Error('probe boom')).mockResolvedValue(ownerProbe('refused')),
       spawn: vi.fn().mockReturnValue('spawned'),
@@ -140,7 +121,6 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
 
     await expect(ensureWebForPlayback(playbackEnabled, boom)).rejects.toThrow('probe boom');
 
-    // Latch cleared → this call re-probes (now 'refused') and spawns.
     const status = await ensureWebForPlayback(playbackEnabled, boom);
     expect(boom.probe).toHaveBeenCalledTimes(2);
     expect(boom.spawn).toHaveBeenCalledTimes(1);
@@ -148,8 +128,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
   });
 
   it('re-probes on a subsequent call after the first settles (no stale latch)', async () => {
-    // First call: player is up. Second call (after power-off): refused → spawn.
-    // Proves we do NOT short-circuit on a remembered "already spawned" state.
+    // The second call stands in for a play after the user powered the player off.
     const upDeps = makeDeps('ours');
     await ensureWebForPlayback(playbackEnabled, upDeps);
 

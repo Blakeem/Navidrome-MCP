@@ -1,29 +1,15 @@
 /**
  * Navidrome MCP Server - Configuration Schema
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { z } from 'zod';
 import { WEBUI_THEMES } from '../constants/defaults.js';
 
 /**
- * The canonical runtime configuration shape. This is a *flat* projection of the
- * nested `settings.json` store (see `src/config/store.ts`), kept flat because
- * `NavidromeClient`, the playback engine, the managers, and every tool category
- * read fields like `config.navidromeUrl` / `config.features.*` directly.
+ * A flatter projection of the nested settings.json store, since the client, engine, managers, and
+ * tools read fields such as `config.navidromeUrl` directly.
  */
 export const ConfigSchema = z.object({
   navidromeUrl: z.url({ protocol: /^https?$/, error: 'Navidrome URL must be a valid URL starting with http:// or https://' }),
@@ -32,8 +18,6 @@ export const ConfigSchema = z.object({
   debug: z.boolean(),
   tokenExpiry: z.number().positive(),
 
-  // 'http' serves Streamable HTTP at `/mcp` so the server can run long-lived without an external bridge.
-  // Only an unauthenticated loopback bind auto-allowlists loopback Hosts, since a bearer token already defeats DNS rebinding.
   transport: z.object({
     type: z.enum(['stdio', 'http']),
     host: z.string(),
@@ -65,16 +49,16 @@ export const ConfigSchema = z.object({
   lrclibBase: z.url({ protocol: /^https?$/ }),
 
   mpvPath: z.string().optional(),
-  // 'raw' streams the original file untouched, at the highest quality and fully seekable.
-  // A codec such as 'mp3' or 'opus' transcodes for limited bandwidth at `playbackTranscodeBitrate`.
+  // 'raw' streams the original file, which keeps full quality and seeking. A codec such as 'mp3'
+  // or 'opus' transcodes at `playbackTranscodeBitrate` for limited bandwidth.
   playbackTranscodeFormat: z.string(),
   playbackTranscodeBitrate: z.string(),
 
   // Off re-fetches tag lists on each filter resolution so mid-session library edits show at once.
   filterCacheEnabled: z.boolean(),
 
-  // The web remote initializes only when mpv is detected. `expose` binds 0.0.0.0
-  // so a phone on the LAN can reach it, and an explicit `host` wins over it.
+  // An MCP spawns the web remote only when mpv is detected. `expose` binds 0.0.0.0 so a phone on
+  // the LAN can reach it, and an explicit `host` wins over it.
   webui: z.object({
     enabled: z.boolean(),
     host: z.string(),
@@ -82,16 +66,16 @@ export const ConfigSchema = z.object({
     expose: z.boolean(),
     // Off by default so a headless MCP client launch never pops a browser tab.
     autoOpenBrowser: z.boolean(),
-    // Off by default so an MCP-launched player stops with the last MCP server using it and nothing lingers.
+    // Off by default, so an MCP-launched player stops with the last MCP server using it.
     persistAfterMcpExit: z.boolean(),
     // Every device viewing the player uses this theme. Null leaves each device on its own setting.
     theme: z.enum(WEBUI_THEMES).nullable(),
-    // Off removes the mpv analysis filter too, which costs about 2.5% of one core while music plays.
+    // Off also removes the mpv analysis filter, which uses about 2.5% of one core during playback.
     visualizer: z.boolean(),
   }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
 
-/** The pre-validation input shape. No field has a schema default, so the compiler flags a mapper that omits one. */
+/** No field has a schema default, so the compiler flags a mapper that omits one. */
 export type RawConfigInput = z.input<typeof ConfigSchema>;

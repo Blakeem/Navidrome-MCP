@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - orderQueueSongs tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * Shuffled output is checked by invariants, never by a fixed random sequence.
  */
@@ -37,7 +38,7 @@ function sortedKeys(rows: readonly Row[]): string[] {
   return keys(rows).sort();
 }
 
-// Each album id must occupy one contiguous run of the output.
+// An album split across the output shows up as more than one run.
 function albumRuns(rows: readonly Row[]): string[] {
   const runs: string[] = [];
   for (const row of rows) {
@@ -116,7 +117,8 @@ describe('orderQueueSongs', () => {
   });
 
   it('forms album groups in order of first appearance', () => {
-    // A random value just under 1 makes every Fisher-Yates swap a self-swap, so the group order shows through.
+    // A random value just under 1 makes every Fisher-Yates swap a self-swap, so the group order
+    // shows through.
     const random = vi.spyOn(Math, 'random').mockReturnValue(0.999999);
     try {
       const out = orderQueueSongs(ROWS, { shuffleSongs: false, shuffleAlbums: true });

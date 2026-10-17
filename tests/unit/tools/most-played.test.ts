@@ -1,10 +1,7 @@
 /**
  * Navidrome MCP Server - listMostPlayed tests
  * Copyright (C) 2025
- *
- * Covers listMostPlayed from src/tools/listening-history.ts.
- * listRecentlyPlayed is already covered in listening-history.test.ts.
- * All tests use createMockClient() — no live calls.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -13,7 +10,6 @@ import { createMockClient, type MockNavidromeClient } from '../../factories/mock
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { AlbumDTO, ArtistDTO, SongDTO } from '../../../src/types/index.js';
 
-// Minimal raw song row as Navidrome returns it
 function makeSong(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id: 's1',
@@ -54,8 +50,6 @@ function makeArtist(overrides: Record<string, unknown> = {}): Record<string, unk
     ...overrides,
   };
 }
-
-// ---- type="songs" -----------------------------------------------------------
 
 describe('listMostPlayed — songs', () => {
   let mockClient: MockNavidromeClient;
@@ -127,8 +121,6 @@ describe('listMostPlayed — songs', () => {
   });
 });
 
-// ---- pagination --------------------------------------------------------------
-
 describe('listMostPlayed - pagination', () => {
   let mockClient: MockNavidromeClient;
 
@@ -176,8 +168,6 @@ describe('listMostPlayed - pagination', () => {
   });
 });
 
-// ---- type="albums" ----------------------------------------------------------
-
 describe('listMostPlayed — albums', () => {
   let mockClient: MockNavidromeClient;
 
@@ -210,8 +200,6 @@ describe('listMostPlayed — albums', () => {
     expect(typeof item.playCount).toBe('number');
   });
 });
-
-// ---- type="artists" ---------------------------------------------------------
 
 describe('listMostPlayed — artists', () => {
   let mockClient: MockNavidromeClient;
@@ -258,8 +246,6 @@ describe('listMostPlayed — artists', () => {
     expect(result.items).toHaveLength(0);
   });
 });
-
-// ---- defaults ---------------------------------------------------------------
 
 describe('listMostPlayed — defaults', () => {
   let mockClient: MockNavidromeClient;

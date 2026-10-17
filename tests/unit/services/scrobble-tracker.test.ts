@@ -1,17 +1,7 @@
 /**
  * Navidrome MCP Server - ScrobbleTracker unit tests
  * Copyright (C) 2025
- *
- * Covers the Last.fm-style scrobble rules wired into the playback engine:
- *   - submission=false on track-start (now-playing notification)
- *   - submission=true once per play, after the user listens past 50% of
- *     the duration OR 4 minutes (whichever first); only for tracks >= 30s
- *   - Radio streams (songId === null) never scrobble
- *   - MCP restart mid-track does not scrobble the in-progress track
- *
- * The tracker depends only on the narrow ScrobbleEngine / ScrobbleClient
- * shapes, so tests use a hand-rolled fake engine + the standard
- * createMockClient() factory.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,7 +25,6 @@ interface FakeEngine extends ScrobbleEngine {
   fire(event: StateChangeEvent): void;
   setPlaylist(entries: FakeEntry[]): void;
   setCached(name: string, value: unknown): void;
-  /** Every claim broadcast, in send order. */
   broadcasts: string[][];
   /** mpv echoes a broadcast to its sender. Off lets a test order the echoes itself. */
   autoEcho: boolean;
@@ -87,9 +76,7 @@ function createFakeClient(): ScrobbleClient & {
   };
 }
 
-// Wait one microtask + one macrotask cycle so any fire-and-forget promise
-// chains in the tracker resolve (subsonicRequest is awaited internally via
-// .then/.catch). vi.waitFor would also work but this is cheaper.
+// The tracker's IPC and Subsonic calls are fire-and-forget, so a setImmediate turn settles them.
 async function flush(): Promise<void> {
   await Promise.resolve();
   await new Promise((r) => setImmediate(r));
@@ -105,12 +92,8 @@ describe('ScrobbleTracker', () => {
     client = createFakeClient();
     tracker = new ScrobbleTracker(client, engine);
     tracker.attach();
-    // Simulate mpv's observe-emitted initial-state snapshot of an idle
-    // engine. The tracker treats the FIRST playlist-pos event after
-    // attach as initial state (not a real transition) to avoid double-
-    // scrobbling on attach to a mid-track mpv. Tests that exercise the
-    // attach-from-scratch path explicitly bypass this by re-creating the
-    // tracker.
+    // The first playlist-pos after attach is mpv's snapshot, which never starts a play. Priming it
+    // as idle makes each test's first playlist-pos a real transition.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: -1 });
   });
 
@@ -134,7 +117,6 @@ describe('ScrobbleTracker', () => {
     engine.setPlaylist([{ index: 0, songId: null }]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
-    // Even after threshold-crossing time-pos ticks, nothing fires.
     engine.fire({ kind: 'property', name: 'time-pos', data: 9999 });
     await flush();
 
@@ -146,7 +128,6 @@ describe('ScrobbleTracker', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     client.subsonicRequest.mockClear();
-    // Cross 50% of the (too-short) duration.
     engine.fire({ kind: 'property', name: 'time-pos', data: 20 });
     await flush();
 
@@ -161,12 +142,10 @@ describe('ScrobbleTracker', () => {
     await flush();
     client.subsonicRequest.mockClear();
 
-    // Below threshold — nothing yet.
     engine.fire({ kind: 'property', name: 'time-pos', data: 99 });
     await flush();
     expect(client.subsonicRequest).not.toHaveBeenCalled();
 
-    // Crosses 50% of 200 = 100s.
     nowSpy.mockReturnValue(1_100_000);
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
@@ -258,7 +237,6 @@ describe('ScrobbleTracker', () => {
     ]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
-    // Listen to 30% then skip.
     engine.fire({ kind: 'property', name: 'time-pos', data: 60 });
     await flush();
     client.subsonicRequest.mockClear();
@@ -266,8 +244,6 @@ describe('ScrobbleTracker', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
     await flush();
 
-    // Only the now-playing for song-B should fire, never a submission=true
-    // for song-A.
     const calls = client.subsonicRequest.mock.calls;
     expect(calls).toHaveLength(1);
     expect(calls[0]?.[1]).toEqual({ id: 'song-B', submission: 'false' });
@@ -280,19 +256,14 @@ describe('ScrobbleTracker', () => {
     ]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
-    // Song A reaches past threshold and scrobbles.
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
-    // Engine's cached time-pos is now 101 (real engine would update its
-    // cache here). Simulate that.
+    // A real engine caches the last time-pos, which the new play must not read.
     engine.setCached('time-pos', 101);
     client.subsonicRequest.mockClear();
 
-    // Skip to song B. The new play must NOT inherit the 101 time-pos.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
     await flush();
-    // After hydration only now-playing for song B should have fired —
-    // no submission=true should be triggered by the stale cached value.
     expect(client.subsonicRequest).toHaveBeenCalledTimes(1);
     expect(client.subsonicRequest.mock.calls[0]?.[1]).toEqual({
       id: 'song-B',
@@ -301,19 +272,15 @@ describe('ScrobbleTracker', () => {
   });
 
   it('defers submission until duration is known', async () => {
-    engine.setPlaylist([{ index: 0, songId: 'song-A' }]); // no duration in entry
-    // No cached duration either.
+    engine.setPlaylist([{ index: 0, songId: 'song-A' }]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     client.subsonicRequest.mockClear();
 
-    // time-pos crosses what WOULD be threshold for a 200s track, but
-    // duration is still unknown.
     engine.fire({ kind: 'property', name: 'time-pos', data: 150 });
     await flush();
     expect(client.subsonicRequest).not.toHaveBeenCalled();
 
-    // duration arrives.
     engine.fire({ kind: 'property', name: 'duration', data: 200 });
     await flush();
     expect(client.subsonicRequest).toHaveBeenCalledTimes(1);
@@ -330,32 +297,24 @@ describe('ScrobbleTracker', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
 
-    // No throw escaped; internal state is intact so threshold logic still
-    // marks the play as submitted on the next tick.
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
 
     expect(client.subsonicRequest).toHaveBeenCalledTimes(2);
-    // Another tick past threshold should NOT trigger a second submission
-    // (the failure didn't reset the `submitted` flag).
+    // A failed submission still counts as submitted, so a later tick sends nothing.
     engine.fire({ kind: 'property', name: 'time-pos', data: 120 });
     await flush();
     expect(client.subsonicRequest).toHaveBeenCalledTimes(2);
   });
 
   it('treats first playlist-pos after attach as initial state (mid-track mpv)', async () => {
-    // Skip the beforeEach prime — this test exercises the genuine attach
-    // path where mpv's observe-emitted initial events ARE the first thing
-    // the tracker sees, including a `playlist-pos` for an already-playing
-    // mid-track file.
+    // A fresh tracker skips the prime, so this playlist-pos is the snapshot of a mid-track mpv.
     tracker.detach();
     tracker = new ScrobbleTracker(client, engine);
     tracker.attach();
     engine.setPlaylist([{ index: 0, songId: 'mid-track', duration: 200 }]);
     engine.setCached('duration', 200);
-    // mpv emits observed property values immediately after subscribe; the
-    // engine forwards them through onStateChange in OBSERVED_PROPERTIES
-    // order (playlist-pos, ..., time-pos, duration).
+    // The engine forwards mpv's first emits in OBSERVED_PROPERTIES order, time-pos before duration.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     engine.fire({ kind: 'property', name: 'time-pos', data: 180 });
     engine.fire({ kind: 'property', name: 'duration', data: 200 });
@@ -368,8 +327,6 @@ describe('ScrobbleTracker', () => {
       { index: 0, songId: 'A', duration: 200 },
       { index: 1, songId: 'B', duration: 200 },
     ]);
-    // Transition from the prime's -1 to 1 (covers EOF→next-track after
-    // attach to an idle queue scenario).
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
     await flush();
     expect(client.subsonicRequest).toHaveBeenCalledTimes(1);
@@ -384,8 +341,6 @@ describe('ScrobbleTracker', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     client.subsonicRequest.mockClear();
-    // Same playlist-pos value emitted again (e.g. jumpToQueueEntry to
-    // the current index, or mpv re-emit). Must NOT fire another now-playing.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     expect(client.subsonicRequest).not.toHaveBeenCalled();
@@ -397,10 +352,7 @@ describe('ScrobbleTracker', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     client.subsonicRequest.mockClear();
-    // enqueue('replace') while at index 0: the playlist content changes but
-    // mpv does NOT emit a playlist-pos change event (same numeric value).
-    // The engine still fires a `kind: 'queue'` signal, which the tracker
-    // must use as a fallback "track may have changed" trigger.
+    // A replace at index 0 swaps the track with no playlist-pos event, so the queue event rereads.
     engine.setPlaylist([{ index: 0, songId: 'B', duration: 200 }]);
     engine.fire({ kind: 'queue' });
     await flush();
@@ -417,8 +369,6 @@ describe('ScrobbleTracker', () => {
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     client.subsonicRequest.mockClear();
-    // Simulate a shuffle/move/remove that didn't displace the current
-    // track (entry at index 0 is still song A).
     engine.fire({ kind: 'queue' });
     await flush();
     expect(client.subsonicRequest).not.toHaveBeenCalled();
@@ -752,9 +702,7 @@ describe('ScrobbleTracker', () => {
   });
 
   it('does not corrupt state when playlist reads resolve out of order', async () => {
-    // Two rapid playlist-pos transitions. The first getQueue resolves
-    // AFTER the second has already completed. The stale resolution must
-    // not overwrite state. The generation token catches it.
+    // The first read resolves after the second transition completes, so its result must be dropped.
     let resolveFirst!: (entries: FakeEntry[]) => void;
     const firstPromise = new Promise<FakeEntry[]>((res) => {
       resolveFirst = res;
@@ -765,18 +713,15 @@ describe('ScrobbleTracker', () => {
       { index: 1, songId: 'B', duration: 200 },
     ];
     engine.setPlaylist(playlist);
-    // Override getQueue to defer the first call only.
     engine.getQueue = async (): Promise<FakeEntry[]> => {
       callCount++;
       if (callCount === 1) return firstPromise;
       return playlist;
     };
 
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 }); // suspends
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 }); // overtakes
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
     await flush();
-    // Resolve the stale first read. If the generation guard works, this
-    // must not produce a now-playing for A.
     resolveFirst(playlist);
     await flush();
     const ids = client.subsonicRequest.mock.calls.map(
@@ -823,22 +768,15 @@ describe('ScrobbleTracker', () => {
   });
 
   it('attach is idempotent', async () => {
-    tracker.attach(); // second call — should not double-subscribe
+    tracker.attach();
     engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
 
-    // If a double-subscribe happened, we'd see 2 calls.
     expect(client.subsonicRequest).toHaveBeenCalledTimes(1);
   });
 });
 
-/**
- * Per-track ownership verdict. The injected `shouldSubmit` decides, once at each
- * track's start, whether THIS process may claim the play. In MCP it defers to an
- * older web owner that submits without claiming. These tests pin the latch,
- * deferral and race-guard behavior without real sockets.
- */
 describe('ScrobbleTracker ownership election', () => {
   let engine: FakeEngine;
   let client: ReturnType<typeof createFakeClient>;
@@ -847,7 +785,6 @@ describe('ScrobbleTracker ownership election', () => {
   function startTracker(shouldSubmit: () => Promise<boolean>): void {
     tracker = new ScrobbleTracker(client, engine, shouldSubmit);
     tracker.attach();
-    // Prime the attach sentinel (idle initial state), as the engine would.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: -1 });
   }
 
@@ -860,28 +797,26 @@ describe('ScrobbleTracker ownership election', () => {
     tracker.detach();
   });
 
-  // Helper: did any call submit (submission=true) for the given song id?
   function submittedIds(): string[] {
     return client.subsonicRequest.mock.calls
       .filter((c) => (c[1] as Record<string, string>).submission === 'true')
       .map((c) => (c[1] as Record<string, string>).id);
   }
 
-  it('(a) suppresses submission when a web owner is present at track start', async () => {
+  it('suppresses submission when a web owner is present at track start', async () => {
     startTracker(() => Promise.resolve(false)); // a web owner owns the port
     engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
-    client.subsonicRequest.mockClear(); // drop the now-playing ping
+    client.subsonicRequest.mockClear();
 
-    // Cross 50% — but ownership is 'notMine', so nothing should submit.
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
     expect(submittedIds()).toEqual([]);
   });
 
-  it('(b) submits when no web owner is present at track start', async () => {
-    startTracker(() => Promise.resolve(true)); // MCP-only: nobody else
+  it('submits when no web owner is present at track start', async () => {
+    startTracker(() => Promise.resolve(true));
     engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
@@ -891,9 +826,7 @@ describe('ScrobbleTracker ownership election', () => {
     expect(submittedIds()).toEqual(['song-A']);
   });
 
-  it('(c) web appears mid-session: in-flight track still submitted, next track suppressed', async () => {
-    // First track resolves 'mine' (no web yet); a web appears, so the second
-    // track's probe resolves 'notMine'.
+  it('web appears mid-session: in-flight track still submitted, next track suppressed', async () => {
     const shouldSubmit = vi
       .fn<() => Promise<boolean>>()
       .mockResolvedValueOnce(true)
@@ -904,13 +837,11 @@ describe('ScrobbleTracker ownership election', () => {
       { index: 1, songId: 'song-B', duration: 200 },
     ]);
 
-    // Track A — MCP owns it, submits.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
 
-    // Track B — web is now up, MCP defers.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
     await flush();
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
@@ -919,7 +850,7 @@ describe('ScrobbleTracker ownership election', () => {
     expect(submittedIds()).toEqual(['song-A']);
   });
 
-  it('(d) defers a threshold crossed before the probe resolves, then catches up', async () => {
+  it('defers a threshold crossed before the probe resolves, then catches up', async () => {
     let resolveVerdict!: (v: boolean) => void;
     const verdict = new Promise<boolean>((r) => {
       resolveVerdict = r;
@@ -930,19 +861,17 @@ describe('ScrobbleTracker ownership election', () => {
     await flush();
     client.subsonicRequest.mockClear();
 
-    // Threshold crosses while the verdict is still 'undecided' — must defer
-    // (no submit, and the `submitted` latch must NOT be set).
+    // An undecided verdict defers without latching `submitted`, so a later verdict can submit.
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
     expect(submittedIds()).toEqual([]);
 
-    // Verdict lands as 'mine' — resolveOwnership catches up.
     resolveVerdict(true);
     await flush();
     expect(submittedIds()).toEqual(['song-A']);
   });
 
-  it('(d2) a deferred verdict of notMine never submits', async () => {
+  it('a deferred verdict of notMine never submits', async () => {
     let resolveVerdict!: (v: boolean) => void;
     const verdict = new Promise<boolean>((r) => {
       resolveVerdict = r;
@@ -959,8 +888,7 @@ describe('ScrobbleTracker ownership election', () => {
     expect(submittedIds()).toEqual([]);
   });
 
-  it('(e) a verdict that resolves after a skip does not latch onto the new track', async () => {
-    // Track A's probe is deferred; track B's resolves immediately to 'mine'.
+  it('a verdict that resolves after a skip does not latch onto the new track', async () => {
     let resolveA!: (v: boolean) => void;
     const pA = new Promise<boolean>((r) => {
       resolveA = r;
@@ -975,13 +903,12 @@ describe('ScrobbleTracker ownership election', () => {
       { index: 1, songId: 'song-B', duration: 200 },
     ]);
 
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 }); // A — verdict pending
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 }); // skip to B — verdict 'mine'
+    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
     await flush();
 
-    // A's stale verdict disagrees with B's. Without the generation guard it would
-    // set 'notMine' and silently drop B's scrobble.
+    // Without the generation guard, A's stale 'notMine' would drop B's scrobble.
     resolveA(false);
     await flush();
 
@@ -990,7 +917,7 @@ describe('ScrobbleTracker ownership election', () => {
     expect(submittedIds()).toEqual(['song-B']);
   });
 
-  it('(e2) a stale mine verdict does not override the new track notMine', async () => {
+  it('a stale mine verdict does not override the new track notMine', async () => {
     let resolveA!: (v: boolean) => void;
     const pA = new Promise<boolean>((r) => {
       resolveA = r;
@@ -1019,7 +946,7 @@ describe('ScrobbleTracker ownership election', () => {
     expect(submittedIds()).toEqual([]);
   });
 
-  it('(f) a queue event that orphans an undecided verdict starts a new ownership check', async () => {
+  it('a queue event that orphans an undecided verdict starts a new ownership check', async () => {
     let call = 0;
     startTracker(() => {
       call += 1;
@@ -1027,7 +954,7 @@ describe('ScrobbleTracker ownership election', () => {
     });
     engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
 
-    // The flush lets hydrateAndStart track A, so the queue event orphans the probe, not the hydrate.
+    // The flush lets hydrateAndStart track A, so the queue event orphans the probe, not the read.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
     await flush();
     engine.setCached('playlist-pos', 0);
@@ -1051,10 +978,6 @@ describe('ScrobbleTracker ownership election', () => {
   });
 });
 
-/**
- * The claim channel. mpv echoes every script-message to every client in one
- * order, so the first claim for a play wins and exactly one process submits it.
- */
 describe('ScrobbleTracker claim channel', () => {
   const CLAIM = 'navidrome-mcp-scrobble-claim';
   let engine: FakeEngine;
@@ -1200,10 +1123,7 @@ describe('ScrobbleTracker claim channel', () => {
   });
 });
 
-/**
- * Two processes attached to one mpv. The bus delivers every property event and
- * every broadcast to both trackers in one order, as mpv does.
- */
+/** The bus delivers every event and broadcast to both trackers in one order, as mpv does. */
 describe('ScrobbleTracker claim channel across two processes', () => {
   interface Bus {
     engineFor(slot: number): ScrobbleEngine;

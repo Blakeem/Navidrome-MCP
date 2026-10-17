@@ -1,11 +1,10 @@
 /**
  * Navidrome MCP Server - transformer rating filtering tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the contract that a rating of 0 means "unrated" in Navidrome and must
- * NOT be propagated to the DTO, while a positive rating is preserved. `rating`
- * is a verbose-gated field, so these tests transform with `{ verbose: true }`
- * to exercise the derivation logic (compact mode drops it regardless).
+ * Navidrome stores an unrated item as rating 0. These tests run verbose, since compact mode drops
+ * `rating` regardless of its value.
  */
 
 import { describe, expect, it } from 'vitest';

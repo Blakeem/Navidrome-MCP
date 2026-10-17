@@ -1,10 +1,3 @@
-/**
- * Unit Tests for Test Connection Tool - Live Connection Testing
- * 
- * Following UNIT-TEST-STRATEGY.md - tests live connection to validate
- * server connectivity and feature detection capabilities.
- */
-
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
@@ -23,7 +16,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
-    // Use shared client and config for connection testing (avoids rate limiting)
+    // The shared client authenticates once, since Navidrome rate-limits concurrent logins.
     config = await loadConfig();
     liveClient = await getSharedLiveClient();
   });
@@ -32,11 +25,9 @@ describe('Test Connection Tool - Live Connection Testing', () => {
     it.skipIf(shouldSkipLiveTests())('should successfully connect to live Navidrome server', async () => {
       const result = await testConnection(liveClient, config, { includeServerInfo: false });
 
-      // Validate basic connection response structure
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('message');
-      
-      // Connection should be successful
+
       expect(result.success).toBe(true);
       expect(typeof result.message).toBe('string');
       expect(result.message).toMatch(/successfully connected/i);
@@ -45,42 +36,34 @@ describe('Test Connection Tool - Live Connection Testing', () => {
     it.skipIf(shouldSkipLiveTests())('should return detailed server info when requested', async () => {
       const result = await testConnection(liveClient, config, { includeServerInfo: true });
 
-      // Validate detailed response structure
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('message');
       expect(result).toHaveProperty('serverInfo');
-      
-      // Connection should be successful
+
       expect(result.success).toBe(true);
       expect(typeof result.message).toBe('string');
 
-      // Validate server info structure
       const serverInfo = result.serverInfo!;
       expect(serverInfo).toHaveProperty('url');
       expect(serverInfo).toHaveProperty('authenticated');
       expect(serverInfo).toHaveProperty('timestamp');
       expect(serverInfo).toHaveProperty('mcpServerVersion');
       expect(serverInfo).toHaveProperty('features');
-      
-      // URL should be a string
+
       expect(typeof serverInfo.url).toBe('string');
       expect(serverInfo.url.length).toBeGreaterThan(0);
-      
-      // Authenticated should be boolean
+
       expect(typeof serverInfo.authenticated).toBe('boolean');
       expect(serverInfo.authenticated).toBe(true);
 
-      // Version should be a string with proper format
       expect(typeof serverInfo.mcpServerVersion).toBe('string');
       expect(serverInfo.mcpServerVersion.length).toBeGreaterThan(0);
-      expect(serverInfo.mcpServerVersion).toMatch(/^\d+\.\d+\.\d+$/); // Should match semantic versioning pattern
+      expect(serverInfo.mcpServerVersion).toMatch(/^\d+\.\d+\.\d+$/);
 
-      // Features should be an object with detailed information
       const features = serverInfo.features!;
       expect(typeof features).toBe('object');
       expect(features).not.toBeNull();
-      
-      // Feature detection - these should have enabled flags
+
       expect(features.lastfm).toHaveProperty('enabled');
       expect(features.lastfm).toHaveProperty('description');
       expect(features.lastfm).toHaveProperty('tools');
@@ -96,11 +79,9 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(features.lyrics).toHaveProperty('tools');
       expect(typeof features.lyrics.enabled).toBe('boolean');
 
-      // Timestamp should be valid ISO string
       expect(typeof serverInfo.timestamp).toBe('string');
       expect(() => new Date(serverInfo.timestamp)).not.toThrow();
-      
-      // Tools arrays should exist and be arrays
+
       expect(Array.isArray(features.lastfm.tools)).toBe(true);
       expect(Array.isArray(features.radioBrowser.tools)).toBe(true);
       expect(Array.isArray(features.lyrics.tools)).toBe(true);
@@ -114,8 +95,6 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       
       const features = result.serverInfo!.features!;
 
-      // Verify feature detection matches the resolved config (settings.json is
-      // the source of truth — no longer process.env).
       if (config.features.lastfm) {
         expect(features.lastfm.enabled).toBe(true);
         expect(features.lastfm.tools.length).toBeGreaterThan(0);
@@ -142,14 +121,12 @@ describe('Test Connection Tool - Live Connection Testing', () => {
     });
 
     it.skipIf(shouldSkipLiveTests())('should handle connection with default parameters', async () => {
-      // Test without explicit parameters (should default to includeServerInfo: false)
       const result = await testConnection(liveClient, config, {});
 
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('message');
       expect(result.success).toBe(true);
-      
-      // Should not include server info by default
+
       expect(result.serverInfo).toBeUndefined();
     });
 
@@ -157,17 +134,14 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       const basicResult = await testConnection(liveClient, config, { includeServerInfo: false });
       const detailedResult = await testConnection(liveClient, config, { includeServerInfo: true });
 
-      // Both should have same basic structure
       expect(basicResult).toHaveProperty('success');
       expect(basicResult).toHaveProperty('message');
       expect(detailedResult).toHaveProperty('success');
       expect(detailedResult).toHaveProperty('message');
 
-      // Both should report success
       expect(basicResult.success).toBe(true);
       expect(detailedResult.success).toBe(true);
 
-      // Only detailed should have serverInfo
       expect(basicResult.serverInfo).toBeUndefined();
       expect(detailedResult.serverInfo).toBeDefined();
     });

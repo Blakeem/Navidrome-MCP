@@ -1,33 +1,12 @@
 /**
  * Navidrome MCP Server - respawn-on-play dispatch tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * Covers the respawn-on-play GATE at the dispatch level — the logic inside
- * `createPlaybackToolCategory(...).handleToolCall` (playback-handlers.ts). The
- * companion suite tests/unit/web/respawn-on-play.test.ts exercises only
- * `ensureWebForPlayback` itself; this suite pins the surrounding contract:
- *   (1) a PLAYBACK_STARTER (e.g. play_songs) triggers exactly one respawn;
- *   (2) a queue navigator (next) / a control (pause) does NOT trigger it;
- *   (3) a rejected respawn is SWALLOWED — the play still proceeds.
- * A silent regression here (catch dropped, starter set drifting) would turn a
- * best-effort UX nicety into a hard failure of every play, which no other test
- * would catch. Both collaborators are mocked so no sockets/child processes or
- * real playback engine are touched.
+ * Only a playback starter may respawn the web player, and a failed respawn must not fail the play.
+ * tests/unit/web/respawn-on-play.test.ts covers ensureWebForPlayback itself.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,8 +29,8 @@ vi.mock('../../../src/tools/playback.js', () => ({
   playSongs: playSongsMock,
   next: nextMock,
   pause: pauseMock,
-  // Remaining exports stubbed so the destructuring import in the handler never
-  // binds undefined (defense-in-depth; only the three above are asserted).
+  // The handler imports every playback tool, so each one gets a stub.
+  // Only the three above are asserted.
   resume: vi.fn(),
   setVolume: vi.fn(),
   playbackStatus: vi.fn(),

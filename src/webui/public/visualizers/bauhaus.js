@@ -1,18 +1,18 @@
 import { average, detectBeat, rgba } from '../visualizer-kit.js';
 
-// The three Bauhaus primaries and an ink. Black vanishes on the dark card, so its ink is a warm paper white,
-// and the light card takes deeper primaries that hold their weight on white.
+// The three Bauhaus primaries and an ink. Black does not show on the dark card, so its ink is a
+// warm paper white. The light card takes deeper primaries that hold their weight on white.
 const PRIMARIES = {
   dark: [{ r: 238, g: 66, b: 46 }, { r: 250, g: 198, b: 32 }, { r: 64, g: 120, b: 236 }, { r: 242, g: 234, b: 218 }],
   light: [{ r: 210, g: 36, b: 28 }, { r: 236, g: 168, b: 0 }, { r: 22, g: 64, b: 164 }, { r: 22, g: 22, b: 26 }],
 };
 const INK = 3;
-// Red and blue carry the poster and ink stays an accent.
+// Red and blue dominate the poster, and ink stays an accent.
 const COLOR_WEIGHTS = [0.32, 0.24, 0.3, 0.14];
 
-// About this many cells at every size, so the wide window draws no more shapes than the phone strip.
+// About this many cells at every size, so a wide window draws no more shapes than a small one.
 const TARGET_CELLS = 20;
-// The gap between modules as a fraction of a cell, which keeps the grid legible between the shapes.
+// The gap between modules, as a fraction of a cell, keeps the grid legible between the shapes.
 const GUTTER = 0.14;
 const WIDE_CHANCE = 0.14;
 const TALL_CHANCE = 0.1;
@@ -23,15 +23,14 @@ const LONG_SHAPES = ['half', 'bar'];
 const LONG_WEIGHTS = [0.55, 0.45];
 const LEAD_SHAPES = ['rings', 'split'];
 const LEAD_WEIGHTS = [0.6, 0.4];
-// The lead module takes the bass, so the small modules share the bands above it.
+// The lead module answers the bass, so the small modules skip the two lowest bands.
 const FIRST_SMALL_BAND = 2;
 // The lead's rings stack three deep, so pieces fill in three passes from the back.
 const LAYERS = 3;
 
-// A cubic Bezier with handles this long per radius traces a quarter circle, and its handles stay inside the
-// quarter's own box, so a curve is bounded by its true extent.
+// A cubic Bezier with handles this long per radius traces a quarter circle. Its handles stay
+// inside the quarter's box, so a bound taken from the control points fits the drawn arc.
 const KAPPA = 0.5523;
-// The angles 0, a quarter, a half and three quarters of a turn, as cos and sin.
 const QUADRANTS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
 const BAR_THICKNESS = 0.5;
 const STACK_THICKNESS = 0.2;
@@ -41,28 +40,29 @@ const STACK_LENGTHS = [1, 0.7, 0.42];
 const SPLIT_GAP = 0.08;
 // Below this size in CSS pixels a shape is skipped, so levels at rest draw nothing.
 const MIN_SIZE_PX = 0.75;
-// Levels under this floor are rest noise, and the curve lifts mid levels so a typical mix fills the poster.
+// Levels under this floor are rest noise.
+// The curve lifts mid levels, so a typical mix fills the poster.
 const LEVEL_FLOOR = 0.01;
 const LEVEL_CURVE = 0.7;
-// Overall levels from about 0.2 up give full presence, so only a quiet passage or a fade shrinks the poster.
+// Overall levels from about 0.2 up give full presence, so only a quiet passage shrinks the poster.
 const PRESENCE_GAIN = 5;
-// The share of full size a shape keeps at a silent band. The lead keeps more, so it always dominates.
+// The share of full size a shape keeps at a silent band. The lead keeps more, so it dominates.
 const TILE_BASE = 0.35;
 const LEAD_BASE = 0.5;
 // A flipping tile this close to edge-on is skipped, since its transform is nearly flat.
 const EDGE_ON = 0.02;
 
 const TURN_SECONDS = 0.3;
-// The share of tiles that turn on each beat.
 const TURN_SHARE = 0.12;
 // Quiet passages fire few beats, so a tile still turns after this long without one.
 const IDLE_TURN_SECONDS = 1.6;
 const LEAD_ACCENT_BEATS = 4;
 const RECOMPOSE_BEATS = 32;
 const RECOMPOSE_SECONDS = 18;
-// Below this overall level the layout holds still, so a fade never sets off a turn or a recomposition.
+// Below this overall level the layout holds still, so a fade never starts a turn or recomposition.
 const PRESENT_ENERGY = 0.05;
-// A recomposition sweeps left to right in WIPE_SECONDS, and each module shrinks out and grows back in SWAP_SECONDS.
+// A recomposition sweeps left to right over WIPE_SECONDS.
+// Each module shrinks out and grows back in over SWAP_SECONDS.
 const WIPE_SECONDS = 0.5;
 const SWAP_SECONDS = 0.4;
 const KICK_DECAY_PER_SECOND = 7;
@@ -77,7 +77,7 @@ const CROSS_WIDTH = 0.03;
 const CROSS_BANDS = 6;
 const CROSS_ALPHA = 0.85;
 
-/** A Bauhaus poster whose flat primary shapes scale with their bands on a strict grid, snap turns on beats and recompose. */
+/** A Bauhaus poster of flat primary shapes on a strict grid that scale with their bands. */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
@@ -92,11 +92,11 @@ function draw(ctx, frame) {
   const crossesShown = drawCrosses(ctx, frame, grid, poster, colors[INK]);
   const outgoingShown = wipe !== null && drawPoster(ctx, frame, wipe.previous, colors, (module) => outgoingScale(module, wipe), drive);
   const incomingShown = drawPoster(ctx, frame, poster, colors, (module) => incomingScale(module, wipe), drive);
-  // Shapes shrink with the levels once the music stops, so the host keeps drawing until the last one is gone.
+  // Shapes shrink with the levels after the music stops, so the host keeps drawing until they go.
   return crossesShown || outgoingShown || incomingShown;
 }
 
-// Rows come from the height and columns fill the width, so cells stay square and the grid sits centered.
+// Rows come from the height and columns fill the width, so the cells stay square.
 function gridFor(frame) {
   const { width, height, pad } = frame;
   const innerWidth = width - 2 * pad;
@@ -117,7 +117,7 @@ function gridFor(frame) {
   };
 }
 
-// A new size lays the same poster seed onto the new grid, so a resize keeps the composition where it can.
+// A resize lays the same poster seed onto the new grid, so the composition holds where it can.
 function ensurePoster(state, grid) {
   if (state.poster !== undefined && state.poster.key === grid.key) return;
   state.rng ??= { seed: SEED };
@@ -166,7 +166,7 @@ function recompose(state, grid) {
   state.sinceTurn = 0;
 }
 
-// A few tiles turn on each beat and the lead answers every few beats, so the poster shifts but keeps its layout.
+// Only a few tiles turn per beat, and the lead every few beats, so the poster keeps its layout.
 function turnTiles(state, count, onBeat) {
   const { modules } = state.poster;
   const candidates = modules.filter((module, index) => index > 0 && module.turnAge >= TURN_SECONDS);
@@ -191,8 +191,8 @@ function startTurn(module, direction) {
   module.turnAge = 0;
 }
 
-// The lead module lands first at a random spot, then the rest of the grid fills in reading order with
-// single cells and an occasional double, so every poster keeps the same strict modules.
+// The lead module lands first, so its large span always finds room before single and double
+// cells fill the rest in reading order.
 function compose(grid, seed) {
   const rng = { seed };
   const poster = { key: grid.key, cols: grid.cols, rows: grid.rows, owners: new Int16Array(grid.cols * grid.rows).fill(-1), modules: [] };
@@ -217,7 +217,7 @@ function compose(grid, seed) {
   return poster;
 }
 
-// The lead spans two cells, or three once the grid is five cells deep, so one shape always dominates.
+// The lead spans two cells, or three once the short side has five, so one shape always dominates.
 function leadSpan(grid) {
   const shorter = Math.min(grid.cols, grid.rows);
   return shorter >= 5 ? 3 : Math.min(2, shorter);
@@ -264,7 +264,7 @@ function placeModule(poster, grid, rng, place, kind, colorCount) {
   }
 }
 
-// Every placed module that shares an edge keeps a different color, so no two neighbors merge into one block.
+// Modules that share an edge take different colors, so no two neighbors merge into one block.
 function neighborColors(poster, place) {
   const { col, row, spanX, spanY } = place;
   const colors = [];
@@ -290,7 +290,7 @@ function pickColor(rng, avoid) {
   return color === -1 ? pickWeighted(rng, COLOR_WEIGHTS, []) : color;
 }
 
-// Bands rise left to right across the small modules, so a melody reads as a wave crossing the poster.
+// Bands rise left to right across the small modules, so a melody crosses the poster as a wave.
 function orderBands(modules) {
   const small = modules.slice(1).sort((a, b) => a.x - b.x || a.y - b.y);
   small.forEach((module, rank) => { module.order = rank / small.length; });
@@ -329,7 +329,7 @@ function insideModule(owners, cols, i, j) {
   return owners[(j - 1) * cols + i] === owner && owners[j * cols + i - 1] === owner && owners[j * cols + i] === owner;
 }
 
-// Pieces that share a layer and a color fill as one path, so a frame makes only a handful of paint calls.
+// Pieces that share a layer and a color fill as one path, so a frame makes few paint calls.
 function drawPoster(ctx, frame, poster, colors, scaleOf, drive) {
   const pieces = collectPieces(frame, poster, scaleOf, drive);
   for (let layer = 0; layer < LAYERS; layer++) {
@@ -352,7 +352,6 @@ function collectPieces(frame, poster, scaleOf, drive) {
   return pieces;
 }
 
-// The lead answers the bass, the low mids and the kick, and every other module follows one band.
 function piecesOf(module, frame, drive) {
   const { values } = frame;
   const [first, second, third] = module.colors;
@@ -375,7 +374,7 @@ function piecesOf(module, frame, drive) {
   return [{ layer: 0, color: first, shape: module.kind, level: sized(values[band], TILE_BASE, drive.presence) }];
 }
 
-// Every shape keeps a base size while music plays, so the poster holds its composition and the band pulses on top.
+// Every shape keeps a base size while music plays, so the poster holds its composition.
 function sized(level, base, presence) {
   const lifted = (Math.max(0, level - LEVEL_FLOOR) / (1 - LEVEL_FLOOR)) ** LEVEL_CURVE;
   return presence * (base + (1 - base) * lifted);
@@ -423,7 +422,7 @@ function poseOf(module) {
   return module.kind === 'bar' ? [mirror, 0, 0, 1] : [1, 0, 0, mirror];
 }
 
-// Every shape fits the box from -hw to hw and -hh to hh at full level, so a module never crosses its gutter.
+// Every shape fits the box -hw to hw by -hh to hh at full level, so no module crosses its gutter.
 function addShape(ctx, shape, hw, hh, level) {
   switch (shape) {
     case 'disc': addDisc(ctx, Math.min(hw, hh) * level); break;
@@ -444,7 +443,6 @@ function addDisc(ctx, radius) {
   ctx.closePath();
 }
 
-// A half circle standing on the bottom edge, the arch of Bauhaus tile work.
 function addHalf(ctx, hh, radius) {
   ctx.moveTo(-radius, hh);
   addArc(ctx, 0, hh, radius, 2, 2);
@@ -466,7 +464,6 @@ function addTriangle(ctx, hw, hh, level) {
   ctx.closePath();
 }
 
-// Three rules of falling length, the stepped bars of a Swiss layout.
 function addStack(ctx, hw, hh, level) {
   const thickness = 2 * hh * STACK_THICKNESS * barWeight(level);
   STACK_LENGTHS.forEach((length, k) => {
@@ -479,7 +476,8 @@ function addBar(ctx, hw, hh, level) {
   ctx.rect(-hw, -thickness / 2, 2 * hw * level, thickness);
 }
 
-// A bar holds its weight while music plays and thins only below the base size, so a fade or a wipe leaves no sliver.
+// A bar holds its weight while music plays and thins only below the base size,
+// so a fade or a wipe leaves no sliver.
 function barWeight(level) {
   return Math.min(1, level / TILE_BASE);
 }
@@ -511,7 +509,6 @@ function addArc(ctx, centerX, centerY, radius, firstQuadrant, quadrants) {
   }
 }
 
-// Old modules shrink out ahead of the sweep and new ones grow in behind it, each at its own place across the grid.
 function outgoingScale(module, wipe) {
   const progress = swapProgress(module, wipe);
   if (progress >= 0.5) return 0;

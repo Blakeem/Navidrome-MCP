@@ -1,9 +1,6 @@
 /*
- * Navidrome MCP Settings form logic (vanilla, no build step).
- *
- * Symmetric mapping between the nested settings.json shape and the flat form:
- * each field declares its dotted path, DOM id, and value kind, so seed→form and
- * form→payload use the same table. Password is masked (sentinel) by the server.
+ * Served as-is with no build step. Each FIELDS row maps a settings.json path to a form element, so
+ * populate() and collect() share one table.
  */
 'use strict';
 
@@ -73,10 +70,8 @@ function populate(seed) {
       case 'int':
         el.value = raw == null ? '' : String(raw);
         break;
-      default: // string | stringOrNull | pathOrNull
-        // Fall back to the declared default when the seed has no value, so a
-        // <select> (e.g. transport.type) lands on a valid option instead of an
-        // empty/-1 selection. Text inputs without a default just stay blank.
+      default:
+        // A <select> such as transport.type needs its default, or it shows no selected option.
         el.value = raw == null ? (dflt == null ? '' : String(dflt)) : String(raw);
     }
   }
@@ -96,9 +91,7 @@ function collect() {
         value = el.value.trim();
         break;
       case 'secret':
-        // Secrets (e.g. password) are persisted verbatim. Trimming could
-        // silently corrupt a credential that legitimately carries leading or
-        // trailing whitespace, producing hard-to-diagnose auth failures.
+        // Not trimmed, since a credential may start or end with whitespace.
         value = el.value;
         break;
       case 'stringOrNull': {
@@ -140,7 +133,6 @@ function collect() {
 // Mirrors the server's webui.host rule, so a bad value is flagged before a round trip.
 const WEBUI_BIND_HOSTS = ['127.0.0.1', '0.0.0.0', '::'];
 
-// Returns null after showing the problem, so the caller skips the request.
 function collectChecked() {
   const payload = collect();
   const host = payload.webui ? payload.webui.host : null;
@@ -148,7 +140,8 @@ function collectChecked() {
     showStatus(`Web UI bind host "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`, 'err');
     return null;
   }
-  // collect() drops non-numeric tokens, and an empty list means all libraries, so a typo would silently lift the restriction.
+  // collect() drops non-numeric tokens, and an empty list means all libraries, so a typo would
+  // lift the restriction without notice.
   const bad = document.getElementById('defaultLibraries').value
     .split(',')
     .map((t) => t.trim())
@@ -165,18 +158,12 @@ function isEmptyField(el) {
   return el.value == null || String(el.value).trim() === '';
 }
 
-/*
- * Surface recommended values beside any blank field that has one, WITHOUT
- * touching the field. On first run the seed already pre-fills these (so the
- * fields aren't empty and nothing shows); on later runs an existing config is
- * left verbatim, so a deliberately-blank field just gets a gentle suggestion.
- */
 function renderSuggestions(suggestions) {
   for (const [path, id] of FIELDS) {
     const value = suggestions[path];
     if (value == null || value === '') continue;
     const el = document.getElementById(id);
-    if (!el || !isEmptyField(el)) continue; // pre-filled / user value always wins
+    if (!el || !isEmptyField(el)) continue;
     addSuggestion(el, value);
   }
 }
@@ -196,10 +183,8 @@ function addSuggestion(el, value) {
   });
   wrap.appendChild(use);
 
-  // Outside the field: appended to the end of the field's <label>.
   (el.closest('label') || el.parentNode).appendChild(wrap);
 
-  // If the user fills the field themselves, the suggestion is no longer useful.
   el.addEventListener('input', () => { if (!isEmptyField(el)) wrap.remove(); });
 }
 
@@ -224,7 +209,7 @@ async function postJson(path, body) {
   try {
     data = await res.json();
   } catch (_) {
-    /* non-JSON error */
+    // A non-JSON error body leaves data empty.
   }
   return { ok: res.ok, data };
 }
@@ -269,13 +254,12 @@ async function init() {
   } catch (_) {
     showStatus('Could not load existing settings; starting blank.', 'err');
   }
-  // Suggestions are optional polish: fetch after populate so we only annotate
-  // fields that ended up blank. A failure here must not break the form.
+  // Fetched after populate(), so only fields left blank get a hint.
   try {
     const res = await fetch('/api/settings/suggestions');
     if (res.ok) renderSuggestions(await res.json());
   } catch (_) {
-    /* No suggestions. The form still works. */
+    // Hints are optional, so the form works without them.
   }
   document.getElementById('test-btn').addEventListener('click', onTest);
   document.getElementById('settings-form').addEventListener('submit', onSave);
@@ -283,8 +267,7 @@ async function init() {
   if (genBtn) genBtn.addEventListener('click', generateAuthToken);
 }
 
-/* Fill the auth-token field with a fresh 256-bit random token (hex). Shown as
- * plaintext on generation so the user can copy it for their client config. */
+// Shown as plain text so the user can copy it into the client config.
 function generateAuthToken() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);

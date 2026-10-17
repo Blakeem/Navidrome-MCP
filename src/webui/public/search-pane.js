@@ -1,5 +1,3 @@
-// The Search tab: one query across artists, albums and songs, or the recent plays when the query is empty.
-
 import { getJson } from './api.js';
 import { byId } from './dom.js';
 import { buildLibraryNode } from './library-tree.js';
@@ -35,7 +33,6 @@ export function resetSearchPane() {
 }
 
 async function loadLibrary(rawQuery) {
-  // INPUT
   const text = rawQuery.trim();
   const isSearch = text !== '';
   const url = isSearch ? `/api/library/search?q=${encodeURIComponent(text)}` : '/api/library/recent';
@@ -44,14 +41,12 @@ async function loadLibrary(rawQuery) {
   const mine = generation + 1;
   let data = null;
 
-  // PROCESS
   generation = mine;
   caption.textContent = isSearch ? `Searching for “${text}”…` : 'Loading recently played…';
   results.replaceChildren();
   data = await getJson(url);
   if (mine !== generation) return;
 
-  // OUTPUT
   if (data === null) {
     caption.textContent = 'Could not load results.';
     return;

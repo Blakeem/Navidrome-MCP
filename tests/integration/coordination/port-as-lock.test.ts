@@ -1,10 +1,9 @@
 /**
  * Navidrome MCP Server - Port-as-lock coordination tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Multi-process behaviors (spec §5, §4.10): exactly one navidrome-web owns the
- * configured port; everyone else probes /healthz and stands down; a foreign
- * squatter is refused; the owner exits cleanly on SIGTERM.
+ * Exactly one navidrome-web owns the configured port, and every other instance stands down.
  */
 
 import { createServer as createHttpServer } from 'node:http';
@@ -42,9 +41,9 @@ describeCoordination('port-as-lock', () => {
     const second = spawnWeb(store);
     const code = await waitForExit(second);
 
-    expect(code).toBe(0); // attached → main() returns → clean exit
-    expect((await healthz(port))?.app).toBe('navidrome-mcp-web'); // owner still serving
-    expect(owner.exitCode).toBeNull(); // owner unaffected
+    expect(code).toBe(0);
+    expect((await healthz(port))?.app).toBe('navidrome-mcp-web');
+    expect(owner.exitCode).toBeNull();
   });
 
   it('refuses to bind when the port is held by a foreign process', async () => {
@@ -60,9 +59,8 @@ describeCoordination('port-as-lock', () => {
     try {
       const child = spawnWeb(store);
       const code = await waitForExit(child);
-      expect(code).toBe(1); // conflictError → main catch → exit 1
+      expect(code).toBe(1); // A foreign owner makes startup throw, and main() exits 1 on that.
 
-      // The squatter still owns the port (we never bound over it).
       const res = await fetch(`http://127.0.0.1:${port}/healthz`);
       expect(((await res.json()) as { app?: string }).app).toBe('something-else');
     } finally {
@@ -76,8 +74,7 @@ describeCoordination('port-as-lock', () => {
     expect(await waitFor(async () => (await healthz(port)) !== null)).toBe(true);
 
     owner.kill('SIGTERM');
-    // The meaningful invariant is that the port is released. The exact exit code
-    // is incidental (0 via process.exit, or signal-terminated) and not asserted.
+    // The invariant is the released port. The exit code is 0 or a signal, so it is not asserted.
     await waitForExit(owner);
     expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 15000 })).toBe(true);
   });

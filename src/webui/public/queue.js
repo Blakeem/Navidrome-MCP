@@ -1,5 +1,3 @@
-// The live queue list with its count, shuffle and clear controls.
-
 import { postControl } from './controls.js';
 import { buildIcon, byId, ICON_PLAY } from './dom.js';
 import { playingIndex } from './snapshot.js';
@@ -10,8 +8,8 @@ const queueCount = byId('queue-count');
 const shuffleQueue = byId('shuffle-queue');
 const clearQueue = byId('clear-queue');
 
-// The queue identity in the DOM. A rebuild at the 1 Hz snapshot rate would recreate
-// the row under the pointer between press and release, and the click would be lost.
+// A rebuild on every 1 Hz snapshot would recreate the row under the pointer between press
+// and release, and the click would be lost.
 let renderedSignature = null;
 // The index last revealed, so a routine snapshot never scrolls a list the reader moved.
 let revealedIndex = null;
@@ -51,7 +49,6 @@ export function renderQueue(queue, currentIndex) {
   renderedSignature = signature;
 }
 
-// Scrolls only the list, never the page, so the card and controls stay where the reader left them.
 export function revealCurrentRow(np) {
   const index = playingIndex(np);
   if (index === revealedIndex) return;

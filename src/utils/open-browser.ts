@@ -1,25 +1,13 @@
 /**
  * Navidrome MCP Server - Cross-platform browser launcher
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { spawn } from 'node:child_process';
 import { logger } from './logger.js';
 
-/** Best effort only. Callers always surface the URL too, since headless or SSH hosts cannot open a browser. */
+/** The launch is best effort, so callers also print the URL for a headless or SSH host. */
 export function openBrowser(url: string): void {
   const { command, args } = browserCommand(url);
   try {
@@ -34,13 +22,13 @@ export function openBrowser(url: string): void {
 }
 
 function browserCommand(url: string): { command: string; args: string[] } {
-  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- intentional: all non-darwin/win32 platforms (linux, freebsd, etc.) fall through to xdg-open as a best-effort attempt
+  // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- others use xdg-open
   switch (process.platform) {
     case 'darwin':
       return { command: 'open', args: [url] };
     case 'win32':
-      // start is a cmd builtin that takes its first quoted argument as the window title.
-      // Without that title argument, a URL with spaces would be misparsed as the title.
+      // start takes its first quoted argument as the window title, so the empty title keeps a
+      // quoted URL from being read as one.
       return { command: 'cmd', args: ['/c', 'start', '""', url] };
     default:
       return { command: 'xdg-open', args: [url] };

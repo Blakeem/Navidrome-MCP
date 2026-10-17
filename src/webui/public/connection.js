@@ -1,5 +1,5 @@
-// The SSE stream and its status indicator. The server sets the retry interval,
-// and EventSource reconnects on its own.
+// The server sets the retry interval and EventSource reconnects on its own,
+// so this module holds no reconnect logic.
 
 const conn = document.querySelector('.conn');
 const connLabel = conn.querySelector('.conn-label');

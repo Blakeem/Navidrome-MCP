@@ -3,10 +3,12 @@ name: Publish to NPM
 on:
   release:
     types: [published]
-  # Re-runs a release whose publish failed, since a re-run of the release event uses the tagged workflow file.
+  # Re-runs a release whose publish failed. A re-run of the release event uses the tagged
+  # workflow file, while a dispatch uses the workflow file from the chosen ref.
   workflow_dispatch:
 
-# npm trusted publishing exchanges this OIDC token for a one-time publish credential, so no npm token or OTP is needed.
+# npm trusted publishing exchanges this OIDC token for a one-time publish credential, so the
+# job needs no npm token or OTP.
 permissions:
   contents: read
   id-token: write

@@ -1,25 +1,5 @@
-/**
- * Regression coverage for the loopback-gated privileged web-UI routes and the
- * cover-art content-type allowlist. These surfaces are security-relevant and
- * previously had zero tests:
- *
- *  - health.ts     — /healthz must 404 (hide its version fingerprint) for any
- *                    non-loopback peer whenever the server is LAN-reachable,
- *                    which is true for BOTH `expose=true` AND a wildcard
- *                    `host==='0.0.0.0'` bind (the latter regressed before).
- *  - player.ts     — settings/shutdown routes must reject non-loopback peers
- *                    with 404, and the settings writer must merge (never
- *                    clobber) unrelated `webui` keys and other stored settings
- *                    (credentials included).
- *  - cover.ts      — a 200 upstream with a non-allowlisted content-type must be
- *                    rejected (stored-XSS defense) and its body cancelled so the
- *                    fetch connection is released.
- *  - server.ts       POST /api/controls/shuffle must reach the from-the-top
- *                    shuffle through the dispatcher. A POST without a JSON
- *                    Content-Type gets 415, and a loopback bind rejects a
- *                    foreign Host header with 403 (DNS rebinding).
- *  - controls.ts     an invalid seek, volume or play-index body is a 400.
- */
+// Each case pins a security invariant, such as the loopback-only privileged routes, the /healthz
+// fingerprint gate, or the cover proxy's non-image rejection that blocks stored XSS.
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
@@ -29,15 +9,13 @@ import type { Config } from '../../../src/config.js';
 import type { SettingsFile } from '../../../src/config/store.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 
-// Mock the settings store: keep the REAL SettingsFileSchema (player.ts validates
-// the merged object against it before writing) but stub the disk I/O so tests
-// neither read nor write the real store.
+// player.ts validates merged settings with the real SettingsFileSchema, so only disk I/O is fake.
 vi.mock('../../../src/config/store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/config/store.js')>();
   return { ...actual, readSettings: vi.fn(), writeSettings: vi.fn() };
 });
 
-// Mock the live flags so the response is deterministic and each setter is observable.
+// Stubbed live flags keep each response deterministic and make each setter observable.
 vi.mock('../../../src/web/player-runtime.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/web/player-runtime.js')>();
   return {
@@ -51,7 +29,7 @@ vi.mock('../../../src/web/player-runtime.js', async (importOriginal) => {
   };
 });
 
-// Mock the network fetch used by the cover proxy so no real HTTP is issued.
+// The cover proxy would otherwise send a real HTTP request.
 vi.mock('../../../src/utils/fetch-with-timeout.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/utils/fetch-with-timeout.js')>();
   return {
@@ -61,7 +39,7 @@ vi.mock('../../../src/utils/fetch-with-timeout.js', async (importOriginal) => {
   };
 });
 
-// Mock the control impls so the route tests never reach mpv IPC.
+// The real control impls would reach mpv IPC.
 vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/tools/playback.js')>();
   return {
@@ -93,7 +71,6 @@ import { playbackEngine } from '../../../src/services/playback/playback-engine.j
 import { playQueueIndex, seek, setVolume, shuffleQueueFromTop } from '../../../src/tools/playback.js';
 import { createServer } from '../../../src/webui/server.js';
 
-/** Capture status + body written to a ServerResponse without a real socket. */
 interface CapturedRes {
   res: ServerResponse;
   status: () => number | undefined;
@@ -120,7 +97,6 @@ function fakeRes(): CapturedRes {
   };
 }
 
-/** IncomingMessage stand-in with a fixed peer address, Host header and an optional JSON body. */
 function fakeReq(remoteAddress: string, bodyChunks: Buffer[] = [], host = '127.0.0.1:8808'): IncomingMessage {
   const emitter = new EventEmitter() as IncomingMessage & {
     socket: { remoteAddress: string };
@@ -196,8 +172,8 @@ describe('handleHealth loopback gate (resolved bind host matrix)', () => {
   });
 
   it('hides itself (404) from a non-loopback peer on a wildcard bind (host=0.0.0.0, expose=false)', () => {
-    // Regression guard: a 0.0.0.0 bind is LAN-reachable even with expose=false,
-    // so the version fingerprint must still be gated to loopback.
+    // A 0.0.0.0 bind is LAN-reachable even with expose=false, so the version fingerprint stays
+    // loopback-only.
     const cap = fakeRes();
     handleHealth(fakeReq(LAN_PEER), cap.res, configWith({ expose: false, host: '0.0.0.0' }));
     expect(cap.status()).toBe(404);
@@ -285,7 +261,7 @@ describe('player routes reject non-loopback peers', () => {
     const shutdown = vi.fn();
     handleShutdown(fakeReq(LOOPBACK), cap.res, shutdown);
     expect(cap.status()).toBe(200);
-    expect(shutdown).not.toHaveBeenCalled(); // deferred, not synchronous
+    expect(shutdown).not.toHaveBeenCalled();
     vi.advanceTimersByTime(50);
     expect(shutdown).toHaveBeenCalledTimes(1);
   });
@@ -395,9 +371,7 @@ describe('handleSetPlayerSettings preserves unrelated stored settings', () => {
 
     expect(cap.status()).toBe(200);
     expect(writeSettings).toHaveBeenCalledTimes(1);
-    // The one touched key changed...
     expect(written?.webui?.autoOpenBrowser).toBe(true);
-    // ...while every unrelated key survived the read-merge-write.
     expect(written?.webui?.host).toBe('0.0.0.0');
     expect(written?.webui?.port).toBe(9000);
     expect(written?.webui?.expose).toBe(true);
@@ -640,13 +614,12 @@ describe('handleCover content-type allowlist', () => {
 
     expect(cap.status()).toBe(502);
     expect((cap.json() as { error: string }).error).toContain('non-image');
-    // The rejected upstream stream must be released, not leaked.
+    // Cancelling the body releases the fetch connection.
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('handleCover size parameter', () => {
-  /** Run the handler against a 404 upstream and return the upstream URL it requested. */
   async function requestedUrl(rawSize: string | null): Promise<URL> {
     vi.mocked(fetchWithTimeout).mockResolvedValue({
       ok: false,
@@ -724,7 +697,6 @@ interface ServerReply {
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-/** Send one request through a live dispatcher on an ephemeral loopback port. */
 async function requestServer(method: string, path: string, options: ServerRequestOptions = {}): Promise<ServerReply> {
   const config = configWith({ expose: false, host: options.bindHost ?? '127.0.0.1' });
   if (options.configuredPort !== undefined) config.webui.port = options.configuredPort;
@@ -830,7 +802,8 @@ describe('Host allowlist', () => {
     expect(reply.status).toBe(403);
   });
 
-  // /healthz is local-only on a LAN bind, so a route every peer may read shows the server-wide gate is off.
+  // /healthz is local-only on a LAN bind, so a route every peer may read shows the server-wide
+  // gate is off.
   it('accepts any Host on a non-loopback bind, but the local-only flag stays off', async () => {
     const reply = await requestServer('GET', '/api/player-state', {
       bindHost: '0.0.0.0',

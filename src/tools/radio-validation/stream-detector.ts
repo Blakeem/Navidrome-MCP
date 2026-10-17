@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Radio Stream Detection Module
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { fileTypeFromBuffer } from 'file-type';
@@ -31,7 +19,7 @@ const VALID_AUDIO_MIMES = [
   'audio/aac',
   'audio/aacp',
   'audio/mp4',     // AAC in MPEG-4 container (HLS fMP4, Apple streams)
-  'audio/x-m4a',   // M4A (AAC) variant
+  'audio/x-m4a',
   'audio/m4a',
   'audio/ogg',
   'audio/opus',
@@ -56,13 +44,15 @@ export function isAudioContentType(contentType: string | null): boolean {
   return VALID_AUDIO_MIMES.some(mime => normalized.includes(mime));
 }
 
-// undici decodes header bytes as latin1, while Icecast and Shoutcast pass ICY fields through as the source's UTF-8.
+// undici decodes header bytes as latin1, while Icecast and Shoutcast pass ICY fields through as
+// the source's UTF-8.
 function decodeIcyValue(value: string): string {
   const utf8 = Buffer.from(value, 'latin1').toString('utf8');
   return utf8.includes('\uFFFD') ? value : utf8;
 }
 
-// Headers joins a header sent twice with ", ", and some servers repeat an ICY field, which showed as "320, 320".
+// Headers joins a repeated header with ", ", and some servers send an ICY field twice, such as
+// icy-br "320, 320".
 function collapseRepeatedValue(value: string): string {
   const parts = value.split(', ');
   return parts.every((part) => part === parts[0]) ? (parts[0] ?? value) : value;
@@ -83,7 +73,8 @@ export function extractStreamingHeaders(headers: Headers): Record<string, string
   return streamHeaders;
 }
 
-// Bitrates in kbps by bitrate index for Layer II and III. Index 0 (free format) and 15 (invalid) are unusable.
+// Bitrates in kbps by bitrate index for Layer II and III. Index 0 (free format) and 15 (invalid)
+// are unusable.
 const MPEG1_LAYER2_KBPS = [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384];
 const MPEG1_LAYER3_KBPS = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
 const MPEG2_LAYER23_KBPS = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
@@ -129,8 +120,8 @@ function readAdtsFrame(buffer: Uint8Array, offset: number): FrameHeader | null {
 }
 
 /**
- * A live stream sample starts mid-frame, so a format signature at byte 0 misses it. Three frame headers, each one
- * frame after the last, identify MPEG audio or ADTS AAC, since a lone sync pattern shows up in random data.
+ * A live stream sample starts mid-frame, so a format signature at byte 0 misses it. Three chained
+ * frame headers identify MPEG or ADTS audio, since a lone sync pattern appears in random data.
  */
 function findStreamFrames(buffer: Uint8Array): AudioDetectionResult | null {
   for (let offset = 0; offset + 6 < buffer.length; offset++) {
@@ -164,15 +155,13 @@ export async function detectAudioFormat(buffer: Uint8Array): Promise<AudioDetect
     }
 
     const signatures = [
-      { bytes: [0xFF, 0xFB], format: 'mp3', mime: 'audio/mpeg' }, // MP3
-      { bytes: [0xFF, 0xF1], format: 'aac', mime: 'audio/aac' },  // AAC
-      { bytes: [0xFF, 0xF9], format: 'aac', mime: 'audio/aac' },  // AAC
-      { bytes: [0x4F, 0x67, 0x67, 0x53], format: 'ogg', mime: 'audio/ogg' }, // OGG
+      { bytes: [0xFF, 0xFB], format: 'mp3', mime: 'audio/mpeg' },
+      { bytes: [0xFF, 0xF1], format: 'aac', mime: 'audio/aac' },
+      { bytes: [0xFF, 0xF9], format: 'aac', mime: 'audio/aac' },
+      { bytes: [0x4F, 0x67, 0x67, 0x53], format: 'ogg', mime: 'audio/ogg' },
     ];
 
     for (const sig of signatures) {
-      // An absent byte must count as a mismatch, not a wildcard, so a
-      // 1-byte [0xFF] sample doesn't falsely match MP3/AAC/OGG.
       if (buffer.length < sig.bytes.length) continue;
       let matches = true;
       for (let i = 0; i < sig.bytes.length; i++) {

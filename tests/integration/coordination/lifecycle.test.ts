@@ -1,11 +1,10 @@
 /**
  * Navidrome MCP Server - Player lifecycle coordination tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The IPC parent↔child link (spec lifecycle §B.1): a web player spawned by the
- * MCP server stops with it by default, or survives when persistAfterMcpExit is
- * on. We mimic the MCP server with a tiny harness (fixtures/ipc-parent.mjs) that
- * spawns navidrome-web over an IPC channel, then kill it to simulate MCP exit.
+ * Killing the fixtures/ipc-parent.mjs harness, which stands in for the MCP server, simulates an
+ * MCP exit.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -40,12 +39,12 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
 
     expect(await waitFor(async () => (await healthz(port))?.app === 'navidrome-mcp-web')).toBe(true);
 
-    parent.kill('SIGTERM'); // simulate the MCP server exiting → child `disconnect`
+    parent.kill('SIGTERM');
     expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 20000 })).toBe(true);
   });
 
-  // The log line proves the child started and then stopped, which a free port alone cannot. A parent gone
-  // before the bind makes the child stand down, and one gone after the bind makes it shut down.
+  // The log line proves the child started and then stopped, which a free port alone cannot.
+  // A parent gone before the bind makes the child stand down. One gone after makes it shut down.
   it('persist OFF: a player whose MCP exited during its startup does not keep running', async () => {
     const port = randomPort();
     const storePath = makeTempStore(port, { persistAfterMcpExit: false });
@@ -83,11 +82,10 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     expect(await waitFor(async () => (await healthz(port)) !== null)).toBe(true);
 
     parent.kill('SIGTERM');
-    // Give the disconnect a moment; the player should ignore it and keep serving.
+    // The player ignores the disconnect, so its port stays up for the entire wait.
     expect(await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 4000 })).toBe(false);
     expect((await healthz(port))?.app).toBe('navidrome-mcp-web');
 
-    // Clean up the survivor via its own (loopback) power endpoint.
     await fetch(`http://127.0.0.1:${port}/api/shutdown`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -96,8 +94,6 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     await waitFor(async () => (await healthz(port)) === null, { timeoutMs: 6000 });
   });
 
-  // A direct SIGTERM to the web owner after playback must quit mpv. The web
-  // entry point's shutdown calls quitMpv(), which quits mpv over a one-shot socket.
   it.skipIf(NO_MPV)('a direct SIGTERM to the web owner quits mpv (after playback)', async () => {
     const port = randomPort();
     const owner = spawnWeb(makeTempStore(port));
@@ -108,7 +104,7 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
     };
     const id = list.playlists?.[0]?.id;
     if (id === undefined) {
-      owner.kill('SIGKILL'); // empty library — nothing to play, skip the assertion
+      owner.kill('SIGKILL'); // Without a playlist there is nothing to play.
       return;
     }
     const post = (path: string, body: unknown): Promise<unknown> =>

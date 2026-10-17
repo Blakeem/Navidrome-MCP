@@ -1,5 +1,3 @@
-// The Favorites tab: one row for the starred albums and one for the starred songs.
-
 import { getJson } from './api.js';
 import { byId } from './dom.js';
 import { FAVORITE_SOURCES } from './favorite-sources.js';

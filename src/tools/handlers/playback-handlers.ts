@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Playback Tool Handlers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -25,12 +13,8 @@ import { ALBUM_FILTER_PROPERTIES, SONG_FILTER_PROPERTIES } from './search-handle
 import { respawnWebForPlay } from './respawn-on-play.js';
 
 /**
- * Tools that START playback by loading new content into the queue. The user may have powered the web
- * player off, which also quits mpv, so each starter first respawns it (a no-op when `webui.enabled` is off).
- * play_radio_station is also a starter and respawns in radio-handlers.ts.
- * Queue navigators (next/previous/resume/play_queue_index) and queue mutators (clear_play_queue/
- * shuffle_play_queue/move_in_play_queue/remove_from_play_queue) are excluded. mpv's queue is empty
- * after a respawn, so they attach only and never resurrect the player.
+ * Tools that load new content respawn the web player first, since powering it off also quits mpv.
+ * Queue navigators and mutators skip it, since a powered-off player leaves no queue to act on.
  */
 const PLAYBACK_STARTERS = new Set([
   'play_songs',
@@ -387,9 +371,6 @@ const tools: Tool[] = [
 
 export const PLAYBACK_TOOL_NAMES = tools.map((tool) => tool.name);
 
-/**
- * Factory for the playback ToolCategory. `config` gates the web player respawn before a play.
- */
 export function createPlaybackToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
     tools,

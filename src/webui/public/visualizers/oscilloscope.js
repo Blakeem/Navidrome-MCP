@@ -3,34 +3,35 @@ import { average, detectBeat, rgba } from '../visualizer-kit.js';
 const TAU = Math.PI * 2;
 // Samples per trace. Every pair below closes within one turn, so the trace is one closed loop.
 const POINTS = 480;
-// Frequency pairs from the harmonic series, the musical intervals Lissajous first drew with tuning forks.
+// Harmonic-series frequency pairs, the musical intervals Lissajous first drew with tuning forks.
 const INTERVALS = [[2, 3], [3, 4], [1, 2], [3, 5], [1, 1], [2, 5], [4, 5], [1, 3], [3, 8], [5, 6], [2, 7], [1, 4], [1, 5]];
-// A lobe's width over its height. Outside this range a pair draws flat or spindly lobes in the area's shape.
+// A lobe's width over its height. Outside this range a pair draws flat or spindly lobes.
 const LOBE_ASPECT_MIN = 0.7;
 const LOBE_ASPECT_MAX = 2.6;
-// An area too narrow for every pair gets one figure with lobes this much wider than tall.
+// When no pair fits the area, one figure gets lobes this much longer along the area's long side.
 const FALLBACK_LOBE_ASPECT = 1.4;
-// The generator moves to the next pair on a beat once a figure has held this long, or regardless after the longer hold.
+// The next pair comes on a beat after the short hold, or without one after the long hold.
 const HOLD_S = 5;
 const MAX_HOLD_S = 14;
 const MORPH_S = 0.9;
 
 const PRESENCE_GAIN = 4;
 const POWER_ATTACK_PER_SECOND = 9;
-// The fraction of beam power left after one second of silence, so the last glow is gone in about 1.4 seconds.
+// Beam power left after one second of silence, so the last glow is gone in about 1.3 s.
 const POWER_RETAIN_PER_SECOND = 0.03;
 const POWER_CUTOFF = 0.01;
-// Under this power the trace shrinks toward the center, the way a scope figure collapses as its signal fades.
+// Under this power the trace shrinks to the center, as a scope figure does when its signal fades.
 const COLLAPSE_POWER = 0.5;
 
-// Two scope channels: the low bands swing x and the high bands swing y. The three parts sum to the full radius.
+// The low bands swing x and the high bands swing y. The three parts sum to the full radius.
 const SIZE_BASE = 0.62;
 const SIZE_LEVEL = 0.28;
 const SIZE_KICK = 0.1;
 const KICK_DECAY_PER_SECOND = 7;
 const KICK_FLASH = 0.6;
 
-// Apparent turns per second of the figure. One turn of the x phase repeats the shape once per y cycle.
+// Apparent turns per second of the figure. The shape repeats each time the x phase moves by tau
+// over the y frequency, so the phase step divides by that frequency.
 const SPIN_TURNS_PER_SECOND = 0.12;
 const SPIN_ENERGY = 0.3;
 // A kick briefly speeds the spin, so the figure twists on the beat.
@@ -40,7 +41,7 @@ const PINCH_LOBES = 7;
 const PINCH_DEPTH = 0.32;
 const PINCH_PER_SECOND = 0.5;
 const PINCH_MID = 1.6;
-// The treble adds hash across the trace, like noise riding the input.
+// The treble adds hash across the trace, like noise on the input signal.
 const RIPPLE_CYCLES = 48;
 const RIPPLE_RATIO = 0.02;
 const RIPPLE_MAX_PX = 4;
@@ -89,10 +90,11 @@ const GRID_DOT = 1.4;
 const GRID_LINE = 0.8;
 const GRID_TICK = 3;
 const GRID_KICK = 0.5;
-// Under this alpha a paint rounds to nothing on an 8-bit canvas.
+// Under this alpha a paint changes a pixel by at most one step of an 8-bit channel.
 const MIN_ALPHA = 0.004;
 
-// P31 green phosphor glows on the dark card. On the light card additive light washes out, so it draws as plotter ink.
+// P31 green phosphor glows on the dark card. Additive light washes out on the light card, so it
+// draws as plotter ink there.
 const PHOSPHOR = {
   dark: {
     blend: 'lighter',
@@ -124,7 +126,10 @@ const PHOSPHOR = {
   },
 };
 
-/** An XY oscilloscope whose phosphor beam traces Lissajous figures that the bands size, pinch and roughen. */
+/**
+ * An XY oscilloscope whose phosphor beam traces Lissajous figures that the bands size, pinch and
+ * roughen.
+ */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
@@ -156,11 +161,10 @@ function draw(ctx, frame) {
   if (!frame.reducedMotion) drawHeads(ctx, trace, style, scope, motion.lap, headBrightness);
   drawSpot(ctx, scope, style, power * (1 - shape.collapse));
   captureAfterglow(afterglow, trace, Math.min(1, brightness));
-  // The afterglow and the parked dot outlast the music, so the host keeps drawing until the power runs out.
+  // The afterglow and the parked dot outlast the music, so the host draws until the power runs out.
   return true;
 }
 
-// Power rises with the music over a fraction of a second and falls at its own pace once the music stops.
 function updatePower(state, frame) {
   const presence = Math.min(1, frame.energy * PRESENCE_GAIN);
   const previous = state.power ?? 0;
@@ -175,7 +179,7 @@ function updateKick(state, frame, beat) {
   return state.kick;
 }
 
-// The margin holds the ripple and the head glow, the widest paint, so every stroke stays clear of the pad.
+// The margin holds the ripple and the head glow, the widest paint, so every stroke clears the pad.
 function scopeGeometry(frame) {
   const { width, height, pad } = frame;
   const short = Math.min(width, height);
@@ -199,7 +203,8 @@ function bandLevels(values) {
   };
 }
 
-// The y frequency sets the lobes across and the x frequency the lobes down, so each pair is turned to fit the area.
+// The y frequency sets the lobes across and the x frequency the lobes down, so each pair is turned
+// to fit the area.
 function intervalsFor(aspect) {
   const fits = [];
   for (const [low, high] of INTERVALS) {
@@ -214,7 +219,6 @@ function intervalsFor(aspect) {
   return [[Math.max(1, Math.round(1 / (aspect * FALLBACK_LOBE_ASPECT))), 1]];
 }
 
-// A beat turns the generator to the next interval once the figure has held, and the old figure morphs into it.
 function advancePatch(state, frame, beat, pairs) {
   const patch = (state.patch ??= { from: pairs[0], to: pairs[0], morph: 1, held: 0 });
   let position = pairs.findIndex(([a, b]) => a === patch.to[0] && b === patch.to[1]);
@@ -240,7 +244,7 @@ function advanceMotion(state, frame, levels, kick, patch) {
   return { phase: state.phase, pinch: state.pinch, ripple: state.ripple, lap: state.lap };
 }
 
-// The three size parts never exceed 1 and the pinch only shrinks, so the figure stays inside its radii.
+// The pinch only shrinks, so the size parts keep the figure inside its radii.
 function shapeOf(scope, levels, kick, power) {
   const collapse = smoothstep(0, COLLAPSE_POWER, power);
   return {
@@ -281,7 +285,7 @@ function traceFigure(state, scope, patch, shape, motion) {
   return trace;
 }
 
-// Each point moves along the trace's normal, so the hash roughens the line without changing the figure.
+// Each point moves along the trace's normal, so the hash roughens the line but keeps the figure.
 function addRipple(trace, amplitude, phase) {
   const { baseX, baseY, xs, ys } = trace;
   for (let k = 0; k <= POINTS; k++) {
@@ -313,7 +317,7 @@ function bucketSegments(trace, scope, patch, ease) {
   }
 }
 
-// Each slot holds one earlier trace. A resize drops them all, since their points belong to the old area.
+// A resize drops every slot, since their points belong to the old area.
 function ageAfterglow(state, frame) {
   const area = `${frame.width}x${frame.height}`;
   if (state.afterglow?.area !== area) {
@@ -342,7 +346,7 @@ function captureAfterglow(afterglow, trace, brightness) {
   afterglow.next = (afterglow.next + 1) % GHOSTS;
 }
 
-// The dot grid, center cross and ticks of a scope faceplate, faded toward the edge by one elliptical gradient.
+// One elliptical gradient fades the entire faceplate toward the edge, so the grid takes one fill.
 function drawGraticule(ctx, frame, style, strength) {
   const alpha = style.gridAlpha * strength;
   if (alpha < MIN_ALPHA) return;
@@ -404,7 +408,7 @@ function drawAfterglow(ctx, afterglow, style, scope) {
   }
 }
 
-// Wide halos first, then the bloom, then the core, with one stroke per brightness bucket in each pass.
+// Wider passes draw first, so the core lands on top of the halo and bloom.
 function drawBeam(ctx, trace, style, scope, brightness) {
   for (let bucket = 0; bucket < BUCKETS; bucket++) {
     const heat = (bucket + 1) / BUCKETS;
@@ -440,7 +444,7 @@ function beamColor(style, heat) {
   return mix(style.dim, style.hot, ((heat - lowest) / (1 - lowest)) ** 2);
 }
 
-// Each head drags a tail that brightens toward it, and the tails of all heads share one stroke per step.
+// The tails of all heads share one stroke per brightness step, which keeps the paint count low.
 function drawHeads(ctx, trace, style, scope, lap, brightness) {
   if (brightness < MIN_ALPHA) return;
   const positions = Array.from({ length: HEADS }, (_, h) => ((lap + h / HEADS) % 1) * POINTS);
@@ -474,7 +478,7 @@ function drawSpot(ctx, scope, style, strength) {
   fillGlow(ctx, scope.centerX, scope.centerY, scope.headRadius * SPOT_RADIUS_RATIO, style, alpha);
 }
 
-// A hot center falling to clear at the radius, so the glow ends inside the margin it was sized for.
+// The glow falls to clear at the radius, so it ends inside the margin sized for it.
 function fillGlow(ctx, x, y, radius, style, alpha) {
   const glow = ctx.createRadialGradient(x, y, 0, x, y, radius);
   glow.addColorStop(0, rgba(style.hot, alpha));

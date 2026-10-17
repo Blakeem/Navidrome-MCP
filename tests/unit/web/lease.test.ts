@@ -1,9 +1,7 @@
 /**
  * Navidrome MCP Server - MCP lease unit tests
  * Copyright (C) 2025
- *
- * The MCP side of the lease: one kept-open POST per player port, reopened after
- * the player drops it, and silent against an older or absent player.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';

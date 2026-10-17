@@ -19,20 +19,12 @@ export default defineConfig({
       ],
     },
     include: ['tests/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
-    // Integration suites (live-mpv playback + multi-process coordination) require
-    // a real mpv binary and/or spawn real child processes against a built dist/.
-    // They run via `pnpm test:playback` (vitest.playback.config.ts) and are
-    // excluded here so the default `pnpm test:run` stays fast and mpv-free.
+    // The integration suites need mpv or a built dist/, so they run under `pnpm test:playback`.
     exclude: ['node_modules', 'dist', 'coverage', 'tests/integration/**'],
-    // Provision a temp settings.json store (seeded from env/.env) before each
-    // test file, since runtime config now comes only from the store.
+    // Each test file gets a throwaway settings.json store, so the suite never touches the real one.
     setupFiles: ['tests/helpers/setup-config-store.ts'],
-    // Live-read blocks skip here so this run is deterministic. They authenticate
-    // against a real Navidrome, and vitest's forks pool gives each file its own
-    // worker: four concurrent logins all get 429, and their keep-alive sockets
-    // raced fork teardown as ERR_IPC_CHANNEL_CLOSED. They run via
-    // `pnpm test:live` (vitest.live.config.ts), which shares one fork.
-    // Set in config rather than the npm script so it holds on every platform.
+    // Per-file workers log in to Navidrome at once and get 429, so live reads run in test:live.
+    // The flag lives here instead of the npm script so it holds on every platform.
     env: {
       SKIP_INTEGRATION_TESTS: 'true',
     },

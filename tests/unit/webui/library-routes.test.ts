@@ -1,8 +1,3 @@
-/**
- * Web remote library browse routes, driven directly with a captured
- * ServerResponse and a mocked Navidrome client so no request leaves the process.
- */
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -181,7 +176,8 @@ describe('handleLibrarySearch', () => {
     expect(ids(body['artists'])).toEqual(['ar1']);
     expect(ids(body['albums'])).toEqual(['al1']);
     expect(ids(body['songs'])).toEqual(['so1']);
-    // The remote formats numeric seconds itself, so a song past one hour reads H:MM:SS like the queue.
+    // The remote formats numeric seconds itself, so a song past one hour reads H:MM:SS like the
+    // queue.
     expect((body['songs'] as Array<{ duration?: number }>)[0]?.duration).toBe(7800);
   });
 });

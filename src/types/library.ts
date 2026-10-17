@@ -1,30 +1,15 @@
 /**
  * Navidrome MCP Server - Library Data Transfer Objects
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-/**
- * Clean DTO for library information with LLM-friendly formatting
- */
 export interface LibraryDTO {
   id: number;
   name: string;
   path: string;
   isActive: boolean;
-  /** Null when Navidrome supplied no stats for this library, which is the case for a non-admin account. */
+  /** Null when Navidrome supplied no stats for this library, as for a non-admin account. */
   stats: {
     totalSongs: number;
     totalAlbums: number;
@@ -44,9 +29,6 @@ export interface LibraryDTO {
   updatedAt: string | null;
 }
 
-/**
- * Clean DTO for user details with library information
- */
 export interface UserDetailsDTO {
   user: {
     id: string;
@@ -70,9 +52,6 @@ export interface UserDetailsDTO {
   };
 }
 
-/**
- * Response for library management operations
- */
 export interface LibraryManagementResponse {
   success: boolean;
   message: string;

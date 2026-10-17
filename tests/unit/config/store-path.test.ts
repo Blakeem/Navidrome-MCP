@@ -1,7 +1,3 @@
-/**
- * Unit tests for getSettingsStorePath — OS-aware store location + override.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';

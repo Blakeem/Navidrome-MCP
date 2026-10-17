@@ -1,9 +1,6 @@
 /**
- * Unit tests for the settings server's seed/save behavior — password masking,
- * the first-run sentinel un-mask (regression guard), and save validation.
- *
- * No network: /api/settings/test only receives inputs that fail before a request
- * leaves the process (a validation failure, a URL that carries credentials).
+ * /api/settings/test only receives inputs that fail before a request leaves the process,
+ * such as a validation failure or a URL that carries credentials, so no test reaches the network.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -94,7 +91,7 @@ describe('settings server seed/save', () => {
     expect(sug['features.lyricsProvider']).toBe('lrclib');
     expect(sug['features.lrclibUserAgent']).toBe('Navidrome-MCP');
     expect(sug['features.lrclibBase']).toBe('https://lrclib.net');
-    // No suggestion for the radio base — blank means SRV auto mirror selection.
+    // A blank radio base selects a mirror by SRV lookup, so the form suggests none.
     expect(sug['features.radioBrowserBase']).toBeUndefined();
   });
 
@@ -147,9 +144,7 @@ describe('settings server seed/save', () => {
     expect(readSettings()?.navidrome?.password).toBe('newpass');
   });
 
-  // Regression guard for the first-run bug: with NO settings.json yet, the
-  // seed/mask comes from env, and saving the unchanged sentinel must restore
-  // the real env password (not an empty string that fails validation).
+  // With no store, env supplies the seed password, so a saved mask sentinel must resolve to it.
   it('un-masks from the env seed on first run (no store yet)', async () => {
     process.env['NAVIDROME_URL'] = 'http://first:4533';
     process.env['NAVIDROME_USERNAME'] = 'firstuser';
@@ -239,8 +234,7 @@ describe('settings server seed/save', () => {
     expect(status).toBe(403);
   });
 
-  // The no-orphan reaper: setup-mode hosts (the standalone web player launched
-  // before configuration) pass idleTimeoutMs to self-terminate after inactivity.
+  // Setup mode in the standalone web player passes idleTimeoutMs, so an idle settings page exits.
   it('self-reaps after the idle timeout when there is no activity', async () => {
     let reaped = 0;
     await start({ idleTimeoutMs: 100, onIdleTimeout: () => { reaped += 1; } });
@@ -251,7 +245,6 @@ describe('settings server seed/save', () => {
   it('stays alive while requests keep arriving (idle timer resets each request)', async () => {
     let reaped = 0;
     const base = await start({ idleTimeoutMs: 200, onIdleTimeout: () => { reaped += 1; } });
-    // Poke every 70ms (< 200ms) for ~350ms; each request must reset the clock.
     for (let i = 0; i < 5; i++) {
       await fetch(`${base}/api/settings/seed`);
       await sleep(70);

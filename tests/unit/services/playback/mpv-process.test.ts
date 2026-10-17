@@ -1,12 +1,7 @@
 /**
  * Navidrome MCP Server - mpv-process unit tests
  * Copyright (C) 2025
- *
- * Covers production-hardening changes from docs/review/02 batch C:
- *   - M1: socket path prefers XDG_RUNTIME_DIR when set
- *   - mpv binary resolution rejects directories and the mpv.com wrapper
- *
- * The real mpv binary is exercised by tests/integration/playback/.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

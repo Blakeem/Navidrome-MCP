@@ -1,10 +1,6 @@
 /**
- * Unit tests for buildFormSeed — the settings-form pre-fill source.
- *
- * Deterministic aspects only: that an existing store wins over env, and that
- * process.env values map to the right nested fields (process.env takes
- * precedence over any legacy .env, so these assertions don't depend on whether
- * a project .env is present).
+ * process.env wins over a legacy project .env, so a value set through process.env holds either way.
+ * The default-value assertions assume no project .env sets the same keys.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -65,13 +61,12 @@ describe('buildFormSeed', () => {
   it('pre-fills working radio + lyrics defaults on first run (no store, no env)', () => {
     process.env['NAVIDROME_URL'] = 'http://env:4533';
     const seed = buildFormSeed();
-    // The fields that gate radio/lyrics ON get sensible defaults so a fresh
-    // install works without hunting for values.
+    // Pre-filled gate fields let a fresh install enable radio and lyrics without looking up values.
     expect(seed.features?.radioBrowserUserAgent).toBe('Navidrome-MCP');
     expect(seed.features?.lyricsProvider).toBe('lrclib');
     expect(seed.features?.lrclibUserAgent).toBe('Navidrome-MCP');
     expect(seed.features?.lrclibBase).toBe('https://lrclib.net');
-    // Radio base stays blank → SRV auto mirror selection (not pinned).
+    // A blank radio base selects a mirror by SRV lookup.
     expect(seed.features?.radioBrowserBase ?? null).toBeNull();
   });
 

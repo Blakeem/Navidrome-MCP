@@ -1,34 +1,15 @@
 /**
  * Navidrome MCP Server - Subsonic Auth Helper
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import crypto from 'node:crypto';
 import { SUBSONIC_API_VERSION, SUBSONIC_CLIENT_NAME } from '../constants/defaults.js';
 
 /**
- * Build Subsonic auth params using salted-MD5 (`s` + `t`) — never the
- * plaintext password (`p`). Each call generates a fresh 16-byte salt.
- *
- * `extraParams` are merged on top so callers can pass endpoint-specific
- * keys (`id`, `streamUrl`, `name`, `format`, `maxBitRate`, etc.).
- *
- * The params work as a GET query or a form-encoded POST body. POST keeps the
- * replay-grade `t`/`s` pair out of URLs. A GET URL carries the pair, so it
- * must pass stripSubsonicAuthParams before it is logged or returned.
+ * Salted MD5 keeps the plaintext password (`p`) off the wire. A GET URL carries the replay-grade
+ * `t` and `s` pair, so it must pass stripSubsonicAuthParams before it is logged or returned.
  */
 export function buildSubsonicAuthParams(
   username: string,

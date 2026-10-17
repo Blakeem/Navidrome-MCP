@@ -1,7 +1,3 @@
-/**
- * Unit tests for the settings store reader/writer (read / atomic write).
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,7 +32,6 @@ describe('settings store read/write', () => {
     });
 
     it('returns null when the schema is violated', () => {
-      // webui.port must be a number, so a string fails validation.
       writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { port: 'nope' } }));
       expect(readSettings()).toBeNull();
     });
@@ -111,7 +106,7 @@ describe('settings store read/write', () => {
     });
 
     it('writes owner-only (0600) permissions on POSIX', () => {
-      if (process.platform === 'win32') return; // mode bits are a no-op on Windows
+      if (process.platform === 'win32') return; // Windows ignores POSIX mode bits.
       writeSettings(sample);
       const mode = statSync(process.env['NAVIDROME_CONFIG_PATH']!).mode & 0o777;
       expect(mode).toBe(0o600);
@@ -121,12 +116,12 @@ describe('settings store read/write', () => {
       writeSettings(sample);
       writeSettings({ ...sample, navidrome: { ...sample.navidrome, username: 'updated' } });
       expect(readSettings()?.navidrome?.username).toBe('updated');
-      // No leftover *.tmp siblings from the temp-then-rename.
       const leftovers = readdirSync(dir).filter((f) => f.endsWith('.tmp'));
       expect(leftovers).toEqual([]);
     });
 
-    // renameSync onto a directory throws (EISDIR on POSIX, EPERM on Windows) after the temp file holds the credentials.
+    // renameSync onto a directory throws (EISDIR on POSIX, EPERM on Windows) after the temp file
+    // already holds the credentials.
     it('removes the temp file when the final rename fails', () => {
       const occupied = join(dir, 'occupied');
       mkdirSync(occupied);

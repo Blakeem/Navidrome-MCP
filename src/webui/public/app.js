@@ -1,4 +1,5 @@
-// Navidrome MCP web remote entry point. Production serves the copy pnpm build places in dist/webui/public, so an edit here needs a build and a server restart.
+// Production serves the copy that pnpm build places in dist/webui/public and reads it on every
+// request, so an edit to this folder needs a build and a page reload.
 
 import { getJson } from './api.js';
 import { connect } from './connection.js';
@@ -56,7 +57,8 @@ function bootstrap() {
   bindLyricsView();
   bindVisualizer();
   void loadPlayerState();
-  // A reconnect may have missed any amount of the song, so the next snapshot lands the lyrics clock.
+  // A reconnect may have missed any amount of the song,
+  // so the next snapshot snaps the lyrics clock.
   connect({ onOpen: snapLyricsClock, onSnapshot: applySnapshot });
 }
 

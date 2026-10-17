@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - tools/call error contract tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * A failing tool returns an isError result the model can read and correct.
  * Only an unknown tool name is a JSON-RPC protocol error (-32602).

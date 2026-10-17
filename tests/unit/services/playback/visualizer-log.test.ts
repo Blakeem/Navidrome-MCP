@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { VISUALIZER_BAND_COUNT } from '../../../../src/services/playback/visualizer-filter.js';
 import { VisualizerLogParser } from '../../../../src/services/playback/visualizer-log.js';
 
-// Shaped like the lines mpv 0.41 forwarded from the filter: one frame line, then one line per band.
+// Shaped like mpv 0.41's forwarded filter output, which is a frame line and then a line per band.
 function frameLines(frame: number, ptsTime: string, levels: readonly string[], filter = 'Parsed_ametadata_40'): Array<{ prefix: string; text: string }> {
   return [
     { prefix: 'ffmpeg', text: `${filter}: frame:${String(frame).padEnd(4)} pts:${frame * 1024}     pts_time:${ptsTime}\n` },

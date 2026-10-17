@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Logger Utility
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 // Truncation bounds the regex cost on megabyte-scale blobs.
@@ -41,27 +29,20 @@ const RE_JWT =
 const RE_API_KEY =
   /"?(api[_-]?key|token|secret)"?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi;
 
-// Redacts the Subsonic auth params u, p, s and t anywhere in log text. Salt and token are
-// replay-grade, and this regex is the logger's only Subsonic guard.
+// Salt and token are replay-grade, and this is the logger's only guard for Subsonic auth params.
 const RE_SUBSONIC_PARAMS = /([?&])[upst]=[^&\s]*/gi;
 
-// A string leaf carries no key for redactString to match, so the walker redacts every key ending in one of these names.
+// A string leaf carries no key for redactString to match, so the walker redacts every key ending in
+// one of these names.
 const RE_SENSITIVE_KEY =
   /(password|passwd|pwd|token|secret|api[_-]?key|authorization|credentials?)$/i;
 
-/**
- * Apply all credential-redaction regex passes to a single string.
- * Strings exceeding MAX_REDACT_STRING_BYTES are truncated first, so the
- * retained prefix is still redacted. The [TRUNCATED_BY_LOGGER] tag is
- * appended after redaction so callers still know the string was cut.
- */
 function redactString(s: string): string {
   const truncated = s.length > MAX_REDACT_STRING_BYTES;
   let out = truncated ? s.slice(0, MAX_REDACT_STRING_BYTES) : s;
 
   out = out.replace(RE_BEARER_HEADER, '$1: Bearer <REDACTED>');
 
-  // Runs after the header pass so its output is not re-matched.
   out = out.replace(RE_BEARER_VALUE, 'Bearer <REDACTED>');
 
   // Keep the key and its ':' or '=' separator so the log line keeps its context.
@@ -103,9 +84,8 @@ export function redact(value: unknown, depth: number = 0): unknown {
       });
     }
     if ('cause' in value && value.cause !== undefined) {
-      // Bound the cause-chain recursion: the Error branch sits above the
-      // MAX_REDACT_DEPTH guard below, so without this an unbounded or circular
-      // `.cause` chain would recurse until the V8 stack overflows.
+      // The Error branch runs before the MAX_REDACT_DEPTH guard, so this bound stops a circular
+      // `cause` chain from overflowing the stack.
       Object.defineProperty(redacted, 'cause', {
         value: depth + 1 < MAX_REDACT_DEPTH ? redact(value.cause, depth + 1) : value.cause,
         configurable: true,
@@ -164,7 +144,6 @@ class Logger {
     this.debugMode = enabled;
   }
 
-  /** Redirect output to a custom sink (or pass null to restore stderr). */
   setSink(sink: LogSink | null): void {
     this.sink = sink;
   }
@@ -175,6 +154,7 @@ class Logger {
       this.sink(level, redacted);
       return;
     }
+    // stdout carries the MCP stdio protocol, so logs go to stderr.
     console.error(`[${level}]`, ...redacted);
   }
 

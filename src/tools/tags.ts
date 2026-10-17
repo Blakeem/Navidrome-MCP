@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Tag Management Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -56,7 +44,10 @@ interface TagNamePage {
 /** Bounds outbound connections to Navidrome, since each backfilled entry issues two requests. */
 const BACKFILL_CONCURRENCY = 8;
 
-/** Filter keys are lowercased tag names with the row id (releasetype=<tag id>), the form Navidrome's frontend sends. */
+/**
+ * Filter keys are lowercased tag names with the row id, such as releasetype=<tag id>, the form
+ * Navidrome's frontend sends.
+ */
 async function backfillTagCounts(
   client: NavidromeClient,
   entries: TagWithMeta[],
@@ -123,7 +114,7 @@ export async function listTagValues(client: NavidromeClient, args: unknown): Pro
       queryParams.append('tag_value', params.tagValue);
     }
 
-    // X-Total-Count gives the matching value count beyond this page.
+    // X-Total-Count counts the matching values beyond this page.
     const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(`/tag?${queryParams.toString()}`);
     const tagMeta = transformTagsToMeta(data);
 
@@ -159,7 +150,8 @@ async function fetchTagNamePage(
     tag_name: tagName,
   });
 
-  // X-Total-Count gives the library-wide distinct count without fetching every value.
+  // X-Total-Count gives the distinct count across the active libraries without fetching every
+  // value.
   const { data, total } = await client.requestWithLibraryFilterAndMeta<unknown>(`/tag?${queryParams.toString()}`);
   return { tagName, entries: transformTagsToMeta(data), total };
 }
@@ -202,7 +194,7 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
     const pages = await Promise.all(
       tagNamesToFetch.map((tagName) => fetchTagNamePage(client, tagName, params.distributionLimit)),
     );
-    // One backfill across every page, so BACKFILL_CONCURRENCY bounds the whole tool call.
+    // One backfill spans every page, so BACKFILL_CONCURRENCY bounds the entire tool call.
     await backfillTagCounts(client, pages.flatMap((page) => page.entries));
 
     const distributions: TagDistribution[] = [];
@@ -220,9 +212,6 @@ export async function getTagDistribution(client: NavidromeClient, args: unknown)
   }
 }
 
-/**
- * List the cached values of one search filter type, so agents can pick exact filter values.
- */
 export async function getFilterOptions(args: unknown): Promise<GetFilterOptionsResult> {
   try {
     const { filterType, limit, offset } = FilterOptionsSchema.parse(args);

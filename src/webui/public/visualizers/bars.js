@@ -8,7 +8,7 @@ function draw(ctx, frame) {
   const step = (width - 2 * pad) / BAR_COUNT;
   const barWidth = step * 0.55;
   const middle = height / 2;
-  // A round cap reaches half the bar width past the line's end, so the line stops short by that much.
+  // A round cap reaches half the bar width past the line's end, so the line stops that much short.
   const maxHalf = middle - pad - barWidth / 2;
   const heights = resample(frame.values, BAR_COUNT);
   const peaks = resample(frame.peaks, BAR_COUNT);

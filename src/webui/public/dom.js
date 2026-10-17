@@ -1,5 +1,3 @@
-// DOM helpers shared by the web remote modules.
-
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 export const ICON_PLAY = 'M8 5v14l11-7z';
@@ -8,8 +6,8 @@ export function byId(id) {
   return document.getElementById(id);
 }
 
-// Some browsers set the `hidden` property on an SVG element without its attribute,
-// so the attribute is written directly and `svg[hidden]` in styles.css matches.
+// An SVG element has no `hidden` property, so assigning one would not set the attribute.
+// The attribute is written directly, and `svg[hidden]` in styles.css hides it.
 export function setHidden(el, hide) {
   if (hide) el.setAttribute('hidden', '');
   else el.removeAttribute('hidden');

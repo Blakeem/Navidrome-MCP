@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - validation schema tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it } from 'vitest';
@@ -70,10 +71,7 @@ describe('SetActiveLibrariesSchema', () => {
 });
 
 describe('TopTracksByArtistSchema limit contract', () => {
-  // Regression: the default must sit within the declared max. zod's `.default()`
-  // substitutes its value WITHOUT re-running `.max()`, so a default above the max
-  // (previously 100 vs a max of 50) silently returns an out-of-contract value on
-  // the omitted-limit path while the same explicit value would be rejected.
+  // zod's `.default()` skips `.max()`, so a default above the max would escape the limit contract.
   it('applies a default of 10 when limit is omitted, within the max', () => {
     const result = TopTracksByArtistSchema.parse({ artist: 'Radiohead' });
     expect(result.limit).toBe(10);

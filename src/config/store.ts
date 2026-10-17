@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Settings store (read / write)
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import {
@@ -33,10 +21,8 @@ import { getSettingsStorePath } from './store-path.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * The canonical on-disk settings shape (nested, grouped by surface). Every
- * field is optional/nullable so a partially-filled or hand-edited file still
- * parses. "Is this a usable config?" is decided downstream by whether
- * `navidrome.url` is present and the mapped flat config passes `ConfigSchema`.
+ * Every field is optional so a partial or hand-edited file still parses. ConfigSchema decides
+ * later whether the mapped config is usable.
  */
 export const SettingsFileSchema = z.object({
   navidrome: z.object({
@@ -78,7 +64,7 @@ export const SettingsFileSchema = z.object({
     expose: z.boolean().optional(),
     autoOpenBrowser: z.boolean().optional(),
     persistAfterMcpExit: z.boolean().optional(),
-    // A plain nullable string, so a hand-edited null or unknown theme reads as unset instead of voiding the store.
+    // Not an enum, so an unknown theme reads as unset instead of failing the entire store.
     theme: z.string().nullish(),
     visualizer: z.boolean().optional(),
   }).optional(),
@@ -90,11 +76,7 @@ export const SettingsFileSchema = z.object({
 
 export type SettingsFile = z.infer<typeof SettingsFileSchema>;
 
-/**
- * Read and validate the settings store. Returns `null` when the file is
- * absent, unreadable, not JSON, or fails the (lenient) schema. Callers treat
- * all of those as "unconfigured" rather than crashing at startup.
- */
+/** Every failure returns null instead of throwing, so a bad file never crashes startup. */
 export function readSettings(): SettingsFile | null {
   const path = getSettingsStorePath();
   let raw: string;
@@ -130,8 +112,8 @@ export function readSettings(): SettingsFile | null {
 }
 
 /**
- * A secrets file must never exist with default perms or partial content, so this writes a 0600 temp
- * file in the same directory, fsyncs it, then renames. Windows ignores the mode and relies on per-user %APPDATA%.
+ * A secrets file must never exist with default perms or partial content, so a 0600 temp file is
+ * synced and renamed into place. Windows ignores the mode and relies on per-user %APPDATA%.
  */
 export function writeSettings(settings: SettingsFile): void {
   const path = getSettingsStorePath();
@@ -144,9 +126,7 @@ export function writeSettings(settings: SettingsFile): void {
     // Any failure after open removes the tmp file, so no plaintext credentials are orphaned.
     // closeSync runs before that cleanup because an open fd blocks the unlink on Windows.
     try {
-      // Enforce owner-only perms via the open fd, independent of the process
-      // umask (openSync's mode arg is applied as mode & ~umask, so a non-standard
-      // umask could otherwise strip the owner-write bit). No-op on Windows.
+      // openSync applies its mode through the umask, so fchmod sets 0600 regardless of umask.
       fchmodSync(fd, 0o600);
       writeSync(fd, `${JSON.stringify(settings, null, 2)}\n`);
       fsyncSync(fd);
@@ -158,7 +138,7 @@ export function writeSettings(settings: SettingsFile): void {
     try {
       unlinkSync(tmpPath);
     } catch {
-      /* best-effort cleanup */
+      // The original write error matters more than a failed cleanup.
     }
     throw err;
   }

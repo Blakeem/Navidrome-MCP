@@ -1,10 +1,9 @@
-# Source files
+# package.json "files" is the publish allowlist, and a root .npmignore does not override it.
 src/
 tests/
 *.test.ts
 *.test.js
 
-# Development files
 .github/
 .vscode/
 .eslintrc.*
@@ -12,20 +11,14 @@ tests/
 tsconfig.json
 vitest.config.ts
 
-# Environment and temp files
 .env
 .env.*
 *.log
 tmp/
 temp/
 
-# OS files
 .DS_Store
 Thumbs.db
 
-# Git
 .git/
 .gitignore
-
-# Only include built dist and essential files
-# (package.json automatically includes files listed in "files" field)

@@ -1,11 +1,5 @@
-/**
- * Coverage for the visualizer's pure browser modules: the level timeline and the kit the modes share.
- * The modes themselves run the plugin contract in visualizer-plugins.test.ts.
- *
- * Both live under src/webui/public/, which eslint ignores and tsc cannot see, so this file is their
- * only automated guard. They stay importable here only while they reference no browser global,
- * which the purity scan below enforces.
- */
+// src/webui/public/ is outside eslint and type checking, so this file guards the timeline and kit.
+// They stay importable in Node only while they reference no browser global.
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -92,7 +86,7 @@ describe('createTimeline', () => {
 
   it('falls back to the arrival lead when the clock does not reach the newest segment yet', () => {
     const timeline = createTimeline();
-    // A new file started: its timestamps restart while the clock still reports the old track's end.
+    // A new file restarts its timestamps while the clock still reports the old track's end.
     timeline.ingest([row(1, 200_000), row(2, 0, -45), row(2, 100, -35), row(2, 400, -20)], 0);
 
     expect(timeline.levelsAt(200.1, 10)).toEqual({ segment: 2, levels: row(2, 100, -35).slice(2) });

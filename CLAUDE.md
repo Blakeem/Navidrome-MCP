@@ -17,7 +17,9 @@ pnpm test:run       # unit tests
 pnpm build          # production bundle
 ```
 
-CI runs all three, with `test:ci` in place of `test:run`.
+CI runs lint, the src typecheck, dead-code, `test:ci` and the build. It does
+not run `typecheck:tests`, so a type error under `tests/` only shows up locally
+in `pnpm check:all`.
 
 Dead-code (`ts-unused-exports`) blocks PRs. When you delete or refactor
 a function, remove its exports too. Tests under `tests/` are part of the
@@ -79,19 +81,29 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 - **Subsonic auth:** `client.subsonicRequest()` — POST + salted-MD5 by default. Don't hand-roll Subsonic fetches.
 - **Stream URLs to mpv:** `buildSubsonicAuthParams()` from `utils/subsonic-auth.ts`. Anything user-facing that may contain a URL goes through `stripSubsonicAuthParams()` first.
 - **Raw responses with `text/plain`:** the client now JSON-sniffs the body, so callers can `await client.request<T>(...)` and just read `response.field` directly. No per-call workarounds needed.
+- **License header:** every `.ts` file under `src/` starts with this short header (after a shebang, if any). Test files may carry it too. Never paste the AGPL text, since `LICENSE` holds it.
+  ```ts
+  /**
+   * Navidrome MCP Server - <module title>
+   * Copyright (C) 2025
+   * SPDX-License-Identifier: AGPL-3.0-or-later
+   */
+  ```
 
 ---
 
 ## Environment
 
 Configuration lives in a single canonical **`settings.json`** store — the
-GUI-managed source of truth. When the store is **absent or unusable**, runtime
-falls back to **environment variables** (`NAVIDROME_URL`/`NAVIDROME_USERNAME`/
+GUI-managed source of truth. When the store is **absent, unreadable, malformed,
+or has no `navidrome.url`**, runtime falls back to **environment variables** (`NAVIDROME_URL`/`NAVIDROME_USERNAME`/
 `NAVIDROME_PASSWORD` + the optional `MCP_*`/feature vars, via
 `buildEnvRuntimeSettings()` — `process.env` only, never `.env` files) — the
-headless/container path. A usable store always wins over env. `.env` files are
-import-only: they pre-fill the settings form on first run, nothing else.
-Store path (mirrors `getDefaultIpcPath()`):
+headless/container path. A store that has a URL but fails validation enters
+setup mode instead, and env is not consulted. A usable store always wins over
+env. `.env` files are import-only: they pre-fill the settings form on first run,
+nothing else.
+Store path:
 
 - Linux: `${XDG_CONFIG_HOME:-~/.config}/navidrome-mcp/settings.json`
 - macOS: `~/Library/Application Support/navidrome-mcp/settings.json`

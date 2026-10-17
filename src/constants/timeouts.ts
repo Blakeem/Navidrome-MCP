@@ -1,4 +1,8 @@
-/** Timeouts for radio stream validation, mpv IPC, and outbound fetches. */
+/**
+ * Navidrome MCP Server - Timeouts
+ * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 
 // A user asked for this one stream, so the probe can afford to be thorough.
 export const SINGLE_VALIDATION_TIMEOUT_MS = 8000;
@@ -6,8 +10,8 @@ export const SINGLE_VALIDATION_TIMEOUT_MS = 8000;
 // Batch probes stay short so many slow streams do not stack up wait time.
 export const BATCH_VALIDATION_TIMEOUT_MS = 3000;
 
-// 3000ms leaves the HEAD probe 1800ms, enough for a slow TLS handshake on a non-standard port. Same-host
-// stations probe one at a time, so worst-case discovery validation is RADIO_DISCOVERY_PROBE_COUNT x this value.
+// 3000ms leaves the HEAD probe 1800ms, enough for a slow TLS handshake on a non-standard port.
+// Same-host stations probe in series, so discovery can take RADIO_DISCOVERY_PROBE_COUNT x this.
 export const DISCOVERY_VALIDATION_TIMEOUT_MS = 3000;
 
 export const MAX_VALIDATION_TIMEOUT_MS = 30000;
@@ -21,68 +25,55 @@ export const RADIO_VALIDATION = {
   SAMPLE_BUFFER_SIZE: 8192,
 } as const;
 
-// Per-command timeouts keep a stalled mpv from wedging the server. The stale-socket probe keeps
-// cleanup from unlinking a socket a live mpv still holds.
+// Per-command timeouts keep a stalled mpv from wedging the server.
 
-/** Per-command timeout for short mpv IPC operations (property reads/writes,
- *  observe, stop, seek, get_version, etc.). Short because these are pure
- *  in-memory operations on mpv's side. If they don't return in 2s, mpv is
- *  almost certainly wedged. */
+/** Property reads and writes, seek and stop are in-memory work for mpv, so a reply slower than 2s
+ *  means mpv is wedged. */
 export const MPV_COMMAND_TIMEOUT_QUICK_MS = 2000;
 
-/** Per-command timeout for mpv loadfile/loadlist operations, which involve
- *  opening a remote stream. Navidrome may be cold-starting transcoding, so
- *  this needs more headroom than the QUICK tier. */
+/** loadfile and loadlist open a remote stream, and Navidrome may be cold-starting a transcode. */
 export const MPV_COMMAND_TIMEOUT_LOAD_MS = 5000;
 
-/** Initial-connect retry budget when opening the IPC socket post-spawn while
- *  mpv is binding the socket. Fast-failing attempts give 50 x 100ms = 5s.
- *  Hung attempts can each take MPV_IPC_CONNECT_TIMEOUT_MS, for a worst case
- *  near 55s. */
+/** mpv binds the IPC socket a moment after spawn. Fast-failing attempts give 50 x 100ms = 5s, and
+ *  hung attempts can each add MPV_IPC_CONNECT_TIMEOUT_MS, for a worst case near 55s. */
 export const MPV_IPC_CONNECT_RETRIES = 50;
 export const MPV_IPC_CONNECT_DELAY_MS = 100;
 
-/** Attach retry budget. An existing mpv answers fast, so attach skips the
- *  post-spawn budget. */
+/** An existing mpv answers fast, so attach skips the post-spawn budget. */
 export const MPV_ATTACH_CONNECT_RETRIES = 3;
 export const MPV_ATTACH_CONNECT_DELAY_MS = 50;
 
-/** A local IPC connect settles in single-digit ms. A hung attempt would otherwise stall
- *  connect()'s retry loop indefinitely, so it is torn down and rejected. */
+/** A local IPC connect settles in single-digit ms, so a slower attempt counts as hung. */
 export const MPV_IPC_CONNECT_TIMEOUT_MS = 1000;
 
-/** Bounds the one-shot quit connection, so shutdown never waits on a wedged mpv. */
+/** The bound on the one-shot quit connection keeps shutdown from waiting on a wedged mpv. */
 export const MPV_QUIT_SOCKET_TIMEOUT_MS = 1000;
 
-/** Probe timeout used by cleanupStaleSocket to decide whether a socket file
- *  is bound to a live mpv before unlinking. */
 export const MPV_STALE_SOCKET_PROBE_MS = 100;
 
-/** How often an unattached web owner retries attaching to mpv. Bounds how long
- *  an mpv the MCP process spawned goes without the owner tracking its plays. */
+/** An mpv the MCP process spawned plays untracked by the web owner for at most this long. */
 export const WEB_OWNER_ATTACH_INTERVAL_MS = 5000;
 
-/** How long a scrobble claim waits for mpv to echo it back before the tracker submits anyway.
- *  A local IPC round trip takes milliseconds, so only a wedged or gone mpv reaches it. */
+/** An echo is a local IPC round trip of milliseconds, so only a wedged or gone mpv hits this. */
 export const SCROBBLE_CLAIM_ECHO_TIMEOUT_MS = 5000;
 
-/** Bounds the headless mpv run that checks the visualizer filter. A pass took 313 ms when measured. */
+/** The headless mpv filter check took 313 ms when measured. */
 export const MPV_VISUALIZER_VALIDATE_TIMEOUT_MS = 10_000;
 
-/** A validation run that timed out or failed to start says nothing about the filter, so it runs again after this. */
+/** A check that timed out or failed to start says nothing about the filter, so its result is
+ *  dropped after this delay and the next request reruns it. */
 export const MPV_VISUALIZER_VALIDATE_RETRY_MS = 60_000;
 
-/** How long a fresh mpv waits for the filter check before the first track. A slower check gives up that track, not the play. */
+/** A fresh mpv waits this long for the filter check before its first track. A slower check leaves
+ *  that track without the filter but does not delay the play. */
 export const MPV_VISUALIZER_SPAWN_WAIT_MS = 1000;
 
-/** How long the visualizer level feed waits before it reconnects to a missing or restarted mpv. */
 export const VISUALIZER_FEED_RETRY_MS = 3000;
 
-/** How long the level feed stays open after the last viewer leaves, so a page reload keeps it. */
 export const VISUALIZER_FEED_GRACE_MS = 5000;
 
-/** A quiet SSE stream sends a comment this often, under common reverse-proxy idle timeouts (nginx waits 60 s).
- *  It also bounds how long a dead client lingers. */
+/** Reverse proxies close an idle stream, nginx after 60 s, so a quiet SSE stream sends a comment
+ *  this often. The interval also bounds how long a dead client lingers. */
 export const SSE_HEARTBEAT_MS = 10_000;
 
 export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
@@ -90,36 +81,27 @@ export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
   'loadlist',
 ]);
 
-// Every fetch timeout, one retry included, stays under the MCP SDK's 60s request timeout. A hung Navidrome,
-// Last.fm, MusicBrainz, LRCLIB or Radio Browser then gives the agent a per-call error, not a generic RequestTimeout.
+// Each fetch timeout, one retry included, stays under the MCP SDK's 60s request timeout, so a hung
+// upstream gives the agent a per-call error instead of a generic RequestTimeout.
 
-/** Default per-request timeout for Navidrome REST + Subsonic fetches.
- *  15s comfortably covers cold-cache listing endpoints on a healthy server.
- *  Most respond in <1s. */
+/** 15s covers cold-cache listing endpoints on a healthy server. Most respond in under 1s. */
 export const DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS = 15_000;
 
-/** Default per-request timeout for the `/auth/login` POST. Auth is a single
- *  round-trip (DB lookup + bcrypt + JWT mint) and should be fast on a healthy
- *  server. Tighter than the request timeout so a wedged auth fails quickly. */
+/** Login is one round trip (DB lookup, bcrypt, JWT mint), so this sits below the request timeout
+ *  and a wedged login fails fast. */
 export const DEFAULT_NAVIDROME_AUTH_TIMEOUT_MS = 10_000;
 
-/** Default per-request timeout for external APIs (Last.fm, MusicBrainz, LRCLIB,
- *  Radio Browser). It equals the Navidrome request default. */
 export const DEFAULT_EXTERNAL_API_TIMEOUT_MS = 15_000;
 
-/** Hard upper bound for any fetch timeout. It protects against env-var
- *  misconfiguration that would push wall-clock (timeout + retry) past the
- *  MCP SDK's 60s `DEFAULT_REQUEST_TIMEOUT_MSEC`. 25s × 2 = 50s, leaving 10s
- *  of headroom. */
+/** The cap on an env override keeps timeout plus retry, 25s x 2 = 50s, under the MCP SDK's 60s
+ *  `DEFAULT_REQUEST_TIMEOUT_MSEC`. */
 export const MAX_FETCH_TIMEOUT_MS = 25_000;
 
-/** Hard lower bound. It prevents accidental sub-second timeouts that would
- *  fail-fast on a perfectly healthy but slow connection. */
+/** A sub-second env override would fail a healthy but slow connection. */
 export const MIN_FETCH_TIMEOUT_MS = 1_000;
 
-/** Longest `Retry-After` wait honored on a 429 from `/auth/login`. Navidrome's
- *  default login window is 20s, and a longer wait would push a tool call past the SDK's 60s limit. */
+/** A longer `Retry-After` wait on a login 429 would push a tool call past the SDK's 60s limit. */
 export const MAX_AUTH_RATE_LIMIT_WAIT_MS = 25_000;
 
-/** Navidrome's default login rate-limit window, the wait when a 429 sends no usable `Retry-After`. */
+/** Navidrome's default login window, the wait when a 429 has no usable `Retry-After`. */
 export const NAVIDROME_LOGIN_RATE_LIMIT_WINDOW_MS = 20_000;

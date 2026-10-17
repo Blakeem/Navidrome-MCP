@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Radio Recommendation Engine Module
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { StreamValidationResult } from '../../types/index.js';
@@ -44,6 +32,7 @@ export function generateRecommendations(result: StreamValidationResult): string[
   } else if (result.status === 'invalid') {
     recommendations.push('Stream validation failed');
 
+    // An error page is text/html, so a non-2xx status is advised on before the content type.
     if (result.httpStatus !== undefined && !result.validation.httpAccessible) {
       recommendations.push(...httpErrorAdvice(result.httpStatus));
     } else if (!result.validation.hasAudioContentType) {
@@ -58,7 +47,8 @@ export function generateRecommendations(result: StreamValidationResult): string[
   } else {
     recommendations.push('Stream validation encountered an error');
 
-    // A private/local refusal and an unparseable response are deterministic, so "try again later" would mislead.
+    // A private/local refusal and an unparseable response fail the same way on retry, so "try
+    // again later" would mislead.
     const allMessages = [...result.errors, ...result.warnings];
     const refusedPrivateAddress = allMessages.some((m) => m.includes(PRIVATE_ADDRESS_REFUSAL));
     const nonStandardResponse = allMessages.some((m) => m.includes(NON_STANDARD_HTTP_RESPONSE));
@@ -74,7 +64,6 @@ export function generateRecommendations(result: StreamValidationResult): string[
   return recommendations;
 }
 
-// An error page is text/html, so a non-2xx status must be advised on before the content type.
 function httpErrorAdvice(httpStatus: number): string[] {
   if (httpStatus === 404 || httpStatus === 410) {
     return ['Stream URL appears to be offline or moved', 'Check the station\'s official website for updated URLs'];

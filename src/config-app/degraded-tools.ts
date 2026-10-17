@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Degraded (unconfigured) tool surface
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -30,7 +18,7 @@ export interface StartupFailure {
   unreachable: boolean;
 }
 
-/** settings.json wins over env vars on every restart, so env advice alone cannot fix a failing store. */
+/** A settings.json with a URL overrides env vars, so env advice cannot fix a failing store. */
 function configFixHint(): string {
   return (
     `Fix the values on the settings page, or edit or remove settings.json at ${getSettingsStorePath()}. ` +
@@ -69,7 +57,10 @@ export function buildSetupNotice(settingsUrl: string, failure?: StartupFailure):
   );
 }
 
-/** The settings URL goes in every response because the auto-opened browser no-ops on headless or SSH hosts. */
+/**
+ * Every response carries the settings URL, since the browser auto-open does nothing on headless
+ * or SSH hosts.
+ */
 export function registerDegradedTools(server: Server, settingsUrl: string, failure?: StartupFailure): void {
   const notice = buildSetupNotice(settingsUrl, failure);
 

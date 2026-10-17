@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Validation Schema Definitions
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { z } from 'zod';
@@ -100,7 +88,8 @@ export const AddTracksToPlaylistSchema = PlaylistIdSchema.extend({
   }
 });
 
-// get_playlist_tracks emits each row's 1-based position as a string, so positions round-trip as strings.
+// get_playlist_tracks emits each row's 1-based position as a string, so positions round-trip
+// as strings.
 const PlaylistPositionSchema = z.string().regex(/^[1-9]\d*$/, 'Track position must be a 1-based positive integer');
 
 export const RemoveTracksFromPlaylistSchema = PlaylistIdSchema.extend({
@@ -184,8 +173,8 @@ export const TrendingMusicSchema = z.object({
   verbose: VerboseSchema,
 });
 
-// MusicBrainz release-group vocabulary, the subset relevant to discographies (docs/musicbrainz-api.md §8).
-// Values are lowercase, since MB's `type=` browse filter accepts them lowercase, and secondary types are lowercased on parse.
+// MusicBrainz release-group types (docs/musicbrainz-api.md §8). Lowercase, since MB's `type=`
+// browse filter accepts lowercase and the parser lowercases secondary types.
 const MbPrimaryTypeSchema = z.enum(['album', 'ep', 'single']);
 const MbSecondaryTypeSchema = z.enum([
   'live',
@@ -221,8 +210,8 @@ export const ArtistAlbumsSchema = z.object({
   }
 });
 
-// `mbid` is a MusicBrainz RELEASE-GROUP MBID, the mbid of a get_artist_albums row with source 'musicbrainz'.
-// See docs/ARTIST-ALBUMS-SPEC.md §9.
+// `mbid` is a MusicBrainz RELEASE-GROUP MBID, the mbid of a get_artist_albums row with source
+// 'musicbrainz'. See docs/ARTIST-ALBUMS-SPEC.md §9.
 export const AlbumInfoSchema = z.object({
   artist: z.string().min(1).optional(),
   album: z.string().min(1).optional(),
@@ -245,7 +234,7 @@ export const LyricsMetadataSchema = z.object({
   durationMs: z.number().min(0).optional(),
 });
 
-// get_lyrics takes an identity. search_lyrics candidates carry the lrclibId it accepts.
+// search_lyrics candidates carry the lrclibId that get_lyrics accepts.
 export const LyricsIdentitySchema = z.object({
   songId: SongIdSchema.shape.songId.optional(),
   lrclibId: z.string().min(1).regex(/^\d+$/, 'LRCLIB record ID must be numeric').optional(),
@@ -308,10 +297,9 @@ export const LibraryPlayRequestSchema = z.discriminatedUnion('type', [
   }),
 ], { error: 'type must be one of artist, album, song, playlist, starred-songs, starred-albums' });
 
-// Playback controls shared by the MCP tools and the web remote routes
 export const SetVolumeSchema = z.strictObject({
-  // The tool contract promises clamping to [0, 100] in playback-engine.setVolume,
-  // so the schema rejects only non-finite values, never out-of-range ones.
+  // The tool contract promises clamping to [0, 100] in playback-engine.setVolume, so the
+  // schema rejects only non-finite values, never out-of-range ones.
   level: z.number().finite(),
 });
 
@@ -372,7 +360,8 @@ export const PlayerSettingsPatchSchema = z.strictObject({
 
 export const LibrarySearchQuerySchema = z.string().trim().min(1).max(SEARCH_QUERY_MAX_LENGTH);
 
-// Node fetch probes only http and https, so other radio schemes fail here with guidance instead of an opaque fetch error.
+// Node fetch probes only http and https, so other radio schemes fail here with guidance
+// instead of an opaque fetch error.
 export const ValidateStreamSchema = z.object({
   url: z.string()
     .trim()
@@ -404,7 +393,8 @@ export const DiscoverRadioStationsSchema = z.object({
   bitrateMin: z.number().min(0).optional(),
   isHttps: z.boolean().optional(),
   sort: z.enum(['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random']).default('votes'),
-  // The direction default depends on the sort field, so OrderSchema's fixed ASC default does not apply.
+  // The direction default depends on the sort field, so OrderSchema's fixed ASC default does
+  // not apply.
   order: OrderSchema.removeDefault(),
   offset: OffsetSchema,
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT),

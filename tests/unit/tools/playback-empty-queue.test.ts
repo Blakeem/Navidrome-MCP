@@ -1,28 +1,12 @@
 /**
  * Navidrome MCP Server - empty-queue navigator and mutator tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * Covers the queue NAVIGATORS (next / previous / play_queue_index / resume)
- * and MUTATORS (clear / shuffle / move / remove) when no mpv is running (e.g. the web player was powered off, taking mpv with
- * it). The play queue lives inside mpv, so a fresh spawn would be empty; these
- * tools must therefore attach-only and report an empty queue rather than
- * lazy-spawning an empty player. The engine is mocked: `isRunning()` returns
- * false, and the underlying transport commands must NOT be invoked.
+ * The play queue lives inside mpv, so a fresh spawn holds an empty queue. Queue and transport tools
+ * therefore attach to a live mpv and never spawn one.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,7 +62,7 @@ const {
 describe('queue navigators with no live mpv (empty queue)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    isRunningMock.mockReturnValue(false); // no mpv attached
+    isRunningMock.mockReturnValue(false);
   });
 
   it('next reports an empty queue and does not skip', async () => {
@@ -165,7 +149,7 @@ describe('queue navigators with no live mpv (empty queue)', () => {
 describe('queue navigators with a live mpv pass through to the engine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    isRunningMock.mockReturnValue(true); // mpv attached + a real queue
+    isRunningMock.mockReturnValue(true);
     readQueueStateMock.mockResolvedValue({ position: 0, count: 5 });
   });
 

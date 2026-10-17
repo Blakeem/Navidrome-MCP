@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Search Orchestration
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../../client/navidrome-client.js';
@@ -32,8 +20,8 @@ import {
 } from './result-aggregator.js';
 
 /**
- * Search songs, albums and artists in parallel with one shared set of filters. `transformOptions` lets a
- * non-MCP caller such as the web remote force-keep a field like the numeric duration.
+ * `transformOptions` lets a non-MCP caller such as the web remote force-keep a field like the
+ * numeric duration.
  */
 export async function searchAll(client: NavidromeClient, args: unknown, transformOptions: TransformOptions = {}): Promise<{
   artists: ArtistDTO[];
@@ -63,7 +51,8 @@ export async function searchAll(client: NavidromeClient, args: unknown, transfor
       year: params.year,
       starred: params.starred,
     });
-    // A zero count skips its fetch because `_start=N&_end=N` with N > 0 is a SQL error in Navidrome.
+    // A zero count skips its fetch. Navidrome answers `_start=N&_end=N` with a SQL error for N > 0
+    // and with every row for N = 0.
     const fetchSongs = params.songCount > 0;
     const fetchAlbums = params.albumCount > 0;
     // An unfiltered artist page would be reported as matches for a tag or year filter.

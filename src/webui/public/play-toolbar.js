@@ -1,5 +1,3 @@
-// The Play Music toolbar: the add or replace toggle and the two shuffle toggles, kept per device.
-
 import { byId } from './dom.js';
 import { prefRead, prefWrite } from './prefs.js';
 
@@ -21,12 +19,10 @@ export function shuffleOptions() {
 }
 
 export function bindPlayToolbar(onModeChange) {
-  // INPUT
   const mode = prefRead(PLAY_MODE_KEY) === 'replace' ? 'replace' : 'append';
   const shuffleSongs = prefRead(PLAY_SHUFFLE_SONGS_KEY) === 'true';
   const shuffleAlbums = prefRead(PLAY_SHUFFLE_ALBUMS_KEY) === 'true';
 
-  // PROCESS
   for (const radio of modeRadios()) {
     radio.checked = radio.value === mode;
     radio.addEventListener('change', () => {
@@ -37,7 +33,6 @@ export function bindPlayToolbar(onModeChange) {
   bindShuffleToggle(shuffleSongsToggle, PLAY_SHUFFLE_SONGS_KEY, shuffleSongs);
   bindShuffleToggle(shuffleAlbumsToggle, PLAY_SHUFFLE_ALBUMS_KEY, shuffleAlbums);
 
-  // OUTPUT
   onModeChange(mode);
 }
 

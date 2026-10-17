@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Artist Discography Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Config } from '../config.js';
@@ -47,11 +35,8 @@ import {
   AlbumInfoSchema,
 } from '../schemas/index.js';
 
-// === get_artist_albums =======================================================
-//
-// Full discography with types/years/genres (MusicBrainz spine), popularity
-// (Last.fm enrichment), and in-library flags (Navidrome). Pipeline + decisions:
-// docs/ARTIST-ALBUMS-SPEC.md.
+// get_artist_albums takes the discography from MusicBrainz, popularity from Last.fm, and library
+// membership from Navidrome. Step labels [A] to [G] refer to docs/ARTIST-ALBUMS-SPEC.md §3.
 
 interface LastFmTopAlbumRow {
   name: string;
@@ -73,7 +58,7 @@ interface ArtistAlbumDTO {
   mbid: string | null;
   source: 'musicbrainz' | 'lastfm-only';
   typeUnverified: boolean;
-  // verbose-only (already in hand from the spine/join, never extra requests)
+  // Verbose-only. These come from data already fetched, so verbose adds no requests.
   playcount?: number;
   url?: string;
   disambiguation?: string;
@@ -99,9 +84,8 @@ interface ArtistAlbumsResult {
   note?: string;
 }
 
-// Raw per-source caches (24h: discographies change rarely, spec §8). The
-// merged result is intentionally NOT cached so filter-param permutations
-// (onlyMissing/excludeSecondary/verbose) always recompute from cached raws.
+// Discographies change rarely, so raw per-source responses cache for 24h (spec §8). The merged
+// result is not cached, so each filter combination recomputes from the cached raws.
 const ARTIST_ALBUMS_CACHE_TTL_SECONDS = 86400;
 const mbArtistCache = new Cache<MbArtistMatch | null>(ARTIST_ALBUMS_CACHE_TTL_SECONDS);
 const mbSpineCache = new Cache<MbReleaseGroup[]>(ARTIST_ALBUMS_CACHE_TTL_SECONDS);
@@ -114,8 +98,7 @@ export function clearArtistAlbumsCachesForTests(): void {
   lastFmTopAlbumsCache.clear();
 }
 
-// Per-cache in-flight fetch maps, so a burst of concurrent calls for the same
-// key coalesces into a single external request (MusicBrainz enforces 1 req/s).
+// Concurrent calls for one key share a single in-flight request, since MusicBrainz allows 1 req/s.
 const inflightByCache = new WeakMap<Cache<unknown>, Map<string, Promise<unknown>>>();
 
 async function cachedOr<T>(cache: Cache<T>, key: string, fetcher: () => Promise<T>): Promise<T> {
@@ -143,14 +126,11 @@ async function cachedOr<T>(cache: Cache<T>, key: string, fetcher: () => Promise<
   return p;
 }
 
-// --- Last.fm branch ---------------------------------------------------------
-
-// Last.fm error 6 texts, specific enough to skip an HTTP "404 Not Found" status line.
+// Matches the Last.fm error 6 messages but not an HTTP "404 Not Found" status line.
 const LASTFM_NOT_FOUND = /album not found|could not be found/i;
 
 async function fetchTopAlbums(artist: string, apiKey: string): Promise<LastFmTopAlbumRow[]> {
-  // ONE page only: rank beyond the top 100 carries no popularity signal.
-  // Spine albums that miss the join get popularityRank null.
+  // One page suffices because rank beyond the top 100 carries no popularity signal.
   const data = await callLastFmApi('artist.getTopAlbums', {
     artist,
     limit: '100',
@@ -170,10 +150,7 @@ async function fetchTopAlbums(artist: string, apiKey: string): Promise<LastFmTop
   }));
 }
 
-/**
- * Junk-drop + normTitle-dedup (keep the highest-playcount variant), keyed by
- * normalized title for the spine join. Last.fm exposes only release MBIDs, so MBIDs cannot join.
- */
+/** Last.fm exposes only release MBIDs, so the spine join keys rows by normalized title. */
 function indexLastFmRows(rows: LastFmTopAlbumRow[]): Map<string, LastFmTopAlbumRow> {
   const byNorm = new Map<string, LastFmTopAlbumRow>();
   for (const row of rows) {
@@ -188,20 +165,14 @@ function indexLastFmRows(rows: LastFmTopAlbumRow[]): Map<string, LastFmTopAlbumR
   return byNorm;
 }
 
-// --- Navidrome branch ---------------------------------------------------------
-
 interface LibraryLookup {
-  /** Primary resolved Navidrome artist id (first accepted match). */
+  /** The first accepted match. */
   artistId: string | null;
-  /** normTitle(album name) → Navidrome album id, across ALL accepted artist ids. */
+  /** Spans every accepted artist id, since one act can have several Navidrome artist rows. */
   albumsByNormTitle: Map<string, string>;
 }
 
-/**
- * Same act, multiple spellings ("Miami Nights '84" vs "Miami Nights 1984"):
- * equal after normalization, or token-wise equal where numeric tokens match
- * by suffix.
- */
+/** One act can carry several spellings, such as "Miami Nights '84" and "Miami Nights 1984". */
 function likelySameArtist(a: string, b: string): boolean {
   const na = normTitle(a);
   const nb = normTitle(b);
@@ -222,10 +193,8 @@ function likelySameArtist(a: string, b: string): boolean {
 }
 
 /**
- * Navidrome's `/artist?name=` is a contains-filter, so a query for
- * "Miami Nights 1984" never returns the "'84" alias row. When the name ends
- * in a numeric-ish token, also query with that token stripped so alias rows
- * surface. `likelySameArtist` then decides what actually counts.
+ * Navidrome's `/artist?name=` requires every query word as a word prefix, so "Miami Nights 1984"
+ * misses the "Miami Nights '84" row. The query without the trailing number finds such aliases.
  */
 function artistQueryVariants(name: string): string[] {
   const variants = [name];
@@ -248,8 +217,7 @@ function parseIdNameRows(data: unknown): Array<{ id: string; name: string }> {
 }
 
 async function fetchLibraryLookup(client: NavidromeClient, artistName: string): Promise<LibraryLookup> {
-  // Resolve artist id(s). Collect ALL close matches, not just one (spec §4).
-  const seen = new Map<string, string>(); // id → name
+  const seen = new Map<string, string>();
   for (const variant of artistQueryVariants(artistName)) {
     const { data } = await client.requestWithLibraryFilterAndMeta<unknown>(
       `/artist?name=${encodeURIComponent(variant)}&role=maincredit&_start=0&_end=20`,
@@ -264,7 +232,7 @@ async function fetchLibraryLookup(client: NavidromeClient, artistName: string): 
   const artistIds = [...seen.keys()];
   const albumsByNormTitle = new Map<string, string>();
 
-  // Union albums across all accepted artist ids (Navidrome has no rate limit).
+  // Navidrome has no rate limit, so the per-artist album queries run in parallel.
   const albumPages = await Promise.all(artistIds.map(async id => {
     const { data } = await client.requestWithLibraryFilterAndMeta<unknown>(
       `/album?artist_id=${encodeURIComponent(id)}&_start=0&_end=500`,
@@ -286,7 +254,7 @@ async function fetchLibraryLookup(client: NavidromeClient, artistName: string): 
   };
 }
 
-/** One failed probe must not fail the whole tool, since library membership degrades per title. */
+/** One failed probe must not fail the entire tool, since library membership degrades per title. */
 async function probeAlbumsByName(client: NavidromeClient, title: string): Promise<unknown> {
   try {
     const { data } = await client.requestWithLibraryFilterAndMeta<unknown>(
@@ -300,9 +268,8 @@ async function probeAlbumsByName(client: NavidromeClient, title: string): Promis
 }
 
 /**
- * Fallback when name-resolution found no Navidrome artist (heavy aliasing):
- * probe a capped number of discography titles by album name and accept only
- * on a normalized artist-name match (spec §4 step 4).
+ * Covers artists that name resolution misses through heavy aliasing (spec §4 step 4). The probe
+ * cap bounds the added Navidrome requests.
  */
 async function fallbackAlbumMatch(
   client: NavidromeClient,
@@ -360,8 +327,6 @@ async function resolveLibraryLookup(
   return { lookup: { ...lookup, albumsByNormTitle: fallbackMatches }, note: null };
 }
 
-// --- Orchestration ------------------------------------------------------------
-
 interface MergeInput {
   spine: MbReleaseGroup[];
   lastFmRows: LastFmTopAlbumRow[];
@@ -394,13 +359,13 @@ function mergeSources(input: MergeInput): MergedAlbum[] {
     const included = new Set(input.includeTypes);
     const excluded = new Set(input.excludeSecondary);
     for (const rg of input.spine) {
-      // [D] joins by normalized title, since Last.fm exposes only release MBIDs. It runs before
-      // both [F] filters so a filtered match stays joined and never resurfaces as unverified.
+      // [D] runs before both [F] filters so a filtered match stays joined and never resurfaces as
+      // unverified.
       const key = normTitle(rg.title);
       const lastFm = byNorm.get(key) ?? null;
       if (lastFm !== null) joinedNormKeys.add(normTitle(lastFm.name));
 
-      // [F] primary-type filter, then secondary-type exclusion (secondary types lowercased at parse).
+      // Secondary types are lowercased at parse, so they compare directly with excludeSecondary.
       if (!included.has((rg.primaryType ?? '').toLowerCase())) continue;
       if (rg.secondaryTypes.some(t => excluded.has(t))) continue;
 
@@ -419,9 +384,8 @@ function mergeSources(input: MergeInput): MergedAlbum[] {
     }
   }
 
-  // Last.fm-only rows: the long tail MB lacks. Reached two ways: explicit
-  // opt-in (`includeUnverified`) on the normal path, or automatically as the
-  // degraded spine when MB is unusable (spec §6: degrade, not fail).
+  // Last.fm-only rows cover the long tail MB lacks. They become the entire list when MB is
+  // unusable (spec §6).
   if (!input.mbUsable || input.includeUnverified) {
     for (const [key, row] of byNorm) {
       if (joinedNormKeys.has(key)) continue;
@@ -452,7 +416,7 @@ interface ShapedAlbums {
   onlyMissingSkipped: boolean;
 }
 
-/** Ranks span the full filtered discography before onlyMissing, so they stay stable whatever the membership filter does. */
+/** Ranks are assigned before onlyMissing filters, so a rank does not depend on membership. */
 function shapeAlbums(
   merged: MergedAlbum[],
   navLookup: LibraryLookup | null,
@@ -486,7 +450,7 @@ function shapeAlbums(
     };
   });
 
-  // Most-listened first reads naturally. Unranked rows keep spine order at the end.
+  // The sort is stable, so unranked rows keep spine order at the end.
   albums.sort((a, b) => (a.popularityRank ?? Number.MAX_SAFE_INTEGER) - (b.popularityRank ?? Number.MAX_SAFE_INTEGER));
 
   return {
@@ -519,15 +483,13 @@ export async function getArtistAlbums(
     const apiKey = requireLastFmApiKey(config);
     const notes: string[] = [];
 
-    // -- Resolve the MB artist (search by name, or lookup when MBID given).
-    //    Last.fm's own mbid= param is unreliable, so the MBID path recovers
-    //    the canonical name from MB for the other two branches.
+    // Last.fm's mbid= param is unreliable, so the MBID path recovers the canonical name from MB
+    // for the Last.fm and Navidrome branches.
     let mbArtist: MbArtistMatch | null = null;
     let mbRequestFailed = false;
     try {
-      // Cache keys use the raw lowercased name, NOT normTitle. Normalization is
-      // lossy ("The Midnight" / "Midnight" collide) and a 24h wrong-artist hit
-      // is worse than the occasional duplicate fetch.
+      // Cache keys use the lowercased name, not normTitle. normTitle collides "The Midnight" with
+      // "Midnight", and a 24h wrong-artist hit costs more than a duplicate fetch.
       mbArtist = params.mbid !== undefined
         ? await cachedOr(mbArtistCache, `mbid:${params.mbid}`, () => lookupMbArtist(params.mbid as string, config))
         : await cachedOr(mbArtistCache, `name:${(params.artist as string).toLowerCase()}`, () => searchMbArtist(params.artist as string, config));
@@ -544,9 +506,8 @@ export async function getArtistAlbums(
         : `No MusicBrainz artist exists for mbid ${mbid}. Pass the artist name instead.`);
     }
 
-    // -- Fan out the three branches. MB is internally serialized at 1 req/s.
-    //    Last.fm and Navidrome run alongside.
-    // includeUnverified browses every primary type so a Last.fm row MB types as a single or EP joins instead of leaking.
+    // includeUnverified browses every primary type, so a Last.fm row that MB types as a single or
+    // EP joins its release group instead of appearing as unverified.
     const browseTypes = params.includeUnverified ? ['album', 'ep', 'single'] : params.includeTypes;
     const spinePromise: Promise<MbReleaseGroup[]> = mbArtist !== null
       ? cachedOr(
@@ -568,7 +529,6 @@ export async function getArtistAlbums(
       navPromise,
     ]);
 
-    // -- Degradation accounting (spec §6: degrade, not fail).
     const spine = spineResult.status === 'fulfilled' ? spineResult.value : [];
     if (spineResult.status === 'rejected') {
       mbRequestFailed = true;
@@ -597,7 +557,6 @@ export async function getArtistAlbums(
         : `No discography source is available: ${notes.join(' ')}`);
     }
 
-    // -- [D]/[E]/[F] merge, enrich, type-filter, then [G] library compare.
     const merged = mergeSources({
       spine,
       lastFmRows,
@@ -646,11 +605,8 @@ export async function getArtistAlbums(
   }
 }
 
-// === get_album_info ===========================================================
-//
-// Single-album deep dive, the companion to get_artist_albums (spec §9).
-// MusicBrainz is primary for the tracklist because its durations and titles are
-// complete where Last.fm's are not. Last.fm supplies the wiki, tags and popularity only it has.
+// get_album_info takes the tracklist from MusicBrainz because Last.fm durations and titles are
+// incomplete. Last.fm supplies the wiki, tags, and popularity that only it has (spec §9).
 
 interface AlbumTrackDTO {
   position: number;
@@ -674,7 +630,7 @@ interface AlbumInfoResult {
   album: {
     title: string;
     artist: string;
-    /** MusicBrainz release-group MBID (feed it back to this tool), or null. */
+    /** A MusicBrainz release-group MBID, which this tool accepts back as input. */
     mbid: string | null;
     year: number | null;
     primaryType: string;
@@ -683,7 +639,7 @@ interface AlbumInfoResult {
     inLibrary: boolean | null;
     libraryAlbumId: string | null;
   };
-  /** MB release-group genres. Falls back to top-5 Last.fm tags when MB has none. */
+  /** MB release-group genres. Falls back to the top 5 genre-like Last.fm tags when MB has none. */
   genres: string[];
   listeners: number | null;
   playcount: number | null;
@@ -693,7 +649,7 @@ interface AlbumInfoResult {
   tracks: AlbumTrackDTO[];
   tracksSource: 'musicbrainz' | 'lastfm' | null;
   sources: { musicbrainz: boolean; lastfm: boolean };
-  // verbose-only (already in hand, never extra requests)
+  // Verbose-only. These come from data already fetched, so verbose adds no requests.
   wikiFull?: string | null;
   lastFmUrl?: string;
   tags?: string[];
@@ -701,7 +657,6 @@ interface AlbumInfoResult {
   note?: string;
 }
 
-// Raw per-source caches, 24h like the discography caches (spec §8.3/§9.5).
 const mbRgDetailCache = new Cache<MbReleaseGroupDetail | null>(ARTIST_ALBUMS_CACHE_TTL_SECONDS);
 const mbTracklistCache = new Cache<MbTracklist | null>(ARTIST_ALBUMS_CACHE_TTL_SECONDS);
 const lastFmAlbumInfoCache = new Cache<LastFmAlbumInfo>(ARTIST_ALBUMS_CACHE_TTL_SECONDS);
@@ -713,15 +668,11 @@ export function clearAlbumInfoCachesForTests(): void {
   lastFmAlbumInfoCache.clear();
 }
 
-/**
- * Last.fm album tags mix genres with user shelf-keeping noise (observed live:
- * ":3star", "2015", "albums I own", "seen live"). Keep only genre-like tags
- * for the `genres` fallback. The verbose `tags` field keeps the raw list.
- */
+/** Last.fm album tags mix genres with shelf tags such as ":3star", "2015", and "albums I own". */
 function isGenreLikeTag(tag: string): boolean {
   const trimmed = tag.trim();
-  if (trimmed === '' || /^\d{1,4}$/.test(trimmed)) return false; // bare years/numbers
-  if (!/^[\p{L}\p{N}]/u.test(trimmed)) return false; // punctuation-led (":3star")
+  if (trimmed === '' || /^\d{1,4}$/.test(trimmed)) return false;
+  if (!/^[\p{L}\p{N}]/u.test(trimmed)) return false;
   if (/\b(?:own(?:ed)?|favou?rites?|seen live|check ?out|wishlist)\b/i.test(trimmed)) return false;
   return true;
 }
@@ -739,8 +690,8 @@ async function fetchLastFmAlbumInfo(artist: string, album: string, apiKey: strin
   }
   const info = albumRaw as Record<string, unknown>;
 
-  // Last.fm drops or reshapes sparse fields (no tracks key, object-form single track,
-  // tags as "", no wiki) and sends counts as strings (verified live, spec §9.4).
+  // Last.fm omits or reshapes sparse fields, such as a missing tracks key, a lone track as an
+  // object, tags as "", or no wiki. Counts arrive as strings (spec §9.4).
   const tracksContainer = typeof info['tracks'] === 'object' && info['tracks'] !== null
     ? (info['tracks'] as Record<string, unknown>)['track']
     : undefined;
@@ -802,10 +753,8 @@ export async function getAlbumInfo(
     const apiKey = requireLastFmApiKey(config);
     const notes: string[] = [];
 
-    // -- Resolve the MB release group: lookup when an mbid is given (recovers
-    //    canonical title/artist for the other branches), else name search.
-    //    Last.fm's own mbid= param is NEVER used. It wants a release MBID and
-    //    rejects release-group MBIDs with "Album not found" (verified live).
+    // Last.fm's mbid= param takes a release MBID and rejects release-group MBIDs, so the mbid path
+    // recovers the names from MB for the Last.fm and Navidrome branches.
     let rg: MbReleaseGroupDetail | null = null;
     let mbResolveFailed = false;
     try {
@@ -834,8 +783,6 @@ export async function getAlbumInfo(
       throw new Error(`MusicBrainz release group ${mbid} has no artist credit. Pass artist and album names instead.`);
     }
 
-    // -- Fan out the three branches (the MB tracklist browse is serialized
-    //    behind the resolve step by the module-level 1 req/s throttle).
     const tracklistPromise: Promise<MbTracklist | null> = rg !== null
       ? cachedOr(mbTracklistCache, rg.mbid, () => browseMbReleaseTracklist(rg.mbid, config))
       : Promise.resolve(null);
@@ -852,9 +799,8 @@ export async function getAlbumInfo(
       navPromise,
     ]);
 
-    // -- Degradation accounting (spec §9.5: degrade, not fail). The resolve and
-    //    the tracklist browse are distinct MB calls. A browse failure must not
-    //    claim "MB unreachable" when year/type/genres are sitting in `rg`.
+    // A tracklist browse failure must not report MB unreachable, since `rg` already holds the
+    // year, type, and genres.
     const mbTracklist = tracklistResult.status === 'fulfilled' ? tracklistResult.value : null;
     if (tracklistResult.status === 'rejected') {
       logger.warn(`MusicBrainz release browse failed: ${String(tracklistResult.reason)}`);
@@ -882,7 +828,6 @@ export async function getAlbumInfo(
         : `No album info source is available: ${notes.join(' ')}`);
     }
 
-    // -- Library compare.
     const probeTitles = rg !== null && rg.title !== albumTitle ? [albumTitle, rg.title] : [albumTitle];
     const library = await resolveLibraryLookup(client, navResult, artistName, probeTitles);
     const navLookup = library.lookup;
@@ -894,7 +839,6 @@ export async function getAlbumInfo(
       ?? (rg !== null ? navLookup?.albumsByNormTitle.get(normTitle(rg.title)) : undefined)
       ?? null;
 
-    // -- Tracklist: MB primary, Last.fm fallback (spec §9.1).
     const mbTracks: MbTrack[] = mbTracklist?.tracks ?? [];
     const tracks: AlbumTrackDTO[] = mbTracks.length > 0 ? mbTracks : lastFm?.tracks ?? [];
     const tracksSource: 'musicbrainz' | 'lastfm' | null =
@@ -903,9 +847,8 @@ export async function getAlbumInfo(
       notes.push('No tracklist is available from either source.');
     }
 
-    // -- Genres: MB release-group genres, else genre-like Last.fm tags
-    //    (lowercased to match MB genre casing). Search-resolved RGs carry no
-    //    genres, so the names path usually lands on the tag fallback.
+    // Tags are lowercased to match MB genres, which parse lowercased. Search-resolved RGs carry no
+    // genres, so the names path usually falls back to tags.
     const genres = rg !== null && rg.genres.length > 0
       ? rg.genres
       : (lastFm?.tags ?? []).filter(isGenreLikeTag).slice(0, 5).map(t => t.toLowerCase());

@@ -1,21 +1,17 @@
 /**
  * Navidrome MCP Server - radio-discovery tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers discoverRadioStations, getRadioFilters, getStationByUuid,
- * clickStation, and voteStation with mocked fetch + mocked client.
- * External API (Radio Browser) is never hit live.
+ * Radio Browser is an external API, so every test mocks fetch.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../../../src/config.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 
-// Station validation now flows through network-safety's safeFetch (a peer-IP
-// gated dispatcher). Route it to whatever global.fetch mock each test installs
-// so the existing interleaved search+validation sequences keep working and no
-// real network is hit; safeFetch's real dispatcher behavior is covered in
-// tests/unit/utils/network-safety.test.ts. Keep the module's other exports real.
+// Stream probes go through safeFetch, so it is routed to each test's global.fetch mock.
+// tests/unit/utils/network-safety.test.ts covers the real peer-IP dispatcher.
 vi.mock('../../../src/utils/network-safety.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/utils/network-safety.js')>();
   return {
@@ -24,8 +20,6 @@ vi.mock('../../../src/utils/network-safety.js', async (importOriginal) => {
       (globalThis.fetch as (...a: unknown[]) => unknown)(...args),
   };
 });
-
-// ---- helpers ----------------------------------------------------------------
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -37,9 +31,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     tokenExpiry: 86400,
     features: { lastfm: false, radioBrowser: true, lyrics: false, playback: false },
     lastFmApiKey: undefined,
-    // Setting the override pins the resolver and avoids real DNS lookups
-    // (the SRV-resolution path is exercised separately in
-    // radio-browser-resolver.test.ts with a mocked dns module).
+    // The override skips the resolver's DNS lookup. radio-browser-resolver.test.ts covers it.
     radioBrowserBaseOverride: 'https://de1.api.radio-browser.info',
     radioBrowserUserAgent: 'TestAgent/1.0',
     lyricsProvider: undefined,
@@ -68,7 +60,6 @@ function firstFetchUrl(fetchMock: typeof fetch): string {
   return input instanceof Request ? input.url : input.toString();
 }
 
-/** A minimal Radio Browser station object. */
 function makeStation(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     stationuuid: 'uuid-001',
@@ -87,24 +78,19 @@ function makeStation(overrides: Record<string, unknown> = {}): Record<string, un
   };
 }
 
-// ---- discoverRadioStations --------------------------------------------------
-
 describe('discoverRadioStations', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
   it('returns stations + source + mirrorUsed on happy path', async () => {
-    // Radio Browser search → one station; validation HEAD → also mocked
     global.fetch = vi.fn()
-      // First call: /json/stations/search
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         json: () => Promise.resolve([makeStation()]),
         headers: new Headers(),
       } as unknown as Response)
-      // Subsequent calls: validation HEAD requests (up to 8)
       .mockResolvedValue({
         ok: true,
         status: 200,
@@ -227,16 +213,11 @@ describe('discoverRadioStations', () => {
     const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
     const result = await discoverRadioStations(makeConfig(), { limit: 1 });
 
-    // Mock guarantees one station; assert unconditionally so a regression
-    // that drops/filters the station fails the test instead of silently
-    // skipping the body. Also asserts the actual mapping content rather
-    // than just the array shape.
     expect(result.stations.length).toBe(1);
     const station = result.stations[0]!;
     expect(station.tags).toEqual(['jazz', 'blues']);
     expect(station.languages).toEqual(['english', 'french']);
     expect(station).not.toHaveProperty('languageCodes');
-    // DTO shape sanity: required fields are populated from the mock.
     expect(typeof station.stationUuid).toBe('string');
     expect(station.stationUuid.length).toBeGreaterThan(0);
     expect(typeof station.name).toBe('string');
@@ -272,9 +253,9 @@ describe('discoverRadioStations', () => {
     expect(station).not.toHaveProperty('homepage');
   });
 
-  it('serializes probes per host but runs different hosts in parallel, preserving order (Issue #7)', async () => {
-    // 4 stations: three share one host:port (hostA:8443), one is on hostB.
-    // hostA is the icecast-style cluster that rate-limits concurrent IPs.
+  it('serializes probes per host but runs different hosts in parallel, preserving order', async () => {
+    // Three stations share hosta.test:8443, which models an Icecast host that rate-limits
+    // concurrent connections from one IP.
     const stationList = [
       makeStation({ stationuuid: 'a1', name: 'A-one',    url: 'http://hosta.test:8443/one',   url_resolved: 'http://hosta.test:8443/one' }),
       makeStation({ stationuuid: 'b1', name: 'B-stream', url: 'http://hostb.test/stream',      url_resolved: 'http://hostb.test/stream' }),
@@ -282,7 +263,6 @@ describe('discoverRadioStations', () => {
       makeStation({ stationuuid: 'a3', name: 'A-three',  url: 'http://hosta.test:8443/three', url_resolved: 'http://hosta.test:8443/three' }),
     ];
 
-    // Track in-flight probes per host (and overall) to prove the concurrency model.
     const active = new Map<string, number>();
     const maxPerHost = new Map<string, number>();
     let totalActive = 0;
@@ -293,8 +273,7 @@ describe('discoverRadioStations', () => {
       if (url.includes('/json/stations/search')) {
         return { ok: true, status: 200, json: () => Promise.resolve(stationList), headers: new Headers() } as unknown as Response;
       }
-      // A station probe (HEAD). Record concurrency, then resolve as a 400 + ICY
-      // headers — the icecast-reject-HEAD shape that our validator treats as valid.
+      // Icecast rejects HEAD with 400 but still sends ICY headers, which the validator accepts.
       const host = new URL(url).host;
       const nowHost = (active.get(host) ?? 0) + 1;
       active.set(host, nowHost);
@@ -315,18 +294,12 @@ describe('discoverRadioStations', () => {
     const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
     const result = await discoverRadioStations(makeConfig(), { limit: 10 });
 
-    // Order preserved (discovery order, not bucket-completion order).
     expect(result.stations.map((s) => s.name)).toEqual(['A-one', 'B-stream', 'A-two', 'A-three']);
-    // Same-host probes never overlapped — hostA saw at most one in-flight probe.
     expect(maxPerHost.get('hosta.test:8443')).toBe(1);
-    // Different hosts DID run concurrently — hostA and hostB overlapped.
     expect(maxTotalActive).toBeGreaterThanOrEqual(2);
-    // All four validated successfully (400 + ICY headers ⇒ valid).
     expect(result.stations.every((s) => s.validation?.isValid === true)).toBe(true);
   });
 });
-
-// ---- getRadioFilters --------------------------------------------------------
 
 describe('getRadioFilters', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
@@ -402,7 +375,6 @@ describe('getRadioFilters', () => {
     const { getRadioFilters } = await import('../../../src/tools/radio-discovery.js');
     const result = await getRadioFilters(makeConfig(), { kinds: ['codecs'] });
 
-    // Only one fetch (for codecs), not four
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(Array.isArray(result.codecs)).toBe(true);
     expect(result.tags).toBeUndefined();
@@ -418,8 +390,8 @@ describe('getRadioFilters', () => {
   });
 
   it('reports a failed kind in partialFailures while still returning the others', async () => {
-    // Fetches are issued in kinds order: tags → countries → languages → codecs.
-    // Fail only the languages fetch; the other three succeed.
+    // getRadioFilters fetches tags, countries, languages and codecs in that order,
+    // so the third mock fails the languages fetch.
     global.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true, status: 200,
@@ -446,8 +418,7 @@ describe('getRadioFilters', () => {
     const { getRadioFilters } = await import('../../../src/tools/radio-discovery.js');
     const result = await getRadioFilters(makeConfig(), {});
 
-    // Successful kinds are present; the failed one is absent, and its name is
-    // surfaced in partialFailures so the caller can tell "errored" from "empty".
+    // partialFailures lets the caller tell a failed kind from an empty one.
     expect(Array.isArray(result.tags)).toBe(true);
     expect(Array.isArray(result.countries)).toBe(true);
     expect(Array.isArray(result.codecs)).toBe(true);
@@ -468,8 +439,6 @@ describe('getRadioFilters', () => {
     expect(result.partialFailures).toBeUndefined();
   });
 });
-
-// ---- getStationByUuid -------------------------------------------------------
 
 describe('getStationByUuid', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
@@ -503,8 +472,6 @@ describe('getStationByUuid', () => {
     await expect(getStationByUuid(makeConfig(), { stationUuid: 'any' })).rejects.toThrow();
   });
 });
-
-// ---- clickStation -----------------------------------------------------------
 
 describe('clickStation', () => {
   beforeEach(async () => {
@@ -563,7 +530,6 @@ describe('clickStation', () => {
     const first = await clickStation(makeConfig(), { stationUuid: 'uuid-dup' });
     const second = await clickStation(makeConfig(), { stationUuid: 'uuid-dup' });
 
-    // Only one outbound HTTP call — second was served from the dedup set.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(first.success).toBe(true);
     expect(second.success).toBe(true);
@@ -584,9 +550,7 @@ describe('clickStation', () => {
   });
 
   it('does NOT mark as deduped when Radio Browser responded ok:false', async () => {
-    // Server-side rejection is not a real click — we want the LLM to be
-    // able to retry next session with a corrected UUID, so don't poison
-    // the dedup set on a failed attempt.
+    // Radio Browser did not count a rejected click, so a retry must reach it again.
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true, status: 200,
       json: () => Promise.resolve({ ok: false, message: 'Station not found' }),
@@ -603,8 +567,6 @@ describe('clickStation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
-
-// ---- voteStation ------------------------------------------------------------
 
 describe('voteStation', () => {
   beforeEach(async () => {
@@ -704,14 +666,11 @@ describe('voteStation', () => {
     const v = await voteStation(makeConfig(), { stationUuid: 'uuid-mix' });
     const c = await clickStation(makeConfig(), { stationUuid: 'uuid-mix' });
 
-    // Two distinct upstream calls — vote and click slots are independent.
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(v.success).toBe(true);
     expect(c.success).toBe(true);
   });
 });
-
-// ---- mapStationToDTO (empty-field filtering) ---------------------------------
 
 describe('discoverRadioStations: empty-field filtering and deduplication', () => {
   beforeEach(() => {
@@ -724,12 +683,11 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
         ok: true,
         status: 200,
         json: () => Promise.resolve([
-          makeStation({ stationuuid: '' }),   // should be dropped
+          makeStation({ stationuuid: '' }),
           makeStation({ stationuuid: 'valid-uuid', name: 'Good FM', url: 'http://good.test/stream' }),
         ]),
         headers: new Headers(),
       } as unknown as Response)
-      // Validation HEAD for the one kept station
       .mockResolvedValue({
         ok: true, status: 200,
         headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
@@ -740,7 +698,6 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
     const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
     const result = await discoverRadioStations(makeConfig(), { limit: 5 });
 
-    // Only the station with a valid UUID should appear
     expect(result.stations.every(s => s.stationUuid !== '')).toBe(true);
     expect(result.stations.some(s => s.stationUuid === 'valid-uuid')).toBe(true);
   });
@@ -751,7 +708,7 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
         ok: true,
         status: 200,
         json: () => Promise.resolve([
-          makeStation({ name: '' }),  // should be dropped
+          makeStation({ name: '' }),
           makeStation({ stationuuid: 'uuid-2', name: 'Named FM', url: 'http://named.test/stream' }),
         ]),
         headers: new Headers(),
@@ -794,22 +751,19 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
   });
 
   it('dedupes stations with the same streamUrl before validation (case/spelling-tolerant)', async () => {
-    // Three rows from Radio Browser. mapStationToDTO prefers url_resolved
-    // when set, so we override BOTH url and url_resolved to make the test
-    // actually exercise distinct streamUrls. The two Jazz FM rows differ in
-    // casing, and dedup keys on streamUrl only, so they collapse.
+    // mapStationToDTO prefers url_resolved, so each row sets both URLs. Dedupe keys on
+    // streamUrl alone, so the two Jazz FM rows collapse despite their name casing.
     global.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         json: () => Promise.resolve([
           makeStation({ stationuuid: 'uuid-a', name: 'Jazz FM', url: 'http://jazz.test/stream', url_resolved: 'http://jazz.test/stream' }),
-          makeStation({ stationuuid: 'uuid-b', name: 'jazz fm', url: 'http://jazz.test/stream', url_resolved: 'http://jazz.test/stream' }), // duplicate by streamUrl, casing differs
+          makeStation({ stationuuid: 'uuid-b', name: 'jazz fm', url: 'http://jazz.test/stream', url_resolved: 'http://jazz.test/stream' }),
           makeStation({ stationuuid: 'uuid-c', name: 'Rock FM', url: 'http://rock.test/stream', url_resolved: 'http://rock.test/stream' }),
         ]),
         headers: new Headers(),
       } as unknown as Response)
-      // Validation for each kept station (2 unique, not 3)
       .mockResolvedValue({
         ok: true, status: 200,
         headers: new Headers({ 'Content-Type': 'audio/mpeg' }),
@@ -820,7 +774,6 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
     const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
     const result = await discoverRadioStations(makeConfig(), { limit: 5 });
 
-    // 2 unique stations (dedup dropped 1 duplicate)
     expect(result.stations.length).toBe(2);
     const names = result.stations.map(s => s.name);
     expect(names).toContain('Jazz FM');
@@ -856,15 +809,10 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
   });
 
   it('validates stations in parallel (Promise.all) — all complete in roughly one timeout window', async () => {
-    // Use a timing-based check: if validations run serially with individual
-    // delays each call would take N * delay; in parallel, total ≈ 1 * delay.
-    // We fake individual delays via mockImplementation and verify total call
-    // timing doesn't accumulate (pass if all validations resolve successfully).
     let concurrentCount = 0;
     let maxConcurrent = 0;
 
     global.fetch = vi.fn()
-      // First call: search results
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -875,7 +823,6 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
         ]),
         headers: new Headers(),
       } as unknown as Response)
-      // Subsequent validation HEAD calls — each increments the concurrency counter
       .mockImplementation(() => {
         concurrentCount++;
         maxConcurrent = Math.max(maxConcurrent, concurrentCount);
@@ -892,9 +839,7 @@ describe('discoverRadioStations: empty-field filtering and deduplication', () =>
     const { discoverRadioStations } = await import('../../../src/tools/radio-discovery.js');
     await discoverRadioStations(makeConfig(), { limit: 5 });
 
-    // At least 2 validations ran concurrently at some point — confirms Promise.all
-    // (serial for-loop would cap maxConcurrent at 1 since each await resolves
-    // before the next starts).
+    // A serial loop settles each probe before the next starts, which caps maxConcurrent at 1.
     expect(maxConcurrent).toBeGreaterThan(1);
   });
 });

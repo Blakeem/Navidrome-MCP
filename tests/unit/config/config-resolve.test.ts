@@ -1,32 +1,23 @@
-/**
- * Unit tests for config resolution: store → flat Config mapping (the four
- * round-trip edge cases), loadConfig, and resolveConfigState branching.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, resolveConfigState } from '../../../src/config.js';
 
-// process.execPath (the node binary) is guaranteed to exist and be executable —
-// a stable stand-in for "a valid mpv path" that doesn't depend on mpv install.
+// The node binary stands in for a valid mpv path, since it exists and is executable on every host.
 const EXEC = process.execPath;
 
 const BASE = {
   navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
 };
 
-// Env vars that feed the runtime env fallback. Cleared per test so the suite is
-// deterministic regardless of the developer's shell or CI's injected
-// NAVIDROME_URL/USERNAME/PASSWORD (which would otherwise legitimately activate
-// the fallback and flip the "unconfigured" expectations).
+// CI injects NAVIDROME_URL/USERNAME/PASSWORD, which would activate the env fallback and flip the
+// unconfigured expectations. A developer's shell could set the rest, so each test clears them all.
 const FALLBACK_ENV_KEYS = [
   'NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD',
   'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT', 'MCP_HTTP_EXPOSE',
   'MCP_HTTP_AUTH_TOKEN', 'MCP_HTTP_ALLOWED_HOSTS', 'MCP_HTTP_ALLOWED_ORIGINS',
-  // Feature-gating env vars — cleared so a developer's shell can't spuriously
-  // enable radio/lyrics and break the opt-in assertions below.
+  // A set feature-gating var would enable radio or lyrics and break the opt-in assertions.
   'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LASTFM_API_KEY',
 ];
 
@@ -190,7 +181,7 @@ describe('config resolution', () => {
 
     it('rejects an unknown transport type', async () => {
       write({ ...BASE, transport: { type: 'websocket' } });
-      // SettingsFileSchema rejects the bad enum → store reads as unconfigured.
+      // SettingsFileSchema rejects the unknown enum value, so the store reads as unconfigured.
       expect(await resolveConfigState()).toEqual({ configured: false });
     });
 
@@ -267,7 +258,6 @@ describe('config resolution', () => {
         expect(state.config.navidromeUrl).toBe('http://env-host:4533');
         expect(state.config.navidromeUsername).toBe('env-user');
         expect(state.config.navidromePassword).toBe('env-pass');
-        // No MCP_TRANSPORT → stdio default, same as a store-less GUI install.
         expect(state.config.transport.type).toBe('stdio');
       }
     });
@@ -321,8 +311,7 @@ describe('config resolution', () => {
       const state = await resolveConfigState();
       expect(state.configured).toBe(true);
       if (state.configured) {
-        // The headless env-runtime path must not silently enable third-party
-        // outbound features from the form-seed convenience defaults.
+        // The env runtime must not enable third-party outbound traffic from the form-seed defaults.
         expect(state.config.features.radioBrowser).toBe(false);
         expect(state.config.features.lyrics).toBe(false);
       }

@@ -1,17 +1,12 @@
 /**
  * Navidrome MCP Server - mpv-ipc unit tests
  * Copyright (C) 2025
- *
- * Covers the production-hardening changes from docs/review/02 ship-blockers
- * C1 (per-command timeout) and C2 (settled-sentinel + safe-write). Mocks
- * `node:net` so the IPC client talks to a controllable in-memory socket;
- * the real mpv binary is exercised by tests/integration/playback/.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Shared state between the vi.mock factory and tests. vi.hoisted ensures
-// this runs before the mock factory.
+// vi.mock is hoisted above this file's declarations, so the state its factory shares must be too.
 const state = vi.hoisted(() => ({
   sockets: [] as FakeSocket[],
 }));
@@ -54,7 +49,6 @@ vi.mock('node:net', async () => {
   };
 });
 
-// Import AFTER the mock is registered.
 const { MpvIpc } = await import('../../../../src/services/playback/mpv-ipc.js');
 
 function latestSocket(): FakeSocket {
@@ -65,10 +59,8 @@ function latestSocket(): FakeSocket {
 
 async function connectedIpc(): Promise<InstanceType<typeof MpvIpc>> {
   const ipc = new MpvIpc();
-  // Single attempt + zero delay so a successful connect doesn't queue a
-  // timer the fake clock would have to drain.
+  // One attempt with no delay, so a failed connect rejects without waiting on the fake clock.
   const promise = ipc.connect('/fake', 1, 0);
-  // Yield once so vi.mock's createConnection ran and pushed the socket.
   await Promise.resolve();
   latestSocket().emit('connect');
   await promise;
@@ -115,13 +107,12 @@ describe('MpvIpc', () => {
 
     const promise = ipc.command('loadfile', 'http://x/y', 'replace');
     vi.advanceTimersByTime(2500);
-    // Should NOT have rejected yet — promise is still pending.
     let settled = false;
     promise.catch(() => { settled = true; });
     await Promise.resolve();
     expect(settled).toBe(false);
 
-    vi.advanceTimersByTime(2600); // total 5100ms
+    vi.advanceTimersByTime(2600);
     await expect(promise).rejects.toThrow(/mpv command timeout \(5000ms\): loadfile/);
   });
 
@@ -146,8 +137,6 @@ describe('MpvIpc', () => {
     vi.advanceTimersByTime(2001);
     await expect(promise).rejects.toThrow(/timeout/);
 
-    // The original socket listeners are still attached; emitting data after
-    // the tear-down should NOT throw and should NOT re-resolve the promise.
     expect(() => emitResponse(sock, 1, false)).not.toThrow();
   });
 
@@ -159,12 +148,9 @@ describe('MpvIpc', () => {
     expect(sock.writeCalls.length).toBe(1);
     const writeCall = sock.writeCalls[0]!;
 
-    // Peer drops the socket BEFORE the write callback fires.
     sock.emit('close');
     await expect(promise).rejects.toThrow(/closed unexpectedly/);
 
-    // Now the write callback fires with an error — must not throw or
-    // double-reject.
     expect(() => writeCall.cb?.(new Error('EPIPE'))).not.toThrow();
   });
 
@@ -187,18 +173,12 @@ describe('MpvIpc', () => {
     expect(ipc.isConnected()).toBe(false);
   });
 
-  it('caps the IPC framing buffer at 16MB and tears down on overflow (M6)', async () => {
+  it('caps the IPC framing buffer at 16MB and tears down on overflow', async () => {
     const ipc = await connectedIpc();
     const sock = latestSocket();
     const onDisconnect = vi.fn();
     ipc.onDisconnect(onDisconnect);
 
-    // Emit a single chunk >16MB with no newline. The IPC parser cannot frame
-    // it as a complete response and is supposed to drop the buffer + tear
-    // down the connection (next ensureRunning() will re-attach). The cap was
-    // raised from 64KB to 16MB to accommodate large-playlist `get_property`
-    // responses (~400 bytes/entry × queue length), which can legitimately be
-    // hundreds of KB on a 500+-track queue.
     sock.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1024));
 
     expect(ipc.isConnected()).toBe(false);
@@ -212,9 +192,7 @@ describe('MpvIpc', () => {
     const promise = ipc.command('pause');
     sock.emit('data', 'a'.repeat(16 * 1024 * 1024 + 1024));
 
-    // Regex is intentionally loose on the byte count so future cap tweaks
-    // don't require test updates — the assertion is "we surface a frame-
-    // -size violation," not "the cap is exactly N."
+    // The byte count is not pinned, since the guarded behavior is the rejection, not the cap value.
     await expect(promise).rejects.toThrow(/exceeded \d+ bytes/);
   });
 
@@ -227,8 +205,6 @@ describe('MpvIpc', () => {
     vi.advanceTimersByTime(2001);
     await expect(promise).rejects.toThrow(/timeout/);
 
-    // Explicit close() after the timeout already tore the IPC down — must
-    // be a no-op (no extra disconnect-handler invocation, no throw).
     expect(() => ipc.close()).not.toThrow();
     expect(onDisconnect).toHaveBeenCalledTimes(1);
   });

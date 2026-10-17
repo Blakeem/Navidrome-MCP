@@ -1,9 +1,9 @@
 /**
  * Navidrome MCP Server - common schema tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Verifies B2 ID-pattern enforcement: malicious or path-injecting IDs
- * MUST be rejected at the schema layer, before any URL builder sees them.
+ * A path-injecting ID must fail at the schema layer, before any URL builder interpolates it.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -39,7 +39,7 @@ describe('IdSchema', () => {
     expect(() => IdSchema.parse({ id: 'has/slash' })).toThrow(/invalid characters/);
   });
 
-  it('rejects empty IDs with the original min(1) message', () => {
+  it('rejects empty IDs with the required message', () => {
     expect(() => IdSchema.parse({ id: '' })).toThrow(/required/);
   });
 });
@@ -97,13 +97,12 @@ describe('ItemListTypeSchema (plural normalization)', () => {
 });
 
 describe('createLimitSchema / OffsetSchema integer enforcement', () => {
-  // A non-integer limit/offset becomes `_start`/`_end` in the Navidrome REST
-  // URL; Navidrome silently drops a fractional pagination param and returns
-  // the ENTIRE unpaginated result set. These must be rejected at validation.
+  // Navidrome ignores a fractional `_end` and returns the entire result set. It also ignores a
+  // fractional `_start` and serves the first page.
   it('accepts integer limits within range', () => {
     const schema = createLimitSchema(1, 500, 100);
     expect(schema.parse(50)).toBe(50);
-    expect(schema.parse(undefined)).toBe(100); // default applied
+    expect(schema.parse(undefined)).toBe(100);
   });
 
   it('rejects fractional limits', () => {
@@ -119,7 +118,7 @@ describe('createLimitSchema / OffsetSchema integer enforcement', () => {
 
   it('accepts integer offsets and rejects fractional ones', () => {
     expect(OffsetSchema.parse(20)).toBe(20);
-    expect(OffsetSchema.parse(undefined)).toBe(0); // default applied
+    expect(OffsetSchema.parse(undefined)).toBe(0);
     expect(() => OffsetSchema.parse(20.5)).toThrow();
     expect(() => OffsetSchema.parse(-1)).toThrow();
   });
@@ -150,11 +149,8 @@ describe('EnhancedSearchSchema year filter', () => {
       .toThrow(/more than one year in the future/);
   });
 
-  it('rejects the obsolete yearFrom/yearTo via passthrough strip (params silently dropped)', () => {
-    // EnhancedSearchSchema is not strict, so unknown fields are silently
-    // dropped by Zod default. The important guarantee: yearFrom/yearTo do NOT
-    // appear in the parsed output, so downstream callers can't accidentally
-    // pass them through to Navidrome.
+  it('strips unknown yearFrom/yearTo keys', () => {
+    // A non-strict Zod object strips unknown keys, so yearFrom and yearTo never reach Navidrome.
     const result = EnhancedSearchSchema.parse({
       query: 'test',
       yearFrom: 2010,

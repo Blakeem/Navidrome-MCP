@@ -2,19 +2,7 @@
 /**
  * Navidrome MCP Server
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -40,10 +28,8 @@ import { buildSetupNotice, registerDegradedTools, type StartupFailure } from './
 import { openBrowser } from './utils/open-browser.js';
 import { isLanReachable } from './webui/network.js';
 
-// Belt-and-suspenders against any unhandled rejection escaping the system.
-// Without this, Node 20+ terminates the process by default. The mpv IPC layer
-// has its own settled-sentinel safety, but a single regression in tool code
-// shouldn't crash the whole MCP server.
+// Node exits on an unhandled rejection by default, and one stray rejection in tool code
+// must not end the MCP server.
 process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection:', reason);
 });
@@ -56,7 +42,7 @@ function createBareServer(capabilities: ServerCapabilities): Server {
   );
 }
 
-/** HTTP needs one Server per session and stdio needs one, so both build here to keep one tool surface. */
+/** Each HTTP session and the stdio transport build their Server here, so all share one tool set. */
 function createConfiguredServer(client: NavidromeClient, config: Config): Server {
   const server = createBareServer(MCP_CAPABILITIES);
   registerTools(server, client, config);
@@ -65,8 +51,8 @@ function createConfiguredServer(client: NavidromeClient, config: Config): Server
 }
 
 /**
- * Signals and, under stdio, stdin EOF run cleanup then exit, since StdioServerTransport
- * ignores EOF and a ref'd mpv socket or settings listener would keep the process alive.
+ * StdioServerTransport ignores stdin EOF, and a ref'd mpv socket or settings listener keeps the
+ * process alive, so signals and stdin EOF run cleanup and exit here.
  */
 function installExitHandlers(cleanup: () => Promise<void>, watchStdin: boolean): void {
   let stopping = false;
@@ -92,12 +78,7 @@ function installExitHandlers(cleanup: () => Promise<void>, watchStdin: boolean):
   }
 }
 
-/**
- * First-run / degraded mode, used when neither settings.json nor the env-var
- * fallback yields a usable config, or when stdio startup fails. An unreachable
- * Navidrome skips the auto-open, since its settings are not at fault. The auto-open
- * silently no-ops on headless/SSH, so the degraded tools hand the user the settings URL in band.
- */
+/** An unreachable Navidrome skips the browser auto-open, since its settings are not at fault. */
 async function runSetupMode(failure?: StartupFailure): Promise<void> {
   const settings = await startConfigServer();
   logger.warn(buildSetupNotice(settings.url, failure));
@@ -116,9 +97,8 @@ async function runSetupMode(failure?: StartupFailure): Promise<void> {
 }
 
 /**
- * Build the runtime. A stdio exit reaches the user only as a generic client
- * disconnect, so a stdio startup failure falls back to setup mode with the
- * reason and resolves null. An HTTP startup failure still exits.
+ * A stdio exit reaches the user only as a generic client disconnect, so a stdio startup failure
+ * enters setup mode and reports the reason there. An HTTP startup failure exits.
  */
 async function createRuntimeOrSetupMode(config: Config): Promise<Runtime | null> {
   try {
@@ -152,14 +132,14 @@ async function main(): Promise<void> {
   if (runtime === null) return;
   const { config, client } = runtime;
 
-  // Spawned as an IPC child so it can follow this process's exit. Best effort,
-  // so a player failure never stops MCP.
+  // Best effort, so a player failure never stops MCP.
   await ensureWebForPlayback(config);
 
-  // Every process attached to mpv tracks plays, and the mpv claim channel picks one submitter per play.
+  // Every process attached to mpv tracks plays, and the mpv claim channel picks one submitter
+  // per play.
   if (config.features.playback) {
-    // Subscribe BEFORE adopting mpv so the tracker catches the initial state
-    // emit (it hydrates without re-scrobbling the in-flight track).
+    // Attach before adopting mpv, so the tracker hydrates from the initial state emit without
+    // re-scrobbling the in-flight track.
     const tracker = new ScrobbleTracker(client, playbackEngine, async () => {
       const owner = await probeWebOwner(config.webui, readSavedWebuiEndpoint);
       // A player respawned by another MCP has no lease from this one until a probe finds it.
@@ -167,9 +147,8 @@ async function main(): Promise<void> {
       return !legacyOwnerScrobbles(owner);
     });
     tracker.attach();
-    // Adopt an already-playing mpv (e.g. left by a prior session) so the
-    // scrobbler sees real state immediately. Best-effort and never spawns mpv
-    // (ensureAttached only latches onto an existing socket).
+    // Adopting an mpv left by a prior session lets the scrobbler see real state at once.
+    // ensureAttached never spawns mpv.
     try {
       await playbackEngine.ensureAttached();
     } catch (err) {
@@ -177,8 +156,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Bind the configured transport. HTTP serves remote clients over a socket
-  // (one MCP Server per session). stdio serves the single local-process client.
   let httpHandle: HttpTransport | undefined;
   if (config.transport.type === 'http') {
     // A NetworkPolicy-locked or same-pod deployment is a legitimate no-token

@@ -1,15 +1,3 @@
-/**
- * Coverage for the web-UI lyrics endpoint and the player-state flag it pairs with.
- *
- *  - lyrics.ts — id validation before any upstream call, queue resolution,
- *                the missing-metadata path that must never reach a Zod throw,
- *                the two-TTL cache, and the LRCLIB feature gate.
- *  - player.ts — /api/player-state must report `lyrics.lrclibEnabled` so the
- *                overlay can explain an empty result.
- *  - server.ts — both of the above must actually be reachable through the
- *                dispatcher, including the malformed-percent-sequence path.
- */
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -21,20 +9,19 @@ import type { SseBroadcaster } from '../../../src/webui/broadcaster.js';
 import { createMockClient } from '../../factories/mock-client.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 
-// Mock the live-queue read so no mpv IPC is attempted.
+// The real live-queue read would attempt mpv IPC.
 vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/tools/playback.js')>();
   return { ...actual, getPlayQueue: vi.fn() };
 });
 
-// Mock the resolver: this file tests the route around it, and the resolver's own
-// behavior is covered by the lyrics tool tests.
+// The lyrics tool tests cover the resolver, so this file mocks it and tests the route around it.
 vi.mock('../../../src/tools/lyrics.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/tools/lyrics.js')>();
   return { ...actual, resolveLyricsByMetadata: vi.fn() };
 });
 
-// Belt and braces: nothing in this file may reach an external API.
+// A second guard, so no test in this file can reach an external API.
 vi.mock('../../../src/utils/fetch-with-timeout.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/utils/fetch-with-timeout.js')>();
   return {
@@ -52,7 +39,6 @@ import { handleLyrics } from '../../../src/webui/routes/lyrics.js';
 import { handlePlayerState } from '../../../src/webui/routes/player.js';
 import { createServer } from '../../../src/webui/server.js';
 
-/** Capture status + body written to a ServerResponse without a real socket. */
 interface CapturedRes {
   res: ServerResponse;
   status: () => number | undefined;
@@ -79,7 +65,6 @@ function fakeRes(): CapturedRes {
   };
 }
 
-/** IncomingMessage stand-in with a fixed peer address and a loopback Host header. */
 function fakeReq(remoteAddress: string): IncomingMessage {
   const emitter = new EventEmitter() as IncomingMessage & { socket: { remoteAddress: string } };
   emitter.socket = { remoteAddress } as never;
@@ -156,7 +141,6 @@ function testClient(): NavidromeClient {
   return createMockClient() as unknown as NavidromeClient;
 }
 
-/** Raw request so a malformed percent-sequence survives to the server verbatim. */
 function httpGet(port: number, path: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const req = httpRequest({ host: '127.0.0.1', port, path, method: 'GET' }, (res) => {
@@ -355,6 +339,7 @@ describe('handleLyrics LRCLIB feature gate', () => {
   });
 });
 
+// The lyrics overlay reads lrclibEnabled to explain an empty result.
 describe('handlePlayerState lyrics flag', () => {
   it('reports lrclibEnabled true when the lyrics feature is configured', () => {
     const cap = fakeRes();

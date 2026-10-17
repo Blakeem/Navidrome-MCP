@@ -1,13 +1,10 @@
 /**
  * Navidrome MCP Server - playAlbums pagination tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers M4 from docs/review/02-playback-deep-review.md: fetchAlbumSongs
- * used to hardcode a 500-track ceiling and silently truncate. The fix
- * paginates via X-Total-Count so multi-disc boxsets play through completely.
- *
- * `fetchAlbumSongs` is module-private; we exercise it through `playAlbums`
- * with the playbackEngine module mocked so no real mpv is touched.
+ * A boxset can exceed one QUEUE_READ_PAGE_SIZE page, so the album track read must page by
+ * X-Total-Count. The private read is reached through playAlbums with the playback engine mocked.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +27,7 @@ function trackPage(start: number, count: number): unknown[] {
   return Array.from({ length: count }, (_, i) => ({ id: `track-${start + i}` }));
 }
 
-describe('fetchAlbumSongs pagination (M4)', () => {
+describe('playAlbums album track pagination', () => {
   let client: MockNavidromeClient;
 
   beforeEach(() => {
@@ -54,10 +51,8 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     expect(result.success).toBe(true);
     expect(result.trackCount).toBe(12);
     expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(1);
-    // Third arg is the optional metadata array — the engine ingests it into
-    // its per-session cache so `get_play_queue` reports titles for the full
-    // queue, not just mpv's current track. Mock-track rows omit title/etc.
-    // so each entry is just `{ songId }`.
+    // The third argument is the metadata the engine caches for get_play_queue. These mock rows
+    // carry only an id, so each metadata entry holds only songId.
     expect(enqueueMock).toHaveBeenCalledWith(
       Array.from({ length: 12 }, (_, i) => `track-${i}`),
       'replace',
@@ -66,7 +61,6 @@ describe('fetchAlbumSongs pagination (M4)', () => {
   });
 
   it('paginates through a 1500-track boxset using X-Total-Count', async () => {
-    // Three pages: 500 + 500 + 500 = 1500 total
     client.requestWithLibraryFilterAndMeta
       .mockResolvedValueOnce({ data: trackPage(0, 500), total: 1500 })
       .mockResolvedValueOnce({ data: trackPage(500, 500), total: 1500 })
@@ -81,7 +75,6 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     expect(result.trackCount).toBe(1500);
     expect(client.requestWithLibraryFilterAndMeta).toHaveBeenCalledTimes(3);
 
-    // Verify pagination cursor moves forward correctly
     const calls = client.requestWithLibraryFilterAndMeta.mock.calls.map((c) => c[0]);
     expect(calls[0]).toContain('_start=0');
     expect(calls[0]).toContain('_end=500');
@@ -90,14 +83,12 @@ describe('fetchAlbumSongs pagination (M4)', () => {
     expect(calls[2]).toContain('_start=1000');
     expect(calls[2]).toContain('_end=1500');
 
-    // Last enqueued track id should be the last of page 3
     const enqueued = enqueueMock.mock.calls[0]?.[0] as string[];
     expect(enqueued.at(-1)).toBe('track-1499');
     expect(enqueued.length).toBe(1500);
   });
 
   it('falls back to short-page heuristic when X-Total-Count is missing', async () => {
-    // Server returns null total, second page is short → stop
     client.requestWithLibraryFilterAndMeta
       .mockResolvedValueOnce({ data: trackPage(0, 500), total: null })
       .mockResolvedValueOnce({ data: trackPage(500, 87), total: null });

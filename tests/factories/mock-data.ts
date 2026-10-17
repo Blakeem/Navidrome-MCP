@@ -1,15 +1,5 @@
-/**
- * Mock Data Factory for Navidrome MCP Server Tests
- * 
- * Provides consistent mock data structures for testing without
- * relying on specific music library content.
- */
-
 import type { PlaylistDTO } from '../../src/types/index.js';
 
-/**
- * Mock playlist data following the PlaylistDTO interface structure
- */
 export const mockPlaylist: PlaylistDTO = {
   id: 'mock-playlist-id-001',
   name: 'Mock Test Playlist',

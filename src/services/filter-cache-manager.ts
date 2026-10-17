@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Filter Cache Manager Service
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -26,10 +14,9 @@ const FILTER_TYPES = FilterOptionsSchema.shape.filterType.options;
 
 export type FilterType = (typeof FILTER_TYPES)[number];
 
-// Case-insensitive, so "Accession Records" sorts beside "ATO Records" instead of after every capital.
+// Case-insensitive, so "Accession Records" sorts beside "ATO Records", not after every capital.
 const FILTER_OPTION_ORDER = new Intl.Collator(undefined, { sensitivity: 'base' });
 
-// The /api/tag tag_name each filter type loads from.
 const TAG_NAMES: Record<FilterType, string> = {
   genres: 'genre',
   mediaTypes: 'media',
@@ -58,14 +45,7 @@ function createFilterSets(): Record<FilterType, FilterSet> {
   ) as Record<FilterType, FilterSet>;
 }
 
-/**
- * Singleton service for managing filter option caches for enhanced search functionality.
- * Caches small, well-defined filter sets for text-based filtering.
- *
- * When filterCacheEnabled=false the Maps are still used as a working buffer, but
- * ensureFresh() re-fetches all tag data before every resolve operation so
- * newly-added values are always visible.
- */
+/** Resolves text filter values, such as a genre name, to the tag UUIDs Navidrome filters by. */
 class FilterCacheManager {
   private static instance: FilterCacheManager | null = null;
 
@@ -74,8 +54,7 @@ class FilterCacheManager {
   private initialized = false;
   private cacheEnabled = true;
   private client: NavidromeClient | null = null;
-  // Concurrent callers share one refresh. Loaders clear and refill the Maps non-atomically,
-  // so a reader is safe only behind this single-flight.
+  // Shared by concurrent callers, so a burst of resolves triggers one fetch.
   private refreshPromise: Promise<void> | null = null;
 
   private constructor() {}
@@ -85,13 +64,6 @@ class FilterCacheManager {
     return FilterCacheManager.instance;
   }
 
-  /**
-   * Initialize the filter cache manager by loading all filter options.
-   *
-   * When config.filterCacheEnabled is false the client reference is stored for
-   * use by ensureFresh(), which re-fetches all data on every resolve call.
-   * The startup fetch still runs so the first request has data immediately.
-   */
   async initialize(client: NavidromeClient, config: Config): Promise<void> {
     this.client = client;
     this.cacheEnabled = config.filterCacheEnabled;
@@ -125,8 +97,8 @@ class FilterCacheManager {
   }
 
   /**
-   * Called before every resolve. With filterCacheEnabled=false it re-fetches so newly
-   * added genres, labels and moods are visible. Every caller waits for an in-flight refresh.
+   * With filterCacheEnabled=false it re-fetches, so newly added tag values are visible.
+   * Every caller waits for an in-flight refresh, such as one started by reload().
    */
   async ensureFresh(): Promise<void> {
     if (this.refreshPromise !== null) {
@@ -140,10 +112,7 @@ class FilterCacheManager {
     return this.startRefresh(client);
   }
 
-  /**
-   * Re-fetch all filter data for the libraries active now. The maps hold only
-   * the values of the libraries that were active when they loaded.
-   */
+  /** The maps hold only the values of the libraries active when they loaded. */
   async reload(): Promise<void> {
     const client = this.requireClient();
     while (this.refreshPromise !== null) {
@@ -166,10 +135,7 @@ class FilterCacheManager {
     return this.refreshPromise;
   }
 
-  /**
-   * Load one filter type into its Maps. A failed or invalid fetch keeps the
-   * previous values and never blocks the other filter types.
-   */
+  /** A failed or invalid fetch keeps the previous values and never blocks another filter type. */
   private async loadFilterSet(client: NavidromeClient, type: FilterType): Promise<void> {
     const set = this.filterSets[type];
     try {

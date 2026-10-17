@@ -1,6 +1,3 @@
-// The lyrics body. Four content states share one entry point: instrumental, timed, plain and none found.
-// Only the timed state follows the player.
-
 import { byId } from './dom.js';
 import { snapLyricsClock } from './lyrics-clock.js';
 import { lyricsFor } from './lyrics-data.js';
@@ -22,7 +19,7 @@ export function setLrclibEnabled(enabled) {
   lrclibEnabled = enabled;
 }
 
-// A null songId also covers the window before the queue snapshot lands,
+// A null songId also covers a track with no row in the queue snapshot,
 // since /api/lyrics/:songId answers 404 for an id not in the queue.
 export function showLyricsFor(songId) {
   generation += 1;
@@ -31,7 +28,8 @@ export function showLyricsFor(songId) {
     setLyricsStatus('Nothing is playing.');
     return;
   }
-  // The offset applies to every song, so the loading state leaves the offset control and its open dialog alone.
+  // The offset applies to every song, so the loading state leaves the offset control
+  // and its open dialog alone.
   clearLyricsBody();
   status.textContent = 'Loading lyrics…';
   void loadLyrics(songId, generation);
@@ -68,14 +66,11 @@ function setLyricsStatus(text) {
   status.textContent = text;
 }
 
-// A placard is more than one run of text, so it is built as nodes. `link` is { text, href } or null.
 function renderPlacard(headline, note, link) {
-  // INPUT
   const head = document.createElement('span');
   const detail = document.createElement('span');
   const anchor = link === null ? null : document.createElement('a');
 
-  // PROCESS
   head.className = 'lyrics-placard-head';
   head.textContent = headline;
   detail.className = 'lyrics-placard-note';
@@ -88,7 +83,6 @@ function renderPlacard(headline, note, link) {
     anchor.textContent = link.text;
   }
 
-  // OUTPUT
   clearLyricsBody();
   setOffsetControlVisible(false);
   status.append(head, detail);
@@ -114,17 +108,15 @@ function renderNoLyrics(dto) {
 }
 
 function lyricsLineEl(text, index) {
-  // INPUT
   const li = document.createElement('li');
-  // A native button gives a keyboard and screen-reader path to the seek. A blank row has no name to announce.
+  // A native button gives a keyboard and screen-reader path to the seek.
+  // A blank row has no name to announce.
   const seekBtn = index !== null && text.trim() !== '' ? document.createElement('button') : null;
 
-  // PROCESS
   li.className = 'lyric-line';
   // Only a timed row can be tapped to seek, so only a timed row is indexed.
   if (index !== null) li.dataset.index = String(index);
 
-  // OUTPUT
   // Lyrics are untrusted third-party text, so they go through textContent only.
   if (seekBtn === null) {
     li.textContent = text;
@@ -138,7 +130,6 @@ function lyricsLineEl(text, index) {
 }
 
 function renderLyricsLines(dto) {
-  // INPUT
   const timed = dto.hasSynced === true && Array.isArray(dto.synced) ? dto.synced : [];
   const plain = typeof dto.unsynced === 'string' ? dto.unsynced : '';
   let rows = [];
@@ -148,12 +139,10 @@ function renderLyricsLines(dto) {
     return;
   }
 
-  // PROCESS
   clearLyricsBody();
   if (timed.length > 0) rows = timed.map((line, index) => lyricsLineEl(line.text, index));
   else if (plain.trim() !== '') rows = plain.split(/\r?\n/).map((text) => lyricsLineEl(text, null));
 
-  // OUTPUT
   if (rows.length === 0) {
     renderNoLyrics(dto);
     return;
@@ -162,6 +151,6 @@ function renderLyricsLines(dto) {
   lines.classList.toggle('is-synced', timed.length > 0);
   lines.replaceChildren(...rows);
   setOffsetControlVisible(timed.length > 0);
-  // A snapshot may have landed during the lookup, leaving a correction that belongs to no row on screen.
+  // A snapshot during the lookup may have left a correction that belongs to no row on screen.
   snapLyricsClock();
 }

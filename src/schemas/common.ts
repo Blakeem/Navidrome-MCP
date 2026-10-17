@@ -1,25 +1,13 @@
 /**
  * Navidrome MCP Server - Common Schema Definitions
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { z } from 'zod';
 
-// An ID holding `?`, `&`, `..` or `/` would inject query params or path segments into a request URL.
-// encodeURIComponent at the call sites is defense-in-depth on top of this regex.
+// An ID holding `?`, `&`, `..` or `/` would inject query params or path segments into a
+// request URL. encodeURIComponent at the call sites is defense-in-depth on top of this regex.
 export const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // abort stops an empty ID at its first issue, so it is not also reported as invalid characters.
@@ -29,8 +17,8 @@ export const IdSchema = z.object({
   id: IdStringSchema,
 });
 
-// Generic over the literal field name so the key stays a precise `{ [field]: string }` shape, not an index
-// signature. The cast restores the literal key that the `[fieldName]` computed-property syntax erases.
+// Generic over the literal field name so the key stays a precise `{ [field]: string }` shape,
+// not an index signature. The cast restores the literal key that `[fieldName]` syntax erases.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory. Its return type is inferred by zod, and an explicit annotation would be unwieldy
 export const createIdSchema = <F extends string>(resourceType: string, fieldName: F) =>
   z.object({
@@ -57,20 +45,20 @@ export const ItemListTypeSchema = z.enum(ITEM_TYPE_VARIANTS).transform((v): 'son
   return v;
 });
 
-// Navidrome drops a non-integer `_start` or `_end` and returns the whole unpaginated set, so limits must be integers.
+// Navidrome ignores a non-integer `_start` or `_end`, so the page starts at row 0 or runs to
+// the end of the set.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type,@typescript-eslint/explicit-module-boundary-types -- schema factory. Its return type is inferred by zod, and an explicit annotation would be unwieldy
 export const createLimitSchema = (min: number, max: number, defaultValue: number) =>
   z.number().int().min(min).max(max).optional().default(defaultValue);
 
-// Offset schema for pagination (see createLimitSchema for why `.int()`)
+// `.int()` for the same Navidrome `_start` quirk as createLimitSchema.
 export const OffsetSchema = z.number().int().min(0).optional().default(0);
 
 export const OrderSchema = z.enum(['ASC', 'DESC']).optional().default('ASC');
 
 export const OptionalBooleanSchema = z.boolean().optional();
 
-// Compact output keeps large array responses under the tool-result token cap.
-// True returns the full per-item metadata (path, genres, year, bitrate, rating).
+// Compact output by default keeps large array responses under the tool-result token cap.
 export const VerboseSchema = z.boolean().optional().default(false);
 
 export const SEARCH_QUERY_MAX_LENGTH = 500;
@@ -84,7 +72,7 @@ const OptionalSearchQuerySchema = z.string()
 export const EnhancedSearchSchema = z.object({
   query: OptionalSearchQuerySchema,
 
-  // Text-based filters (resolved to IDs internally)
+  // Tag values by name. The search tools resolve each one to a Navidrome tag ID.
   genre: z.string().optional(),
   mediaType: z.string().optional(),
   country: z.string().optional(), 
@@ -132,7 +120,8 @@ export const SearchAlbumsSchema = EnhancedSearchSchema.extend({
   verbose: VerboseSchema,
 });
 
-// /api/artist ignores tag and year filters, so a set value fails here instead of returning unfiltered artists.
+// /api/artist ignores tag and year filters, so a set value fails here instead of returning
+// unfiltered artists.
 const ArtistUnsupportedFilterSchema = z.undefined(
   'search_artists does not filter by tag or year. Use search_albums or search_songs for tag-filtered lookups, and list_tag_values for the tag values.',
 );

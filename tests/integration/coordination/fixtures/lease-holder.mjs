@@ -1,6 +1,5 @@
-// Test harness: stands in for a second MCP server that finds a running player. It runs the
-// real ensureWebForPlayback from dist/web/spawn.js, which holds a lease on the player, prints
-// a ready line and stays alive. Killing it closes the lease socket.
+// Stands in for a second MCP server that finds the running player and holds a lease on it.
+// Killing this harness closes the lease socket.
 //
 // argv: <distWebMain> <storePath>
 import { readFileSync } from 'node:fs';

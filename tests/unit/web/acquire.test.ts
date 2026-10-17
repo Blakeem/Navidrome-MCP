@@ -1,10 +1,10 @@
 /**
  * Navidrome MCP Server - Port-as-lock acquire/attach unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the acquire decision flow with injected probe + bind (the
- * multi-process coordination suite binds the real port under test:playback).
- * The probe verdict tests bind one ephemeral loopback server.
+ * The decision flow runs on an injected probe and bind, since the coordination suite binds the
+ * real port.
  */
 
 import { createServer, type RequestListener, type Server } from 'node:http';
@@ -33,8 +33,7 @@ function loopback(port: number): WebEndpoint {
   return { port, host: '127.0.0.1' };
 }
 
-/** A throwaway object standing in for an http.Server — the injected `bind`
- * never touches it, so its identity is all that matters. */
+/** The injected bind never touches the server, so only its identity matters. */
 function fakeServer(): Server {
   return { tag: 'fake-server' } as unknown as Server;
 }
@@ -46,13 +45,13 @@ function deps(
   let probeCalls = 0;
   let bindCalls = 0;
   return {
-    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async AcquireDeps.probe interface
+    // eslint-disable-next-line @typescript-eslint/require-await -- AcquireDeps.probe is async
     probe: async () => {
       const outcome = probeOutcomes[Math.min(probeCalls, probeOutcomes.length - 1)];
       probeCalls += 1;
       return outcome as ProbeOutcome;
     },
-    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async AcquireDeps.bind interface
+    // eslint-disable-next-line @typescript-eslint/require-await -- AcquireDeps.bind is async
     bind: async () => {
       bindCalls += 1;
       return bindResult;
@@ -100,7 +99,7 @@ describe('acquireOrAttach', () => {
 
     expect(result.mode).toBe('attached');
     expect(d.bindCalls).toBe(1);
-    expect(d.probeCalls).toBe(2); // re-probed after the race
+    expect(d.probeCalls).toBe(2);
   });
 
   it('throws when it loses a bind race to a foreign process', async () => {

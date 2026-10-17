@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - Startup failure fallback tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * A stdio client sees a startup exit only as a generic disconnect, so a failed
  * createRuntime() on stdio must open setup mode with the reason. HTTP still exits.

@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - mpv JSON-IPC Client
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { createConnection, type Socket } from 'node:net';
@@ -29,18 +17,12 @@ import { logger } from '../../utils/logger.js';
 
 type IpcArg = string | number | boolean | null;
 
-/**
- * Generic mpv event payload. Property-change events have additional fields
- * (`id`, `name`, `data`) which callers can read off the index signature.
- */
+/** Event-specific fields, such as `reason` on end-file, are read off the index signature. */
 interface IpcEvent {
   event: string;
   [key: string]: unknown;
 }
 
-/**
- * Property-change event from mpv. Emitted after an `observe_property` call.
- */
 interface PropertyChangeEvent {
   id: number;
   name: string;
@@ -57,21 +39,12 @@ interface IpcResponse {
   data?: unknown;
 }
 
-/**
- * Caps a runaway partial frame. A 583-track playlist frame reached ~250 KB, so 16 MB leaves wide headroom.
- */
+/** Caps a runaway partial frame. A 583-track playlist frame reached ~250 KB. */
 const MAX_IPC_BUFFER_BYTES = 16 * 1024 * 1024;
 
 /**
- * mpv JSON-IPC client.
- *
- * Wraps a single net socket connection to mpv's `--input-ipc-server` endpoint,
- * handles newline-delimited JSON framing, correlates command requests with
- * responses by `request_id`, and dispatches unsolicited events to listener
- * callbacks.
- *
- * On Linux/macOS the path is a Unix domain socket. On Windows it is a named
- * pipe (`\\.\pipe\...`). Node's `net` module handles both transparently.
+ * Node's `net` opens a Unix domain socket and a Windows named pipe (`\\.\pipe\...`) alike, so one
+ * client serves every platform.
  */
 export class MpvIpc {
   private socket: Socket | null = null;
@@ -83,12 +56,7 @@ export class MpvIpc {
   private readonly disconnectHandlers: Array<() => void> = [];
   private closed = false;
 
-  /**
-   * Connect to mpv's IPC endpoint. Retries with a short backoff because mpv
-   * may take a moment to create the socket after spawn.
-   *
-   * @throws Error if connection cannot be established within the retry budget.
-   */
+  /** Retries, since mpv creates its socket a moment after spawn. */
   async connect(
     path: string,
     retries = MPV_IPC_CONNECT_RETRIES,
@@ -109,10 +77,6 @@ export class MpvIpc {
     }
   }
 
-  /**
-   * Send a command to mpv and resolve with its `data` field on success.
-   * Rejects on protocol error or disconnect.
-   */
   command(...args: IpcArg[]): Promise<unknown> {
     if (this.socket === null || this.closed) {
       return Promise.reject(new Error('mpv IPC socket is not connected'));
@@ -145,7 +109,7 @@ export class MpvIpc {
 
       this.pending.set(id, { resolve: safeResolve, reject: safeReject });
 
-      // A stalled mpv hangs every later command, so a timeout drops the socket and the next call re-attaches.
+      // A stalled mpv blocks every later command, so a timeout drops the socket to force re-attach.
       timer = setTimeout(() => {
         if (settled) return;
         const err = new Error(
@@ -168,43 +132,28 @@ export class MpvIpc {
     });
   }
 
-  /**
-   * Subscribe to mpv property changes. Pair with {@link onPropertyChange} to
-   * receive the change events. The `id` must be a positive integer and is
-   * used by mpv to tag subsequent change events.
-   */
+  /** mpv tags each later property-change event for `name` with `id`. */
   async observeProperty(id: number, name: string): Promise<void> {
     await this.command('observe_property', id, name);
   }
 
-  /**
-   * Register a handler for any non-property-change event (e.g. `start-file`,
-   * `end-file`, `playback-restart`).
-   */
+  /** A well-formed property-change event goes to the onPropertyChange handlers instead. */
   onEvent(handler: (evt: IpcEvent) => void): void {
     this.eventHandlers.push(handler);
   }
 
-  /**
-   * Register a handler for property-change events. The handler receives the
-   * observe id, property name, and current value.
-   */
   onPropertyChange(handler: (evt: PropertyChangeEvent) => void): void {
     this.propertyHandlers.push(handler);
   }
 
   /**
-   * Register a handler that fires once when the peer closes the socket, a command times out, or a frame overflows. close() does not fire it.
+   * Fires once on peer close, command timeout or frame overflow. close() never fires it, so the
+   * engine can tell a deliberate teardown from a hangup it must react to.
    */
   onDisconnect(handler: () => void): void {
     this.disconnectHandlers.push(handler);
   }
 
-  /**
-   * Close the IPC socket. Any pending requests are rejected. Idempotent.
-   * Disconnect handlers are NOT fired here, so the engine can tell a
-   * deliberate teardown from a hangup it should react to.
-   */
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -213,14 +162,11 @@ export class MpvIpc {
       this.socket?.end();
       this.socket?.destroy();
     } catch {
-      // Ignore. The socket is being torn down.
+      // The socket is being torn down.
     }
     this.socket = null;
   }
 
-  /**
-   * Whether the socket is currently connected and writable.
-   */
   isConnected(): boolean {
     return this.socket !== null && !this.closed;
   }
@@ -308,7 +254,6 @@ export class MpvIpc {
         }
         return;
       }
-      // request_id 0 with no pending entry can occur for unsolicited replies. Ignore it.
       return;
     }
 
@@ -338,9 +283,7 @@ export class MpvIpc {
     this.pending.clear();
   }
 
-  /**
-   * Shared teardown for peer close, command timeout and frame overflow. Idempotent, so racing triggers fire handlers once.
-   */
+  /** Idempotent, so racing triggers fire the disconnect handlers once. */
   private handleUnexpectedDisconnect(reason: string): void {
     if (this.closed) return;
     logger.debug(`mpv IPC unexpectedly disconnected: ${reason}`);
@@ -348,7 +291,7 @@ export class MpvIpc {
     try {
       this.socket?.destroy();
     } catch {
-      // The socket is already destroyed. Ignore.
+      // Teardown continues whatever destroy() throws.
     }
     this.socket = null;
     this.rejectAllPending(new Error(reason));

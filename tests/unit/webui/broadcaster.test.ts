@@ -1,11 +1,5 @@
-/**
- * Pins the SSE dead-peer reaping. res.write() does NOT throw synchronously
- * when a peer's socket is gone (Node reports it via res.destroyed /
- * res.writableEnded), so the reaper must inspect those flags — an
- * exception-only check would let dead ServerResponse objects accumulate in the
- * client set for the process lifetime. These tests exercise the private
- * sendHeartbeat / writeToClient logic directly against fake responses.
- */
+// res.write() does not throw for a dead peer, so an exception-only check would let dead responses
+// accumulate in the client set. These tests drive the private reaper against fake responses.
 
 import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import type { ServerResponse } from 'node:http';
@@ -33,7 +27,6 @@ type FakeRes = ServerResponse & {
   writableNeedDrain: boolean;
 };
 
-/** Minimal ServerResponse stand-in: only the fields the reaper touches. */
 function fakeRes(opts: FakeResOptions = {}): FakeRes {
   const writes: string[] = [];
   const res = {
@@ -43,8 +36,7 @@ function fakeRes(opts: FakeResOptions = {}): FakeRes {
     writableLength: opts.writableLength ?? 0,
     destroyCalls: 0,
     writes,
-    // res.write() returning false is backpressure, not death, so the reaper must
-    // not treat it as a dead pipe. Returning false here pins that distinction.
+    // write() always returns false, so a test fails if a false return is read as a dead peer.
     write(chunk: string): boolean {
       writes.push(chunk);
       return false;
@@ -57,10 +49,10 @@ function fakeRes(opts: FakeResOptions = {}): FakeRes {
   return res as unknown as FakeRes;
 }
 
-// writableLength measured right after res.write() of a 10,000-track queue snapshot to a peer that reads normally.
+// writableLength measured right after res.write() of a 10,000-track queue snapshot to a peer
+// that reads normally.
 const IN_FLIGHT_SNAPSHOT_BYTES = 1_779_012;
 
-/** Reach the private members the reaping logic operates on. */
 interface BroadcasterInternals {
   clients: Set<ServerResponse>;
   sendHeartbeat: () => void;
@@ -75,7 +67,7 @@ function internals(b: SseBroadcaster): BroadcasterInternals {
 }
 
 function newBroadcaster(): SseBroadcaster {
-  // The constructor only stashes the client; nothing here touches it.
+  // The mocked playback reads ignore the client, so an empty object stands in.
   return new SseBroadcaster({} as never);
 }
 

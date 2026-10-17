@@ -393,7 +393,7 @@
     </form>
   </dialog>
 
-  <!-- Module scripts are deferred by default, so `defer` is redundant here. -->
+  <!-- A module script runs after parsing, so each module looks up its elements at import. -->
   <script src="/app.js" type="module"></script>
 </body>
 </html>

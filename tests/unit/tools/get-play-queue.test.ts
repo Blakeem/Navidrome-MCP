@@ -1,8 +1,4 @@
-/**
- * Covers the get_play_queue snapshot: the Navidrome enrichment after an MCP restart,
- * mpv's title winning over Navidrome's, the LLM-facing field allow-list, and the
- * no-mpv short circuit. The playback engine is mocked, so no mpv is touched.
- */
+/** The playback engine is mocked, so these get_play_queue cases never touch mpv. */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
@@ -58,7 +54,7 @@ describe('get_play_queue', () => {
     expect(result.currentIndex).toBe(0);
   });
 
-  // getPlayQueue has no catch of its own, so these pin the best-effort catch in fetchSongMetadata.
+  // getPlayQueue rethrows errors, so these cases pin the best-effort path in fetchSongMetadata.
   it('returns the queue without metadata when the Navidrome lookup fails', async () => {
     getQueueMock.mockResolvedValueOnce([{ index: 0, songId: 's1', isCurrent: true, isPlaying: true }]);
     const client = {

@@ -1,5 +1,3 @@
-// The Play Music dialog: its tabs, its placement below the top bar, and the toolbar's effect on the rows.
-
 import { byId } from './dom.js';
 import { loadFavoritesPane } from './favorites-pane.js';
 import { relabelLibraryActions } from './library-tree.js';
@@ -28,7 +26,6 @@ export function bindPlayDialog() {
   bindSearchPane();
 }
 
-// Every open starts on the Search tab, showing the recent plays.
 function openPlayDialog() {
   switchTab('search');
   resetSearchPane();
@@ -48,7 +45,7 @@ function switchTab(name) {
   }
 }
 
-// The tab roles promise arrow-key movement to screen reader users, so the arrows, Home and End switch tabs.
+// The ARIA tab pattern expects arrow-key movement, so the arrows, Home and End switch tabs.
 function onTabKeydown(ev) {
   const names = Object.keys(TABS);
   const index = names.indexOf(ev.target.dataset.tab);
@@ -63,7 +60,7 @@ function onTabKeydown(ev) {
   TABS[next].tab.focus();
 }
 
-// The dialog's data-mode picks which icon CSS shows in every pane, and each button's label names the action.
+// CSS swaps every row's icon from the dialog's data-mode, so only the labels change here.
 function applyPlayMode(mode) {
   dialog.dataset.mode = mode;
   relabelLibraryActions(dialog, mode);

@@ -1,10 +1,6 @@
 /**
- * Deterministic config factory for unit tests.
- *
- * Tests that only need a `Config` object with specific feature flags (e.g. the
- * tool-registry coverage test) should build it directly rather than going
- * through `loadConfig()` / the settings store, so they stay independent of the
- * developer's real configuration and of mpv being installed on the host.
+ * Builds a `Config` without `loadConfig()`, so a test is independent of the developer's settings
+ * store and of mpv detection on the host.
  */
 
 import type { Config } from '../../src/config.js';

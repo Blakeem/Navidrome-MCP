@@ -3,12 +3,12 @@ import { average, detectBeat, resample } from '../visualizer-kit.js';
 const TAU = Math.PI * 2;
 const DEG_PER_RAD = 180 / Math.PI;
 
-// Hues of real bioluminescence, from the cyan of dinoflagellates to the violet and magenta of deep jellies.
+// Hues of real bioluminescence, from the cyan of dinoflagellates to the violet of deep jellies.
 const BIO_HUES = [188, 272, 160, 306, 206, 242];
 const PLANKTON_HUE = 178;
 const HUE_SWAY_DEG = 14;
-// Additive light glows on the dark card but washes out on white, so the light theme lays deep inks instead.
-// Lightness is in percent: tone for bodies, accent for outlines and organs, belly for the lit core of a bell.
+// Additive light does not show on white, so the light theme lays deep inks instead. Lightness is in
+// percent. Tone colors bodies, accent colors outlines and organs, and belly the lit core of a bell.
 const INKS = {
   dark: {
     blend: 'lighter', glowPass: true, saturation: 100,
@@ -20,44 +20,44 @@ const INKS = {
   },
 };
 
-// One jelly per slot about this many inner heights wide, so the phone strip holds a row and a square holds one.
+// One jelly per slot about this many inner heights wide, so the phone strip holds a row of them.
 const SLOT_ASPECT = 0.85;
 const MAX_JELLIES = 6;
 // Smaller jellies read as farther away, so they also glow dimmer.
 const DEPTH_SIZES = [1, 0.8, 0.93, 0.74, 0.97, 0.85];
 const SMALLEST_SIZE = 0.74;
-// Reaches in bell radii from the rim center. Up covers the halo, side the halo and bell at full tilt, and down
-// the longest tentacle with its tip bead, its glow and the drop of a tilted rim.
+// Reaches in bell radii from the rim center. Up covers the halo, side the halo and the tilted bell.
+// Down covers the longest tentacle with its tip bead and glow, and the drop of a tilted rim.
 const REACH_UP = 1.85;
 const REACH_SIDE = 1.5;
 const REACH_DOWN = 2.45;
 // Vertical room in bell radii kept free for swimming, so even the phone strip lets a jelly lurch.
 const MIN_SWIM = 2.2;
-// A strip just inside the pad stays empty, since the host fades the canvas edges.
+// A strip just inside the pad stays empty, so antialiased edges stay off the pad line.
 const EDGE_PX = 1.5;
 const MIN_RADIUS_PX = 3;
 
 const PRESENCE_GAIN = 3;
-// The fraction of the glow left after one second of silence, so the sea goes dark in under two seconds.
+// The share of the glow left after one second of silence, so the sea goes dark in under 2 s.
 const GLOW_RETAIN_PER_SECOND = 0.05;
 const SLEEP_GLOW = 0.01;
 const KICK_DECAY_PER_SECOND = 5;
 
-// The bell squeezes on its own bass band above this floor, and a beat squeezes it further.
+// The bell squeezes on its own bass band above this floor. A beat squeezes it further.
 const BASS_FLOOR = 0.2;
 const CONTRACT_BASS = 1.1;
 const CONTRACT_KICK = 0.55;
 const MAX_TILT = 0.18;
 const TILT_PER_SPEED = 0.25;
-// Swimming runs in bell radii and seconds. A beat or a sharp squeeze drives the jelly up about half a radius,
-// and a damped spring sinks it back toward a home that wanders slowly through its slot.
+// Swimming runs in bell radii and seconds. A beat or a sharp squeeze drives the jelly up about half
+// a radius. A damped spring sinks it back toward a home that wanders slowly through its slot.
 const BEAT_THRUST = 3.1;
 const PULSE_THRUST = 1.2;
 const SIDE_KICK = 0.9;
 const SPRING_PER_S2 = 10;
 const DRAG_PER_SECOND = 4.5;
-// Steady beats hold a jelly above its home, so the home sits low in the range and the lift carries it to the
-// middle. Thrust also weakens near the top, so a busy track never pins the swarm against it.
+// Steady beats hold a jelly above its home, so the home sits low and the lift carries it to the
+// middle. Thrust weakens near the top, so a busy track never pins the swarm against it.
 const HOME_SINK = 0.4;
 const WANDER = 0.45;
 const TOP_THRUST = 0.25;
@@ -88,11 +88,11 @@ const COMB_ROWS = 6;
 const COMB_STOPS = 6;
 const OUTLINE_WIDTH = 0.035;
 const RIM_GLOW_WIDTH = 0.12;
-// Four gonads across the bell as offset and width in bell half-widths, the wide middle pair nearest the eye.
+// Four gonads as offset and width in bell half-widths. The wide middle pair is nearest the eye.
 const GONADS = [[-0.46, 0.11], [-0.16, 0.15], [0.16, 0.15], [0.46, 0.11]];
 
 const PLANKTON_MAX = 110;
-// Inner area in square CSS pixels per mote. The pool caps the count, so the wide window stays as light as the default.
+// Inner area in square CSS pixels per mote. PLANKTON_MAX caps the count for a wide window.
 const PLANKTON_AREA_PX = 900;
 const PLANKTON_MIN = 26;
 const PLANKTON_RADIUS = 0.008;
@@ -104,15 +104,15 @@ const PLANKTON_DRIFT = 0.05;
 const PLANKTON_BASE = 0.08;
 const PLANKTON_TWINKLE = 0.9;
 const STILL_SPARKLE = 0.35;
-// A flash dies fast, so a passing wave shows as a moving band of light rather than a lit field.
+// A flash fades fast, so a passing wave shows as a moving band of light rather than a lit field.
 const FLASH_DECAY_PER_SECOND = 5;
-// Brightness buckets, so every mote of one brightness joins one fill. The top buckets also get halos.
+// Brightness buckets, so every mote of one brightness joins one fill. The top buckets get halos.
 const BUCKET_FLOORS = [0.05, 0.22, 0.42, 0.66];
 const BUCKET_LEVELS = [0.16, 0.34, 0.56, 0.9];
 const HALO_BUCKET = 2;
 
-// Pressure waves run in bell radii, so each jelly lights its own neighborhood at every size. A wave dims with
-// distance and stops where its flash would no longer show.
+// Pressure waves run in bell radii, so each jelly lights its own neighborhood at every size.
+// A wave dims with distance and stops where its flash would no longer show.
 const RIPPLE_SPEED = 5;
 const RIPPLE_FALLOFF = 4;
 const RIPPLE_REACH = 11;
@@ -122,8 +122,8 @@ const WAKE_SPEED = 0.35;
 const STILL_FLASH_REACH = 3;
 
 /**
- * Glowing jellyfish over drifting plankton in a dark sea. Bells pulse and lurch upward on the bass, tentacles
- * sway with the bands, and every beat sends an unseen pressure wave that the plankton reveal as they flash.
+ * Glowing jellyfish over drifting plankton. Bells pulse and swim on the bass, tentacles sway with
+ * the bands, and each beat sends an unseen pressure wave that the plankton reveal as they flash.
  */
 function draw(ctx, frame) {
   const { state } = frame;
@@ -163,7 +163,7 @@ function layoutOf(frame) {
   return { left, top, right, bottom, innerW, innerH, short: Math.min(innerW, innerH), count, radius, slot: innerW / count };
 }
 
-// Phases wrap at a full turn and are only read through whole multiples, so the wrap never shows.
+// Phases wrap at a full turn and are only read through integer multiples, so the wrap never shows.
 function advance(state, frame, beat) {
   const dt = frame.reducedMotion ? 0 : frame.dtSeconds;
   const bands = frame.values.length;
@@ -223,7 +223,7 @@ function swimSwarm(swarm, layout, motion) {
   });
 }
 
-// Only a rising squeeze pushes, the way a real bell thrusts on its contraction and coasts on its release.
+// Only a rising squeeze pushes, as a real bell thrusts on its contraction and coasts on release.
 function swim(jelly, contraction, motion) {
   const squeeze = Math.max(0, contraction - jelly.contraction);
   const power = TOP_THRUST + (1 - TOP_THRUST) * jelly.room;
@@ -240,7 +240,7 @@ function swim(jelly, contraction, motion) {
   jelly.dx += jelly.vx * motion.dt;
 }
 
-// The range keeps every reach of the jelly inside the padded area, so its position is the only clamp it needs.
+// The rim range keeps the bell and halo in the padded area. Tentacles and arms clamp their points.
 function place(jelly, index, r, layout, motion, contraction) {
   const slotCenter = layout.left + layout.slot * (index + 0.5);
   const sideRoom = Math.max(0, layout.slot / 2 - REACH_SIDE * r);
@@ -270,7 +270,7 @@ function place(jelly, index, r, layout, motion, contraction) {
   };
 }
 
-// A jelly held at the edge of its range loses the speed that pushes it further out, so it never sticks there.
+// A jelly held at the edge of its range loses its outward speed, so it never sticks there.
 function settle(jelly, dx, dy) {
   if ((dx < jelly.dx - 1e-6 && jelly.vx > 0) || (dx > jelly.dx + 1e-6 && jelly.vx < 0)) jelly.vx = 0;
   if ((dy < jelly.dy - 1e-6 && jelly.vy > 0) || (dy > jelly.dy + 1e-6 && jelly.vy < 0)) jelly.vy = 0;
@@ -319,14 +319,14 @@ function seedPlankton() {
     twinkle: Math.random() * TAU,
     rate: 1.5 + Math.random() * 3,
     size: PLANKTON_SIZE_MIN + Math.random() * (PLANKTON_SIZE_MAX - PLANKTON_SIZE_MIN),
-    // Some cells answer a disturbance more readily than others, so a wave lights the field unevenly.
+    // Some cells answer a disturbance more readily, so a wave lights the field unevenly.
     sensitivity: 0.35 + Math.random() * 0.65,
     flash: 0,
     light: 0,
   }));
 }
 
-// Each beat sends a ring out from every jelly. The ring is never drawn, only the plankton it lights on its way.
+// Each beat sends a ring out from every jelly. Only the plankton it lights show, never the ring.
 function spreadRipples(state, poses, motion) {
   const ripples = state.ripples ?? [];
   if (motion.beat && !motion.still) {
@@ -388,7 +388,7 @@ function paintPlankton(c, plankton, ink) {
     const members = motes.filter((mote) => mote.light >= floor && mote.light < ceiling);
     if (members.length === 0) continue;
     if (k >= HALO_BUCKET) {
-      // Two stacked discs fall off like a soft glow without a gradient per mote.
+      // Two stacked discs approximate a soft glow without a gradient per mote.
       paintDiscs(c, members, radius * PLANKTON_HALO * level, hsla(hue, ink.saturation, ink.mote, level * 0.07 * ink.halo));
       paintDiscs(c, members, radius * 1.9 * level, hsla(hue, ink.saturation, ink.mote, level * 0.14 * ink.halo));
     }
@@ -421,7 +421,6 @@ function paintJelly(c, pose, layout, motion, ink) {
   c.restore();
 }
 
-// The halo sits on the middle of the tilted bell and swells as the bell squeezes.
 function paintHalo(c, pose, motion, ink) {
   const centerX = pose.x + (pose.h / 2) * Math.sin(pose.tilt);
   const centerY = pose.y - (pose.h / 2) * Math.cos(pose.tilt);
@@ -458,7 +457,6 @@ function paintTentacles(c, pose, layout, motion, ink) {
     traceTentacle(c, specs[2 * p + 1], bounds);
     c.stroke();
   }
-  // The stinging cells at the tips flicker with the treble.
   c.fillStyle = hsla(pose.hue + 40, ink.saturation, ink.accent, pose.alpha * (0.35 + 0.65 * motion.treble));
   c.beginPath();
   for (const spec of specs) {
@@ -471,7 +469,6 @@ function paintTentacles(c, pose, layout, motion, ink) {
   c.fill();
 }
 
-// Each band sets its pair's length and sway. Thrust straightens the tentacles and the bell's squeeze splays them.
 function tentacleSpecs(pose, motion) {
   const specs = [];
   const cos = Math.cos(pose.tilt);
@@ -513,7 +510,6 @@ function traceTentacle(c, spec, bounds) {
   }
 }
 
-// The frilled oral arms hang from the middle of the bell and curl slowly with the melody.
 function paintOralArms(c, pose, layout, motion, ink) {
   const width = pose.r * ORAL_WIDTH;
   const bounds = insetBox(layout, width / 2 + 0.5);
@@ -564,7 +560,6 @@ function traceDome(c, { w, h }) {
   c.bezierCurveTo(w * 0.56, -h, w, -h * 0.72, w, 0);
 }
 
-// The scalloped margin closes the dome, and its lobes deepen as the bell squeezes.
 function traceMarginLobes(c, pose) {
   const dip = pose.r * (LOBE_DIP + 0.05 * pose.contraction);
   const step = (2 * pose.w) / LOBES;
@@ -574,7 +569,7 @@ function traceMarginLobes(c, pose) {
   }
 }
 
-// Thicker jelly at the margin catches more light, so the rim glows brighter than the middle of the bell.
+// Thicker jelly at the margin catches more light, so the rim glows brighter than the bell's middle.
 function bellGradient(c, pose, motion, ink) {
   const { w, h, hue, alpha } = pose;
   const body = c.createRadialGradient(0, -h * 0.75, 0, 0, -h * 0.35, w * 1.15);
@@ -585,7 +580,7 @@ function bellGradient(c, pose, motion, ink) {
   return body;
 }
 
-// Comb rows split light into a rainbow that runs down the bell, as a ctenophore's cilia do, quickened by the treble.
+// Comb rows split light into a rainbow that runs down the bell, as a ctenophore's cilia do.
 function paintCombRows(c, pose, motion, ink) {
   const { w, h } = pose;
   const shimmer = c.createLinearGradient(0, -h, 0, 0);
@@ -605,7 +600,6 @@ function paintCombRows(c, pose, motion, ink) {
   c.stroke();
 }
 
-// The four gonads of a moon jelly glow inside the bell and brighten with the melody.
 function paintGonads(c, pose, motion, ink) {
   const { w, h } = pose;
   const y = -h * 0.42;

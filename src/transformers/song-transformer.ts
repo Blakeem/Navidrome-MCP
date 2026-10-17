@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Song Data Transformers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { SongDTO } from '../types/index.js';
@@ -28,9 +16,6 @@ import {
   type TransformOptions,
 } from './shared-transformers.js';
 
-/**
- * Raw song data from Navidrome API
- */
 export interface RawSong {
   id: string;
   title: string;
@@ -57,20 +42,11 @@ export interface RawSong {
 }
 
 
-/**
- * Transform a raw song from Navidrome API to a clean DTO
- * @param rawSong Raw song data from API
- * @param options Verbosity controls (see {@link TransformOptions}). Default
- *   compact: only the identity block below is emitted. Verbose/keep restore
- *   the secondary fields.
- * @returns Clean song DTO for LLM consumption
- */
 export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions): SongDTO {
-  // Only the presence and the timing of the file's lyrics survive. Carrying the
-  // text itself would put a full lyric sheet on every row of every listing.
+  // Only whether the file has lyrics, and whether they are synced, reaches the DTO. The text
+  // would put a full lyric sheet on every row of every listing.
   const localLyrics = parseLocalLyrics(rawSong.lyrics);
 
-  // Identity block, always emitted (these are what makes a song actionable).
   const dto: SongDTO = {
     id: rawSong.id,
     title: rawSong.title || '',
@@ -82,7 +58,6 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     ...(localLyrics !== null ? { lyrics: localLyrics.hasSynced ? 'synced' as const : 'unsynced' as const } : {}),
   };
 
-  // A fabricated timestamp would mislead, so addedDate is omitted when the row lacks createdAt.
   if (shouldEmit('addedDate', options) && rawSong.createdAt !== undefined && rawSong.createdAt !== '') {
     dto.addedDate = rawSong.createdAt;
   }
@@ -117,7 +92,8 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
     dto.trackNumber = rawSong.trackNumber;
   }
 
-  // Navidrome omits playCount for never-played rows, so an explicit 0 separates never played from unavailable.
+  // Navidrome omits playCount on a never-played row. An explicit 0 keeps never played distinct
+  // from not reported.
   if (shouldEmit('playCount', options)) {
     dto.playCount = rawSong.playCount ?? 0;
   }
@@ -144,12 +120,6 @@ export function transformToSongDTO(rawSong: RawSong, options?: TransformOptions)
 }
 
 
-/**
- * Transform an array of raw songs to DTOs
- * @param rawSongs Array of raw song data
- * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
- * @returns Array of clean song DTOs
- */
 export function transformSongsToDTO(rawSongs: unknown, options?: TransformOptions): SongDTO[] {
   return transformObjectRows(rawSongs, (song: RawSong) => transformToSongDTO(song, options));
 }

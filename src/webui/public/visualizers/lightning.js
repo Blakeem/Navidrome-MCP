@@ -1,11 +1,11 @@
 import { average, detectBeat, rgba } from '../visualizer-kit.js';
 
 const TAU = Math.PI * 2;
-// Widths and radii are CSS pixels at this shorter side, and scale with the area between the two limits.
+// Widths and radii are CSS pixels at this shorter side, and scale with it between the two limits.
 const SCALE_REFERENCE_PX = 160;
 const MIN_SCALE = 0.7;
 const MAX_SCALE = 1.4;
-// The field keeps half the widest stroke plus this gap inside the pad, so no glow reaches the faded edge.
+// The field keeps half the widest stroke plus this gap inside the pad, clear of the edge fade.
 const EDGE_GAP_PX = 1.5;
 const MIN_FIELD_PX = 6;
 // A superellipse reaches into the corners of a wide strip that an ellipse would leave empty.
@@ -18,17 +18,17 @@ const MAX_TERMINALS = 3;
 const TENDRIL_SPACING_PX = 22;
 const MIN_TENDRILS = 4;
 const MAX_TENDRILS = 8;
-// Midpoint displacement halves each span, so every segment count is a power of two. Paths take about one
-// segment per this many pixels, so a short path in the phone strip costs fewer points.
+// Midpoint displacement halves each span, so every segment count is a power of two. Paths take
+// about one segment per this many pixels, so a short path in the phone strip costs fewer points.
 const SEGMENT_PX = 6;
 const TWIG_SEGMENTS = 4;
 const BRANCH_SEGMENTS = 16;
 const SUB_BRANCH_SEGMENTS = 8;
 const SPARK_SEGMENTS = 3;
-// Each finer level of displacement keeps this share of the coarser one, which sets how jagged a path looks.
+// Each finer displacement level keeps this share of the coarser one, which sets the jaggedness.
 const ROUGH_FALLOFF = 0.58;
 const FREE_END_SPREAD = 0.6;
-// A point past this share of its region's radius eases toward the rim, so a jagged path never flattens on it.
+// Past this share of the region's radius a point eases toward the rim, so no path flattens on it.
 const CONFINE_KNEE = 0.8;
 
 // Below the presence floor the steady plasma is gone, so silence draws nothing.
@@ -42,7 +42,7 @@ const BRIDGE_FIRST_BAND = 4;
 // Treble in a track runs between about these two levels, which map to smooth flow and full crackle.
 const CRACKLE_FROM = 0.15;
 const CRACKLE_SPAN = 0.55;
-// Shapes change this many times a second. Smooth flow eases between shapes, full crackle snaps between them.
+// Shapes change this many times a second. Smooth flow eases between them and full crackle snaps.
 const WANDER_BASE = 1.2;
 const WANDER_CRACKLE = 26;
 // A long frame skips at most one shape, so the curve never jumps past the next key.
@@ -50,7 +50,7 @@ const WANDER_PROGRESS_MAX = 0.999;
 // Jaggedness as a share of a path's length.
 const ROUGH_BASE = 0.015;
 const ROUGH_CRACKLE = 0.15;
-// Fresh noise each frame on top of the wander, the fizz of a live arc.
+// Fresh noise each frame on top of the wander, so a crackling arc never holds still.
 const FIZZ_PX = 1.4;
 const DRIFT_RAD_PER_SECOND = 0.35;
 const BOW_SHARE = 0.22;
@@ -63,7 +63,7 @@ const REACH_LEVEL = 0.55;
 const REACH_BASS = 0.12;
 const REACH_KICK = 0.18;
 const REACH_MAX = 0.95;
-// Tendrils are drawn in a few brightness steps, one path per step, so a wide area stays at a handful of paints.
+// Tendrils draw in a few brightness steps, one path per step, so a wide area takes few paints.
 const TENDRIL_STEPS = 5;
 const TENDRIL_DIM = 0.25;
 const TENDRIL_THIN = 0.55;
@@ -79,7 +79,8 @@ const TIP_HALO_PX = 1.6;
 const TIP_HALO_GROW_PX = 2.4;
 const TIP_CORE_PX = 0.5;
 const TIP_CORE_GROW_PX = 1;
-// Each filament of a bridge lights at its own mid level, so arcs join the terminals one by one as the music swells.
+// Each bridge filament lights at its own mid level, so arcs join the terminals one by one as the
+// music swells.
 const BRIDGE_THRESHOLDS = [0.3, 0.5];
 const BRIDGE_RAMP = 0.25;
 const BRIDGE_ROUGHNESS = 0.7;
@@ -87,7 +88,7 @@ const BRIDGE_BOW_SHARE = 0.35;
 const BRIDGE_CHARGE_GLOW = 0.35;
 const BRIDGE_KICK_GLOW = 0.6;
 
-// Bass squared charges the terminals, and a beat lets the charge go once it is ready. A full charge goes alone.
+// Bass squared charges the terminals. A beat fires a ready charge, and a full one needs no beat.
 const CHARGE_PER_SECOND = 1.6;
 const CHARGE_READY = 0.45;
 const DISCHARGE_MIN_PRESENCE = 0.3;
@@ -98,7 +99,7 @@ const MAX_BOLTS = 4;
 const BOLT_ROUGHNESS = 0.09;
 const BOLT_BOW_SHARE = 0.6;
 const AIR_STRIKE_BOW_SHARE = 0.15;
-// An air strike aims at the farthest of a few points near the rim, so it crosses as much of the field as it can.
+// An air strike aims at the farthest of a few points near the rim, so it crosses most of the field.
 const AIR_STRIKE_TRIES = 6;
 const AIR_STRIKE_REACH = 0.75;
 const AIR_STRIKE_REACH_SPREAD = 0.2;
@@ -115,13 +116,13 @@ const BRANCH_REACH_SPREAD = 0.3;
 const SUB_BRANCH_CHANCE = 0.5;
 const SUB_BRANCH_REACH = 0.45;
 const MIN_BRANCH_PX = 4;
-// A fork aimed past the rim would be squashed flat along it, so it is shortened until its end lands inside.
+// A fork aimed past the rim would flatten along it, so it shortens until its end lands inside.
 const BRANCH_END_LIMIT = 0.85;
 const BRANCH_SHORTEN = 0.7;
 // Branches carry less current, so they are thinner and flicker out before the main channel.
 const BRANCH_WIDTH = 0.55;
 const BRANCH_FADE_POWER = 1.6;
-// The leader shoots out from its terminal over this time, and each fork grows once the leader passes it.
+// The leader crosses its path in this time, and each fork grows once the leader passes it.
 const LEADER_S = 0.06;
 const FORK_GROW_SHARE = 0.5;
 // Lightning strikes again down the same channel, so a bolt flickers before it fades.
@@ -134,7 +135,8 @@ const KICK_DECAY_PER_SECOND = 5;
 const FLASH_REDUCED = 0.5;
 
 const SPARKS_PER_SECOND = 70;
-// The spark rate is set for this many tendrils and scales with the actual count, so a wide area crackles as densely.
+// The spark rate is set for this many tendrils and scales with the actual count, so a wide area
+// crackles as densely.
 const SPARK_TENDRIL_REFERENCE = 14;
 const MAX_SPARKS = 48;
 const SPARK_STEP_PX = 3.2;
@@ -151,16 +153,16 @@ const CORE_SWELL_BASS = 0.45;
 const CORE_SWELL_CHARGE = 0.4;
 const CORE_SWELL_FLASH = 0.8;
 
-// Wide faint strokes under narrow bright ones build a soft glow without shadowBlur. Widths are at a scale of 1.
+// Wide faint strokes under narrow bright ones build a soft glow without shadowBlur. Widths are at a
+// scale of 1.
 const PLASMA_STROKES = [{ part: 'halo', width: 7 }, { part: 'glow', width: 2.6 }, { part: 'core', width: 1.1 }];
 const TWIG_STROKES = PLASMA_STROKES.slice(1);
 const BOLT_STROKES = [{ part: 'bloom', width: 14 }, { part: 'halo', width: 7.5 }, { part: 'glow', width: 3.6 }, { part: 'core', width: 1.8 }];
 const SPARK_STROKES = [{ part: 'glow', width: 2.6 }, { part: 'core', width: 0.9 }];
 const WIDEST_STROKE = Math.max(...[...PLASMA_STROKES, ...BOLT_STROKES, ...SPARK_STROKES].map((stroke) => stroke.width));
 
-// The dark card takes added light, so arcs run white hot where they cross. White swallows added light, so the
-// light card gets deep saturated blues painted over it instead. Plasma leans violet and lightning leans cyan,
-// so a bolt stands out from the tendrils it crosses.
+// The dark card adds light, so crossing arcs turn white. Added light is lost on the light card, so
+// deep blues paint over it. Plasma leans violet and bolts lean cyan, so a bolt stands out.
 const INK = {
   dark: {
     blend: 'lighter',
@@ -217,7 +219,10 @@ const INK = {
   },
 };
 
-/** Plasma terminals that reach with the spectrum, crackle with the treble and let a bass charge go as lightning. */
+/**
+ * Plasma terminals that reach with the spectrum, crackle with the treble and let a bass charge go
+ * as lightning.
+ */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
@@ -248,7 +253,7 @@ function draw(ctx, frame) {
   return true;
 }
 
-// The layout depends on the size alone, so a resize rebuilds it and drops discharges placed for the old size.
+// The layout depends only on the size, so a resize rebuilds it and drops the old discharges.
 function plasmaFor(state, frame) {
   const current = state.plasma;
   if (current?.width === frame.width && current?.height === frame.height) return current;
@@ -288,7 +293,6 @@ function buildPlasma(frame) {
   };
 }
 
-// Each terminal owns an elliptical cell of the field, and the cells sit side by side along the long axis.
 function layoutTerminals(field) {
   const horizontal = field.rx >= field.ry;
   const major = horizontal ? field.rx : field.ry;
@@ -308,7 +312,7 @@ function createTendril(terminal, index, count, segments) {
     terminal,
     angle: ((index + Math.random()) / count) * TAU,
     spin: (Math.random() * 2 - 1) * DRIFT_RAD_PER_SECOND,
-    // Neighbors take bands far apart, so the spectrum scatters around each terminal instead of sweeping it.
+    // Neighbors take bands far apart, so the spectrum scatters around each terminal.
     band: TENDRIL_FIRST_BAND + ((index * 5 + terminal * 3) % TENDRIL_BAND_SPAN),
     bowPhase: Math.random() * TAU,
     bowRate: BOW_RATE_MIN + Math.random() * BOW_RATE_SPREAD,
@@ -345,7 +349,7 @@ function createWander(segments, freeEnd) {
   };
 }
 
-// Midpoint displacement roughens a path at every scale at once, the self-similar zigzag of a real discharge.
+// Midpoint displacement gives the self-similar zigzag of a real discharge.
 function fillFractal(out, freeEnd) {
   const segments = out.length - 1;
   let spread = 1;
@@ -358,8 +362,8 @@ function fillFractal(out, freeEnd) {
   return out;
 }
 
-// A Catmull-Rom curve through a chain of random shapes, so a slow rate flows like plasma without pausing on each
-// shape and a fast one snaps like an arc.
+// A Catmull-Rom curve through random shapes never pauses on one, so a slow rate flows like plasma
+// and a fast rate snaps like an arc.
 function stepWander(wander, dt, rate) {
   wander.progress += dt * rate;
   if (wander.progress >= 1) {
@@ -382,7 +386,7 @@ function ageDischarges(plasma, frame) {
   plasma.sparks = plasma.sparks.filter((spark) => spark.life > 0);
 }
 
-// The clock stops under reduced motion, while the charge, the bolts and their fade still follow the levels.
+// Reduced motion stops the clock. The charge, the bolts and their fade still follow the levels.
 function advance(state, plasma, frame, beat, presence) {
   const dt = frame.reducedMotion ? 0 : frame.dtSeconds;
   state.time = (state.time ?? 0) + dt;
@@ -401,7 +405,7 @@ function discharge(state, plasma, frame) {
   plasma.bolts.push(createBolt(plasma, strength, frame.reducedMotion));
   if (strength > TWIN_BOLT_STRENGTH) plasma.bolts.push(createBolt(plasma, strength * TWIN_BOLT_SHARE, frame.reducedMotion));
   plasma.bolts.splice(0, Math.max(0, plasma.bolts.length - MAX_BOLTS));
-  // The jolt snaps every strand into a new shape at once, so the plasma visibly flinches.
+  // A discharge reshapes every strand at once, so the plasma visibly reacts to the strike.
   if (frame.reducedMotion) return;
   for (const wander of plasma.wanders) {
     for (const key of wander.keys) fillFractal(key, wander.freeEnd);
@@ -482,7 +486,6 @@ function forkPath(parent, index, heading, reach, segments, region) {
   return layPath(new Float32Array((segments + 1) * 2), start, end, fillFractal(new Float32Array(segments + 1), true), BRANCH_ROUGHNESS, 0, region, 0);
 }
 
-// Lays a path from start to end, bowed to one side and roughened by the offsets, confined to the region.
 function layPath(points, start, end, offsets, roughness, bow, region, fizz) {
   const dx = end.x - start.x;
   const dy = end.y - start.y;
@@ -499,7 +502,7 @@ function layPath(points, start, end, offsets, roughness, bow, region, fizz) {
   return points;
 }
 
-// A point past the knee is eased toward the rim on a soft curve, so it always lands inside the region.
+// The tanh curve stays under 1, so every eased point lands inside the region.
 function confinePoint(points, index, x, y, region) {
   const u = (x - region.cx) / region.rx;
   const v = (y - region.cy) / region.ry;
@@ -577,7 +580,6 @@ function spawnSparks(plasma, frame, crackle, presence) {
   }
 }
 
-// A spark is a short zigzag thrown off a tendril tip or a lit bridge, gone within a few frames.
 function createSpark(plasma) {
   const origin = sparkOrigin(plasma);
   const points = new Float32Array((SPARK_SEGMENTS + 1) * 2);
@@ -605,7 +607,7 @@ function sparkOrigin(plasma) {
   return tipOf(plasma.tendrils[Math.floor(Math.random() * plasma.tendrils.length)].points);
 }
 
-// A discharge lights the air around it, a wash over the whole field that fades with the bolt.
+// A discharge lights the air around it, so a wash covers the entire field and fades with the bolt.
 function drawFlash(ctx, plasma, ink, flash) {
   if (flash < 0.01) return;
   const { field } = plasma;
@@ -647,7 +649,7 @@ function drawTendrils(ctx, plasma, ink, presence, motion) {
   }
 }
 
-// One path takes every stroke of the stack, widest and faintest first, so the glow sits under the bright core.
+// One path takes every stroke, widest and faintest first, so the glow sits under the bright core.
 function strokeLayered(ctx, paths, strokes, colors, glow, widthScale) {
   if (glow <= 0.01) return;
   ctx.beginPath();
@@ -663,7 +665,7 @@ function strokeLayered(ctx, paths, strokes, colors, glow, widthScale) {
   }
 }
 
-// Each tendril pools into a bead where it ends, the spot where a plasma globe's filament meets the glass.
+// Each tendril ends in a bead, as a plasma globe's filament does where it meets the glass.
 function drawTips(ctx, plasma, ink, presence) {
   const beads = [['glow', TIP_HALO_PX, TIP_HALO_GROW_PX], ['core', TIP_CORE_PX, TIP_CORE_GROW_PX]];
   for (const [part, radius, grow] of beads) {
@@ -680,7 +682,6 @@ function drawTips(ctx, plasma, ink, presence) {
   }
 }
 
-// The terminal glows with the bass, swells as the charge builds and blazes when it lets go.
 function drawCores(ctx, plasma, ink, presence, bass, motion) {
   const intensity = Math.min(1, presence * (CORE_BASE + CORE_BASS * bass) + CORE_FLASH * motion.flash);
   const swell = 1 + CORE_SWELL_BASS * bass + CORE_SWELL_CHARGE * motion.charge + CORE_SWELL_FLASH * motion.flash;
@@ -707,7 +708,7 @@ function drawBolts(ctx, plasma, ink) {
   }
 }
 
-// The leading share of a path, at least one segment long so a fresh bolt already shows a spark at its terminal.
+// At least one segment shows, so a fresh bolt already sparks at its terminal.
 function grown(points, share) {
   const segments = points.length / 2 - 1;
   const shown = clamp(Math.ceil(share * segments), 1, segments);
@@ -732,7 +733,7 @@ function tipOf(points) {
   return { x: points[points.length - 2], y: points[points.length - 1] };
 }
 
-// A power of two between the two exponents, near one segment per SEGMENT_PX of the length.
+// The fewest and most arguments are exponents of two, not segment counts.
 function segmentsFor(length, fewest, most) {
   return 2 ** clamp(Math.round(Math.log2(Math.max(1, length) / SEGMENT_PX)), fewest, most);
 }

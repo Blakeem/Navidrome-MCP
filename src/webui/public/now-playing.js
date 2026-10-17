@@ -1,5 +1,3 @@
-// The now-playing card: title, artist, album, queue position, state badge and cover.
-
 import { mountCover } from './cover.js';
 import { byId } from './dom.js';
 import { playingIndex, queueSongId } from './snapshot.js';
@@ -50,7 +48,7 @@ function setBadge(state, text) {
   badge.textContent = text;
 }
 
-// Subsonic getCoverArt takes a song id and returns its album art, so one lookup per track is enough.
+// Subsonic getCoverArt returns the album art for a song id, so the card needs no album id.
 function renderCover(np) {
   const index = playingIndex(np);
   const songId = index === null ? null : queueSongId(index);

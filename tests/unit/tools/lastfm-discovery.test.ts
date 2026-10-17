@@ -1,22 +1,15 @@
 /**
  * Navidrome MCP Server - lastfm-discovery happy-path tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the five Last.fm tools with mocked fetch responses.
- * Bug-fix regression cases live in lastfm-lyrics-bugs.test.ts; this file
- * adds function-level happy-path structural coverage.
- *
- * NOTE: `lastfm-lyrics-bugs.test.ts` already imports getSimilarArtists /
- * getSimilarTracks extensively. This file covers getArtistInfo,
- * getTopTracksByArtist, and getTrendingMusic (all three modes), and adds
- * one missing-apiKey guard for each function.
+ * Happy-path shape tests for the Last.fm tools. The match-parsing and error-code cases for
+ * getSimilarArtists and getSimilarTracks live in lastfm-lrclib-parsing.test.ts.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../../../src/config.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
-
-// ---- helpers ----------------------------------------------------------------
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -65,8 +58,6 @@ function tagRows(count: number): { name: string; count: string; url: string }[] 
   }));
 }
 
-// ---- getArtistInfo ----------------------------------------------------------
-
 describe('getArtistInfo', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -101,7 +92,6 @@ describe('getArtistInfo', () => {
     expect(Number.isFinite(result.playcount)).toBe(true);
     expect(Array.isArray(result.tags)).toBe(true);
     expect(Array.isArray(result.similar)).toBe(true);
-    // biography has HTML stripped
     expect(result.biography).not.toContain('<a');
   });
 
@@ -135,7 +125,6 @@ describe('getArtistInfo', () => {
         stats: { listeners: '0', playcount: '0' },
         tags: { tag: [] },
         similar: { artist: [] },
-        // no bio field
       },
     };
     global.fetch = makeFetch(200, mockBody);
@@ -202,8 +191,6 @@ describe('getArtistInfo', () => {
   });
 });
 
-// ---- getTopTracksByArtist ---------------------------------------------------
-
 describe('getTopTracksByArtist', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -237,7 +224,6 @@ describe('getTopTracksByArtist', () => {
     expect(Number.isFinite(first.playcount)).toBe(true);
     expect(typeof first.listeners).toBe('number');
     expect(first).not.toHaveProperty('url');
-    // rank starts at 1
     expect(first.rank).toBe(1);
     expect(result.tracks[1]!.rank).toBe(2);
   });
@@ -264,8 +250,6 @@ describe('getTopTracksByArtist', () => {
     expect(result.tracks).toHaveLength(0);
   });
 });
-
-// ---- getTrendingMusic -------------------------------------------------------
 
 describe('getTrendingMusic — artists', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
@@ -422,9 +406,6 @@ describe('getTrendingMusic — tags', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
-
-// ---- getSimilarArtists and getSimilarTracks are covered in lastfm-lyrics-bugs.test.ts
-// but add one missing-key guard for completeness
 
 describe('getSimilarArtists and getSimilarTracks — missing API key guard', () => {
   beforeEach(() => { vi.restoreAllMocks(); });

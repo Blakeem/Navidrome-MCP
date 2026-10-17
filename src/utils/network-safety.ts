@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Network Safety Helpers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { lookup as dnsLookup } from 'node:dns/promises';
@@ -23,11 +11,8 @@ import { Agent, buildConnector, fetch as undiciFetch, type Dispatcher } from 'un
 const ALLOWED_VALIDATOR_SCHEMES: readonly string[] = ['http:', 'https:'];
 
 /**
- * C0 controls and DEL. The WHATWG URL parser silently strips tab, LF and CR
- * before parsing, so `http://host/a\nHost: evil` yields a clean http: URL while
- * callers go on to store and play the ORIGINAL string, newlines intact.
- * Rejecting them here keeps "this parsed" and "this is what we hand onward"
- * the same claim.
+ * The URL parser strips tab, LF and CR, so a string holding them parses clean while callers store
+ * and play the raw string with the control characters intact.
  */
 export function hasControlChars(value: string): boolean {
   for (let i = 0; i < value.length; i += 1) {
@@ -38,12 +23,8 @@ export function hasControlChars(value: string): boolean {
 }
 
 /**
- * True iff the URL parses and uses http:// or https://. Those are the only schemes
- * Node's fetch can probe. Other valid radio stream protocols (mms://,
- * rtsp://, rtmp://) are perfectly playable by mpv but cannot be validated
- * by the radio-stream validator. This helper exists so callers can fail
- * such inputs upfront with a useful message instead of letting fetch
- * throw an opaque error deep in the stack.
+ * fetch can probe only http and https, though mpv also plays mms, rtsp and rtmp. Callers reject
+ * other schemes up front with a clear message instead of an opaque fetch error.
  */
 export function isHttpUrlScheme(url: string): boolean {
   if (hasControlChars(url)) return false;
@@ -57,35 +38,20 @@ export function isHttpUrlScheme(url: string): boolean {
 }
 
 /**
- * Categorize a single literal IP address as private/local. Used to gate
- * redirect-following in the radio-stream validator: a public-looking URL
- * that 302s to localhost is the surprise SSRF vector we want to block.
- *
- * Coverage:
- *  - IPv4 0/8 (this-network), 10/8 (RFC1918), 100.64/10 (CGNAT),
- *    127/8 (loopback), 169.254/16 (link-local, including the cloud
- *    metadata IP 169.254.169.254), 172.16/12 (RFC1918), 192.168/16
- *    (RFC1918), 224/4 (multicast), 240/4 (reserved + 255.255.255.255).
- *  - IPv6 ::1 / ::, fc00::/7 (unique local), fe80::/10 (link-local).
- *  - IPv4-mapped IPv6 (::ffff:a.b.c.d) is unwrapped and re-evaluated.
- *
- * Returns true ("treat as unsafe") for unparseable input. Callers
- * use this to fail closed.
+ * This guards untrusted stream URLs against SSRF, such as a public URL that redirects to localhost.
+ * Unparseable input counts as private, so callers fail closed.
  */
 export function isPrivateOrLocalIp(ip: string): boolean {
   const trimmed = ip.trim();
   if (trimmed === '') return true;
 
-  // IPv4-mapped IPv6 (::ffff:a.b.c.d): pull out the IPv4 and re-check.
   const lowerTrimmed = trimmed.toLowerCase();
   const v4Address = lowerTrimmed.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
   if (v4Address !== undefined) {
     return isPrivateOrLocalIpv4(v4Address);
   }
 
-  // IPv4-mapped IPv6 in hex-group form (::ffff:7f00:1 == 127.0.0.1,
-  // ::ffff:a9fe:a9fe == 169.254.169.254): reassemble the embedded 32 bits into
-  // a dotted-quad and re-check, so these don't slip past as "public" (SSRF gap).
+  // A mapped IPv4 in hex-group form, such as ::ffff:7f00:1 for 127.0.0.1, must not pass as public.
   const hexMapped = lowerTrimmed.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
   if (hexMapped !== null) {
     const hi = parseInt(hexMapped[1] ?? '', 16);
@@ -94,7 +60,6 @@ export function isPrivateOrLocalIp(ip: string): boolean {
     return isPrivateOrLocalIpv4(dotted);
   }
 
-  // Strip IPv6 zone id (fe80::1%eth0) before classification.
   const withoutZone = trimmed.includes('%')
     ? (trimmed.split('%')[0] ?? trimmed)
     : trimmed;
@@ -139,20 +104,17 @@ function isPrivateOrLocalIpv6(ip: string): boolean {
   if (lower === '::' || lower === '::1') return true;
   if (lower === '0:0:0:0:0:0:0:0' || lower === '0:0:0:0:0:0:0:1') return true;
 
-  // fc00::/7 unique local (fc00–fdff)
+  // fc00::/7 unique local
   if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;
-  // fe80::/10 link-local (fe80–febf)
+  // fe80::/10 link-local
   if (/^fe[89ab][0-9a-f]:/.test(lower)) return true;
 
   return false;
 }
 
 /**
- * Resolve a hostname (or pass-through an IP literal) and return true if
- * any resolved address is in a private/local range. Throws on DNS
- * failure. Callers should treat that as "unsafe to follow."
- *
- * Bracketed IPv6 hosts (`[::1]`) and IPv4 literals bypass DNS.
+ * Any private record counts, since the connection may use any of them. A DNS failure throws, and
+ * callers treat it as unsafe.
  */
 export async function hostResolvesToPrivateIp(host: string): Promise<boolean> {
   if (host === '') return true;
@@ -177,29 +139,16 @@ function isLikelyIpLiteral(host: string): boolean {
 }
 
 /**
- * Marker phrase shared by every private/local refusal message (the dispatcher
- * below and the validator's redirect gate). The recommendation engine matches
- * on it to distinguish a deliberate SSRF refusal from a network hiccup. Keep
- * all producers and consumers on this constant so a reword can't silently
- * break that detection.
+ * The recommendation engine matches this phrase to tell an SSRF refusal from a network failure, so
+ * every refusal message uses this constant.
  */
 export const PRIVATE_ADDRESS_REFUSAL = 'private/local address';
 
-// The plain connector with no address check, wrapped by privateIpBlockingDispatcher.
 const baseConnector = buildConnector({});
 
 /**
- * Dispatcher that connects normally (so DNS resolution, the Host header, and
- * TLS SNI all use the original hostname, with no IP pinning, so vhost/CDN
- * routing is unaffected) and then inspects the ACTUAL peer the socket
- * connected to. If that address is private/local the socket is destroyed
- * before any request bytes are written.
- *
- * This closes the DNS-rebinding TOCTOU that a pre-fetch `hostResolvesToPrivateIp`
- * check cannot: the pre-check and `fetch()` resolve DNS independently, so a
- * short-TTL domain can answer "public" for the check and "private" for the
- * connection. Here the address we validate IS the address we're connected to,
- * so there is no window between the two.
+ * The check runs on the connected peer, not a separate DNS answer, which closes the DNS-rebinding
+ * gap. DNS, Host and SNI keep the original hostname, so vhost and CDN routing still work.
  */
 const privateIpBlockingDispatcher = new Agent({
   connect(options, callback): void {
@@ -224,12 +173,12 @@ const privateIpBlockingDispatcher = new Agent({
 const MAX_CAUSE_DEPTH = 8;
 
 /**
- * Marker phrase for a response undici's strict parser rejected. The recommendation engine
- * matches on it, since that failure is deterministic and a retry never helps.
+ * The recommendation engine matches this phrase, since a strict-parser rejection is deterministic
+ * and a retry never helps.
  */
 export const NON_STANDARD_HTTP_RESPONSE = 'server sent a non-standard HTTP/ICY response';
 
-/** True when the cause chain holds undici's HTTPParserError, which carries no `code` to match on. */
+/** HTTPParserError is matched by name, since its `code` varies by parser failure or is unset. */
 export function isHttpParserError(err: unknown): boolean {
   let current: unknown = err;
   for (let depth = 0; depth <= MAX_CAUSE_DEPTH && current instanceof Error; depth++) {
@@ -240,14 +189,8 @@ export function isHttpParserError(err: unknown): boolean {
 }
 
 /**
- * Best human-readable message for a failed fetch. undici wraps every
- * connection-level failure, including the private-IP refusal from the
- * dispatcher above, in a generic `TypeError: fetch failed` whose real reason
- * lives in `.cause`. The cause is sometimes nested. Multi-address connect failures arrive
- * as an AggregateError with an empty message of its own. Callers surfacing
- * fetch errors to users should report this instead of `err.message`, so
- * "Refusing connection to private/local address (127.0.0.1)" or
- * "getaddrinfo ENOTFOUND host" isn't flattened to "fetch failed".
+ * undici reports every connection failure, the private-IP refusal included, as "fetch failed" with
+ * the reason in a nested `cause`.
  */
 export function describeFetchError(err: unknown): string {
   if (!(err instanceof Error)) return 'Unknown error';
@@ -259,6 +202,7 @@ export function describeFetchError(err: unknown): string {
     if (cause.message !== '') {
       best = cause.message;
     } else if (cause instanceof AggregateError) {
+      // A multi-address connect failure is an AggregateError with an empty message of its own.
       const first = cause.errors.find((e): e is Error => e instanceof Error && e.message !== '');
       if (first !== undefined) best = first.message;
     }
@@ -269,8 +213,8 @@ export function describeFetchError(err: unknown): string {
 }
 
 /**
- * Node's bundled fetch rejects an external undici dispatcher, so a custom dispatcher needs undici's own fetch.
- * Its RequestInit and Response are distinct copies of the same WHATWG shapes, hence the casts through `unknown`.
+ * Node's bundled fetch rejects an external undici dispatcher. undici's RequestInit and Response are
+ * separate copies of the WHATWG types, so they cast through `unknown`.
  */
 export async function fetchWithDispatcher(
   url: string,
@@ -283,18 +227,9 @@ export async function fetchWithDispatcher(
 }
 
 /**
- * `fetch` for UNTRUSTED outbound URLs (radio-stream validation/discovery).
- * Identical to global fetch except every connection is refused if it lands on a
- * private/local IP. That covers the initial request AND every redirect hop, which
- * defeats SSRF via redirects or DNS rebinding.
- *
- * Deliberately stays off the HTTP_PROXY path that `fetchWithTimeout`'s
- * `respectProxy` option takes. Behind a proxy the socket peer is the proxy, so
- * the connector below would validate the proxy's address instead of the target's
- * and the SSRF guard would pass everything. Untrusted URLs are unreachable on a
- * proxy-only host as a result, which is the safe side of that trade.
+ * Every connection that lands on a private IP is refused, redirect hops included. The proxy is
+ * skipped, since behind a proxy the peer check would see the proxy and not the target.
  */
 export async function safeFetch(url: string, init: RequestInit): Promise<Response> {
-  // A rebinding or redirect refusal surfaces as a rejected fetch whose `.cause` is the connector Error above.
   return fetchWithDispatcher(url, init, privateIpBlockingDispatcher);
 }

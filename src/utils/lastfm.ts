@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Last.fm API Client
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Config } from '../config.js';
@@ -34,7 +22,10 @@ export function requireLastFmApiKey(config: Config): string {
   return config.lastFmApiKey;
 }
 
-/** Last.fm's non-2xx JSON body ({"error":6,"message":"Album not found"}) names the cause the status line hides. */
+/**
+ * Last.fm's non-2xx JSON body, such as {"error":6,"message":"Album not found"}, names the cause the
+ * status line hides.
+ */
 function parseLastFmErrorMessage(body: string): string | null {
   try {
     const parsed: unknown = JSON.parse(body);
@@ -58,7 +49,7 @@ export async function callLastFmApi(method: string, params: Record<string, strin
 
   logger.debug(`Calling Last.fm API: ${method}`, params);
 
-  // All Last.fm endpoints we call are reads, so they are safe to retry on timeout.
+  // Every Last.fm method this server calls is a read, so a timeout is safe to retry.
   const response = await fetchWithTimeout(
     url.toString(),
     {},
@@ -77,8 +68,7 @@ export async function callLastFmApi(method: string, params: Record<string, strin
 
   const data = await response.json() as Record<string, unknown>;
 
-  // Last.fm uses positive integers as error codes (e.g. 6 = artist not found).
-  // error:0 means no error on some legacy endpoints, so it is not treated as one.
+  // Some Last.fm endpoints send `error: 0` on success, so only a nonzero code is an error.
   if (typeof data['error'] === 'number' && data['error'] !== 0) {
     const message = typeof data['message'] === 'string' ? data['message'] : undefined;
     throw new Error(ErrorFormatter.lastfmResponse(message));
@@ -88,8 +78,8 @@ export async function callLastFmApi(method: string, params: Record<string, strin
 }
 
 /**
- * Last.fm serves single-element containers as a bare object instead of a
- * one-element array (verified live on one-track albums), so coerce.
+ * Last.fm sends a one-element container as a bare object instead of an array, such as the track
+ * list of a one-track album.
  */
 export function asLastFmArray(value: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(value)) {
@@ -101,10 +91,7 @@ export function asLastFmArray(value: unknown): Array<Record<string, unknown>> {
   return [];
 }
 
-/**
- * Strip wiki HTML plus the boilerplate "Read more on Last.fm" anchor Last.fm
- * appends to every summary. Returns null when nothing readable remains.
- */
+/** Every Last.fm wiki summary ends with a "Read more on Last.fm" link that carries no content. */
 export function stripWikiHtml(html: string): string | null {
   const text = html
     .replace(/<a\s[^>]*>\s*Read more on Last\.fm\s*<\/a>\.?/gi, '')

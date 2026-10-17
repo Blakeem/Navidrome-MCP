@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Web UI Lyrics Route
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { ServerResponse } from 'node:http';
@@ -29,12 +17,12 @@ import { writeError, writeJson } from '../http-helpers.js';
 
 type QueueItem = Awaited<ReturnType<typeof getPlayQueue>>['items'][number];
 
-/** A track's lyrics do not change, so an answered lookup is held for a long while. */
+/** A track's lyrics do not change, so an answered lookup is held for an hour. */
 const HIT_TTL_SECONDS = 3600;
 
 /**
- * A miss expires far sooner because queue metadata arrives by best-effort
- * enrichment: an entry with no artist yet can become searchable moments later.
+ * A miss expires sooner, since queue metadata arrives by best-effort enrichment and an entry with
+ * no artist yet can become searchable moments later.
  */
 const MISS_TTL_SECONDS = 60;
 
@@ -46,21 +34,14 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** A DTO with no text and no instrumental flag is a miss worth retrying, not an answer worth holding. */
+/** A DTO with no text and no instrumental flag is a miss to retry, not an answer to hold. */
 function isAnswered(dto: LyricsDTO): boolean {
   return dto.hasSynced || dto.unsynced !== undefined || dto.isInstrumental;
 }
 
 /**
- * GET /api/lyrics/:songId resolves lyrics for one entry of the live play queue.
- *
- * Track metadata comes from the queue rather than from the caller, so the
- * browser cannot steer an LRCLIB query. `songId` is validated against the
- * Navidrome ID character set before any upstream call, exactly as `handleCover`
- * does, so a request carrying path separators is rejected with no network I/O.
- *
- * A song with no lyrics answers 200 with an empty DTO. Only a failed lookup is
- * a non-200, which is what lets the overlay tell "no lyrics" from "it broke".
+ * Track metadata comes from the live queue, so the browser cannot steer an LRCLIB query. A song
+ * with no lyrics answers 200 with an empty DTO, so the overlay can tell no lyrics from a failure.
  */
 export async function handleLyrics(
   res: ServerResponse,
@@ -68,7 +49,6 @@ export async function handleLyrics(
   client: NavidromeClient,
   rawId: string,
 ): Promise<void> {
-  // INPUT
   const parsed = IdSchema.safeParse({ id: rawId });
   if (!parsed.success) {
     writeError(res, 400, 'Invalid id');
@@ -96,7 +76,6 @@ export async function handleLyrics(
     return;
   }
 
-  // PROCESS
   const lookup = buildLyricsLookup({
     title: entry.title,
     artist: entry.artist,
@@ -115,7 +94,6 @@ export async function handleLyrics(
     return;
   }
 
-  // OUTPUT
   const store = isAnswered(dto) ? hitCache : missCache;
   store.set(songId, dto);
   writeJson(res, 200, dto);

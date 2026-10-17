@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - MCP lease on the web player
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { request, type ClientRequest } from 'node:http';
@@ -31,9 +19,8 @@ function release(req: ClientRequest): void {
 }
 
 /**
- * Holds one kept-open POST to the web player, so the player counts this MCP among its users and
- * keeps playing when the MCP that spawned it exits. The OS closes the socket when this process dies.
- * It uses node:http, since undici's 300s body timeout would drop an idle lease made with fetch.
+ * A kept-open POST makes the player count this MCP, so it keeps playing after its spawner exits.
+ * node:http, since undici's 300s body timeout would drop an idle lease made with fetch.
  */
 export function holdOwnerLease(port: number): Promise<void> {
   if (held?.port === port) return Promise.resolve();

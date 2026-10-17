@@ -1,15 +1,10 @@
 /**
  * Navidrome MCP Server - transformer starredAt propagation tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Verifies that the `starred` boolean is authoritative and that
- * `starredAt` is only echoed when `starred === true`. Navidrome retains
- * a leftover `starredAt` after unstarring, so a populated timestamp
- * alone must NOT mark the item as starred in our DTOs.
- *
- * `starred`/`starredAt`/`addedDate` are verbose-gated fields, so every
- * transform here runs with `{ verbose: true }` to exercise the derivation
- * logic (compact mode drops these fields regardless of their raw value).
+ * Navidrome keeps a leftover `starredAt` after unstarring, so only `starred === true` marks an
+ * item starred. These tests run verbose, since compact mode drops the starred and date fields.
  */
 
 import { describe, expect, it } from 'vitest';

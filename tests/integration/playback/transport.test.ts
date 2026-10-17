@@ -1,9 +1,7 @@
 /**
  * Navidrome MCP Server - Transport control integration tests
  * Copyright (C) 2025
- *
- * Live integration tests for pause/resume/next/previous/seek/set_volume.
- * Each test starts with a 5-track queue at idx 0, unpaused.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { beforeAll, beforeEach, expect } from 'vitest';
@@ -42,10 +40,6 @@ describePlayback('transport controls (live)', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // pause / resume
-  // -------------------------------------------------------------------------
-
   itPlayback('pause sets paused:true and is idempotent', async () => {
     await pause();
     await waitFor(async () => {
@@ -54,7 +48,6 @@ describePlayback('transport controls (live)', () => {
     });
     expect((await nowPlaying()).paused).toBe(true);
 
-    // Idempotent: pausing while already paused should not throw and state stays paused.
     await pause();
     expect((await nowPlaying()).paused).toBe(true);
   });
@@ -68,16 +61,12 @@ describePlayback('transport controls (live)', () => {
     expect((await nowPlaying()).paused).toBe(false);
   });
 
-  // -------------------------------------------------------------------------
-  // set_volume
-  // -------------------------------------------------------------------------
-
   itPlayback('set_volume(50) is reflected in playback_status', async () => {
     const result = await setVolume({ level: 50 });
     expect(result.success).toBe(true);
     expect(result.volume).toBe(50);
 
-    // mpv updates the property cache on the round-trip; allow async settle.
+    // playback_status reads the observed volume, which can lag the set_property reply.
     await waitFor(async () => {
       const status = await playbackStatus();
       return status.volume === 50;
@@ -92,10 +81,6 @@ describePlayback('transport controls (live)', () => {
     await setVolume({ level: 50 });
   });
 
-  // -------------------------------------------------------------------------
-  // next / previous
-  // -------------------------------------------------------------------------
-
   itPlayback('next advances queueIndex from 0 to 1', async () => {
     expect((await nowPlaying()).queueIndex).toBe(0);
     await next();
@@ -104,7 +89,6 @@ describePlayback('transport controls (live)', () => {
   });
 
   itPlayback('previous moves queueIndex from 1 back to 0', async () => {
-    // Seed: bump to idx 1 first.
     await next();
     await waitFor(async () => (await nowPlaying()).queueIndex === 1);
 
@@ -113,14 +97,8 @@ describePlayback('transport controls (live)', () => {
     expect((await nowPlaying()).queueIndex).toBe(0);
   });
 
-  // -------------------------------------------------------------------------
-  // seek
-  // -------------------------------------------------------------------------
-
   itPlayback('seek relative +5 increases position', async () => {
-    // Wait for mpv to actually start producing a non-trivial position.
-    // time-pos only updates while playback is running and the HTTP buffer
-    // is filled, so streaming-warm-up time matters.
+    // time-pos advances only while playing with a filled stream buffer, so the wait allows warm-up.
     await resume();
     await waitFor(async () => {
       const np = await nowPlaying();
@@ -133,19 +111,11 @@ describePlayback('transport controls (live)', () => {
 
     const before = (await nowPlaying()).position as number;
 
-    // The seek must complete without throwing — that confirms mpv
-    // accepted the IPC command. Position-update verification is best-effort
-    // because mpv's property-change events for time-pos can be delayed by
-    // HTTP re-buffering after a seek into uncached byte ranges.
     const result = await seek({ seconds: 5, mode: 'relative' });
-    // `seconds` and `mode` are no longer echoed (LLM input echoes); only
-    // `success` survives.
     expect(result.success).toBe(true);
 
-    // Best-effort: try to observe the position bump, but don't fail the
-    // test if mpv's cache hasn't refreshed within the wait window. We
-    // accept either a confirmed advance OR continued playback (position
-    // still >= before, since real-time playback never moves backward).
+    // time-pos events can lag a seek into an uncached byte range, so a missed bump is tolerated and
+    // only a backward move fails.
     let after = before;
     try {
       await waitFor(async () => {
@@ -155,23 +125,16 @@ describePlayback('transport controls (live)', () => {
         return cur >= before + 4;
       }, 5000);
     } catch {
-      // Fall through to the soft assertion below.
+      // The assertion below covers a missed bump.
     }
-    // Soft assertion: position has not regressed. The seek tool itself was
-    // verified above; the cache lag is a known mpv quirk under heavy load.
     expect(after).toBeGreaterThanOrEqual(before);
   });
 
   itPlayback('seek absolute returns success without error', async () => {
-    // Resume first so duration populates; mpv only knows duration after
-    // opening the file.
     await resume();
     await waitFor(async () => (await nowPlaying()).paused === false);
 
-    // Best-effort: try to read mpv's reported duration to pick a safe seek
-    // target. After a long run mpv's property cache may stop emitting
-    // `duration` updates promptly, in which case we fall back to a fixed
-    // small target (5s) that is safe for any track > 5s.
+    // A stale duration cache falls back to 5 s, which lies inside any track longer than 5 s.
     let target = 5;
     try {
       await waitFor(async () => {
@@ -181,27 +144,21 @@ describePlayback('transport controls (live)', () => {
       const dur = (await nowPlaying()).duration as number;
       target = Math.max(5, Math.min(30, Math.floor(dur / 2)));
     } catch {
-      // duration cache is stale; use the safe fallback.
+      // The 5 s fallback stands.
     }
 
-    // The contract under test is the seek tool surface itself — that mpv
-    // accepts the IPC command and the return shape is correct.
     const result = await seek({ seconds: target, mode: 'absolute' });
-    // `seconds` and `mode` are no longer echoed (LLM input echoes); only
-    // `success` survives.
     expect(result.success).toBe(true);
     void target;
 
-    // Best-effort verification — mpv's time-pos cache can lag by several
-    // seconds after a seek under heavy load. Accept any plausibly post-seek
-    // value, but don't fail the test if the cache hasn't caught up.
+    // time-pos can lag a seek by seconds under load, so a missed position never fails the test.
     try {
       await waitFor(async () => {
         const cur = (await nowPlaying()).position;
         return typeof cur === 'number' && Math.abs(cur - target) <= 5;
       }, 5000);
     } catch {
-      // Tool surface is verified; cache propagation is best-effort.
+      // A lagging time-pos is tolerated.
     }
   });
 });

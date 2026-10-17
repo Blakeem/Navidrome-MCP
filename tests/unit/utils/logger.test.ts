@@ -1,19 +1,13 @@
 /**
  * Navidrome MCP Server - logger redaction unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { redact } from '../../../src/utils/logger.js';
 
-// ---------------------------------------------------------------------------
-// redact() — unit tests for each redaction pattern
-// ---------------------------------------------------------------------------
-
 describe('redact()', () => {
-  // -------------------------------------------------------------------------
-  // 1. Bearer token in a plain string
-  // -------------------------------------------------------------------------
   describe('Bearer token redaction', () => {
     it('redacts Authorization: Bearer in a string', () => {
       const input = 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc.def request failed';
@@ -36,9 +30,6 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 2. Authorization header in an object (e.g. serialized request headers)
-  // -------------------------------------------------------------------------
   describe('Bearer token in an object', () => {
     it('redacts Authorization Bearer header value in object strings', () => {
       const input = {
@@ -66,9 +57,6 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 3. Password JSON field in a string
-  // -------------------------------------------------------------------------
   describe('password JSON field redaction', () => {
     it('redacts "password" JSON key', () => {
       const input = 'Config dump: {"username":"bob","password":"s3cr3t!","host":"localhost"}';
@@ -92,10 +80,7 @@ describe('redact()', () => {
     });
 
     it('redacts single-quoted password values (util.format style)', () => {
-      // Bug-fix lock-in: pre-fix the regex required `"[^"]*"` (double-quoted
-      // only), but Node's util.format serializes objects with single quotes —
-      // `{ password: 'secret' }` stringifies to `{ password: 'secret' }`.
-      // After the fix the regex accepts both quote styles AND unquoted.
+      // Node's util.format prints object strings in single quotes.
       const input = "Config: { username: 'alice', password: 's3cr3t!', host: 'localhost' }";
       const result = redact(input) as string;
       expect(result).not.toContain('s3cr3t!');
@@ -107,7 +92,6 @@ describe('redact()', () => {
       const input = 'env dump: NAVIDROME_PASSWORD=envvarsecret123 LOG_LEVEL=debug';
       const result = redact(input) as string;
       expect(result).not.toContain('envvarsecret123');
-      // Unrelated env vars survive
       expect(result).toContain('LOG_LEVEL=debug');
     });
 
@@ -115,14 +99,11 @@ describe('redact()', () => {
       const input = '{"username":"bob","password":"s3cr3t!","host":"localhost"}';
       const result = redact(input) as string;
       expect(result).not.toContain('s3cr3t!');
-      // Following fields must survive intact.
       expect(result).toContain('"host":"localhost"');
     });
 
     it('redacts string-leaf values under sensitive keys in nested objects', () => {
-      // Key-aware walker: a string leaf carries no key context for the regex
-      // passes, so the walker redacts by key name. A `password` key with leaf
-      // value `'myplaintextpwd'` is replaced with <REDACTED> regardless of type.
+      // A string leaf carries no key for the regex passes, so only the key-name check catches it.
       const input = { config: { password: 'myplaintextpwd' } };
       const result = redact(input) as { config: { password: string } };
       expect(result.config.password).toBe('<REDACTED>');
@@ -138,8 +119,6 @@ describe('redact()', () => {
     });
 
     it('passes through non-sensitive object keys unchanged', () => {
-      // Only keys matching the sensitive-name set are redacted; ordinary keys
-      // (even ones whose value happens to contain the word "password") survive.
       const input = { title: 'my password song' };
       const result = redact(input) as { title: string };
       expect(result.title).toBe('my password song');
@@ -152,9 +131,6 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 4. Subsonic auth params in a URL string
-  // -------------------------------------------------------------------------
   describe('Subsonic auth param redaction', () => {
     it('strips u= and p= params from URL-like strings', () => {
       const input = 'Streaming URL: http://host:4533/rest/stream?id=abc&u=admin&p=pass123&v=1.16.1';
@@ -165,17 +141,13 @@ describe('redact()', () => {
     });
 
     it('strips s=/t= salt+token params from raw (non-URL) strings', () => {
-      // Bug-fix lock-in: pre-fix the regex was `[up]=` only, missing salt
-      // (s=) and salted-MD5 token (t=) — the actual replay-credential pair
-      // we send. Now `[upst]=` covers all four. This case feeds a string
-      // fragment NOT parseable as a URL (e.g., embedded in JSON or stderr
-      // mpv forwarding), so stripSubsonicAuthParams can't help. Only the regex can.
+      // stripSubsonicAuthParams handles only a parseable URL, so a query fragment in other text
+      // relies on this regex. The salt and token pair is enough to replay a request.
       const input = 'mpv stderr: requesting ?id=abc&u=user&t=hashtoken99&s=randomsalt&v=1.16.1 fragment';
       const result = redact(input) as string;
       expect(result).not.toContain('t=hashtoken99');
       expect(result).not.toContain('s=randomsalt');
       expect(result).not.toContain('u=user');
-      // non-auth params survive
       expect(result).toContain('v=1.16.1');
       expect(result).toContain('id=abc');
     });
@@ -185,14 +157,10 @@ describe('redact()', () => {
       const result = redact(input) as string;
       expect(result).not.toContain('t=hashtoken');
       expect(result).not.toContain('s=salt');
-      // non-auth params survive
       expect(result).toContain('v=1.16.1');
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 5. Credentials embedded in URL (user:pass@host)
-  // -------------------------------------------------------------------------
   describe('URL userinfo credentials', () => {
     it('redacts https://user:pass@host URLs', () => {
       const input = 'fetch failed for https://admin:mypassword@navidrome.local/api/album';
@@ -215,9 +183,6 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 6. JWT-shaped raw token
-  // -------------------------------------------------------------------------
   describe('JWT-shaped token redaction', () => {
     it('redacts a raw JWT string in a log message', () => {
       const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyMTIzIiwiaWF0IjoxNjE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
@@ -237,9 +202,6 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 7. API key in env-var / JSON style
-  // -------------------------------------------------------------------------
   describe('API key / secret redaction', () => {
     it('redacts api_key=value style', () => {
       const input = 'Request params: api_key=abc123deadbeef method=getSimilarArtists';
@@ -272,21 +234,14 @@ describe('redact()', () => {
     });
 
     it('does NOT over-redact past the value boundary in JSON-flat strings', () => {
-      // Bug-fix lock-in: pre-fix the api-key regex used `\S+` which on a
-      // JSON-flat string would gobble past the comma and redact unrelated
-      // context. Post-fix uses bounded captures stopping at quote/comma/etc.
       const input = '{"apiKey":"lastfmkey12345","other":"x","method":"track.getSimilar"}';
       const result = redact(input) as string;
       expect(result).not.toContain('lastfmkey12345');
-      // The unrelated fields after the apiKey value MUST survive.
       expect(result).toContain('"other":"x"');
       expect(result).toContain('"method":"track.getSimilar"');
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 8. Error object with credential in .message
-  // -------------------------------------------------------------------------
   describe('Error object redaction', () => {
     it('redacts credentials in Error.message', () => {
       const err = new Error('fetch failed for https://user:password123@host:4533/api/album');
@@ -317,9 +272,6 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 9. Nested object (3 levels deep) with password field
-  // -------------------------------------------------------------------------
   describe('nested object redaction', () => {
     it('redacts password strings 3 levels deep', () => {
       const input = {
@@ -336,39 +288,24 @@ describe('redact()', () => {
     });
 
     it('stops walking at depth 5 (returns subtree unchanged beyond limit)', () => {
-      // Build a 6-level deep object. The leaf "shouldNotBeRedacted" string
-      // is a non-credential value; the test claim is that beyond depth 5
-      // the walker hands the subtree back by reference (un-redacted).
-      // If we accidentally walk past 5, the leaf is still a plain string
-      // that doesn't match any pattern, so we additionally embed an apparent
-      // credential at depth 6 to prove the walker actually stopped.
+      // The credential sits deeper than the depth limit, so its survival proves the walk stopped.
       const deep = {
         a: { b: { c: { d: { e: { f: { token: 'Bearer abcdefghijklmnop' } } } } } },
       };
       const result = redact(deep) as typeof deep;
-      // Depth-5 limit means the f.token at depth-6 IS NOT walked into and
-      // therefore IS NOT redacted. If the walker were unbounded, this
-      // assertion would flip (token would be 'Bearer <REDACTED>').
       expect(result.a.b.c.d.e.f.token).toBe('Bearer abcdefghijklmnop');
     });
 
     it('handles circular references without stack-overflow', () => {
-      // Adversarial input: object referring to itself. The depth limit IS
-      // the cycle guard — there's no WeakSet — so depth-5 stops the walk
-      // before recursion blows the stack.
+      // The depth limit is the only cycle guard, since the walker keeps no visited set.
       const circular: Record<string, unknown> = { name: 'site' };
       circular['self'] = circular;
-      // The fact that this returns rather than throwing/blowing the stack
-      // is the test. The structure preservation is incidental.
       expect(() => redact(circular)).not.toThrow();
       const result = redact(circular) as Record<string, unknown>;
       expect(result['name']).toBe('site');
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 10. Array of mixed records
-  // -------------------------------------------------------------------------
   describe('array redaction', () => {
     it('redacts credentials in each array element', () => {
       const input = [
@@ -392,13 +329,8 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 11. Oversized strings — truncation must not bypass redaction
-  // -------------------------------------------------------------------------
   describe('oversized string redaction (truncate-then-redact)', () => {
     it('redacts a password embedded near the front of a >50KB string', () => {
-      // Bug-fix lock-in: pre-fix, oversized strings returned truncated but
-      // UNREDACTED — a secret in the retained 50KB prefix reached stderr.
       const input = `password: "hugedumpsecret42" ${'x'.repeat(60_000)}`;
       const result = redact(input) as string;
       expect(result).not.toContain('hugedumpsecret42');
@@ -420,9 +352,8 @@ describe('redact()', () => {
     });
 
     it('completes quickly on a large dot-free base64url blob (JWT-pass ReDoS guard)', () => {
-      // Regression: the unanchored JWT pass was quadratic on long
-      // [A-Za-z0-9_-] runs without dots (~5s at 50KB). The lookbehind anchor
-      // keeps it linear — generous 1s bound still catches the pathology.
+      // An unanchored JWT pattern takes about 5s on a 50KB dot-free run, so a 1s bound still
+      // catches it.
       const blob = 'A'.repeat(60_000);
       const start = performance.now();
       const result = redact(blob) as string;
@@ -439,17 +370,13 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // 12. Built-in object rendering (Date / RegExp / binary views)
-  // -------------------------------------------------------------------------
   describe('built-in object rendering', () => {
     it('renders a valid Date as its ISO string instead of {}', () => {
       expect(redact(new Date('2026-07-08T12:00:00.000Z'))).toBe('2026-07-08T12:00:00.000Z');
     });
 
     it('renders an invalid Date as "Invalid Date" without throwing', () => {
-      // toISOString() throws RangeError on invalid dates; the logger's
-      // "never throws" contract must hold for any input.
+      // toISOString() throws RangeError on an invalid Date, and the logger must never throw.
       expect(() => redact(new Date('not-a-date'))).not.toThrow();
       expect(redact(new Date('not-a-date'))).toBe('Invalid Date');
     });
@@ -478,9 +405,6 @@ describe('redact()', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Negative cases — normal data must NOT be altered
-  // -------------------------------------------------------------------------
   describe('negative cases (normal data unchanged)', () => {
     it('leaves a plain log message with no credentials unchanged', () => {
       const input = 'FilterCacheManager loaded 42 filter options across 6 types';
@@ -512,10 +436,7 @@ describe('redact()', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// logger output goes to stderr (not stdout) — MCP stdio safety
-// ---------------------------------------------------------------------------
-
+// stdout carries the MCP stdio protocol, so every log line must go to stderr.
 describe('logger output channel', () => {
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;

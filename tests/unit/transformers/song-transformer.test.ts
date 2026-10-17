@@ -1,11 +1,10 @@
 /**
  * Navidrome MCP Server - song transformer lyrics-flag tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Verifies the `lyrics` availability flag derived from a Navidrome song row's
- * own `lyrics` tag. The flag lives in the always-emitted identity block, so
- * absence means "no local lyrics" rather than "not in this projection", and the
- * raw lyric text must never reach the DTO.
+ * The `lyrics` flag sits in the always-emitted identity block, so its absence means no local
+ * lyrics, not a field this projection dropped.
  */
 
 import { describe, it, expect } from 'vitest';

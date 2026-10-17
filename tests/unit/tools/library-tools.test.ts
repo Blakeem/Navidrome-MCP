@@ -1,15 +1,10 @@
 /**
  * Navidrome MCP Server - library tool function tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers getUserDetails and setActiveLibraries through the library tool category.
- * Both functions depend on the libraryManager singleton; we seed it
- * using libraryManager.initialize() with a mocked client, the same
- * pattern used in tests/unit/services/library-manager.test.ts.
- *
- * NOTE: Zod-level validation for setActiveLibraries is covered in
- * tests/unit/schemas/validation.test.ts. These tests target function-level
- * behavior: correct DTO construction, state mutation, error paths.
+ * The library tools read the libraryManager singleton, so each case seeds it through
+ * initialize() with a mocked client. Schema cases live in tests/unit/schemas/validation.test.ts.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -20,8 +15,6 @@ import { createMockClient, type MockNavidromeClient } from '../../factories/mock
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import type { UserDetailsDTO } from '../../../src/types/index.js';
-
-// ---- helpers ----------------------------------------------------------------
 
 function makeJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -88,7 +81,6 @@ function userLibraries(): LibraryRow[] {
   return makeUserInfo()['libraries'] as LibraryRow[];
 }
 
-/** Routes /user/{uid} and /library the way Navidrome answers them. */
 function routeLibraryEndpoints(
   client: MockNavidromeClient,
   options: { libraries?: LibraryRow[]; libraryStats?: () => Promise<unknown>; user?: () => Promise<unknown> } = {},
@@ -127,8 +119,6 @@ async function seedLibraryManager(mockClient: MockNavidromeClient): Promise<void
   );
 }
 
-// ---- setup / teardown -------------------------------------------------------
-
 let mockClient: MockNavidromeClient;
 
 beforeEach(async () => {
@@ -139,7 +129,6 @@ beforeEach(async () => {
   mockClient.requestWithLibraryFilter.mockResolvedValue([]);
   await filterCacheManager.initialize(mockClient as unknown as NavidromeClient, makeConfig());
   routeSummaryTotals(mockClient, { song: 350, album: 35, artist: 22 });
-  // Clear the call history after seeding so subsequent assertions are fresh
   mockClient.request.mockClear();
   mockClient.requestWithLibraryFilter.mockClear();
 });
@@ -148,8 +137,6 @@ afterEach(() => {
   libraryManager.reset();
   filterCacheManager.reset();
 });
-
-// ---- getUserDetails ---------------------------------------------------------
 
 describe('getUserDetails', () => {
   it('returns user + libraries + summary DTO shape', async () => {
@@ -164,17 +151,14 @@ describe('getUserDetails', () => {
     expect(result).toHaveProperty('libraries');
     expect(result).toHaveProperty('summary');
 
-    // user fields
     expect(typeof result.user.id).toBe('string');
     expect(typeof result.user.userName).toBe('string');
     expect(typeof result.user.isAdmin).toBe('boolean');
 
-    // libraries fields
     expect(typeof result.libraries.activeCount).toBe('number');
     expect(typeof result.libraries.totalCount).toBe('number');
     expect(Array.isArray(result.libraries.available)).toBe(true);
 
-    // summary fields
     expect(typeof result.summary.totalSongs).toBe('number');
     expect(typeof result.summary.totalAlbums).toBe('number');
     expect(typeof result.summary.totalArtists).toBe('number');
@@ -187,7 +171,7 @@ describe('getUserDetails', () => {
       libraries: { available: Array<{ scanInfo: { lastScanAt: string | null } }> };
     };
 
-    // Library id=2 has lastScanAt = '0001-01-01T00:00:00Z' which is the Go zero time
+    // Library 2 carries the Go zero time as its lastScanAt.
     const podcasts = result.libraries.available.find((l: Record<string, unknown>) => l['id'] === 2) as {
       scanInfo: { lastScanAt: string | null };
     } | undefined;
@@ -281,8 +265,6 @@ describe('getUserDetails', () => {
   });
 });
 
-// ---- setActiveLibraries -----------------------------------------------------
-
 describe('setActiveLibraries', () => {
   it('sets active libraries and returns success + activeLibraries list', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
@@ -301,7 +283,6 @@ describe('setActiveLibraries', () => {
     expect(typeof result.totalCount).toBe('number');
     expect(result.message).toMatch(/^Successfully set 1 active library: /);
 
-    // Verify the singleton state was actually updated
     expect(libraryManager.getActiveLibraryIds()).toEqual([1]);
   });
 
@@ -324,7 +305,7 @@ describe('setActiveLibraries', () => {
 
   it('throws (not a {success:false} envelope) for an invalid library ID', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
-    // A thrown failure surfaces as a protocol error instead of a misleading HTTP-200 body.
+    // A thrown failure reaches the model as an isError result, not as a success body.
     await expect(category.handleToolCall('set_active_libraries', { libraryIds: [999] }))
       .rejects.toThrow(/set_active_libraries.*Library IDs not available to this user: 999\. Available: 1, 2\. Call get_user_details/);
   });
@@ -359,8 +340,6 @@ describe('setActiveLibraries', () => {
 
   it('throws when non-integer library IDs fail Zod validation', async () => {
     const category = createLibraryToolCategory(mockClient as unknown as NavidromeClient, makeConfig());
-    // The Zod schema requires an array of integers; 'abc' should be rejected,
-    // and the ZodError is re-thrown (formatted) rather than swallowed.
     await expect(category.handleToolCall('set_active_libraries', { libraryIds: ['abc'] }))
       .rejects.toThrow(/set_active_libraries/);
   });
@@ -371,8 +350,6 @@ describe('setActiveLibraries', () => {
       .rejects.toThrow(/set_active_libraries/);
   });
 });
-
-// ---- get_artist description -------------------------------------------------
 
 describe('get_artist description', () => {
   function getArtistDescription(lastfm: boolean): string {

@@ -1,11 +1,9 @@
 /**
  * Navidrome MCP Server - playPlaylist tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the one-shot `play_playlist` tool: the schema, the paginated
- * `fetchPlaylistSongs` helper, and the shuffle / mode / empty-playlist
- * paths. The playbackEngine is mocked so no real mpv is touched —
- * end-to-end mpv behavior is covered by the playback integration suite.
+ * The playback engine is mocked here, since the playback integration suite covers live mpv.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,7 +26,7 @@ const { fetchPlaylistSongs } = await import('../../../src/tools/queue-sources.js
 
 function trackPage(start: number, count: number): unknown[] {
   return Array.from({ length: count }, (_, i) => ({
-    id: start + i, // playlist-position record (numeric in Navidrome)
+    id: start + i, // A playlist row's id is its position, never a song id.
     mediaFileId: `song-${start + i}`,
     title: `Title ${start + i}`,
     artist: `Artist ${start + i}`,
@@ -50,10 +48,6 @@ describe('play_playlist', () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
-
-  // ---------------------------------------------------------------------
-  // Happy path
-  // ---------------------------------------------------------------------
 
   it('enqueues a small playlist (single page) with full metadata', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 12), total: 12 });
@@ -115,10 +109,6 @@ describe('play_playlist', () => {
     expect(warnSpy.mock.calls[0]?.[0]).toContain('playlist pl-x row 2');
     warnSpy.mockRestore();
   });
-
-  // ---------------------------------------------------------------------
-  // Pagination
-  // ---------------------------------------------------------------------
 
   it('paginates a 1500-track playlist using X-Total-Count', async () => {
     client.requestWithLibraryFilterAndMeta
@@ -201,21 +191,14 @@ describe('play_playlist', () => {
   });
 
   it('rejects a playlist ID with characters outside the ID pattern (defense-in-depth)', async () => {
-    // PlaylistIdSchema regex-validates against [A-Za-z0-9_-]+ before the value
-    // reaches the URL builder, on top of the call-site encodeURIComponent.
     await expect(
       playPlaylist(client as never, { playlistId: 'has spaces/and?special' }),
     ).rejects.toThrow(/Playlist ID contains invalid characters/);
     expect(client.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
   });
 
-  // ---------------------------------------------------------------------
-  // shuffle
-  // ---------------------------------------------------------------------
-
   it('shuffle:true preserves the multiset but permutes order', async () => {
-    // 50 distinct tracks gives Fisher-Yates plenty of room; the chance of
-    // landing on the identity permutation is 1/50! — effectively zero.
+    // A shuffle of 50 tracks keeps the identity order with only a 1/50! chance.
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 50), total: 50 });
 
     await playPlaylist(client as never, { playlistId: 'pl-shuf', shuffle: true });
@@ -234,10 +217,6 @@ describe('play_playlist', () => {
     const enqueuedIds = enqueueMock.mock.calls[0]?.[0] as string[];
     expect(enqueuedIds).toEqual(Array.from({ length: 10 }, (_, i) => `song-${i}`));
   });
-
-  // ---------------------------------------------------------------------
-  // mode
-  // ---------------------------------------------------------------------
 
   it("mode:'append' passes through to the engine", async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 3), total: 3 });
@@ -270,10 +249,6 @@ describe('play_playlist', () => {
 
     expect(result.demoted).toBe(true);
   });
-
-  // ---------------------------------------------------------------------
-  // Error paths
-  // ---------------------------------------------------------------------
 
   it('throws a library-scoped message for a playlist with no tracks in the active libraries', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [], total: 0 });

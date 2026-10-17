@@ -6,7 +6,7 @@ describe('Cache', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    cache = new Cache<string>(1); // 1 second TTL for testing
+    cache = new Cache<string>(1); // TTL in seconds
   });
 
   afterEach(() => {
@@ -40,7 +40,6 @@ describe('Cache', () => {
     cache.set('key1', 'value1');
     expect(cache.get('key1')).toBe('value1');
 
-    // Advance fake clock past the 1-second TTL
     vi.advanceTimersByTime(1100);
 
     expect(cache.get('key1')).toBeUndefined();

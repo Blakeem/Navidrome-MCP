@@ -1,22 +1,15 @@
 /**
  * Navidrome MCP Server - ErrorFormatter tests
  * Copyright (C) 2025
- *
- * Covers every public static method on ErrorFormatter from
- * src/utils/error-formatter.ts. Each method gets one happy-path test
- * (correct string shape) and one error-shape test (correct fallback).
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it } from 'vitest';
 import { ErrorFormatter } from '../../../src/utils/error-formatter.js';
 
-// ---- helper -----------------------------------------------------------------
-
 function makeResponse(status: number, statusText: string): Response {
   return { ok: status < 400, status, statusText } as unknown as Response;
 }
-
-// ---- toolExecution ----------------------------------------------------------
 
 describe('ErrorFormatter.toolExecution', () => {
   it('includes the tool name and error message', () => {
@@ -30,8 +23,8 @@ describe('ErrorFormatter.toolExecution', () => {
     expect(msg).toContain('Unknown error');
   });
 
-  // Nested impls (e.g. listRadioStations -> getRadioStation -> playRadioStation)
-  // each rewrap, and the agent called only the outermost tool.
+  // Nested impls, such as playRadioStation calling getRadioStation, each rewrap the error, and
+  // the agent called only the outermost tool.
   it('replaces an inner tool prefix with the outermost tool name', () => {
     const inner = ErrorFormatter.toolExecution('list_radio_stations', new Error('network down'));
     const outer = ErrorFormatter.toolExecution('play_radio_station', new Error(inner));
@@ -44,8 +37,6 @@ describe('ErrorFormatter.toolExecution', () => {
     expect(msg).toBe("Tool 'search_songs' failed: boom");
   });
 });
-
-// ---- httpRequest ------------------------------------------------------------
 
 describe('ErrorFormatter.httpRequest', () => {
   it('includes operation, status code, and statusText', () => {
@@ -62,12 +53,9 @@ describe('ErrorFormatter.httpRequest', () => {
 
   it('omits errorText separator when errorText is empty', () => {
     const msg = ErrorFormatter.httpRequest('GET /song', makeResponse(200, 'OK'), '');
-    // Should not contain " - " at the end
     expect(msg.endsWith(' - ')).toBe(false);
   });
 });
-
-// ---- configMissing ----------------------------------------------------------
 
 describe('ErrorFormatter.configMissing', () => {
   it('includes service name and config key', () => {
@@ -77,8 +65,6 @@ describe('ErrorFormatter.configMissing', () => {
   });
 });
 
-// ---- toolUnknown ------------------------------------------------------------
-
 describe('ErrorFormatter.toolUnknown', () => {
   it('includes the unknown tool name', () => {
     const msg = ErrorFormatter.toolUnknown('nonexistent_tool');
@@ -86,16 +72,12 @@ describe('ErrorFormatter.toolUnknown', () => {
   });
 });
 
-// ---- subsonicApi ------------------------------------------------------------
-
 describe('ErrorFormatter.subsonicApi', () => {
   it('names the endpoint and includes the HTTP status and statusText', () => {
     const msg = ErrorFormatter.subsonicApi('/getAlbum', makeResponse(401, 'Unauthorized'));
     expect(msg).toBe('Subsonic API request failed: /getAlbum - 401 Unauthorized');
   });
 });
-
-// ---- subsonicResponse -------------------------------------------------------
 
 describe('ErrorFormatter.subsonicResponse', () => {
   it('includes the subsonic error message', () => {
@@ -110,8 +92,6 @@ describe('ErrorFormatter.subsonicResponse', () => {
   });
 });
 
-// ---- lastfmResponse ---------------------------------------------------------
-
 describe('ErrorFormatter.lastfmResponse', () => {
   it('includes the Last.fm error message', () => {
     const msg = ErrorFormatter.lastfmResponse('Artist not found');
@@ -125,8 +105,6 @@ describe('ErrorFormatter.lastfmResponse', () => {
   });
 });
 
-// ---- notFound ---------------------------------------------------------------
-
 describe('ErrorFormatter.notFound', () => {
   it('includes the resource type and identifier', () => {
     const msg = ErrorFormatter.notFound('Station', 'uuid-abc');
@@ -134,8 +112,6 @@ describe('ErrorFormatter.notFound', () => {
     expect(msg).toContain('uuid-abc');
   });
 });
-
-// ---- configValidation -------------------------------------------------------
 
 describe('ErrorFormatter.configValidation', () => {
   it('includes all validation messages', () => {

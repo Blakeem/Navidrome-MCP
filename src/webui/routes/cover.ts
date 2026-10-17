@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Web UI Cover Art Proxy
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { ServerResponse } from 'node:http';
@@ -26,9 +14,8 @@ import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
 /**
- * Raster image MIME types we'll proxy and cache for 24h. A non-image body (e.g. a text/html
- * error page) or an SVG, which can embed script, would otherwise become a long-lived
- * same-origin stored-XSS vector. Anything outside this set is treated as an upstream error.
+ * Raster types only. An HTML error page or an SVG, which can embed script, cached for 24h on this
+ * origin would be a stored-XSS vector.
  */
 const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set([
   'image/png',
@@ -48,19 +35,8 @@ function parseCoverSize(rawSize: string): string | null {
 }
 
 /**
- * GET /api/cover/:id proxies the Subsonic `getCoverArt.view` endpoint.
- *
- * Credentials stay server-side (built per-request with a fresh salt), so the
- * browser never sees a Subsonic auth token. The response body is streamed
- * through unmodified, preserving Navidrome's choice of image encoding so
- * the browser can pick the best decoder.
- *
- * `id` is validated with `IdSchema` before any upstream call, so a request with
- * `..` or path separators is rejected as 400 with no network I/O. The Subsonic
- * endpoint accepts both album and song IDs (it returns the album-level art for
- * either), so either kind is accepted without disambiguating.
- *
- * The optional `size` lets a list view fetch a thumbnail instead of full-resolution art.
+ * The proxy keeps the Subsonic credentials server-side. `getCoverArt.view` takes an album id or a
+ * song id, so the id kind is not checked.
  */
 export async function handleCover(
   res: ServerResponse,
@@ -100,7 +76,7 @@ export async function handleCover(
       },
     );
   } catch (err) {
-    // A discreet 502 lets the UI render a placeholder without making the user think the server itself is dead.
+    // A 502 lets the UI render a placeholder without implying the web server itself is down.
     logger.debug(
       `webui: cover proxy fetch failed for id=${id}: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -109,15 +85,14 @@ export async function handleCover(
   }
 
   if (!upstream.ok || upstream.body === null) {
-    // Navidrome returns 404 for unknown IDs, so that status passes through.
     writeError(res, upstream.status === 404 ? 404 : 502, `Upstream returned ${upstream.status}`);
     upstream.body?.cancel().catch(() => undefined);
     return;
   }
 
-  // Album art rarely changes, so a long browser cache saves a phone re-fetching it on every snapshot.
   const rawType = upstream.headers.get('content-type') ?? '';
   const baseType = rawType.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  // Navidrome answers an unknown id with 200 and a Subsonic XML error, which this check rejects.
   if (!ALLOWED_IMAGE_TYPES.has(baseType)) {
     logger.debug(`webui: cover proxy rejected non-image content-type "${rawType}" for id=${id}`);
     writeError(res, 502, 'Upstream returned a non-image cover');
@@ -125,6 +100,7 @@ export async function handleCover(
     return;
   }
   const contentType = baseType;
+  // Album art rarely changes, so a long browser cache spares a phone a re-fetch on every snapshot.
   const headers: Record<string, string> = {
     'Content-Type': contentType,
     'Cache-Control': 'public, max-age=86400',
@@ -133,7 +109,8 @@ export async function handleCover(
   if (contentLength !== null) headers['Content-Length'] = contentLength;
   res.writeHead(200, headers);
 
-  // A stream error must abort the response, because a cleanly ended chunked body would be cached as a complete image.
+  // A stream error must abort the response, because a cleanly ended chunked body would be cached as
+  // a complete image.
   pipeline(Readable.fromWeb(upstream.body), res, (err) => {
     if (err) logger.debug(`webui: cover stream error for id=${id}: ${err.message}`);
   });

@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Settings app HTTP server (loopback-only, on-demand)
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -34,22 +22,18 @@ interface ConfigServer {
   close: () => Promise<void>;
 }
 
-/** Per-host options. Kept local (not exported), since callers pass an object literal. */
 interface ConfigServerOptions {
   /**
-   * Self-reap after this many ms without a request. Setup-mode hosts set it because
-   * they have no terminal or player power button to stop an abandoned settings page.
+   * The web player's setup mode sets this, since it may run without a terminal and has no power
+   * button to stop an abandoned settings page.
    */
   idleTimeoutMs?: number;
-  /** Invoked after the idle timeout fires and the server has been closed. */
   onIdleTimeout?: () => void;
 }
 
 /**
- * Start the settings server on a loopback ephemeral port (127.0.0.1:0). The OS
- * assigns a free port so it never collides with the player web UI or anything
- * else. Settings are never exposed beyond loopback (a hard requirement, since they
- * carry credentials), enforced both by the bind host and a peer guard.
+ * Settings carry credentials, so the server binds loopback and also checks each peer. An ephemeral
+ * port never collides with the web player.
  */
 export async function startConfigServer(options: ConfigServerOptions = {}): Promise<ConfigServer> {
   let idleTimer: NodeJS.Timeout | undefined;
@@ -60,15 +44,14 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
   const close = (): Promise<void> =>
     new Promise<void>((resolvePromise) => {
       if (idleTimer) clearTimeout(idleTimer);
-      // Terminate in-flight connections (Node 18.2+) so server.close()'s
-      // callback actually fires. Otherwise an open request at Ctrl-C would
-      // keep the server alive and hang the close promise forever.
+      // server.close() waits for in-flight requests, so an open request at Ctrl-C would hang
+      // the close promise.
       server.closeAllConnections();
       server.close(() => resolvePromise());
     });
 
-  // Unref'd so the timer never keeps the process alive on its own. The listening
-  // server does that, and this only bounds how long an abandoned setup page lingers.
+  // Unref'd, since the listening server keeps the process alive and this timer only bounds how
+  // long an abandoned setup page lingers.
   const bumpIdle = (): void => {
     const ms = options.idleTimeoutMs;
     if (ms === undefined) return;
@@ -107,13 +90,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
-  // DNS-rebinding guard: a rebound attacker hostname still connects from loopback.
+  // A DNS-rebound attacker hostname still connects from loopback, so the Host header is checked.
   if (!isLoopbackHostHeader(req.headers.host)) {
     writeError(res, 403, 'Forbidden host');
     return;
   }
 
-  // A cross-site page cannot send this header without a CORS preflight, which this server never approves.
+  // A cross-site page cannot send this header without a CORS preflight, which this server never
+  // approves.
   if (method === 'POST' && !isJsonContentType(req.headers['content-type'])) {
     writeError(res, 415, 'Content-Type must be application/json');
     return;

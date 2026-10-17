@@ -56,7 +56,8 @@ const SHARD_LIFT = 10;
 const SHARD_GRAVITY = 60;
 const SHARD_DRAG = 1.6;
 const SHARD_LIFE_S = 0.8;
-// A shard flashes white, burns in its invader's color, then cools to an ember at these fractions of its life.
+// A shard starts in the flash color, burns in its source's color, then cools to an ember at these
+// fractions of its life.
 const SHARD_FLASH = 0.12;
 const SHARD_EMBER = 0.62;
 const SHARD_TRAIL_S = 0.035;
@@ -68,7 +69,8 @@ const MAX_SHARDS = 180;
 const PRESENCE_RETAIN = 0.02;
 const PRESENCE_GAIN = 5;
 const MIN_PRESENCE = 0.02;
-// About one bloom texel per two art pixels, so the upscaled copy spreads each pixel's glow onto its neighbors.
+// About one bloom texel per two art pixels, so the upscaled copy spreads each pixel's glow onto
+// its neighbors.
 const BLOOM_TEXELS_PER_PIXEL = 0.5;
 const BLOOM_ALPHA = 0.5;
 // A one pixel scanline would cover too much of a smaller art pixel.
@@ -81,7 +83,7 @@ const SHADOW_COLOR = '#1d2b53';
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((rank) => (rank + 0.5) / 16);
 const BAYER_MIN = BAYER[0];
 
-// The PICO-8 palette. The light theme takes its deeper entries, since the bright yellows vanish on white.
+// The PICO-8 palette. The light theme takes deeper entries, since bright yellows vanish on white.
 const PALETTES = {
   dark: {
     squid: '#ff77a8', crab: '#29adff', octopus: '#ffec27', cannon: '#00e436',
@@ -119,7 +121,7 @@ const INVADERS = { squid: SQUID, crab: CRAB, octopus: OCTOPUS };
 // Rows from the top, by how many fit. The arcade puts squids on top and octopuses at the base.
 const ROW_KINDS = [[], ['crab'], ['crab', 'octopus'], ['squid', 'crab', 'octopus']];
 
-/** An invader formation whose columns fill with the spectrum, march on the beat and burst into pixel fireworks. */
+/** Invader columns fill with the spectrum, march on the beat and burst into pixel fireworks. */
 function draw(ctx, frame) {
   const { state } = frame;
   const layout = layoutFor(state, frame);
@@ -140,7 +142,7 @@ function draw(ctx, frame) {
   return true;
 }
 
-// Parses rows of X and dots into horizontal runs for solid sprites and single pixels for dithered ones.
+// Solid sprites draw as horizontal runs and dithered ones as single pixels, so a frame keeps both.
 function sprite(...frames) {
   const parsed = frames.map((rows) => {
     const runs = [];
@@ -162,7 +164,7 @@ function sprite(...frames) {
   return { width: frames[0][0].length, height: frames[0].length, frames: parsed };
 }
 
-// detectBeat listens to every band, so the hi-hats that drop bombs get their own rise test on the top bands.
+// detectBeat listens to every band, so the bomb-dropping hi-hats get a rise test on the top bands.
 function detectHiHat(state, frame) {
   const hat = (state.hiHat ??= { sinceSample: HAT_WINDOW_S, sinceHit: HAT_GAP_S, previous: null });
   hat.sinceSample += frame.dtSeconds;
@@ -177,7 +179,7 @@ function detectHiHat(state, frame) {
   return true;
 }
 
-// Presence follows the music up at once and lingers after it, so actors dissolve instead of vanishing.
+// Presence rises with the music at once and lingers, so actors dissolve instead of vanishing.
 function updatePresence(state, frame) {
   const target = Math.min(1, frame.energy * PRESENCE_GAIN);
   state.presence = Math.max(target, (state.presence ?? 0) * PRESENCE_RETAIN ** frame.dtSeconds);
@@ -193,7 +195,6 @@ function layoutFor(state, frame) {
   return state.layout.scene;
 }
 
-// Tries the chunkiest art pixel first and shrinks it until the scene fits.
 function buildLayout(frame) {
   const { width, height, pad } = frame;
   const innerWidth = width - 2 * (pad + EDGE_MARGIN);
@@ -260,7 +261,7 @@ function newGame() {
 
 function advance(game, layout, frame, levels, beat, hat) {
   aimCannon(game, layout, frame, levels);
-  // Reduced motion keeps only what the levels move, the formation's fill and the cannon's column.
+  // Reduced motion keeps only what the levels move: the formation's fill and the cannon's column.
   if (frame.reducedMotion) {
     clearActors(game);
     return;
@@ -289,7 +290,7 @@ function clearActors(game) {
   game.dip = 0;
 }
 
-// The formation steps and flips its legs on each beat, the way the arcade march kept time with its bass notes.
+// The formation steps on each beat, as the arcade march kept time with its bass notes.
 function stepFormation(game, layout, dt, beat) {
   game.sinceStep += dt;
   if (!beat && game.sinceStep < IDLE_STEP_S) return;
@@ -301,7 +302,8 @@ function stepFormation(game, layout, dt, beat) {
     game.dip = 0;
     return;
   }
-  // At each end the arcade formation steps down instead of across. Lacking room, it rises back on the next step.
+  // At each end the arcade formation steps down instead of across. Lacking room, it rises back
+  // on the next step.
   if (game.dip === 0) game.direction = -game.direction;
   game.dip = 1 - game.dip;
 }
@@ -343,7 +345,7 @@ function moveBolts(game, layout, levels, bass, dt) {
   game.bolts = flying;
 }
 
-// A bolt strikes the crown of its column, so each beat's firework bursts at the top of the spectrum.
+// A bolt strikes its column's top standing invader, so each firework bursts at the spectrum's top.
 function strikeInvader(game, layout, levels, bolt, bass) {
   const column = columnUnder(layout, game, bolt.x);
   const row = column === -1 ? -1 : crownRow(game, layout, levels, column);
@@ -368,7 +370,7 @@ function strikeUfo(game, layout, bolt, bass) {
   return true;
 }
 
-// Bombs fall from the base of the loudest treble column, the bands where the hi-hats live.
+// Bombs fall from the base of the loudest treble column, the bands where the hi-hats sit.
 function dropBomb(game, layout, levels) {
   if (game.bombs.length >= MAX_BOMBS) return;
   const column = loudestColumn(levels, Math.floor(layout.columns / 2));
@@ -399,7 +401,7 @@ function burst(game, layout, x, y, colors, count, speedScale) {
   const total = Math.round(count);
   const speed = SHARD_SPEED * speedScale * layout.motionScale;
   for (let i = 0; i < total; i++) {
-    // Alternate shards take an inner ring, so the burst opens as a filled flower instead of a hollow ring.
+    // Alternate shards take an inner ring, so the burst opens filled instead of hollow.
     const ring = i % 2 === 0 ? 1 : 0.55;
     const angle = (i / total) * Math.PI * 2 + Math.random() * 0.3;
     const velocity = speed * ring * (0.85 + 0.3 * Math.random());
@@ -477,7 +479,6 @@ function loudestColumn(levels, from) {
   return loudest;
 }
 
-// The top standing invader of a column, counted from the top row.
 function crownRow(game, layout, levels, column) {
   for (let row = 0; row < layout.rows; row++) {
     if (litFraction(levels[column], layout.rows, row) >= HIT_MIN && !isExploding(game, column, row)) return row;
@@ -569,7 +570,8 @@ function plotDithered(batch, color, x, y, fraction) {
   if (fraction >= 1 || fraction > BAYER[((y & 3) << 2) | (x & 3)]) plot(batch, color, x, y, 1);
 }
 
-// Every pixel of one color joins one path, and the clip keeps the art inside its reserved rows and column.
+// Every pixel of one color joins one path. The clip keeps art out of the last row and column, which
+// fitScene reserves.
 function plot(batch, color, x, y, width) {
   const top = y + batch.shiftY;
   const left = Math.max(0, x);
@@ -583,7 +585,8 @@ function plot(batch, color, x, y, width) {
   list.push(left, top, right - left);
 }
 
-// The art layer holds one device pixel per art pixel, so every pixel stays square and sharp at any device scale.
+// The art layer holds one device pixel per art pixel, so every pixel stays square and sharp at any
+// device scale.
 function sceneLayers(state, frame, layout) {
   if (state.layers) return state.layers;
   const probe = frame.createLayer(layout.artW, 1);
@@ -632,7 +635,7 @@ function renderArt(layers, layout, batch) {
   c.restore();
 }
 
-// On white, a navy silhouette half a pixel down and right lifts the sprites off the card like a printed label.
+// On white, a navy silhouette half an art pixel down and right lifts the sprites off the card.
 function castShadow(ctx, layers, layout, box) {
   const c = layers.shade.ctx;
   const offset = Math.max(1, Math.round(layout.px / 2));
@@ -649,7 +652,7 @@ function castShadow(ctx, layers, layout, box) {
   ctx.globalAlpha = 1;
 }
 
-// On the dark card, a small copy scaled back up with smoothing glows like phosphor around each pixel.
+// On the dark card, a small copy scaled up with smoothing glows like phosphor around each pixel.
 function addBloom(ctx, layers, box) {
   const { bloom } = layers;
   bloom.ctx.clearRect(0, 0, bloom.width, bloom.height);

@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Lyrics Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { z } from 'zod';
@@ -50,14 +38,11 @@ type LyricsMetadataParams = z.infer<typeof LyricsMetadataSchema>;
 /** Both settings gate LRCLIB, so a missing-config error names both. */
 export const LRCLIB_CONFIG_KEYS = 'features.lyricsProvider and features.lrclibUserAgent';
 
-/** LRCLIB search answers with dozens of rows, so a candidate list is capped to
- *  keep the tool result inside a sane context budget. */
+/** LRCLIB search answers with dozens of rows, so the candidate list is capped to bound context. */
 const MAX_LYRICS_CANDIDATES = 10;
 
-/** How many library rows the local match scans before giving up. */
 const LIBRARY_MATCH_LIMIT = 20;
 
-/** Stands in for a track field that neither the song row nor LRCLIB supplied. */
 const UNKNOWN_TRACK_FIELD = 'Unknown';
 
 // Navidrome fills untagged fields with these, and LRCLIB holds junk records under the same names.
@@ -78,7 +63,6 @@ interface LRCLIBResponse {
   syncedLyrics?: string;
 }
 
-/** One LRCLIB ladder rung. The path plus the serialized query is its dedup key. */
 interface LrclibRung {
   readonly kind: 'get' | 'search';
   readonly path: string;
@@ -93,20 +77,15 @@ interface TrackFallback {
   readonly durationMs?: number | undefined;
 }
 
-/** File lyrics the resolver reads by songId, or the parsed result a caller already holds. */
 type LocalLyricsSource =
   | { readonly client: NavidromeClient; readonly songId: string }
   | { readonly lyrics: LocalLyricsResult | null };
 
-/** Source selection for the resolver. Omitting it keeps the LRCLIB-only behavior. */
+/** Omitting the options gives LRCLIB-only resolution. */
 interface ResolveLyricsOptions {
   readonly local?: LocalLyricsSource;
   readonly allowLrclib?: boolean;
 }
-
-// ---------------------------------------------------------------------------
-// Shared parsing
-// ---------------------------------------------------------------------------
 
 function hasText(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== '';
@@ -114,14 +93,13 @@ function hasText(value: unknown): value is string {
 
 function parseSyncedLyrics(lrcText: string, durationMs?: number): LyricsLine[] {
   const markers: TimedMarker[] = [];
-  // Anchored tag matcher: LRC lines legally group multiple timestamps for a
-  // repeated section (e.g. `[01:02.34][01:15.67]lyric`). Extract each leading
-  // tag in turn rather than greedily swallowing later tags into the text.
+  // The regex is anchored because an LRC line may group several timestamps for a repeated
+  // section, such as `[01:02.34][01:15.67]lyric`.
   const tagRegex = /^\[(\d{2}):(\d{2})\.(\d{2,3})\]/;
 
   for (const rawLine of lrcText.split('\n')) {
-    // Community LRC text may carry a leading space, a stray `\r`, a BOM or indentation.
-    // Without trimming, the anchored regex misses the tag and drops the whole line.
+    // Community LRC text may lead with a space, `\r`, BOM, or indentation, which would make the
+    // anchored regex miss the tag and drop the line.
     let rest = rawLine.trimStart();
     const timestamps: number[] = [];
 
@@ -136,8 +114,8 @@ function parseSyncedLyrics(lrcText: string, durationMs?: number): LyricsLine[] {
       const fractionMs = fractionStr.length === 3 ? fraction : fraction * 10;
       timestamps.push((minutes * 60 + seconds) * 1000 + fractionMs);
 
-      // trimStart again so whitespace between grouped tags (`[..] [..]lyric`)
-      // doesn't stop the loop and leak the next tag's brackets into the text.
+      // Whitespace between grouped tags, such as `[..] [..]lyric`, would otherwise end the loop
+      // and leak the next tag into the text.
       rest = rest.slice(tag[0].length).trimStart();
       tag = tagRegex.exec(rest);
     }
@@ -153,10 +131,6 @@ function parseSyncedLyrics(lrcText: string, durationMs?: number): LyricsLine[] {
 
   return buildTimedLines(markers, durationMs);
 }
-
-// ---------------------------------------------------------------------------
-// Local file source
-// ---------------------------------------------------------------------------
 
 async function fetchSongRow(
   client: NavidromeClient,
@@ -190,8 +164,8 @@ async function readLocalLyrics(source: LocalLyricsSource, durationMs?: number): 
   try {
     return await fetchLocalLyrics(source.client, source.songId, durationMs);
   } catch (error) {
-    // The file tag is one source among several, so an unreadable song row
-    // must not strand a lookup that LRCLIB can still answer.
+    // The file tag is one source among several, so an unreadable song row must not fail a lookup
+    // that LRCLIB can still answer.
     logger.warn(
       'resolveLyricsByMetadata: local file lyrics unavailable, continuing with LRCLIB:',
       error instanceof Error ? error.message : String(error),
@@ -199,10 +173,6 @@ async function readLocalLyrics(source: LocalLyricsSource, durationMs?: number): 
     return null;
   }
 }
-
-// ---------------------------------------------------------------------------
-// LRCLIB source
-// ---------------------------------------------------------------------------
 
 function buildGetQuery(
   params: LyricsMetadataParams,
@@ -218,9 +188,8 @@ function buildGetQuery(
 }
 
 /**
- * Ordered ladder: narrowest exact lookup first, structured search last.
- * Rungs that serialize identically are dropped by `dedupeRungs`, so a bare
- * title+artist lookup costs one `/api/get` rather than three.
+ * Rungs run from the narrowest exact lookup to search. `dedupeRungs` drops identical rungs, so a
+ * bare title and artist lookup costs one `/api/get` instead of three.
  */
 function buildLrclibRungs(params: LyricsMetadataParams): LrclibRung[] {
   const rungs: LrclibRung[] = [];
@@ -254,10 +223,7 @@ function dedupeRungs(rungs: readonly LrclibRung[]): LrclibRung[] {
   return unique;
 }
 
-/**
- * Rank one search hit on title, artist, album and duration proximity. Duration
- * only ranks here, since it filters on the first ladder rung instead.
- */
+/** Search queries carry no duration, so duration proximity ranks hits instead of filtering them. */
 function scoreSearchResult(result: LRCLIBResponse, wanted: TrackFallback): number {
   const titleLower = wanted.title.toLowerCase();
   const artistLower = wanted.artist.toLowerCase();
@@ -291,10 +257,7 @@ function scoreSearchResult(result: LRCLIBResponse, wanted: TrackFallback): numbe
   return score;
 }
 
-/**
- * LRCLIB is an external API: a 200 that isn't a JSON array (object, null, or
- * an error payload), or a non-object row inside one, must degrade to "no lyrics found".
- */
+/** A non-array LRCLIB body or a non-object row degrades to no match instead of throwing. */
 function toSearchRows(body: unknown): LRCLIBResponse[] {
   if (!Array.isArray(body)) return [];
 
@@ -319,9 +282,8 @@ function pickBestSearchResult(body: unknown, wanted: TrackFallback): LRCLIBRespo
 }
 
 /**
- * Single transport site for every LRCLIB call. A 404 means "not in LRCLIB" and
- * yields null. Every other non-ok status throws, so a downed or rate-limiting
- * LRCLIB never reads as "no lyrics".
+ * LRCLIB answers 404 for a missing record. Every other non-ok status throws, so an outage or rate
+ * limit never reads as no lyrics.
  */
 async function fetchLrclibBody(rung: LrclibRung, config: Config): Promise<unknown> {
   const url = new URL(rung.path, config.lrclibBase);
@@ -370,7 +332,7 @@ async function fetchLrclib(
   return body as LRCLIBResponse | null;
 }
 
-/** Walk the deduplicated ladder, stopping at the first synced hit. */
+/** A plain hit does not stop the walk, since a later rung may hold synced lyrics. */
 async function resolveFromLrclib(
   params: LyricsMetadataParams,
   config: Config,
@@ -383,7 +345,8 @@ async function resolveFromLrclib(
     try {
       hit = await fetchLrclib(rung, params, config);
     } catch (error) {
-      // A plain hit in hand outranks a failed rung. Later rungs are skipped, since a timeout or 429 would repeat.
+      // A plain hit in hand outranks a failed rung. Later rungs are skipped, since a timeout or
+      // 429 would repeat.
       if (bestPlain === null) throw error;
       logger.warn(
         'resolveFromLrclib: LRCLIB failed after a plain hit, keeping it:',
@@ -401,13 +364,9 @@ async function resolveFromLrclib(
   return bestPlain;
 }
 
-// ---------------------------------------------------------------------------
-// Result assembly
-// ---------------------------------------------------------------------------
-
 /**
- * Attribution points at the data source actually queried (which may be a
- * self-hosted mirror), never at credentials embedded in the configured URL.
+ * Attribution names the queried host, which may be a self-hosted mirror. `origin` drops any
+ * credentials embedded in the configured URL.
  */
 function resolveOrigin(base: string, fallback: string): string {
   try {
@@ -484,7 +443,7 @@ function buildRemoteDto(
   return dto;
 }
 
-/** An empty answer credits LRCLIB only when LRCLIB was actually asked. */
+/** An empty answer credits LRCLIB only when LRCLIB was queried. */
 function buildEmptyDto(
   fallback: TrackFallback,
   lrclibConsulted: boolean,
@@ -500,16 +459,12 @@ function buildEmptyDto(
   };
 }
 
-/**
- * Get lyrics for a song from the audio file's own tag and/or LRCLIB.
- * Precedence: local synced, LRCLIB synced, local plain, LRCLIB plain.
- */
+/** Precedence: local synced, LRCLIB synced, local plain, LRCLIB plain. */
 export async function resolveLyricsByMetadata(
   config: Config,
   args: unknown,
   opts?: ResolveLyricsOptions,
 ): Promise<LyricsDTO> {
-  // INPUT
   const params = LyricsMetadataSchema.parse(args);
   const localSource = opts?.local;
   const allowLrclib = opts?.allowLrclib ?? true;
@@ -522,7 +477,6 @@ export async function resolveLyricsByMetadata(
   logger.debug('resolveLyricsByMetadata called with args:', params);
 
   try {
-    // PROCESS
     const local = localSource !== undefined ? await readLocalLyrics(localSource, params.durationMs) : null;
 
     if (local?.hasSynced === true) {
@@ -534,7 +488,8 @@ export async function resolveLyricsByMetadata(
       try {
         remote = await resolveFromLrclib(params, config);
       } catch (error) {
-        // File lyrics in hand still answer when LRCLIB is down. Without them the failure is the answer.
+        // File lyrics in hand still answer when LRCLIB is down. Without them the LRCLIB error
+        // propagates.
         if (local === null) throw error;
         logger.warn(
           'resolveLyricsByMetadata: LRCLIB failed, returning the file lyrics:',
@@ -544,15 +499,12 @@ export async function resolveLyricsByMetadata(
     }
     const remoteDto = remote !== null ? buildRemoteDto(params, remote, lrclibAttribution) : null;
 
-    // OUTPUT
     if (remoteDto?.hasSynced === true) return remoteDto;
     if (local !== null) return buildLocalDto(params, local, localAttribution);
     if (remoteDto !== null) return remoteDto;
 
     return buildEmptyDto(params, allowLrclib, lrclibAttribution, localAttribution);
   } catch (error) {
-    // Transport errors (5xx, 429, network failures) are re-thrown with context so
-    // callers can distinguish config/network problems from "song not in LRCLIB".
     logger.warn(
       'resolveLyricsByMetadata: lookup failed (transport/config error, not a missing track):',
       error instanceof Error ? error.message : String(error),
@@ -560,10 +512,6 @@ export async function resolveLyricsByMetadata(
     throw new Error(ErrorFormatter.toolExecution('resolveLyricsByMetadata', error));
   }
 }
-
-// ---------------------------------------------------------------------------
-// Identity lookup (get_lyrics)
-// ---------------------------------------------------------------------------
 
 async function resolveByLrclibId(config: Config, lrclibId: string): Promise<LyricsDTO> {
   const rung: LrclibRung = {
@@ -575,8 +523,7 @@ async function resolveByLrclibId(config: Config, lrclibId: string): Promise<Lyri
   const attribution = buildLrclibAttribution(config);
 
   const record = await fetchLrclib(rung, fallback, config);
-  // The caller named this record, so an empty result is a wrong id rather than
-  // a song LRCLIB happens not to carry.
+  // The caller named this record, so an empty result means a wrong id, not a missing song.
   if (record === null) {
     throw new Error(`LRCLIB has no record with id ${lrclibId}`);
   }
@@ -584,7 +531,7 @@ async function resolveByLrclibId(config: Config, lrclibId: string): Promise<Lyri
   return buildRemoteDto(fallback, record, attribution);
 }
 
-/** Track fields from a song row or a play-queue entry. `duration` is in seconds. */
+/** `duration` is in seconds, as in Navidrome song rows and play-queue entries. */
 interface LyricsTrackFields {
   readonly title: string | undefined;
   readonly artist: string | undefined;
@@ -603,8 +550,8 @@ function withoutPlaceholder(value: string | undefined, placeholder: string): str
 }
 
 /**
- * LyricsMetadataSchema rejects an empty title or artist, so placeholders fill the gaps. Callers must AND
- * `searchable` into allowLrclib, since a placeholder matches unrelated LRCLIB records.
+ * LyricsMetadataSchema rejects an empty title or artist, so placeholders fill the gaps. Callers
+ * must AND `searchable` into allowLrclib, since a placeholder matches unrelated LRCLIB records.
  */
 export function buildLyricsLookup(fields: LyricsTrackFields): LyricsLookup {
   const title = fields.title?.trim() ?? '';
@@ -661,14 +608,12 @@ export async function getLyricsByIdentity(
   client: NavidromeClient,
   args: unknown,
 ): Promise<LyricsDTO> {
-  // INPUT
   const params = LyricsIdentitySchema.parse(args);
   const allowLrclib = config.features.lyrics;
 
   logger.debug('Tool getLyricsByIdentity called with args:', params);
 
   try {
-    // PROCESS + OUTPUT
     if (params.songId !== undefined) {
       return withoutDuplicateText(await resolveBySongId(config, client, params.songId, allowLrclib));
     }
@@ -688,13 +633,8 @@ export async function getLyricsByIdentity(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Candidate search (search_lyrics)
-// ---------------------------------------------------------------------------
-
 function toCandidate(result: LRCLIBResponse): LyricsCandidateDTO | null {
-  // A record with no id cannot be fetched back by get_lyrics, so offering it
-  // would be a dead end.
+  // get_lyrics fetches a candidate by id, so a record without one is unusable.
   if (typeof result.id !== 'number' || !Number.isFinite(result.id)) return null;
 
   const durationMs = secondsToMs(result.duration);
@@ -724,7 +664,7 @@ function toCandidates(body: unknown, wanted: TrackFallback): LyricsCandidateDTO[
   return ranked.slice(0, MAX_LYRICS_CANDIDATES).map((entry) => entry.candidate);
 }
 
-/** Titles must share a join key. Artists may contain each other, so "feat." credits still match. */
+/** Artist containment in either direction lets "feat." credits match. */
 function matchesLibrarySong(song: { title: string; artist: string }, wanted: TrackFallback): boolean {
   const songArtist = normTitle(song.artist);
   const wantedArtist = normTitle(wanted.artist);
@@ -747,7 +687,8 @@ async function findLibrarySong(
 
     const wantedTitle = wanted.title.trim().toLowerCase();
     const matches = songs.filter((song) => matchesLibrarySong(song, wanted));
-    // normTitle drops (Instrumental), (Remix) and version groups, so an exact title beats a variant.
+    // normTitle drops (Instrumental), (Remix), and version groups, so an exact title beats a
+    // variant.
     const song = matches.find((match) => match.title.trim().toLowerCase() === wantedTitle) ?? matches[0];
     if (song === undefined) return null;
 
@@ -756,8 +697,8 @@ async function findLibrarySong(
       ...(song.lyrics !== undefined ? { lyrics: song.lyrics } : {}),
     };
   } catch (error) {
-    // The library match rides along with the LRCLIB answer, so a failed search
-    // must not sink the whole lookup.
+    // The library match is secondary to the LRCLIB candidates, so a failed search must not fail
+    // the entire lookup.
     logger.warn(
       'searchLyricsCandidates: library lookup failed:',
       error instanceof Error ? error.message : String(error),
@@ -767,15 +708,14 @@ async function findLibrarySong(
 }
 
 /**
- * Search LRCLIB by track metadata and report the matching library song beside
- * the candidates, so choosing a source costs one call rather than two.
+ * The matching library song is reported beside the LRCLIB candidates, so choosing a source costs
+ * one call instead of two.
  */
 export async function searchLyricsCandidates(
   config: Config,
   client: NavidromeClient,
   args: unknown,
 ): Promise<LyricsSearchDTO> {
-  // INPUT
   const params = LyricsMetadataSchema.parse(args);
   const query = new URLSearchParams();
   query.set('track_name', params.title);
@@ -785,20 +725,16 @@ export async function searchLyricsCandidates(
   logger.debug('Tool searchLyricsCandidates called with args:', params);
 
   try {
-    // PROCESS
     const [body, librarySong] = await Promise.all([
       fetchLrclibBody(rung, config),
       findLibrarySong(client, params),
     ]);
 
-    // OUTPUT
     return {
       candidates: toCandidates(body, params),
       ...(librarySong !== null ? { librarySong } : {}),
     };
   } catch (error) {
-    // Transport errors (5xx, 429, network failures) are re-thrown with context so
-    // callers can distinguish config/network problems from "nothing matched".
     logger.warn(
       'searchLyricsCandidates: LRCLIB search failed (transport/config error):',
       error instanceof Error ? error.message : String(error),

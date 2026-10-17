@@ -1,10 +1,9 @@
-// Level math for the visualizer: matching measurements to the playback clock, mapping decibels to
-// heights, and smoothing. It references no browser global, so unit tests import it in Node.
+// This module references no browser global, so unit tests import it in Node.
 
 export const BAND_COUNT = 16;
 
-// Band medians measured from -50 dB on a classical track to -21 dB on a pop master, so a fixed range
-// pinned loud masters at full height. A reference that follows the music keeps every track in range.
+// Band medians span -50 dB on a classical track to -21 dB on a pop master, so a fixed range would
+// pin loud masters at full height. The range follows a moving reference instead.
 const RANGE_DB = 24;
 // The loudest band sits this far under the top, so a frame at the reference never pins.
 const HEADROOM_DB = 2;
@@ -13,7 +12,7 @@ const ATTACK_SECONDS = 0.3;
 const RELEASE_DB_PER_SECOND = 2;
 // Keeps a fade to silence from lifting noise to full height.
 const MIN_REFERENCE_DB = -55;
-// The bands are a constant fraction of an octave wide, and most music still falls off above the mids.
+// Each band is a fixed fraction of an octave wide, and most music still falls off above the mids.
 const TILT_FROM_BAND = 6;
 const TILT_DB_PER_BAND = 1;
 
@@ -31,11 +30,8 @@ const PEAK_HOLD_SECONDS = 0.5;
 const PEAK_FALL_PER_SECOND = 1.2;
 const REST_THRESHOLD = 0.002;
 
-/**
- * Maps band levels to heights from 0 to 1 against a reference that follows the loudest band, the way
- * cava's automatic sensitivity works. The reference rises fast and falls slowly, so a loud master never
- * pins the bars and a quieter passage still shows lower than the one before it.
- */
+/** The reference follows the loudest band, like cava's automatic sensitivity. It rises fast and
+ *  falls slowly, so a loud master never pins the bars and a quieter passage still shows lower. */
 export function createLevelGain() {
   let reference = null;
   let segment = null;
@@ -45,7 +41,7 @@ export function createLevelGain() {
     heights(sample, dtSeconds) {
       const tilted = sample.levels.map((db, band) => db + Math.max(0, band - TILT_FROM_BAND) * TILT_DB_PER_BAND);
       const loudest = Math.max(...tilted);
-      // A new file starts from its own level, so a quiet track after a loud one is not dwarfed for a minute.
+      // A new file starts from its own level, so a quiet track after a loud one is not drawn low.
       if (reference === null || sample.segment !== segment) {
         segment = sample.segment;
         reference = loudest;
@@ -66,10 +62,8 @@ export function createLevelGain() {
   };
 }
 
-/**
- * Holds recent measurements of the newest segment. A segment is one file's measurements, and its
- * timestamps restart at 0, so a new segment replaces the old one.
- */
+/** A segment is one file's measurements and its timestamps restart at 0, so a new segment
+ *  replaces the old one. */
 export function createTimeline() {
   let segment = null;
   let frames = [];
@@ -91,10 +85,8 @@ export function createTimeline() {
       if (newest !== undefined) frames = frames.filter((frame) => newest.ptsMs - frame.ptsMs <= BUFFER_MS);
     },
 
-    /**
-     * `{ segment, levels }` for the playback position, or null when nothing describes it. The playback
-     * clock is exact once it reports the new track, and the arrival lead covers the second before that.
-     */
+    /** The playback clock matches once a snapshot reports the new track. The arrival lead covers
+     *  the second before that. */
     levelsAt(positionSeconds, nowMs) {
       if (frames.length === 0 || nowMs - lastIngestMs > FEED_STALE_MS) return null;
       const positionMs = positionSeconds * 1000;
@@ -129,10 +121,8 @@ function frameAtOrBefore(frames, ptsMs) {
   return found;
 }
 
-/**
- * Eases the drawn heights toward their targets with a factor from elapsed time, so the motion
- * looks the same at 30 and 144 frames a second. Peaks hold briefly, then fall.
- */
+/** The easing factor comes from elapsed time, so the motion looks the same at 30 and 144 frames
+ *  a second. */
 export function createSmoother(count) {
   const values = new Float32Array(count);
   const peaks = new Float32Array(count);

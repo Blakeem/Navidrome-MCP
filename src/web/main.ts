@@ -2,24 +2,12 @@
 /**
  * Navidrome MCP Server - Standalone web player entry (`navidrome-web`)
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * The standalone web player: the `navidrome-web` binary and the IPC child the MCP server spawns.
- * It owns mpv, so every shutdown path quits mpv.
+ * Entry for the `navidrome-web` binary and for the IPC child the MCP server spawns. The port owner
+ * is responsible for mpv's lifetime, so every owner shutdown path quits mpv.
  */
 
 // First, because ESM evaluates every import before this body and some imported modules log at load.
@@ -43,20 +31,21 @@ import { VisualizerHub } from '../webui/visualizer-hub.js';
 import { acquireOrAttach, loopbackUrl } from './acquire.js';
 import { getPersist, getVisualizer, setPersist, setTheme, setVisualizer, shouldStopForMcpExit } from './player-runtime.js';
 
-// Node 20+ exits on an unhandled rejection, and an MCP-spawned child's stderr is ignored, so it goes to the file sink.
+// Node exits on an unhandled rejection by default, and an MCP-spawned child's stderr is ignored, so
+// the reason goes to the log file instead.
 process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection:', reason);
 });
 
-/** Hard ceiling on owner shutdown: if the mpv `quit` IPC wedges, exit anyway. */
+/** Bounds owner shutdown, so a wedged mpv `quit` IPC cannot keep the process alive. */
 const SHUTDOWN_HARD_EXIT_MS = 3000;
 
 // Only an MCP spawn opens an IPC channel, so process.send marks who launched this process.
 const launchedByMcp = process.send !== undefined;
 
 /**
- * Opened here, not in the parent, because only this process knows the bind succeeded. A direct run always
- * opens, since the user launched it to use it. NAVIDROME_WEB_AUTO_OPEN=0 keeps test runs from opening one.
+ * Only this process knows the bind succeeded, so the MCP parent never opens the browser. A direct
+ * run always opens, since the user launched it to use it. Tests set NAVIDROME_WEB_AUTO_OPEN=0.
  */
 function maybeOpenBrowser(port: number, autoOpenBrowser: boolean): void {
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] === '0') return;
@@ -76,15 +65,14 @@ function logBanner(port: number, host: string): void {
   process.stdout.write(`\n  ${lines.join('\n  ')}\n\n`);
 }
 
-// Set once this process owns the port, so the one shutdown path can tear them down whatever triggered it.
+// Set once this process owns the port, so the one shutdown path tears them down for every trigger.
 let serverRef: Server | null = null;
 let broadcasterRef: SseBroadcaster | null = null;
 let visualizerHubRef: VisualizerHub | null = null;
 let shuttingDown = false;
-// MCP processes other than the spawner that use this player, each through a kept-open lease.
+// Every MCP whose probe finds this player running holds one lease, the spawner included.
 let openMcpLeases = 0;
 
-/** The owner quits mpv on every shutdown, and a hard exit backstops a wedged mpv `quit` IPC. */
 function shutdownPlayer(reason: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -124,7 +112,7 @@ function installShutdownTriggers(): void {
   if (launchedByMcp && !process.connected) onMcpDisconnect();
 }
 
-/** Runs on the spawner's exit and on every lease close, so the player stops with the last MCP using it. */
+/** Runs on the spawner's exit and on every lease close, so the player stops with its last MCP. */
 function stopIfNoMcpRemains(): void {
   const stop = shouldStopForMcpExit({
     launchedByMcp,
@@ -166,8 +154,8 @@ function keepPlaybackAttached(): void {
 const SETUP_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * Hosts the settings UI so a user who launched the player first, even from the terminal-less desktop
- * shortcut, has a visible path to configure. No power button exists yet, so the server reaps itself when idle.
+ * A user who launched the player first, even from the terminal-less desktop shortcut, needs a
+ * visible path to configure. The settings page has no power button, so the server exits when idle.
  */
 async function runSetupMode(): Promise<void> {
   const settings = await startConfigServer({
@@ -181,7 +169,8 @@ async function runSetupMode(): Promise<void> {
   });
 
   logger.warn(`navidrome-web is not configured. Opening the settings page: ${settings.url}`);
-  // The logger writes to a file, so stdout carries the URL for a terminal run and for a host where no browser opens.
+  // The logger writes to a file, so stdout carries the URL for a terminal run and for a host where
+  // no browser opens.
   process.stdout.write(
     `\n  navidrome-web is not configured yet.\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, re-launch navidrome-web.\n\n`,
   );
@@ -193,7 +182,8 @@ async function runSetupMode(): Promise<void> {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
-  // The listening config server keeps the process alive. Serving waits for the next launch to read the saved config.
+  // The listening config server keeps the process alive. Serving waits for the next launch to read
+  // the saved config.
 }
 
 async function main(): Promise<void> {
@@ -206,16 +196,15 @@ async function main(): Promise<void> {
   }
   logger.setDebug(state.config.debug);
 
-  // A bare createRuntime() re-reads the store, which throws on the env-var fallback path and opens a TOCTOU window.
   const { config, client } = await createRuntime(state.config);
-  // Seed the live flags, which the settings modal may toggle.
   setPersist(config.webui.persistAfterMcpExit);
   setTheme(config.webui.theme);
   setVisualizer(config.webui.visualizer);
-  // The snapshot and the settings dialog read the same live flag, so the card shows only while this engine keeps the filter.
+  // The owner alone keeps mpv's filter in sync, since the snapshot and the settings dialog read its
+  // live flag.
   playbackEngine.setVisualizerSource(getVisualizer, { keepInSync: true });
 
-  // Startup can outlast the MCP that spawned this process, and binding then would only open a doomed player.
+  // Startup can outlast the spawning MCP, and a player bound then would stop at once.
   if (launchedByMcp && !process.connected && !getPersist()) {
     logger.info('navidrome-web: the spawning MCP exited during startup. Standing down.');
     return;
@@ -243,11 +232,11 @@ async function main(): Promise<void> {
   broadcaster.start();
 
   // The owner claims plays through mpv like every attached MCP, and the first claim submits.
-  // Subscribe BEFORE adopting mpv so the tracker hydrates from the initial emit without re-scrobbling.
+  // Subscribing before adopting mpv lets the tracker hydrate from the initial emit unscrobbled.
   if (config.features.playback) {
     new ScrobbleTracker(client, playbackEngine).attach();
-    // Adopt an already-playing mpv left by a since-closed session, so the
-    // player controls it at once. Best-effort, and ensureAttached never spawns mpv.
+    // Adopts an mpv a closed session left playing, so the player controls it at once.
+    // ensureAttached never spawns mpv.
     try {
       await playbackEngine.ensureAttached();
     } catch (err) {
@@ -264,8 +253,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  // The file sink is installed at module load, so this reaches the logfile even
-  // when MCP spawned us with stdio ignored (stderr → /dev/null).
   logger.error('navidrome-web failed to start:', error);
   // A direct terminal run would otherwise exit with no visible reason.
   const message = error instanceof Error ? error.message : String(error);

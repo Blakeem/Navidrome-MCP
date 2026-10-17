@@ -1,24 +1,16 @@
 /**
  * Navidrome MCP Server - fetch-with-timeout unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the fetch timeout + single-retry helper used by every outbound HTTP
- * path (NavidromeClient, AuthManager, Last.fm, LRCLIB, Radio Browser).
- *
- * Strategy: mock `global.fetch` so it returns a never-settling promise that
- * rejects only when the AbortSignal it was passed fires. Drive
- * `AbortSignal.timeout()` deterministically with `vi.useFakeTimers()`.
- *
- * The proxy branch additionally mocks undici's own `fetch`, so which of the two
- * transports ran is observable without any real proxy or network.
+ * AbortSignal.timeout ignores vi.useFakeTimers, so each timeout case waits its real timeoutMs.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
 
 /**
- * The undici mocks must exist before `vi.mock`'s hoisted factory runs, hence
- * `vi.hoisted`. `fetch` is replaced. The real `EnvHttpProxyAgent` is kept, since
- * constructing one opens no socket, and a subclass records its options.
+ * `vi.mock`'s factory is hoisted, so the mocks it closes over come from `vi.hoisted`. The real
+ * EnvHttpProxyAgent stays, since constructing one opens no socket.
  */
 const { mockUndiciFetch, proxyAgentOptions } = vi.hoisted(() => ({
   mockUndiciFetch:
@@ -57,11 +49,7 @@ import { logger } from '../../../src/utils/logger.js';
 const mockFetch = vi.fn() as MockedFunction<typeof fetch>;
 global.fetch = mockFetch;
 
-/**
- * Create a fetch impl that hangs forever, only rejecting when the passed
- * AbortSignal aborts. Mirrors how native fetch behaves on a server that
- * accepts the connection but never replies.
- */
+/** Mirrors native fetch against a server that accepts the connection but never replies. */
 function hangingFetch(): (
   url: unknown,
   init?: { signal?: AbortSignal | null },
@@ -70,20 +58,15 @@ function hangingFetch(): (
     return new Promise<Response>((_resolve, reject) => {
       const signal = init?.signal;
       if (signal === undefined || signal === null) {
-        // No signal — would hang forever in real life. Tests that don't pass
-        // a timeout shouldn't reach here.
         return;
       }
       if (signal.aborted) {
-        // Synchronously aborted before fetch even ran.
         const reason = signal.reason instanceof Error ? signal.reason : new Error('aborted');
         reject(reason);
         return;
       }
       signal.addEventListener('abort', () => {
-        // Mirror native fetch: throw the abort reason (a DOMException-like
-        // with name='TimeoutError' for AbortSignal.timeout, or 'AbortError'
-        // otherwise). Use a real Error subclass with the right `name`.
+        // Native fetch rejects with TimeoutError for AbortSignal.timeout, and AbortError otherwise.
         const reasonName = signal.reason instanceof Error ? signal.reason.name : 'AbortError';
         const err = new Error('aborted');
         err.name = reasonName === 'TimeoutError' ? 'TimeoutError' : 'AbortError';
@@ -143,8 +126,6 @@ describe('fetchWithTimeout', () => {
       expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['X-Test']).toBe('1');
       expect(init?.body).toBe('payload');
-      // The signal is injected by fetchWithTimeout — the caller didn't pass one,
-      // but the impl must still attach the timeout signal.
       expect(init?.signal).toBeDefined();
     });
   });
@@ -168,7 +149,6 @@ describe('fetchWithTimeout', () => {
         attempts: 1,
         timeoutMs: 1000,
       });
-      // Single attempt — no retry.
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -192,7 +172,6 @@ describe('fetchWithTimeout', () => {
   describe('retry policy', () => {
     it('retries exactly once on timeout when retryPolicy="safe", then succeeds', async () => {
       vi.useFakeTimers();
-      // First call hangs (will time out), second resolves.
       mockFetch
         .mockImplementationOnce(hangingFetch())
         .mockResolvedValueOnce(jsonResponse({ ok: true }));
@@ -203,7 +182,6 @@ describe('fetchWithTimeout', () => {
         baseOptions({ timeoutMs: 1000, retryPolicy: 'safe' }),
       );
 
-      // Drive the first attempt to timeout.
       await vi.advanceTimersByTimeAsync(1001);
 
       const response = await promise;
@@ -222,13 +200,10 @@ describe('fetchWithTimeout', () => {
         {},
         baseOptions({ timeoutMs: 1000, retryPolicy: 'safe' }),
       );
-      // Catch immediately so the unhandled-rejection harness doesn't trip
-      // while we drive the timers.
+      // An early catch keeps the pending rejection from surfacing as unhandled.
       const settled = promise.catch((e: unknown) => e);
 
-      // First attempt times out.
       await vi.advanceTimersByTimeAsync(1001);
-      // Second attempt times out.
       await vi.advanceTimersByTimeAsync(1001);
 
       const result = await settled;
@@ -253,21 +228,16 @@ describe('fetchWithTimeout', () => {
       const result = await settled;
       expect(result).toBeInstanceOf(FetchTimeoutError);
       expect((result as FetchTimeoutError).attempts).toBe(1);
-      // Critical: POST that times out is NOT retried — server may have applied
-      // the mutation just before the timeout, retry would double-apply.
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('does NOT retry on non-timeout errors (DNS / connection-refused / 4xx-5xx)', async () => {
-      // 4xx/5xx are returned as resolved Responses, not errors — they go straight through.
-      // Network errors (DNS, ECONNREFUSED) come back as rejected promises with names like
-      // 'TypeError'. Those must NOT be retried, regardless of retryPolicy.
+      // fetch resolves a 4xx or 5xx response, so only a rejected network failure needs a case here.
       mockFetch.mockRejectedValueOnce(Object.assign(new Error('ECONNREFUSED'), { name: 'TypeError' }));
 
       await expect(
         fetchWithTimeout('http://x/y', {}, baseOptions({ retryPolicy: 'safe' })),
       ).rejects.toThrow(/ECONNREFUSED/);
-      // Single attempt — connection-refused is a fail-fast, not a retry-eligible timeout.
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -311,16 +281,13 @@ describe('fetchWithTimeout', () => {
       );
       const settled = promise.catch((e: unknown) => e);
 
-      // Caller aborts immediately — before timeout.
       callerController.abort();
       await vi.advanceTimersByTimeAsync(0);
 
       const result = await settled;
-      // The abort name from the caller's signal is 'AbortError' (default for
-      // controller.abort() with no reason); the wrapper rethrows it as-is.
+      // abort() with no reason yields an AbortError, which the wrapper rethrows unchanged.
       expect(result).toBeInstanceOf(Error);
       expect((result as Error).name).toBe('AbortError');
-      // Critical: even with safe-retry, a caller-initiated abort must NOT trigger retry.
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
@@ -391,9 +358,7 @@ describe('timeout env var resolvers', () => {
     expect(getNavidromeRequestTimeoutMs()).toBe(DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS);
   });
 
-  // NOTE: the warn-once dedup Set is module-level, so these tests use env
-  // values unique to each case — a value another test already warned about
-  // would be (correctly) deduped and skew the call counts.
+  // The warn-once Set is module-level, so each case uses an env value no other test warned about.
   describe('misconfiguration warn-once dedup', () => {
     let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -406,16 +371,14 @@ describe('timeout env var resolvers', () => {
     });
 
     it('warns once per distinct bad value, not once per call', () => {
-      // Bug-fix lock-in: these resolvers run on every request, so pre-fix a
-      // misconfigured env var emitted an identical warning per request for
-      // the process lifetime.
+      // The resolvers run on every request, so an undeduplicated warning would repeat for the
+      // process lifetime.
       process.env['NAVIDROME_REQUEST_TIMEOUT_MS'] = 'dedup-garbage-a';
       expect(getNavidromeRequestTimeoutMs()).toBe(DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS);
       expect(getNavidromeRequestTimeoutMs()).toBe(DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS);
       expect(getNavidromeRequestTimeoutMs()).toBe(DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS);
       expect(warnSpy).toHaveBeenCalledTimes(1);
 
-      // A DIFFERENT bad value is a new misconfiguration — warn again, once.
       process.env['NAVIDROME_REQUEST_TIMEOUT_MS'] = 'dedup-garbage-b';
       expect(getNavidromeRequestTimeoutMs()).toBe(DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS);
       expect(getNavidromeRequestTimeoutMs()).toBe(DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS);
@@ -436,7 +399,6 @@ describe('timeout env var resolvers', () => {
       expect(getExternalApiTimeoutMs()).toBe(DEFAULT_EXTERNAL_API_TIMEOUT_MS);
       expect(getNavidromeRequestTimeoutMs()).toBe(DEFAULT_NAVIDROME_REQUEST_TIMEOUT_MS);
       expect(getExternalApiTimeoutMs()).toBe(DEFAULT_EXTERNAL_API_TIMEOUT_MS);
-      // One warn per env-var name, despite the identical raw value.
       expect(warnSpy).toHaveBeenCalledTimes(2);
     });
   });
@@ -445,8 +407,6 @@ describe('timeout env var resolvers', () => {
 describe('proxy transport selection', () => {
   const PROXY_ENV_VARS = ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy'] as const;
 
-  // Windows `process.env` is case-insensitive, so deleting all four names also
-  // covers the lowercase aliases of the same variable.
   function clearProxyEnv(): void {
     for (const name of PROXY_ENV_VARS) {
       delete process.env[name];
@@ -531,9 +491,7 @@ describe('proxy transport selection', () => {
     });
 
     it('when HTTP_PROXY is empty but HTTPS_PROXY is real', async () => {
-      // Bug-fix lock-in: a `??` chain stopped at the empty HTTP_PROXY and never
-      // read HTTPS_PROXY, so the request went out direct and failed on a
-      // proxy-only host. Compose files and CI emit `HTTP_PROXY=` this way.
+      // Compose files and CI emit an empty `HTTP_PROXY=`, which must not hide a real HTTPS_PROXY.
       process.env['HTTP_PROXY'] = '';
       process.env['HTTPS_PROXY'] = 'http://proxy.test:8080';
       mockUndiciFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
@@ -545,7 +503,7 @@ describe('proxy transport selection', () => {
     });
 
     it('hands the agent HTTPS_PROXY when the lowercase https_proxy is empty', async () => {
-      // A plain object keeps the two spellings distinct, since Windows process.env is case-insensitive.
+      // A plain object keeps both spellings distinct. Windows process.env is case-insensitive.
       const savedEnv = process.env;
       process.env = { ...savedEnv, https_proxy: '', HTTPS_PROXY: 'http://proxy.test:8080' };
       try {
@@ -586,8 +544,5 @@ describe('proxy transport selection', () => {
   });
 });
 
-// Type-only export reference — keeps RetryPolicy alive for ts-unused-exports
-// (the type is used in the public surface but TS-only types don't always
-// satisfy the dead-code analyzer through structural usage alone).
 const _retryPolicies: readonly RetryPolicy[] = ['safe', 'never'];
 void _retryPolicies;

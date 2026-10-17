@@ -1,10 +1,7 @@
 /**
  * Navidrome MCP Server - shared transformer utility tests
  * Copyright (C) 2025
- *
- * Covers the post-fix contracts for formatDuration (NaN/Infinity/undefined
- * guards), parseDuration (non-numeric MM:SS and missing-colon inputs), and
- * extractAllGenres (empty-name scenarios returning undefined).
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it } from 'vitest';

@@ -1,11 +1,10 @@
 /**
  * Navidrome MCP Server - mpv claim channel integration test
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The scrobble claim election relies on mpv delivering every script-message to
- * every IPC client, the sender included, in one order. mpv documents the delivery
- * but not the order, so this pins both on the installed mpv build. It sends only
- * messages and leaves the queue untouched.
+ * The scrobble claim election needs mpv to deliver each script-message to every client, the sender
+ * included, in one order. mpv documents only the delivery, so this pins both on the local build.
  */
 
 import { afterAll, beforeAll, expect } from 'vitest';

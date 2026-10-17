@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Radio Validation Core Module
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { z } from 'zod';
@@ -71,10 +59,7 @@ export async function validateRadioStream(args: unknown): Promise<StreamValidati
   return result;
 }
 
-/**
- * HEAD first, then a GET sample only when HEAD was inconclusive. The overall timer
- * aborts an in-flight sample, and the sampler reports that as its own timeout.
- */
+/** The overall timer also aborts an in-flight sample, and the sampler reports it as a timeout. */
 async function probeStream(params: ValidateStreamParams, startTime: number): Promise<StreamProbe> {
   const probe: StreamProbe = {
     headResponse: null,
@@ -111,7 +96,8 @@ async function probeStream(params: ValidateStreamParams, startTime: number): Pro
       probe.sampled = true;
       const remainingTime = params.timeout - (Date.now() - startTime);
       if (remainingTime > MIN_SAMPLE_BUDGET_MS) {
-        // Reusing the URL HEAD resolved skips a second walk of the redirect chain and its private-IP checks.
+        // Reusing the URL HEAD resolved skips a second walk of the redirect chain and its
+        // private-IP checks.
         const sampleResult = await sampleAudioData(probe.resolvedFinalUrl ?? params.url, remainingTime, params.followRedirects, overallController.signal);
         probe.buffer = sampleResult.buffer;
         probe.headers = sampleResult.headers;
@@ -139,9 +125,7 @@ function headersAreConclusive(headers: Headers): boolean {
   return hasAudioContentType || Object.keys(extractStreamingHeaders(headers)).length > 0;
 }
 
-/**
- * Map a probe to the validation result. Recommendations and test duration are left for the caller.
- */
+/** Recommendations and test duration are left for the caller. */
 export function classifyStream(url: string, probe: StreamProbe, audioFormat: AudioFormat | null): StreamValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];

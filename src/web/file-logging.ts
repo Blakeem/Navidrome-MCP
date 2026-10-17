@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - File log sink for the standalone web player
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { appendFileSync, mkdirSync } from 'node:fs';
@@ -29,7 +17,7 @@ function setupFileLogging(): string {
   try {
     mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
   } catch {
-    /* The directory may already exist. A failing append surfaces real failures. */
+    /* The first failing append reports the problem through the stderr fallback. */
   }
   let sinkFailed = false;
   logger.setSink((level: LogLevel, args: unknown[]) => {
@@ -39,10 +27,12 @@ function setupFileLogging(): string {
       .join(' ');
     const line = `[${stamp}] [${level}] ${body}\n`;
     try {
-      // The log carries redacted but operational detail, so it stays owner-only. mode applies only on creation.
+      // The redacted log still carries operational detail, so it stays owner-only. mode applies
+      // only when the file is created.
       appendFileSync(logPath, line, { mode: 0o600 });
     } catch (err) {
-      // Never throw from the log path. A direct run has a real stderr, so fall back to it and say once that file logging broke.
+      // A throw from the log path would break its caller. A direct run has a real stderr, so the
+      // line goes there, with a one-time notice that file logging broke.
       if (!sinkFailed) {
         sinkFailed = true;
         try {

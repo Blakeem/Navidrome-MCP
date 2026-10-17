@@ -1,5 +1,5 @@
-// Helpers shared by the visualizer's drawing modes, which live one per file in visualizers/. It
-// references no browser global, so unit tests drive the modes with a recording context.
+// Shared by the drawing modes in visualizers/. It references no browser global, so unit tests
+// run the modes with a recording context.
 
 /** Every mode keeps its drawing at least this fraction of the shorter side away from each edge. */
 export const PAD_RATIO = 0.08;
@@ -9,7 +9,7 @@ const BEAT_WINDOW_S = 0.05;
 const BEAT_FLUX = 0.35;
 const BEAT_MIN_GAP_S = 0.2;
 
-/** Interpolates the band heights to `count` points with a Catmull-Rom curve, so drawn shapes stay smooth. */
+/** A Catmull-Rom curve through the bands, so a shape drawn from `count` points stays smooth. */
 export function resample(values, count) {
   const out = new Float32Array(count);
   const last = values.length - 1;
@@ -37,13 +37,13 @@ export function average(values, from, to) {
   return sum / (to - from);
 }
 
-/** The loudness of all bands and of the lowest four. */
+/** `energy` averages every band and `bass` the lowest four. */
 export function levelSummary(values) {
   return { energy: average(values, 0, values.length), bass: average(values, 0, Math.min(4, values.length)) };
 }
 
 /**
- * True on a rise in loudness across the bands, at most once per gap, measured over a fixed interval.
+ * True on a loudness rise across the bands, measured over a fixed interval, at most once per gap.
  * It keeps its own fields under `state.beat`, so a mode calls it once per frame with its own state.
  */
 export function detectBeat(state, frame) {

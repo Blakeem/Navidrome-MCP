@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Search Filter Resolution
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { filterCacheManager, type FilterType } from '../../services/filter-cache-manager.js';
@@ -58,7 +46,8 @@ const TAG_FILTERS: readonly TagFilter[] = [
     displayKey: 'country',
     label: 'Country',
     artistSupported: false,
-    // Country names contain unrelated two-letter codes, so a substring suggestion points at the wrong country.
+    // Country names contain unrelated two-letter codes, so a substring suggestion points at the
+    // wrong country.
     notFoundHint: 'Use an ISO 3166-1 alpha-2 code such as US, GB or DE. Call get_filter_options with filterType "countries" to list the codes in this library.',
   },
   { param: 'releaseType', cacheCategory: 'releaseTypes', urlKey: 'releasetype', displayKey: 'releaseType', label: 'Release type', artistSupported: false },
@@ -66,7 +55,8 @@ const TAG_FILTERS: readonly TagFilter[] = [
   { param: 'mood', cacheCategory: 'moods', urlKey: 'mood', displayKey: 'mood', label: 'Mood', artistSupported: false },
 ];
 
-// /api/artist has no tag or year columns and ignores those params, so they are neither sent nor reported there.
+// /api/artist has no tag or year columns and ignores those params, so they are neither sent nor
+// reported there.
 const ARTIST_UNSUPPORTED_URL_KEYS: ReadonlySet<string> = new Set(
   TAG_FILTERS.filter(filter => !filter.artistSupported).map(filter => filter.urlKey),
 );
@@ -92,10 +82,7 @@ function resolveTagFilter(filter: TagFilter, value: string): string {
   throw new Error(`${filter.label} '${value}' not found.${describeNotFound(filter, value)}`);
 }
 
-/**
- * Resolve text filters to Navidrome tag IDs and collect every requested filter for display.
- * @throws Error naming the filter value when it is absent from the active libraries
- */
+/** @throws Error naming the filter value when it is absent from the active libraries */
 export async function resolveTextFilters(params: FilterableSearchParams): Promise<FilterResolutionResult> {
   const resolvedFilters: Record<string, string> = {};
   const appliedFilters: Record<string, string> = {};
@@ -149,12 +136,10 @@ function withoutArtistUnsupported(
   return Object.fromEntries(Object.entries(filters).filter(([key]) => !unsupported.has(key)));
 }
 
-/** Copy of resolved URL params without the ones the endpoint ignores. */
 export function stripUnsupportedUrlParams(filters: Record<string, string>, endpoint: SearchEndpoint): Record<string, string> {
   return withoutArtistUnsupported(filters, endpoint, ARTIST_UNSUPPORTED_URL_KEYS);
 }
 
-/** Copy of an appliedFilters map without the filters the endpoint ignores. */
 export function stripUnsupportedAppliedFilters(filters: Record<string, string>, endpoint: SearchEndpoint): Record<string, string> {
   return withoutArtistUnsupported(filters, endpoint, ARTIST_UNSUPPORTED_APPLIED_KEYS);
 }

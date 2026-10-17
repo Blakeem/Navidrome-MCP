@@ -1,5 +1,3 @@
-// The lyrics overlay: opening and closing it, its full screen or window view, and its track changes.
-
 import { mountCover } from './cover.js';
 import { byId, setHidden } from './dom.js';
 import { clearLyricsSlew, rebaseLyricsClock, snapLyricsClock } from './lyrics-clock.js';
@@ -48,10 +46,9 @@ const main = document.querySelector('main');
 let open = false;
 // The window view is a per-device choice, like the other reading preferences.
 let windowed = prefRead(VIEW_KEY) === 'window';
-// Starts undefined rather than null, so the first snapshot paints an initial state even with nothing playing.
+// Undefined rather than null, so the first snapshot paints a state even with nothing playing.
 let shownSongId = undefined;
 let raf = null;
-// Whether follow was on when the current gesture's pointerdown suspended it.
 let followedAtPointerDown = true;
 
 export function bindLyricsView() {
@@ -63,7 +60,8 @@ export function bindLyricsView() {
     // Following a placard link opens a new tab, so it must not also hide the overlay header.
     if (ev.target.closest('a') !== null) return;
     view.classList.toggle('is-immersive');
-    // A gesture that ends in a click was a tap, so it takes back only the suspend its own pointerdown armed.
+    // A gesture that ends in a click was a tap,
+    // so it undoes only the suspend its own pointerdown made.
     if (followedAtPointerDown) resumeFollow();
   });
   scrollBox.addEventListener('pointerdown', () => {
@@ -79,12 +77,12 @@ export function bindLyricsView() {
   window.addEventListener('resize', () => {
     if (open && windowed) placeBelowTopbar(view);
   });
-  // Back from a hidden tab, the interpolation is arbitrarily stale.
+  // After the tab was hidden, the interpolated position can be stale by any amount.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') snapLyricsClock();
   });
   // Immersive mode hides the header controls, so Escape is the way out.
-  // The lyrics settings dialog answers Escape itself, and its keydown reaches here too.
+  // The lyrics settings dialog handles its own Escape, and its keydown reaches here too.
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && open && !lyricsSettingsOpen()) closeLyrics();
   });
@@ -110,7 +108,7 @@ function openLyrics() {
   renderHeader(currentNowPlaying());
   retryFailedLyrics();
   renderLyricsProgress();
-  // The loop was down with the overlay, so the frame clock and any outstanding correction are stale.
+  // The loop stopped while the overlay was closed, so the frame clock and the correction are stale.
   resetFollowFrame();
   clearLyricsSlew();
   resumeFollow();
@@ -146,7 +144,6 @@ function toggleViewMode() {
   recenterActiveLine();
 }
 
-// The window view sits below the top bar like the Play Music dialog, and closes with its own X.
 function applyViewMode() {
   view.classList.toggle('is-window', windowed);
   setHidden(backdrop, !(open && windowed));
@@ -171,29 +168,26 @@ function renderHeader(np) {
   artist.textContent = hasTrack ? (np.artist ?? '') : '';
 }
 
-// Repaints the overlay for a new song and warms the next queue entry. A radio stream carries
-// no Navidrome songId, so it has no lyrics path and the button goes away.
+// A radio stream has no Navidrome songId and so no lyrics path, which hides the lyrics button.
+// The next entry's lyrics load ahead, so a track change shows them without a wait.
 function syncTrack(np) {
-  // INPUT
   const isRadio = np?.isRadio === true;
   const index = playingIndex(np);
   const inQueue = index !== null && !isRadio;
   const songId = inQueue ? queueSongId(index) : null;
   const nextSongId = inQueue ? queueSongId(index + 1) : null;
 
-  // PROCESS
   setHidden(openBtn, isRadio);
   if (isRadio) closeLyrics();
   renderHeader(np);
   if (songId === shownSongId) return;
   shownSongId = songId;
-  // A new track starts followed, and lands without animating through it.
+  // A new track starts followed, and its clock snaps instead of slewing from the old track.
   setFollowing(true);
   snapLyricsClock();
   mountCover(cover, songId, () => shownSongId === songId);
   mountCover(thumb, songId, () => shownSongId === songId);
 
-  // OUTPUT
   showLyricsFor(songId);
   if (nextSongId !== null) void lyricsFor(nextSongId);
 }

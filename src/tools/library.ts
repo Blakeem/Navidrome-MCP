@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Library Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -37,8 +25,8 @@ interface LibraryTotals {
 }
 
 /**
- * Get user details including library information with active status.
- * The library list reloads on every call, so a long-lived server reports current scans and new libraries.
+ * The library list reloads on every call, so a long-lived server reports current scans and new
+ * libraries.
  */
 export async function getUserDetails(client: NavidromeClient): Promise<UserDetailsDTO> {
   try {
@@ -137,9 +125,6 @@ async function fetchActiveLibraryTotals(
   };
 }
 
-/**
- * Set active libraries for the user session
- */
 export async function setActiveLibraries(client: NavidromeClient, args: unknown): Promise<LibraryManagementResponse> {
   try {
     if (!libraryManager.isInitialized()) {
@@ -175,7 +160,8 @@ export async function setActiveLibraries(client: NavidromeClient, args: unknown)
 
     return result;
   } catch (error) {
-    // A success:false payload in an MCP 200 body reads as a successful call to the LLM, so the failure is thrown.
+    // A success:false payload in an MCP 200 body reads as a successful call to the LLM, so the
+    // failure is thrown.
     throw new Error(ErrorFormatter.toolExecution('set_active_libraries', error));
   }
 }

@@ -1,25 +1,13 @@
 /**
  * Navidrome MCP Server - Web UI HTTP Helpers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { z } from 'zod';
 
-// A bounded body lets a misbehaving client fail fast instead of making the server buffer arbitrary input.
+// A bounded body makes a misbehaving client fail fast instead of making the server buffer it all.
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
 
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {
@@ -36,14 +24,13 @@ export function writeError(res: ServerResponse, status: number, message: string)
   writeJson(res, status, { error: message });
 }
 
-/** Opens a server-sent events response. The retry directive goes first, so the browser learns it even if the stream drops at once. */
+/** The retry directive goes first, so the browser learns it even if the stream drops at once. */
 export function openSseStream(res: ServerResponse, retryMs: number): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
-    // Hint to reverse proxies (nginx in particular) not to buffer the
-    // stream. Harmless when no proxy is in the loop.
+    // nginx buffers a proxied response unless this header says not to.
     'X-Accel-Buffering': 'no',
   });
   res.write(`retry: ${retryMs}\n\n`);
@@ -54,11 +41,6 @@ export function isJsonContentType(contentType: string | undefined): boolean {
   return baseType === 'application/json';
 }
 
-/**
- * Run a route action and map its result to an HTTP response with consistent
- * error-to-status handling. Errors from the engine or the reused Zod schemas
- * flow through as 500 with their message preserved, so every web action behaves identically.
- */
 export async function runAction(res: ServerResponse, action: () => Promise<unknown>): Promise<void> {
   try {
     const result = await action();
@@ -68,11 +50,7 @@ export async function runAction(res: ServerResponse, action: () => Promise<unkno
   }
 }
 
-/**
- * Read a JSON request body with a hard size cap. Empty bodies resolve to
- * `null` so the caller can tell "no body provided" from "{}". Beyond `maxBytes`
- * the connection is destroyed (no partial JSON parse) and the promise rejects.
- */
+/** An empty body resolves to null, so the caller can tell a missing body from `{}`. */
 export async function readJsonBody(
   req: IncomingMessage,
   maxBytes: number = DEFAULT_MAX_BODY_BYTES,
@@ -111,8 +89,8 @@ export async function readJsonBody(
 }
 
 /**
- * Invalid input returns 400 here because runAction maps every thrown error, the impls' own ZodErrors included, to 500.
- * Resolves to null once the 400 response is written.
+ * Invalid input answers 400 here, because runAction maps every thrown error to 500, the impls' own
+ * ZodErrors included. Resolves to null once the 400 response is written.
  */
 export async function readValidBody<T>(req: IncomingMessage, res: ServerResponse, schema: z.ZodType<T>): Promise<T | null> {
   let body: unknown;

@@ -1,22 +1,10 @@
-/**
- * Regression coverage for the static-file path-traversal guard in
- * static-files.ts. `resolveStaticPath` is the only security-relevant logic in
- * this unit — dot-segment rejection, per-segment dotfile rejection, and the
- * PUBLIC_DIR-prefix confirmation. It previously had zero tests, so a future
- * refactor of the `..${sep}` / per-segment checks could silently reopen a
- * directory-traversal hole. These drive the public `handleStatic` entry (the
- * guard is exercised via its 400/404/200 responses).
- *
- * The Content-Security-Policy assertions pin the directive list. Every directive
- * is named in the header rather than inherited from `default-src`, so dropping
- * one has to fail here instead of surfacing as a blocked asset in a browser.
- */
+// A refactor of the resolveStaticPath traversal checks could reopen directory traversal unnoticed.
+// The CSP names every directive instead of inheriting default-src, so dropping one fails here.
 
 import { describe, expect, it } from 'vitest';
 import type { ServerResponse } from 'node:http';
 import { handleStatic } from '../../../src/webui/routes/static-files.js';
 
-/** Capture the status and headers written to a ServerResponse without a real socket. */
 interface CapturedRes {
   res: ServerResponse;
   status: () => number | undefined;
@@ -34,7 +22,7 @@ function fakeRes(): CapturedRes {
       return res;
     },
     end(): void {
-      // Body content is irrelevant to these tests; only the status matters.
+      // These tests read only the status and headers.
     },
   } as unknown as ServerResponse;
   return { res, status: () => status, headers: () => headers };

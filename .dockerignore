@@ -1,27 +1,24 @@
-# Keep the build context small and reproducible: deps and build output are
-# produced inside the image, never copied from the host.
+# The image installs deps and builds its output, so host copies of them stay out of the context.
 node_modules
 dist
 coverage
 
-# VCS / editor / CI
 .git
 .gitignore
 .github
 .vscode
 .idea
 
-# Local dev + secrets — must never leak into an image layer.
+# Local config and secrets must never reach an image layer.
 .env
 .env.*
 settings.json
 *.local.json
 .claude
 
-# Docs / meta not needed at runtime
+# The runtime reads no docs.
 *.md
 !README.md
 
-# OS cruft
 .DS_Store
 Thumbs.db

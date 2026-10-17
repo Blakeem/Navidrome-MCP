@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Visualizer level feed
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { VISUALIZER_FEED_RETRY_MS } from '../constants/timeouts.js';
@@ -23,8 +11,8 @@ import { VisualizerLogParser, type LevelRecord } from '../services/playback/visu
 import { logger } from '../utils/logger.js';
 
 /**
- * Reads the visualizer filter's measurements from mpv's log. mpv finishes each write to a client before the
- * next, so a slow log reader would stall commands on its connection, and this feed holds a connection of its own.
+ * Reads the visualizer filter's measurements from mpv's log over a connection of its own, since mpv
+ * finishes each write to a client before the next and a slow log reader would stall commands.
  */
 export class VisualizerFeed {
   private ipc: MpvIpc | null = null;

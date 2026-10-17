@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Settings built from the environment (form seed and headless runtime fallback)
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { readFileSync } from 'node:fs';
@@ -33,8 +21,8 @@ import {
 import { logger } from '../utils/logger.js';
 
 /**
- * Recommended feature-field values keyed by form field path. A first run pre-fills them, and later runs only hint
- * them beside blank fields so a deliberate blank survives. `radioBrowserBase` is absent: blank selects a mirror by SRV.
+ * A first run pre-fills these. Later runs only hint them beside blank fields, so a deliberate blank
+ * stays. `radioBrowserBase` has no entry, since a blank value selects a mirror by SRV.
  */
 export const FORM_SUGGESTIONS = {
   'features.musicBrainzUserAgent': DEFAULT_MUSICBRAINZ_USER_AGENT,
@@ -45,8 +33,8 @@ export const FORM_SUGGESTIONS = {
 } as const;
 
 /**
- * Settings form seed: an existing settings.json verbatim, else an import from `process.env` and a legacy `.env`,
- * so an upgrading user verifies instead of retyping. It returns real secrets. The HTTP layer masks them.
+ * Without a usable settings.json, the seed imports `process.env` and a legacy `.env`, so an
+ * upgrading user verifies instead of retyping. It returns real secrets, which the routes mask.
  */
 export function buildFormSeed(): SettingsFile {
   const existing = readSettings();
@@ -57,8 +45,8 @@ export function buildFormSeed(): SettingsFile {
 }
 
 /**
- * Headless runtime fallback built from `process.env` only. It skips `.env` files and the radio and lyrics suggestions,
- * so radio and lyrics enable only on an explicit env opt-in, and a usable settings.json wins over it.
+ * Reads `process.env` only, since `.env` files are import-only. It skips the radio and lyrics
+ * suggestions, so those features turn on only by explicit env opt-in.
  */
 export function buildEnvRuntimeSettings(): SettingsFile {
   return settingsFromEnvSource((key) => {
@@ -79,8 +67,8 @@ function importFromLegacyEnv(): SettingsFile {
 }
 
 /**
- * `applySuggestions` fills the feature-gating fields from FORM_SUGGESTIONS for the review-gated form seed only.
- * MusicBrainz keeps its default either way because it has no feature gate.
+ * `applySuggestions` is true only for the form seed, which the user reviews before saving.
+ * MusicBrainz keeps its default either way, since it gates no feature.
  */
 function settingsFromEnvSource(
   get: (key: string) => string | undefined,
@@ -182,25 +170,18 @@ function toTransportType(value: string | undefined): 'stdio' | 'http' {
   return 'stdio';
 }
 
-/** Split a comma-separated env value into a trimmed list, or null when unset. */
 function toList(value: string | undefined): string[] | null {
   if (value === undefined) return null;
   const items = value.split(',').map((s) => s.trim()).filter((s) => s !== '');
   return items.length > 0 ? items : null;
 }
 
-/**
- * Parse a legacy `.env` (project root or cwd), import-only. A plain KEY=VALUE
- * line parser, NOT a shell sourcer, so values with shell-special characters
- * (e.g. parens in `RADIO_BROWSER_USER_AGENT`) are read verbatim. Returns an
- * empty map when no `.env` is found.
- */
 function readLegacyEnvFile(): Record<string, string> {
   for (const candidate of legacyEnvCandidates()) {
     try {
       return parseEnv(readFileSync(candidate, 'utf8'));
     } catch {
-      /* try next candidate */
+      // A missing or unreadable candidate falls through to the next one.
     }
   }
   return {};
@@ -208,13 +189,17 @@ function readLegacyEnvFile(): Record<string, string> {
 
 function legacyEnvCandidates(): string[] {
   return [
-    // dist/config/env-settings.js sits two levels below the project root.
-    // src/config/env-settings.ts under tsx resolves the same way.
+    // Both dist/config/env-settings.js and src/config/env-settings.ts sit two levels below the
+    // project root.
     join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'),
     join(process.cwd(), '.env'),
   ];
 }
 
+/**
+ * A KEY=VALUE line parser, not a shell sourcer, so shell-special characters such as the parens in
+ * `RADIO_BROWSER_USER_AGENT` are read verbatim.
+ */
 function parseEnv(content: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const rawLine of content.split(/\r?\n/)) {

@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Search Tool Handlers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -76,9 +64,10 @@ const STARRED_PROPERTY = {
   description: 'true returns only starred items. false returns only unstarred items. Omit for no starred filter.',
 } as const;
 
-// The year filters take a single year. Navidrome has no year-range filter, so a multi-year query takes one call per year.
+// Navidrome's native API has no year-range filter, so a multi-year query takes one call per year.
 const YEAR_MINIMUM = 1900;
-// Computed once at load, so across New Year the published maximum can lag the Zod refine by a day. Zod stays authoritative.
+// The value is fixed at load, so after New Year it trails the Zod refine by one year until restart.
+// Zod stays authoritative.
 const MAX_YEAR = new Date().getFullYear() + 1;
 
 export const SONG_FILTER_PROPERTIES = {

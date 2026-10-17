@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Web UI Snapshot Broadcaster
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { ServerResponse } from 'node:http';
@@ -28,19 +16,17 @@ import { getTheme, getVisualizer } from '../web/player-runtime.js';
 import { logger } from '../utils/logger.js';
 import { openSseStream } from './http-helpers.js';
 
-// mpv fires time-pos every 250 ms and a bulk loadfile fires one playlist-count change per track, so property events are throttled.
+// mpv fires time-pos every 250 ms and a bulk loadfile fires one playlist-count change per track.
 const BROADCAST_THROTTLE_MS = 1000;
 
-// Browsers retry at this interval verbatim, so it sets how soon an idle phone reconnects without polling the server hard.
+// EventSource waits this long before each reconnect, so it bounds how often an idle phone retries.
 const SSE_RETRY_MS = 10_000;
 
-/**
- * Pushes engine snapshots to every SSE remote. Property events are throttled to one broadcast per
- * BROADCAST_THROTTLE_MS, and queue events flush at once so a user action shows within one frame.
- */
+/** Queue and visualizer events skip the property throttle, so a user action shows at once. */
 export class SseBroadcaster {
   private readonly clients = new Set<ServerResponse>();
-  // A snapshot carries the full state, so a client still flushing its last write keeps only the newest one for its 'drain'.
+  // A snapshot carries the full state, so a client still flushing its last write keeps only the
+  // newest one for its 'drain'.
   private readonly heldSnapshots = new WeakMap<ServerResponse, string>();
   private readonly backloggedAtHeartbeat = new WeakSet<ServerResponse>();
   private lastBroadcastMs = 0;
@@ -78,7 +64,7 @@ export class SseBroadcaster {
     this.clients.clear();
   }
 
-  // Also the reaper for peers that vanish without a 'close' event, since it runs while playback is idle.
+  // Also reaps peers that vanish without a 'close' event, since it runs while playback is idle.
   private sendHeartbeat(): void {
     for (const res of this.clients) {
       if (isClosed(res) || this.reapIfStalled(res)) {
@@ -120,13 +106,12 @@ export class SseBroadcaster {
           this.lastBroadcastMs = Date.now();
           void this.broadcast();
         }, delay);
-        // Don't keep the event loop alive solely for a pending broadcast.
         this.pendingBroadcastTimer.unref();
       }
       return;
     }
-    // The engine is not yet usable at the attach event, and the snapshot burst after it broadcasts.
-    // A message carries no player state.
+    // The property events that follow an attach event broadcast the new mpv's state. A message
+    // carries no player state.
     if (evt.kind === 'attach' || evt.kind === 'message') return;
 
     this.broadcastNow();
@@ -142,7 +127,8 @@ export class SseBroadcaster {
     void this.broadcast();
   }
 
-  // One build at a time, so a slow build never overwrites a newer snapshot and requests during a build coalesce into one rebuild.
+  // One build at a time, so a slow build never overwrites a newer snapshot, and requests during a
+  // build coalesce into one rebuild.
   private async broadcast(): Promise<void> {
     if (this.clients.size === 0) return;
     if (this.buildInFlight) {
@@ -160,7 +146,6 @@ export class SseBroadcaster {
             if (!this.writeToClient(res, snapshot)) this.clients.delete(res);
           }
         }
-        // A broadcast() call during the await above set this flag.
         rebuild = this.rebuildRequested;
       }
     } finally {
@@ -168,7 +153,8 @@ export class SseBroadcaster {
     }
   }
 
-  // A peer that stops reading never errors, so a backlog with no 'drain' across a whole heartbeat interval marks it stalled.
+  // A peer that stops reading never errors, so a backlog with no 'drain' across an entire heartbeat
+  // interval marks it stalled.
   private reapIfStalled(res: ServerResponse): boolean {
     if (!res.writableNeedDrain) {
       this.backloggedAtHeartbeat.delete(res);
@@ -191,7 +177,6 @@ export class SseBroadcaster {
     if (!this.writeToClient(res, held)) this.clients.delete(res);
   }
 
-  /** Returns false if the client is closed or the write failed, so the caller can reap it. */
   private writeToClient(res: ServerResponse, snapshotJson: string): boolean {
     if (isClosed(res)) return false;
     if (res.writableNeedDrain) {
@@ -209,10 +194,11 @@ export class SseBroadcaster {
     }
   }
 
-  // allSettled, so one failed read ships a null field instead of blanking the whole snapshot.
+  // allSettled, so one failed read ships a null field instead of blanking the entire snapshot.
   private async buildSnapshot(): Promise<string | null> {
     const [npResult, queueResult, statusResult] = await Promise.allSettled([
-      // The client lets now_playing resolve title, artist and album by songId after an MCP restart empties the engine cache.
+      // The client lets now_playing fill title, artist and album from Navidrome when the engine
+      // cache lacks them.
       nowPlaying({}, this.client),
       getPlayQueue(this.client, {}),
       playbackStatus({}),
@@ -227,7 +213,8 @@ export class SseBroadcaster {
       return null;
     }
 
-    // `player` carries process-global state, so every open remote follows a theme or visualizer change.
+    // `player` carries process-global state, so every open remote follows a theme or visualizer
+    // change.
     const player = { theme: getTheme(), visualizer: getVisualizer() && !playbackEngine.isVisualizerUnsupported() };
     return JSON.stringify({ nowPlaying: np, queue, status, player });
   }
@@ -238,7 +225,6 @@ function isClosed(res: ServerResponse): boolean {
   return res.destroyed || res.writableEnded;
 }
 
-/** The `field` label names which read broke, so a recurring failure is identifiable in the log. */
 function settled<T>(result: PromiseSettledResult<T>, field: string): T | null {
   if (result.status === 'fulfilled') return result.value;
   const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);

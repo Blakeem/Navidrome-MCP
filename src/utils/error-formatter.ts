@@ -1,27 +1,13 @@
 /**
  * Navidrome MCP Server - Error Formatting Utility
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { z } from 'zod';
 
 export class ErrorFormatter {
-  /**
-   * A ZodError's own message is a JSON dump of its issues, too noisy for the agent to act on.
-   */
+  /** A ZodError's own message is a JSON dump of its issues, too noisy for the agent to act on. */
   private static extractMessage(error: unknown): string {
     if (error instanceof z.ZodError) {
       const issues = error.issues.map((issue) => `${issue.path.join('.') || 'arguments'}: ${issue.message}`);

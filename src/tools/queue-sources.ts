@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Play Queue Sources
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { z } from 'zod';
@@ -25,7 +13,8 @@ import { QUEUE_READ_PAGE_SIZE, MAX_QUEUE_READ_PAGES } from '../constants/default
 
 export type LibraryPlayRequest = z.infer<typeof LibraryPlayRequestSchema>;
 
-// Album position lets album-set reads restore input order and lets orderQueueSongs group and sort albums.
+// Album position lets album-set reads restore input order and lets orderQueueSongs group and sort
+// albums.
 interface QueueSongRow extends QueueTrackMetadata {
   albumId?: string;
   discNumber?: number;
@@ -47,7 +36,7 @@ function toQueueSongRow(songId: string, record: Record<string, unknown>): QueueS
   return row;
 }
 
-// The engine caches whole metadata objects, so album position stays out of its cache.
+// The engine caches each metadata object as given, so album position stays out of its cache.
 export function toQueueMetadata(row: QueueSongRow): QueueTrackMetadata {
   const metadata: QueueTrackMetadata = { songId: row.songId };
   if (row.title !== undefined) metadata.title = row.title;
@@ -67,8 +56,8 @@ export async function fetchLibrarySourceRows(
     case 'album':
       return fetchAlbumSetSongs(client, [request.id], `Album ${request.id}`);
     case 'artist':
-      // Songs, not albums: `/album?artist_id=` also returns albums holding none of this artist's tracks.
-      // `artists_id` matches featured and album-artist credits. `artist_id` holds only the first artist.
+      // `/album?artist_id=` also returns albums without this artist's tracks, so songs are read.
+      // `artists_id` matches featured and album-artist credits, unlike the single `artist_id`.
       return fetchSongPages(client, { artists_id: request.id, _sort: 'album', _order: 'ASC' }, `Artist ${request.id}`);
     case 'playlist':
       return fetchPlaylistSongs(client, request.id);
@@ -103,7 +92,8 @@ export async function fetchAlbumSetSongs(
   return sortRowsByAlbumOrder(rows, albumIds);
 }
 
-// The chunked read returns album-name order. A stable sort restores the input order and keeps each album's track order.
+// The chunked read returns album-name order. A stable sort restores the input order and keeps each
+// album's track order.
 function sortRowsByAlbumOrder(rows: readonly QueueSongRow[], albumIds: readonly string[]): QueueSongRow[] {
   const albumRank = new Map(albumIds.map((albumId, index) => [albumId, index]));
   const rankOf = (row: QueueSongRow): number => {
@@ -113,10 +103,6 @@ function sortRowsByAlbumOrder(rows: readonly QueueSongRow[], albumIds: readonly 
   return rows.slice().sort((a, b) => rankOf(a) - rankOf(b));
 }
 
-/**
- * Shared paging loop for every Navidrome list read that feeds the queue. `extract` returns null to skip a row.
- * MAX_QUEUE_READ_PAGES bounds the walk in case Navidrome reports an inflated X-Total-Count.
- */
 async function fetchPages<T>(
   client: NavidromeClient,
   path: string,
@@ -149,7 +135,7 @@ async function fetchPages<T>(
       const item = extract(entry as Record<string, unknown>);
       if (item !== null) items.push(item);
     }
-    // A stale X-Total-Count can promise rows that never come, so an empty page always ends the walk.
+    // A stale X-Total-Count can promise rows that never come, so an empty page ends the walk.
     if (data.length === 0) break;
     // Without X-Total-Count, a short page is the only end-of-set signal.
     if (total !== null) {
@@ -184,7 +170,8 @@ function fetchSongPages(
   return fetchPages(client, '/song', filter, songRowFromRecord, label);
 }
 
-// The library filter also narrows X-Total-Count, so a deactivated library's tracks never enqueue.
+// Navidrome applies library_id to playlist rows and their X-Total-Count, so a deactivated
+// library's tracks never enqueue.
 export function fetchPlaylistSongs(client: NavidromeClient, playlistId: string): Promise<QueueSongRow[]> {
   return fetchPages(
     client,
@@ -195,7 +182,7 @@ export function fetchPlaylistSongs(client: NavidromeClient, playlistId: string):
   );
 }
 
-// A playlist row's own `id` is its playlist position, never a song, so only `mediaFileId` can be played.
+// A playlist row's `id` is its position, never a song, so only `mediaFileId` can be played.
 function playlistSongRow(playlistId: string, record: Record<string, unknown>): QueueSongRow | null {
   const mediaFileId = record['mediaFileId'];
   if (typeof mediaFileId === 'string' && mediaFileId !== '') return toQueueSongRow(mediaFileId, record);
@@ -203,12 +190,12 @@ function playlistSongRow(playlistId: string, record: Record<string, unknown>): Q
   return null;
 }
 
-// `playDate` ASC plays the least-recently-played first, so repeated plays cycle the whole collection.
+// `playDate` ASC plays the least recently played first, so repeated plays cycle the entire set.
 function fetchStarredSongs(client: NavidromeClient): Promise<QueueSongRow[]> {
   return fetchSongPages(client, { starred: 'true', _sort: 'playDate', _order: 'ASC' }, 'Starred set');
 }
 
-// Same least-recently-played order as the starred songs. The songs are read later per album chunk.
+// Starred albums use the starred songs' order. Their songs are read later per album chunk.
 function fetchStarredAlbumIds(client: NavidromeClient): Promise<string[]> {
   return fetchPages(
     client,
@@ -220,10 +207,8 @@ function fetchStarredAlbumIds(client: NavidromeClient): Promise<string[]> {
 }
 
 /**
- * Look up queue metadata (title/artist/album/duration) for a list of song IDs.
- * Each chunk is one request that repeats the `id` key per ID.
- * The scoped read is the play-eligible set, so a failed or malformed read throws. `strict` makes an unscoped read
- * throw too. Otherwise the unscoped enrichment read is best-effort, and a failed chunk yields no metadata.
+ * A scoped read is the play-eligible set, so its failure throws. An unscoped read only enriches
+ * metadata, so a failed chunk yields nothing unless `strict` is set.
  */
 export async function fetchSongMetadata(
   client: NavidromeClient,
@@ -238,7 +223,6 @@ export async function fetchSongMetadata(
     const chunk = songIds.slice(i, i + ID_CHUNK_SIZE);
     const params = new URLSearchParams();
     for (const id of chunk) params.append('id', id);
-    // Navidrome paginates even an id-filtered read, so `_end` spans the whole chunk.
     params.set('_start', '0');
     params.set('_end', String(chunk.length));
     const endpoint = `/song?${params.toString()}`;
@@ -258,7 +242,7 @@ export async function fetchSongMetadata(
       }
     } catch (err) {
       if (strict) throw err;
-      // Unscoped enrichment only. The affected entries fall back to mpv's own metadata.
+      // The affected entries fall back to mpv's own metadata.
       logger.debug(`fetchSongMetadata chunk failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
@@ -269,8 +253,8 @@ export async function fetchSongMetadata(
 const UNKNOWN_SONG_IDS_SHOWN = 10;
 
 /**
- * Throws when any ID names no song in any library. Navidrome stores an unknown ID in a playlist as a dangling row
- * and drops it from a saved queue, so writes check their IDs here first. `consequence` says what the call skipped.
+ * Navidrome stores an unknown song ID in a playlist as a dangling row and drops it from a saved
+ * queue, so writes reject unknown IDs here first. The check spans every library.
  */
 export async function assertKnownSongIds(
   client: NavidromeClient,

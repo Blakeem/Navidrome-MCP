@@ -1,21 +1,17 @@
-# Dependencies
 node_modules/
 pnpm-debug.log*
 .pnpm-store/
 
-# Build outputs
 dist/
 build/
 *.tsbuildinfo
 
-# Environment and config
 .env
 .env.local
 .env.*.local
 .env.test
 .mcp.json
 
-# IDE
 .vscode/
 .idea/
 *.swp
@@ -23,12 +19,10 @@ build/
 *~
 .DS_Store
 
-# Testing
 coverage/
 *.lcov
 .nyc_output/
 
-# Logs
 logs/
 *.log
 npm-debug.log*
@@ -36,19 +30,15 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# Runtime data
 pids
 *.pid
 *.seed
 *.pid.lock
 
-# Cache
 .npm
 .eslintcache
 .cache/
 
-# Project specific
-# CLAUDE.md
 *.bak
 *.backup
 .tmp/
@@ -56,16 +46,14 @@ temp/
 tat:q
 .serena/
 
-# Debug outputs
 debug/
 *.debug
 
-# OS files
 Thumbs.db
 Desktop.ini
 
 
-# Production review-cycle working artifacts
+# Working directories of review and workflow tools
 code-review/
 claude-code-review-workflow/
 claude-code-feature-workflow/

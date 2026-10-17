@@ -3,7 +3,7 @@ import { average, detectBeat, resample, rgba } from '../visualizer-kit.js';
 const TAU = Math.PI * 2;
 const BANDS = 16;
 
-// Additive light vanishes on white, so the light theme prints deeper teal with plain blending.
+// Additive light does not show on white, so the light theme prints deeper teal with plain blending.
 const INKS = {
   dark: {
     line: { r: 72, g: 226, b: 255 },
@@ -26,7 +26,7 @@ const INKS = {
     scanBandAlpha: 0.35,
   },
 };
-// Erasing ignores color and keeps only alpha.
+// destination-out reads only the source alpha, so the erase color does not matter.
 const ERASE_INK = { r: 0, g: 0, b: 0 };
 
 // The HUD reaches full strength at an energy of 0.25, under the average of the quietest tracks.
@@ -34,7 +34,7 @@ const PRESENCE_GAIN = 4;
 // Natural-log fade per second once the music stops, so the HUD is gone in about 2 s.
 const FADE_PER_SECOND = 2.4;
 const MIN_PRESENCE = 0.01;
-// Seconds the HUD takes to draw itself on when the music starts.
+// The HUD draws itself on over this many seconds when the music starts.
 const BOOT_SECONDS = 1.4;
 
 // Room inside the pad for the widest glow stroke.
@@ -69,7 +69,7 @@ const NOTCH_TIP = 0.915;
 const BEZEL_RADIUS = 0.965;
 const BEZEL_TICK = 0.03;
 
-// Radians per second, so louder passages spin the beam faster.
+// Beam speed in radians per second, which rises with the energy.
 const SWEEP_BASE = 1.6;
 const SWEEP_ENERGY = 3.2;
 const SWEEP_TRAIL = 1.2;
@@ -99,7 +99,7 @@ const FLASH_DECAY = 7;
 const GLITCH_DECAY = 14;
 
 const GAUGE_SEGMENTS = 36;
-// The gauge runs clockwise from lower left to lower right, leaving the bottom open for the bass chevrons.
+// The gauge runs clockwise from lower left to lower right, leaving the bottom for the chevrons.
 const GAUGE_START = Math.PI * 0.75;
 const GAUGE_SWEEP = Math.PI * 1.5;
 const GAUGE_FILL = 0.72;
@@ -164,8 +164,8 @@ const FLICKER_DEPTH = 0.12;
 const GLITCH_TEARS = 3;
 
 /**
- * A holographic targeting HUD. A radar beam paints the bands as contacts inside rings of gauges and
- * spectrum ticks, brackets lock on with each beat, and data wings stream the levels and their history.
+ * A holographic targeting HUD. A radar beam paints the bands as contacts inside rings of gauges
+ * and spectrum ticks, brackets lock on with each beat, and data wings stream the levels.
  */
 function draw(ctx, frame) {
   const { state } = frame;
@@ -326,7 +326,7 @@ function flickerOf(hud, frame) {
   return 1 - FLICKER_DEPTH * dip;
 }
 
-// The reticle fills the height, and on a wide area a data wing takes the room left beside the brackets.
+// The reticle fills the height. On a wide area, a data wing takes the room beside the brackets.
 function layoutHud(frame) {
   const { width, height, pad } = frame;
   const halfWidth = width / 2 - pad - EDGE_MARGIN;
@@ -385,7 +385,6 @@ function drawBezel(scene) {
   for (let k = 0; k < 4; k++) notchPath(c, layout, (k / 4) * TAU);
   c.fillStyle = rgba(ink.line, alpha * 0.55 * reveal);
   c.fill();
-  // The heading pointer rides the bezel at the radar beam's bearing.
   c.beginPath();
   notchPath(c, layout, hud.sweep);
   c.fillStyle = rgba(ink.hot, alpha * 0.9 * reveal);
@@ -464,7 +463,6 @@ function drawGauge(scene) {
   gaugeSegments(c, layout, ring, lit, available);
   strokeFaint(scene, alpha * ink.dim, width);
   if (lit > 0) {
-    // Lit segments heat from the line color at the start to the hot color at the top of the scale.
     const heat = c.createConicGradient(GAUGE_START, x, y);
     heat.addColorStop(0, rgba(ink.line, alpha * 0.75));
     heat.addColorStop(GAUGE_SWEEP / TAU, rgba(ink.hot, alpha));
@@ -509,7 +507,6 @@ function drawBassChevrons(scene) {
   }
 }
 
-// Each beat sends a ring out from the core to the bezel.
 function drawPings(scene) {
   const { c, layout, hud, ink, alpha } = scene;
   const { centerX: x, centerY: y, radius } = layout;
@@ -551,7 +548,6 @@ function dotsPath(c, layout, radar, points, size) {
   for (const point of points) circlePath(c, layout.centerX + point.x * radar, layout.centerY + point.y * radar, size);
 }
 
-// A small bracket spins in and snaps onto the strongest contact on each beat, joined to the core by a dashed line.
 function drawLock(scene) {
   const { c, layout, frame, hud, ink, alpha } = scene;
   const lock = hud.lock;
@@ -605,7 +601,6 @@ function drawCore(scene) {
   c.fill();
 }
 
-// The corner brackets snap inward and flash hot on each beat, then ease back out.
 function drawBrackets(scene) {
   const { c, layout, hud, ink, alpha } = scene;
   const { centerX: x, centerY: y, radius } = layout;
@@ -639,7 +634,7 @@ function drawWing(scene, side) {
   drawPackets(scene, wing);
 }
 
-// Distances run outward from the wing's inner edge beside the brackets, so one geometry serves both sides.
+// Distances run outward from the wing's inner edge, so one geometry serves both sides.
 function wingGeometry(layout, side) {
   const { radius, wingWidth, wingStart, centerX, centerY } = layout;
   const top = centerY - radius * WING_HEIGHT;
@@ -683,7 +678,7 @@ function drawWingRules(scene, wing) {
   strokeFaint(scene, alpha * 0.45, layout.lineWidth);
 }
 
-// Bass sits on the bottom row, so both wings read upward from low to high, and bars grow away from the reticle.
+// Each wing's lowest band sits on its bottom row, so both read upward from low to high.
 function drawDataBars(scene, wing) {
   const { c, frame, hud, ink, alpha } = scene;
   const box = wing.bars;
@@ -731,7 +726,7 @@ function addBlocks(c, wing, box, y, block, from, to, grow) {
   }
 }
 
-// Telemetry scrolls away from the reticle: bass history on the left wing, treble on the right.
+// Telemetry scrolls away from the reticle. The left wing traces bass history, the right treble.
 function drawTrace(scene, wing) {
   const { c, frame, hud, layout, ink, alpha } = scene;
   const box = wing.trace;
@@ -779,7 +774,8 @@ function drawTrace(scene, wing) {
   c.fill();
 }
 
-// Newest first. Under reduced motion the history stands still, so the trace shows that wing's half of the spectrum.
+// Newest first. A scrolling history is motion, so reduced motion shows the wing's half of the
+// spectrum instead.
 function traceSeries(frame, hud, side) {
   if (frame.reducedMotion) {
     const half = side < 0 ? frame.values.slice(0, BANDS / 2) : frame.values.slice(BANDS / 2);
@@ -792,7 +788,6 @@ function traceSeries(frame, hud, side) {
   return series;
 }
 
-// The left wing counts beats in fours, and the right wing shows a signal ladder from the energy gauge.
 function drawWingPips(scene, wing) {
   const { c, layout, hud, ink, alpha } = scene;
   const reveal = stage(hud.boot, 0.7, 0.3);
@@ -819,7 +814,6 @@ function drawWingPips(scene, wing) {
   }
 }
 
-// Each beat fires a data packet along the bottom rule, out from the reticle.
 function drawPackets(scene, wing) {
   const { c, layout, hud, ink, alpha } = scene;
   const length = layout.radius * PACKET_LENGTH;
@@ -837,7 +831,7 @@ function drawPackets(scene, wing) {
   strokeGlowing(scene, rgba(ink.hot, alpha), alpha, layout.lineWidth * 1.8);
 }
 
-// Scanlines, beat tears and a rolling scan band act only on what is already drawn, so they never add pixels.
+// Scanlines, beat tears and the scan band act only on what is already drawn, so they add no pixels.
 function applyHologram(scene) {
   const { c, frame, hud, ink } = scene;
   const area = { left: frame.pad, top: frame.pad, width: frame.width - 2 * frame.pad, height: frame.height - 2 * frame.pad };
@@ -897,7 +891,6 @@ function radialSegment(c, layout, angle, from, to) {
   c.lineTo(layout.centerX + cos * to, layout.centerY + sin * to);
 }
 
-// A small triangle on the bezel pointing in at the given bearing.
 function notchPath(c, layout, angle) {
   const { centerX: x, centerY: y, radius } = layout;
   const tip = radius * NOTCH_TIP;
@@ -936,7 +929,7 @@ function mix(from, to, t) {
   };
 }
 
-// A repeatable pseudo-random fraction, so each beat tears the image in the same places on every frame of its fade.
+// A repeatable pseudo-random fraction, so a beat tears the same rows on every frame of its fade.
 function hash(seed) {
   const value = Math.sin(seed * 12.9898) * 43758.5453;
   return value - Math.floor(value);

@@ -1,5 +1,3 @@
-// The network info dialog: the addresses the player is reachable on.
-
 import { getJson } from './api.js';
 import { byId } from './dom.js';
 

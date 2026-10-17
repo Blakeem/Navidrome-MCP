@@ -10,7 +10,7 @@ export default [
   prettier,
   {
     // Stale eslint-disable directives are a hard failure (e.g. once a lying type is
-    // fixed, its suppression must be removed) — keeps suppressions honest over time.
+    // fixed, its suppression must go), since a stale disable would hide a later violation.
     linterOptions: {
       reportUnusedDisableDirectives: 'error',
     },
@@ -47,21 +47,18 @@ export default [
     },
     rules: {
       // Every eslint-disable must carry a `-- <reason>` (last-resort suppressions
-      // — e.g. an intentional no-unnecessary-condition guard — must justify themselves).
+      // must state why they are needed).
       '@eslint-community/eslint-comments/require-description': ['error', { ignore: [] }],
-      // Type-aware ruleset — catches the mechanically-detectable defect classes the review
-      // cycle was otherwise spending expensive LLM passes on (unsafe `any` flow, unnecessary
-      // assertions/conditions, unsafe argument/return, etc.).
+      // Type-aware rules catch unsafe `any` flow and unnecessary assertions without a review pass.
       ...typescript.configs['recommended-type-checked'].rules,
 
-      // Targeted additions for finding-classes seen in review (not in recommended-type-checked):
-      '@typescript-eslint/no-unnecessary-condition': 'error', // redundant !== null / always-truthy guards
-      'unicorn/prefer-node-protocol': 'error',                // require node: prefix on builtin imports
-      '@typescript-eslint/switch-exhaustiveness-check': 'error', // force every union/enum case (or default)
-      '@typescript-eslint/no-unnecessary-boolean-literal-compare': 'error', // `x === true` → `x`
-      'eqeqeq': ['error', 'always'],                          // ban ==/!= (AI sometimes introduces)
+      // Rules that recommended-type-checked does not enable:
+      '@typescript-eslint/no-unnecessary-condition': 'error',
+      'unicorn/prefer-node-protocol': 'error',
+      '@typescript-eslint/switch-exhaustiveness-check': 'error',
+      '@typescript-eslint/no-unnecessary-boolean-literal-compare': 'error',
+      'eqeqeq': ['error', 'always'],
 
-      // Type safety
       '@typescript-eslint/explicit-function-return-type': 'error',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
@@ -71,36 +68,31 @@ export default [
       '@typescript-eslint/strict-boolean-expressions': 'error',
       '@typescript-eslint/prefer-nullish-coalescing': 'error',
 
-      // Dead code detection
       '@typescript-eslint/no-unused-expressions': 'error',
       'no-unreachable': 'error',
       'no-constant-condition': 'error',
       
-      // Async safety (critical for file I/O operations)
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
       '@typescript-eslint/await-thenable': 'error',
       
-      // Additional strictness
       '@typescript-eslint/explicit-module-boundary-types': 'error',
       '@typescript-eslint/prefer-readonly': 'error',
       '@typescript-eslint/prefer-optional-chain': 'error',
       
-      // Error handling
       'no-throw-literal': 'error',
       
-      // General best practices
       'no-console': ['error', { allow: ['error', 'warn'] }], // console.log breaks MCP stdio
       'prefer-const': 'error',
       'no-var': 'error',
       'object-shorthand': 'error',
       'prefer-template': 'error',
-      'no-undef': 'off', // TypeScript handles this
+      'no-undef': 'off', // The TypeScript compiler reports undefined names.
     },
   },
   {
-    // Config flows through the `Config` object, not env. Tools/services must not read
-    // process.env directly (legit env reads live in config/, web/, utils/, services/playback).
+    // Tools and services receive configuration through the Config object, not env.
+    // mpv-process.ts reads OS env such as PATH and XDG_RUNTIME_DIR, which is not configuration.
     files: ['src/tools/**/*.ts', 'src/services/**/*.ts'],
     ignores: ['src/services/playback/mpv-process.ts'],
     rules: {
@@ -115,8 +107,7 @@ export default [
     },
   },
   {
-    // Tests are AI-written too and feed the dead-code graph, but legitimately use `any`,
-    // non-null assertions, etc. Type-aware via tsconfig.analysis.json (includes tests/).
+    // tsconfig.json excludes tests/, so type-aware linting here uses tsconfig.analysis.json.
     files: ['tests/**/*.ts'],
     languageOptions: {
       parser: typescriptParser,
@@ -138,15 +129,15 @@ export default [
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
       '@typescript-eslint/explicit-function-return-type': 'off',
-      // Tests legitimately poke at `any`-typed mock objects; the no-unsafe-* family is
-      // mock noise here (it stays enabled for src/, where `any` shouldn't appear).
+      // Mock objects are typed `any`, so the no-unsafe-* rules report only mock noise here.
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
       'no-console': ['error', { allow: ['error', 'warn'] }],
-      'no-undef': 'off', // TypeScript handles this; vitest globals aren't declared here
+      // TypeScript resolves names here, including the vitest globals that ESLint does not declare.
+      'no-undef': 'off',
     },
   },
   {

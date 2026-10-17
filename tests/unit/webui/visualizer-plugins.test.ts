@@ -1,6 +1,6 @@
 /**
- * Every file in src/webui/public/visualizers/ runs the plugin contract, so a dropped-in mode is checked
- * with no other change. The fake modes below confirm the checker catches each kind of fault.
+ * Every file in src/webui/public/visualizers/ runs the plugin contract, so a dropped-in mode is
+ * checked with no other change. The fake modes below confirm the checker catches each fault.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';

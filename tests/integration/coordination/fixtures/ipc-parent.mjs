@@ -1,8 +1,5 @@
-// Test harness: stands in for the MCP server by running the real spawnWebChild
-// (through ensureWebForPlayback in dist/web/spawn.js) instead of mirroring its
-// spawn options. Killing this harness closes the IPC channel, so the web child
-// receives `disconnect`, which is what we assert on (stop-with-parent when
-// persist off, survive when persist on).
+// Stands in for the MCP server and runs the real spawn path, not a copy of its spawn options.
+// Killing this harness closes the IPC channel, which fires 'disconnect' in the web child.
 //
 // argv: <distWebMain> <storePath> [exit-after-spawn]
 import { readFileSync } from 'node:fs';
@@ -26,7 +23,7 @@ if (status !== 'spawned') process.exit(1);
 // Lets a test exit the parent before the child installs its 'disconnect' listener.
 if (mode === 'exit-after-spawn') process.exit(0);
 
-// Keep the harness (and the IPC channel) alive until we're told to exit.
+// The spawn unrefs the child and its IPC channel, so this interval keeps the harness alive.
 const keepAlive = setInterval(() => {}, 1 << 30);
 const die = () => {
   clearInterval(keepAlive);

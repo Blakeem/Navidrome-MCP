@@ -1,15 +1,14 @@
 /**
  * Navidrome MCP Server - network-safety unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-// Mock node:dns/promises BEFORE importing the module under test so that
-// hostResolvesToPrivateIp uses the mock for hostname resolution. (safeFetch
-// targets an IP literal in its tests, so undici never hits this mock.)
+// Only hostResolvesToPrivateIp resolves through this mock. safeFetch tests target an IP literal.
 const mockDnsLookup = vi.fn();
 vi.mock('node:dns/promises', () => ({
   lookup: (...args: unknown[]) => mockDnsLookup(...args),
@@ -52,9 +51,8 @@ describe('network-safety', () => {
       expect(isHttpUrlScheme('')).toBe(false);
     });
 
-    // The WHATWG URL parser strips tab/LF/CR before parsing, so these all yield
-    // a clean http: URL. Callers store and play the ORIGINAL string, so a value
-    // that parses is not automatically a value that is safe to pass onward.
+    // The WHATWG URL parser strips tab, LF and CR, so these parse as clean http: URLs. Callers
+    // store and play the original string, so a value that parses is not proven safe.
     it('rejects control characters the URL parser would silently strip', () => {
       expect(isHttpUrlScheme('http://example.com/live\nHost: internal.local')).toBe(false);
       expect(isHttpUrlScheme('http://example.com/live\r\nX-Injected: 1')).toBe(false);
@@ -71,8 +69,7 @@ describe('network-safety', () => {
     });
 
     it('confirms the parser really does normalize those away', () => {
-      // Guards the reason the check above exists: if this ever stops being true,
-      // the control-char guard is no longer load-bearing.
+      // If the parser stops stripping these characters, the control-character guard is unneeded.
       const raw = 'http://example.com/live\nHost: internal.local';
       expect(new URL(raw).protocol).toBe('http:');
       expect(new URL(raw).href).not.toContain('\n');
@@ -119,7 +116,7 @@ describe('network-safety', () => {
 
     it('passes legitimate public addresses', () => {
       expect(isPrivateOrLocalIp('8.8.8.8')).toBe(false);
-      expect(isPrivateOrLocalIp('93.184.216.34')).toBe(false); // example.com
+      expect(isPrivateOrLocalIp('93.184.216.34')).toBe(false);
       expect(isPrivateOrLocalIp('1.1.1.1')).toBe(false);
     });
 
@@ -190,7 +187,6 @@ describe('network-safety', () => {
     });
 
     it('flags hostname if ANY resolved IP is private', async () => {
-      // Hostname with both public and private records — fail closed.
       mockDnsLookup.mockResolvedValueOnce([
         { address: '8.8.8.8', family: 4 },
         { address: '10.0.0.1', family: 4 },
@@ -271,8 +267,7 @@ describe('network-safety', () => {
       const b = new Error('inner');
       (a as { cause?: unknown }).cause = b;
       (b as { cause?: unknown }).cause = a;
-      // Which message wins is arbitrary for a pathological cycle — the
-      // property under test is termination via the depth cap.
+      // Either message may win on a cycle. The test checks only that the depth cap ends the walk.
       expect(['outer', 'inner']).toContain(describeFetchError(a));
     });
   });
@@ -286,7 +281,6 @@ describe('safeFetch — peer-IP gating (real dispatcher, no mock)', () => {
   beforeEach(async () => {
     requestHandled = false;
     server = createServer((_req, res) => {
-      // If safeFetch were NOT gating, the request would reach here.
       requestHandled = true;
       res.writeHead(200, { 'content-type': 'audio/mpeg' });
       res.end('audio');
@@ -300,25 +294,22 @@ describe('safeFetch — peer-IP gating (real dispatcher, no mock)', () => {
   });
 
   it('refuses a connection whose actual peer is a loopback address', async () => {
-    // The server IS listening and would answer 200, but the dispatcher inspects
-    // the connected socket's remoteAddress (127.0.0.1), sees it is private, and
-    // destroys the socket before the HTTP request is written. This is the
-    // DNS-rebinding / SSRF guard: what we validate IS what we connected to.
+    // The dispatcher checks the connected socket's peer address, so the address it validates is
+    // the address it reached. A DNS-rebinding answer cannot slip past it.
     await expect(safeFetch(`http://127.0.0.1:${port}/`, {})).rejects.toThrow();
     expect(requestHandled).toBe(false);
   });
 
   it('surfaces the private-address refusal as the rejection cause', async () => {
     const err = await safeFetch(`http://127.0.0.1:${port}/`, {}).catch((e: unknown) => e);
-    // Global fetch wraps connector errors in a "fetch failed" TypeError whose
-    // .cause carries our connector Error.
+    // fetch wraps a connector error in a "fetch failed" TypeError and keeps it in `cause`.
     const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : String(err);
     expect(cause).toMatch(/private\/local address/i);
   });
 
   it('describeFetchError recovers the refusal reason from the real wrapped rejection', async () => {
-    // End-to-end guard on undici's actual wrapping shape: if a future undici
-    // stops putting the connector error in .cause, this catches it.
+    // This runs undici's real error wrapping, so a change in where undici puts the connector
+    // error fails here.
     const err = await safeFetch(`http://127.0.0.1:${port}/`, {}).catch((e: unknown) => e);
     expect(describeFetchError(err)).toMatch(/Refusing connection to private\/local address/);
   });

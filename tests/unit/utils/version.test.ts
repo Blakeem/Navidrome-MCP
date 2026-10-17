@@ -1,8 +1,7 @@
 /**
  * Navidrome MCP Server - version utility tests
  * Copyright (C) 2025
- *
- * Covers getPackageVersion from src/utils/version.ts.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it } from 'vitest';
@@ -17,7 +16,6 @@ describe('getPackageVersion', () => {
 
   it('returns a semver-shaped string (N.N.N)', () => {
     const version = getPackageVersion();
-    // Basic semver check: at least two dots separating digits
     expect(version).toMatch(/^\d+\.\d+\.\d+/);
   });
 

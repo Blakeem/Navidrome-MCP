@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Shared runtime bootstrap
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { readSavedWebuiSettings, type Config } from './config.js';
@@ -24,10 +12,8 @@ import { playbackEngine } from './services/playback/playback-engine.js';
 import { logger } from './utils/logger.js';
 
 /**
- * The fully-initialized core every entry point needs to operate: the resolved
- * config plus an authenticated, ready-to-use client. The library and filter
- * caches and the playback engine are module singletons configured as a side
- * effect of this call, so they don't need to be returned.
+ * The library and filter caches and the playback engine are module singletons that createRuntime
+ * configures, so they are not part of the returned runtime.
  */
 export interface Runtime {
   config: Config;
@@ -35,9 +21,8 @@ export interface Runtime {
 }
 
 /**
- * Shared startup for src/index.ts and src/web/main.ts. Scrobbler wiring is left
- * to each entry point, because scrobble ownership depends on the process.
- * `config` is required because only resolveConfigState() includes the env fallback.
+ * Scrobbler wiring stays in each entry point, since scrobble ownership depends on the process.
+ * The caller passes `config` because only resolveConfigState() applies the env fallback.
  */
 export async function createRuntime(config: Config): Promise<Runtime> {
   logger.setDebug(config.debug);
@@ -48,12 +33,10 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   await libraryManager.initialize(client, config);
   await filterCacheManager.initialize(client, config);
 
-  // Configure the singleton engine with the loaded config so tools can
-  // lazy-spawn mpv on first invocation. Gated on the playback feature (mpv
-  // detected), since `buildStreamUrl()` and every play_* tool depend on it.
+  // Tools lazy-spawn mpv on first use, so the engine needs the config before any tool runs.
   if (config.features.playback) {
     playbackEngine.configure(config);
-    // Read when this process spawns mpv, so a toggle the web player saved after this process started applies.
+    // Read at each mpv spawn, so a visualizer toggle saved after this process started applies.
     playbackEngine.setVisualizerSource(
       () => config.webui.enabled && (readSavedWebuiSettings()?.visualizer ?? config.webui.visualizer),
     );

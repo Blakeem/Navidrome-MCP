@@ -1,5 +1,3 @@
-// The player settings dialog, host machine only. Each change saves itself, with no Save button.
-
 import { getJson, postJson } from './api.js';
 import { byId } from './dom.js';
 import { applyTheme } from './theme.js';

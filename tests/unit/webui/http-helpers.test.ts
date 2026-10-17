@@ -1,15 +1,10 @@
-/**
- * Unit tests for readJsonBody's size cap — in particular that the cap is
- * parameterized, so the MCP transport can accept bodies larger than the web UI's
- * tiny 16 KB control-route default while still bounding them.
- */
+// The MCP transport needs a cap above the 16 KB control-route default, so the cap is a parameter.
 
 import { describe, expect, it } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage } from 'node:http';
 import { readJsonBody } from '../../../src/webui/http-helpers.js';
 
-/** Minimal IncomingMessage stand-in: emits the given chunks, then `end`. */
 function fakeReq(chunks: Buffer[]): IncomingMessage {
   const emitter = new EventEmitter() as IncomingMessage;
   emitter.destroy = (): IncomingMessage => {

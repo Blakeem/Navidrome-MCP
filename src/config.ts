@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Configuration Management
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { ErrorFormatter } from './utils/error-formatter.js';
@@ -27,10 +15,7 @@ import { resolveMpvBinary } from './services/playback/mpv-process.js';
 
 export type { Config } from './config/schema.js';
 
-/**
- * Validate a store snapshot against the runtime schema. Shared by startup and the settings
- * Save and Test routes, so each reports the same `path: message` issue list.
- */
+/** Shared by startup and the settings Save and Test routes, so each reports the same issue list. */
 export function validateMappedSettings(
   settings: SettingsFile,
   mpvPath: string | null,
@@ -42,10 +27,10 @@ export function validateMappedSettings(
 }
 
 /**
- * Validate a settings snapshot into the runtime config. A caller that already read the store
- * passes that snapshot, so its guard and this parse see the same file.
+ * A caller that already read the store passes that snapshot, so its guard and this parse see the
+ * same file.
  */
-// eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function. The body is synchronous.
+// eslint-disable-next-line @typescript-eslint/require-await -- kept async since callers await it
 export async function loadConfig(settings?: SettingsFile): Promise<Config> {
   settings ??= readSettings() ?? undefined;
   if (settings === undefined) {
@@ -92,8 +77,8 @@ export async function resolveConfigState(): Promise<ConfigState> {
 }
 
 /**
- * Env fallback for a missing or unusable store, configured only when `NAVIDROME_URL` is set and validates.
- * A broken env config logs its rejection reason before setup mode, so set env vars are never silently ignored.
+ * Applies only when settings.json is absent, unreadable, malformed, or has no Navidrome URL.
+ * A rejected env config logs its reason, so set env vars never fail without a trace.
  */
 async function resolveEnvFallbackState(): Promise<ConfigState> {
   const envSettings = buildEnvRuntimeSettings();
@@ -119,8 +104,8 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
 }
 
 /**
- * The webui settings settings.json holds now, so a running process sees what the web player or the
- * config app saved after it started. Null when the store is absent or invalid.
+ * Reads the store on each call, so a running process sees what the web player or the settings app
+ * saved after it started.
  */
 export function readSavedWebuiSettings(): Config['webui'] | null {
   const settings = readSettings();
@@ -129,7 +114,7 @@ export function readSavedWebuiSettings(): Config['webui'] | null {
   return result.ok ? result.config.webui : null;
 }
 
-/** A spawned or re-run web player binds the saved endpoint, not the one this process started with. */
+/** A spawned or re-run web player binds the saved endpoint, not this process's startup one. */
 export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
   const webui = readSavedWebuiSettings();
   return webui === null ? null : { port: webui.port, host: webui.host };

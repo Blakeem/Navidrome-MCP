@@ -1,4 +1,5 @@
-// Both requests resolve instead of rejecting and log their own failure, so a caller branches on one value.
+// Both requests resolve instead of rejecting and log their own failure,
+// so a caller branches on one value.
 
 export async function getJson(url) {
   try {
@@ -13,7 +14,6 @@ export async function getJson(url) {
 }
 
 // The server rejects a POST without a JSON Content-Type, so a bodyless control sends `{}`.
-// `data` is the parsed response body, or null when the body is not JSON.
 export async function postJson(path, body = {}) {
   try {
     const res = await fetch(path, {

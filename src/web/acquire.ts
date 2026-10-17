@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Port-as-lock acquire/attach
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { get as httpGet, type Server } from 'node:http';
@@ -21,29 +9,22 @@ import type { Config } from '../config.js';
 import { HEALTH_APP_ID } from '../webui/routes/health.js';
 
 /**
- * Port-as-lock decision. The configured TCP port is the lock: whoever binds it
- * first owns the web server. Everyone else probes `/healthz`, confirms it's our
- * server, and stands down (attaches).
+ * The configured TCP port is the lock. The process that binds it owns the web server, and every
+ * later process confirms the owner through `/healthz` and attaches.
  */
 export type AcquireResult =
-  /** We bound the port. `server` is the live HTTP server we now own. */
   | { mode: 'owner'; url: string; server: Server }
-  /** A navidrome-web already owns the port. We stand down and connect to `url`. */
   | { mode: 'attached'; url: string };
 
 /**
- * Outcome of probing `/healthz`:
- * - `ours`: 200 with the matching app signature, so a navidrome-web is already up.
- * - `refused`: connection refused, so nobody is listening and we may bind.
- * - `foreign`: a port conflict. A 200 with a different signature, a non-200, a timeout, or any
- *   connection error other than ECONNREFUSED. A hung listener must not block startup.
+ * `foreign` covers every answer other than our signature or ECONNREFUSED, so a hung listener
+ * counts as a port conflict and never blocks startup.
  */
 export type ProbeOutcome = 'ours' | 'refused' | 'foreign';
 
-/** The webui bind address, the key of the port-as-lock. */
 export type WebEndpoint = Pick<Config['webui'], 'port' | 'host'>;
 
-/** An owner probe across the startup and saved endpoints. `port` is the endpoint whose answer decided it. */
+/** `port` is the endpoint whose answer decided the outcome. */
 export interface WebOwnerProbe {
   outcome: ProbeOutcome;
   playbackAttached: boolean;
@@ -56,7 +37,6 @@ export interface AcquireDeps {
   bind: (server: Server, port: number, host: string) => Promise<'ok' | 'eaddrinuse'>;
 }
 
-/** A probe outcome plus the owner's scrobble fields from /healthz. */
 interface HealthzProbe {
   outcome: ProbeOutcome;
   playbackAttached: boolean;
@@ -67,7 +47,7 @@ const PROBE_TIMEOUT_MS = 500;
 const MAX_PROBE_BODY_BYTES = 4096;
 const WILDCARD_HOSTS: ReadonlySet<string> = new Set(['0.0.0.0', '::']);
 
-/** A wildcard bind accepts loopback connections, and a specific host accepts only its own address. */
+/** A wildcard bind accepts loopback, and a specific host accepts only its own address. */
 function probeHost(bindHost: string): string {
   return WILDCARD_HOSTS.has(bindHost) ? '127.0.0.1' : bindHost;
 }
@@ -94,7 +74,7 @@ function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProb
         res.on('data', (chunk: string) => {
           body += chunk;
           if (body.length > MAX_PROBE_BODY_BYTES) {
-            // destroy() with no argument emits no 'error', so the oversized-body probe must settle here.
+            // destroy() with no argument emits no 'error', so the oversized probe settles here.
             req.destroy();
             done('foreign');
           }
@@ -106,7 +86,8 @@ function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProb
               done('foreign');
               return;
             }
-            // An owner older than the playbackAttached field always scrobbled, so a missing field counts as attached.
+            // An owner older than the playbackAttached field always scrobbled, so a missing field
+            // counts as attached.
             done('ours', json.playbackAttached !== false, json.scrobbleClaims === true);
           } catch {
             done('foreign');
@@ -124,14 +105,13 @@ function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProb
   });
 }
 
-/** Probe `/healthz` at the bind host. A wildcard bind host ('0.0.0.0' or '::') is probed at 127.0.0.1. */
 export async function probeHealthz(port: number, bindHost: string): Promise<ProbeOutcome> {
   return (await probeHealthzDetail(port, bindHost)).outcome;
 }
 
 /**
- * The MCP keeps its startup endpoint, but a spawned or re-run web player binds the endpoint settings.json holds
- * now, so that one is probed second. Either answering as ours is the owner. Refused means both refused.
+ * The MCP keeps its startup endpoint, but a spawned or re-run web player binds the endpoint that
+ * settings.json holds now, so the saved endpoint is probed second.
  */
 export async function probeWebOwner(
   startup: WebEndpoint,
@@ -148,14 +128,12 @@ export async function probeWebOwner(
   const second = await probeHealthzDetail(saved.port, saved.host);
   const secondResult: WebOwnerProbe = { ...second, port: saved.port };
   if (second.outcome === 'ours') return secondResult;
-  // A foreign startup answer keeps its warn-skip, and a foreign saved endpoint dooms a spawned player.
+  // A foreign startup answer keeps the caller's warn-and-skip. A foreign saved endpoint would fail
+  // a spawned player's bind.
   return first.outcome === 'foreign' ? firstResult : secondResult;
 }
 
-/**
- * A real navidrome-web currently owns the web port. The MCP teardown path keys
- * off it, since the owner quits mpv itself whether or not it is attached.
- */
+/** The MCP teardown path keys off this, since the owner quits mpv whether or not it is attached. */
 export async function webOwnerPresent(
   startup: WebEndpoint,
   readSaved: () => WebEndpoint | null,
@@ -164,15 +142,14 @@ export async function webOwnerPresent(
 }
 
 /**
- * An owner older than the scrobble claim channel submits every play it sees without claiming,
- * so the MCP tracker defers to it while it is attached to mpv. Compat for one release.
+ * An owner older than the scrobble claim channel submits every play without claiming, so the MCP
+ * tracker defers to it while it is attached to mpv. Compatibility to remove after one release.
  */
 export function legacyOwnerScrobbles(probe: WebOwnerProbe): boolean {
   return probe.outcome === 'ours' && !probe.scrobbleClaims && probe.playbackAttached;
 }
 
-/** Bind an unstarted HTTP server, resolving `eaddrinuse` instead of throwing on
- * a lost race so the caller can re-probe (the race loser self-attaches). */
+/** EADDRINUSE resolves instead of rejecting, so a cold-start race loser can re-probe and attach. */
 function realBind(server: Server, port: number, host: string): Promise<'ok' | 'eaddrinuse'> {
   return new Promise<'ok' | 'eaddrinuse'>((resolve, reject) => {
     const onError = (err: NodeJS.ErrnoException): void => {
@@ -207,13 +184,7 @@ function conflictError(port: number): Error {
   );
 }
 
-/**
- * Acquire the web port or attach to an already-running navidrome-web.
- *
- * `makeServer` is only invoked when we actually attempt to bind, so attaching
- * to an existing server never constructs a throwaway one. Deps are injectable
- * for unit testing. Production uses the real loopback probe and bind.
- */
+/** `makeServer` runs only when a bind is attempted, so an attaching process builds no server. */
 export async function acquireOrAttach(
   config: Config,
   makeServer: () => Server,
@@ -226,13 +197,12 @@ export async function acquireOrAttach(
   if (first === 'ours') return { mode: 'attached', url };
   if (first === 'foreign') throw conflictError(port);
 
-  // Refused means nobody is listening, so try to become the owner.
   const server = makeServer();
   const bound = await deps.bind(server, port, host);
   if (bound === 'ok') return { mode: 'owner', url, server };
 
-  // EADDRINUSE means a lost cold-start race. Re-probe once and attach if it's ours.
-  // Otherwise a foreign process grabbed the port between our probe and bind.
+  // EADDRINUSE after a refused probe means another process bound first. It is either a
+  // navidrome-web that won a cold-start race or a foreign process.
   const second = await deps.probe(port, host);
   if (second === 'ours') return { mode: 'attached', url };
   throw conflictError(port);

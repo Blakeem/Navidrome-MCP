@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Web UI HTTP Server
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import {
@@ -72,18 +60,13 @@ interface ServerDeps {
   client: NavidromeClient;
   broadcaster: SseBroadcaster;
   visualizer: Pick<VisualizerHub, 'addClient'>;
-  /** Tear down the player (stop mpv + exit). POST /api/shutdown invokes it. */
   shutdown: () => void;
   leases: McpLeaseCounter;
 }
 
 /**
- * Build the underlying HTTP server. The caller (`acquireOrAttach` in `src/web/acquire.ts`)
- * owns the listen and close lifecycle, so this factory returns an unstarted instance the
- * port-as-lock logic can bind or discard.
- *
- * The dispatcher is a flat if-chain rather than a route table, because a linear read is
- * the most reviewable form for security-sensitive code (every accepted path is in plain sight).
+ * The server is returned unstarted, so `acquireOrAttach` decides whether it binds. The dispatcher
+ * is a flat if-chain, so every path this security-sensitive code accepts is in plain sight.
  */
 export function createServer(deps: ServerDeps): Server {
   return createHttpServer((req, res) => {
@@ -102,7 +85,7 @@ export function createServer(deps: ServerDeps): Server {
   });
 }
 
-// A malformed percent sequence (e.g. %GG) is a client error, not a 500, so a URIError maps to null.
+// A malformed percent sequence such as %GG is a client error, so a URIError maps to null.
 function decodePathParam(path: string, prefix: string): string | null {
   try {
     return decodeURIComponent(path.slice(prefix.length));
@@ -121,7 +104,8 @@ async function handleRequest(
     return;
   }
 
-  // Only pathname and searchParams are read, so a placeholder base lets the URL parser accept a relative input.
+  // Only pathname and searchParams are read, so a placeholder base lets the URL parser accept a
+  // relative input.
   let parsed: URL;
   try {
     parsed = new URL(req.url, 'http://localhost');
@@ -138,19 +122,18 @@ async function handleRequest(
     return;
   }
 
-  // A cross-site page cannot send this header without a CORS preflight, which this server never approves.
+  // A cross-site page cannot send this header without a CORS preflight, which this server never
+  // approves.
   if (method === 'POST' && !isJsonContentType(req.headers['content-type'])) {
     writeError(res, 415, 'Content-Type must be application/json');
     return;
   }
 
-  // --- Health signature (port-as-lock coexistence) ---
   if (method === 'GET' && path === '/healthz') {
     handleHealth(req, res, deps.config);
     return;
   }
 
-  // --- API: SSE stream ---
   if (method === 'GET' && path === '/api/events') {
     return handleEvents(res, deps.broadcaster);
   }
@@ -160,7 +143,6 @@ async function handleRequest(
   }
   if (method === 'GET' && path === '/api/visualizer/modes') return handleVisualizerModes(res);
 
-  // --- API: control actions ---
   if (method === 'POST' && path === '/api/controls/pause')    return handlePause(res);
   if (method === 'POST' && path === '/api/controls/resume')   return handleResume(res);
   if (method === 'POST' && path === '/api/controls/next')     return handleNext(res);
@@ -171,16 +153,13 @@ async function handleRequest(
   if (method === 'POST' && path === '/api/controls/clear')      return handleClear(res);
   if (method === 'POST' && path === '/api/controls/shuffle')    return handleShuffle(res);
 
-  // --- API: network info ---
   if (method === 'GET' && path === '/api/network-info') {
     handleNetworkInfo(res, deps.config);
     return;
   }
 
-  // --- API: playlists ---
   if (method === 'GET' && path === '/api/playlists') return handleListPlaylists(res, deps.client);
 
-  // --- API: library browse ---
   if (method === 'GET' && path === '/api/library/recent')        return handleLibraryRecent(res, deps.client);
   if (method === 'GET' && path === '/api/library/search')        return handleLibrarySearch(res, deps.client, parsed.searchParams.get('q'));
   if (method === 'GET' && path === '/api/library/artist-albums') return handleLibraryArtistAlbums(res, deps.client, parsed.searchParams.get('id'));
@@ -188,14 +167,12 @@ async function handleRequest(
   if (method === 'GET' && path === '/api/library/favorites')     return handleLibraryFavorites(res, deps.client);
   if (method === 'POST' && path === '/api/library/play')         return handleLibraryPlay(req, res, deps.client);
 
-  // --- API: player state / settings / shutdown (settings + shutdown loopback-only) ---
   if (method === 'GET'  && path === '/api/player-state')     { handlePlayerState(req, res, deps.config); return; }
   if (method === 'GET'  && path === '/api/player/settings')  { handleGetPlayerSettings(req, res, deps.config); return; }
   if (method === 'POST' && path === '/api/player/settings')  return handleSetPlayerSettings(req, res, deps.config, deps.broadcaster);
   if (method === 'POST' && path === '/api/shutdown')         { handleShutdown(req, res, deps.shutdown); return; }
   if (method === 'POST' && path === MCP_LEASE_PATH)          { handleMcpLease(req, res, deps.leases); return; }
 
-  // --- API: cover art proxy ---
   if (method === 'GET' && path.startsWith('/api/cover/')) {
     const id = decodePathParam(path, '/api/cover/');
     if (id === null) {
@@ -205,7 +182,6 @@ async function handleRequest(
     return handleCover(res, deps.config, id, parsed.searchParams.get('size'));
   }
 
-  // --- API: lyrics for one live-queue entry ---
   if (method === 'GET' && path.startsWith('/api/lyrics/')) {
     const songId = decodePathParam(path, '/api/lyrics/');
     if (songId === null) {
@@ -215,7 +191,6 @@ async function handleRequest(
     return handleLyrics(res, deps.config, deps.client, songId);
   }
 
-  // --- Static / SPA index ---
   if (method === 'GET' && !path.startsWith('/api/')) {
     return handleStatic(res, path);
   }

@@ -1,5 +1,3 @@
-/* Navidrome MCP web UI styles. Mobile-first, system fonts only, no deps. */
-
 :root {
   /* Dark is the default so a phone in a dim room is not flashed. Light follows
      prefers-color-scheme unless data-theme forces it. */
@@ -79,7 +77,8 @@ svg[hidden] { display: none; }
   white-space: nowrap;
 }
 
-/* The wake-lock fallback video. Laid out but invisible, since a video the layout drops stops counting as playing video. */
+/* The wake-lock fallback video stays laid out but invisible, since a video the layout drops
+   no longer counts as playing video. */
 .wake-video {
   position: fixed;
   left: 0;
@@ -118,7 +117,6 @@ main {
   gap: 18px;
 }
 
-/* ───────────────── topbar ───────────────── */
 .topbar {
   width: 100%;
   max-width: 760px;
@@ -180,7 +178,6 @@ main {
   animation: pulse 1.4s ease-in-out infinite;
 }
 .conn[data-state="disconnected"] .conn-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--bad); }
-/* JS owns the label text (setConnState writes textContent), so CSS sets only the per-state color. */
 .conn-label { font-variant-numeric: tabular-nums; }
 .conn[data-state="connected"] .conn-label { color: var(--good); }
 .conn[data-state="connecting"] .conn-label { color: var(--warn); }
@@ -228,12 +225,12 @@ main {
   }
 }
 
-/* ───────────────── tooltip ───────────────── */
-/* A tip grows rightward from its element's left edge, so it fits a 360px screen only on left-half elements. */
+/* A tip grows rightward from its element's left edge, so on a 360px screen it fits only on
+   left-half elements. */
 [data-tip] { position: relative; }
 /* The top-bar buttons sit at the right edge, so their tips grow leftward. */
 .topbar [data-tip]::after { left: auto; right: 0; }
-/* The clear button ends the queue header, and a rightward tip made a phone scroll sideways by 21px. */
+/* The clear button ends the queue header, where a rightward tip would scroll a phone sideways. */
 #clear-queue[data-tip]::after { left: auto; right: 0; }
 [data-tip]::after {
   content: attr(data-tip);
@@ -269,7 +266,6 @@ main {
   transition: opacity 120ms var(--tip-delay), visibility 0s var(--tip-delay);
 }
 
-/* ───────────────── now playing card ───────────────── */
 .now-playing-card {
   --card-padding: 18px;
   background: var(--surface);
@@ -290,9 +286,7 @@ main {
   }
 }
 
-/* The visualizer takes a third column only while it is on, so the card keeps its current layout when off.
-   The info column is only as wide as its text, so the visualizer gets the rest of the card and reaches
-   into the card's padding. It has no background or border, and its canvas fades toward every edge. */
+/* fit-content keeps the info column only as wide as its text, so the visualizer gets the rest. */
 .now-playing-card.has-visualizer {
   grid-template-columns: minmax(120px, 160px) fit-content(45%) minmax(0, 1fr);
 }
@@ -322,13 +316,12 @@ main {
   outline: none;
 }
 
-/* Inside the box, since the box reaches the card's edge. */
+/* The visualizer reaches the card's edge, so its outline and its tip sit inside it. */
 .visualizer:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -4px;
 }
 
-/* The tip names the style. It sits inside the box, since the box reaches the card's edge. */
 .visualizer[data-tip]::after {
   top: auto;
   bottom: 6px;
@@ -336,7 +329,6 @@ main {
   transform: translateX(-50%);
 }
 
-/* A style change shows the new name at once, without the hover delay. */
 .visualizer.naming-mode::after {
   opacity: 1;
   visibility: visible;
@@ -386,7 +378,7 @@ main {
 .cover.has-art .cover-placeholder { display: none; }
 
 .track-info {
-  min-width: 0; /* allow flex/grid children to truncate */
+  min-width: 0; /* A grid item's automatic minimum would grow to fit the no-wrap text. */
 }
 
 .badge {
@@ -432,7 +424,6 @@ main {
 .track-album { font-size: 0.88rem; opacity: 0.9; }
 .queue-pos { margin-top: 6px; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
 
-/* ───────────────── progress ───────────────── */
 .progress-section {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -451,7 +442,7 @@ main {
   margin-top: 4px;
 }
 
-/* ───────────────── sliders (shared) ───────────────── */
+/* Sliders shared by the seek bar and the volume control */
 .slider {
   appearance: none;
   -webkit-appearance: none;
@@ -509,7 +500,6 @@ main {
 .slider:hover::-webkit-slider-thumb,
 .slider:active::-webkit-slider-thumb { transform: scale(1.15); }
 
-/* ───────────────── transport ───────────────── */
 .transport {
   display: flex;
   justify-content: center;
@@ -558,7 +548,8 @@ main {
   font-size: 0.85rem;
   color: var(--bad);
 }
-/* An empty line leaves the flex flow, so it adds no gap, yet stays in the accessibility tree for the next announcement. */
+/* An empty line leaves the flex flow so it adds no gap. It stays in the accessibility tree,
+   so the live region still announces the next message. */
 .control-status:empty {
   position: absolute;
   width: 1px;
@@ -567,7 +558,6 @@ main {
   clip-path: inset(50%);
 }
 
-/* ───────────────── volume ───────────────── */
 .volume-section {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -603,7 +593,6 @@ main {
   color: var(--text-muted);
 }
 
-/* ───────────────── queue ───────────────── */
 .queue {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -737,7 +726,6 @@ main {
   border-top: 0;
 }
 
-/* ───────────────── modal ───────────────── */
 .modal {
   border: 0;
   border-radius: var(--radius-lg);
@@ -886,7 +874,6 @@ main {
 .settings-heading { padding: 0; }
 .theme-toggle { justify-self: start; }
 
-/* Terminal state after the power button shuts the player down. */
 body.player-stopped main,
 body.player-stopped .topbar-actions .ghost-btn { opacity: 0.45; }
 body.player-stopped::after {
@@ -901,7 +888,6 @@ body.player-stopped::after {
   font-size: 0.9rem;
 }
 
-/* ---------- modal tabs ---------- */
 /* One row that scrolls sideways, so the tabs never wrap on a narrow phone. */
 .modal-tabs {
   display: flex;
@@ -928,10 +914,8 @@ body.player-stopped::after {
   border-bottom-color: var(--accent);
 }
 
-/* A hidden pane is collapsed via the native [hidden] attribute. */
 .modal-pane[hidden] { display: none; }
 
-/* ---------- full-screen modal ---------- */
 /* Long lists take the full height below the top bar (--modal-top), in dvh so a collapsing URL bar
    keeps the bottom on screen. The 760px cap matches the player column. */
 .modal.modal-full,
@@ -963,7 +947,6 @@ body.player-stopped::after {
   .modal-full .modal-content { padding: 14px 12px; }
 }
 
-/* ---------- library search tab ---------- */
 /* :not([hidden]) keeps `.modal-pane[hidden]` in charge of hiding the pane. */
 #play-pane-search:not([hidden]),
 #play-pane-playlists:not([hidden]),
@@ -1004,7 +987,6 @@ body.player-stopped::after {
 }
 .lib-search .primary-btn { flex: none; }
 
-/* ---------- play toolbar ---------- */
 /* Sits above the panes, so every tab plays with one queue mode and one pair of shuffle settings. */
 .play-toolbar {
   display: flex;
@@ -1013,7 +995,8 @@ body.player-stopped::after {
   gap: 8px;
 }
 
-/* Exclusive toggle. The labels are the buttons, so the native radios keep arrow-key selection and change events. */
+/* The labels act as the buttons, so the native radios keep arrow-key selection and change
+   events. */
 .mode-toggle {
   position: relative;
   display: inline-flex;
@@ -1144,7 +1127,6 @@ body.player-stopped::after {
 }
 .lib-action svg,
 .lib-toggle svg { width: 22px; height: 22px; }
-/* The dialog's data-mode follows the queue-mode radios, so every row in every pane swaps icon at once. */
 .lib-icon-play { display: none; }
 #play-dialog[data-mode="replace"] .lib-icon-add { display: none; }
 #play-dialog[data-mode="replace"] .lib-icon-play { display: block; }
@@ -1165,7 +1147,8 @@ body.player-stopped::after {
   gap: 2px;
   border-left: 2px solid color-mix(in srgb, var(--accent) 50%, transparent);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  /* Mixed into --surface-2 because a translucent tint over the dialog surface lands on the flat rows' fill. */
+  /* Mixed into --surface-2, since the same tint over the dialog surface comes out close to the
+     rows' own fill. */
   background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
 }
 .lib-children .lib-children { background: color-mix(in srgb, var(--accent) 16%, var(--surface-2)); }
@@ -1195,9 +1178,7 @@ body.player-stopped::after {
   .lib-toggle svg { transition: none; }
 }
 
-/* ───────────────── lyrics overlay ───────────────── */
-/* Full-viewport surface over the remote. Sized in dvh, never vh, so the mobile
-   URL bar collapsing does not leave the transport off-screen. */
+/* Sized in dvh, never vh, so the transport stays on screen while the mobile URL bar shows. */
 .lyrics-view {
   position: fixed;
   inset: 0 0 auto 0;
@@ -1220,8 +1201,8 @@ body.player-stopped::after {
   display: flex;
   align-items: center;
   gap: 12px;
-  /* Without this the row grows to its no-wrap title and pushes the stepper off
-     a phone screen. Zero lets the title's own ellipsis do the work instead. */
+  /* A grid item's automatic minimum would grow to the no-wrap title and push the stepper off
+     a phone screen. */
   min-width: 0;
   padding: 12px 16px;
   padding-top: max(12px, env(safe-area-inset-top));
@@ -1242,7 +1223,6 @@ body.player-stopped::after {
 .lyrics-header-actions { display: flex; align-items: center; gap: 8px; }
 .lyrics-slot { display: flex; align-items: center; gap: 6px; }
 
-/* Two fixed glyphs rather than a slider: the reader picks a step, not a value. */
 .lyric-size-btn { padding: 4px 8px; }
 .lyric-size-glyph { font-weight: 700; line-height: 1; }
 .lyric-size-glyph.is-small { font-size: 0.8rem; }
@@ -1273,7 +1253,7 @@ body.player-stopped::after {
 .lyrics-scroll {
   grid-area: lyrics-body;
   overflow-y: auto;
-  /* Keep a scroll gesture inside the overlay so the page behind never moves. */
+  /* A scroll gesture stays inside the overlay, so the page behind never moves. */
   overscroll-behavior: contain;
   padding: 24px 20px 32px;
   cursor: pointer;
@@ -1323,7 +1303,6 @@ body.player-stopped::after {
 }
 /* Blank lines in plain lyrics mark stanza breaks, so they keep a line of height. */
 .lyric-line:empty { min-height: 0.9em; }
-/* A timed row's text is a button so Enter and Space seek, and it keeps the row's own look. */
 .lyric-seek {
   appearance: none;
   display: block;
@@ -1383,7 +1362,6 @@ body.player-stopped::after {
 .lyrics-buttons .play-btn { width: 54px; height: 54px; }
 .lyrics-buttons .play-btn svg { width: 28px; height: 28px; }
 
-/* ───────────────── lyrics window view ───────────────── */
 .lyrics-backdrop {
   position: fixed;
   inset: 0;
@@ -1397,7 +1375,8 @@ body.player-stopped::after {
   overflow: hidden;
 }
 .lyrics-view.is-window .lyrics-header { padding-top: 12px; }
-/* The full view shows the art beside the words on a wide screen, so only the window carries it in the header. */
+/* The full view shows the art beside the words on a wide screen, so only the window view puts it
+   in the header. */
 .lyrics-thumb { display: none; }
 .lyrics-view.is-window .lyrics-thumb {
   display: flex;
@@ -1408,7 +1387,6 @@ body.player-stopped::after {
 /* The header's right edge holds the toggle and the X, so their tips grow leftward. */
 .lyrics-header [data-tip]::after { left: auto; right: 0; }
 
-/* Immersive: the chrome gets out of the way of the words. */
 .lyrics-view.is-immersive .lyrics-header { display: none; }
 .lyrics-view.is-immersive .lyrics-times { display: none; }
 .lyrics-view.is-immersive .lyrics-transport {
@@ -1429,8 +1407,8 @@ body.player-stopped::after {
 
 .lyric-line { transition: color 180ms ease, opacity 180ms ease; }
 .lyric-line.is-active { color: var(--text); }
-/* The finished line during an instrumental break: still the last thing sung,
-   no longer the thing to read. */
+/* During an instrumental break the last sung line stays marked but dims, since it is no longer
+   the line to read. */
 .lyric-line.is-interlude { opacity: 0.5; }
 
 /* Stands in for the words during a break so a long gap does not look frozen. */
@@ -1454,7 +1432,7 @@ body.player-stopped::after {
   50% { opacity: 1; }
 }
 
-/* Anchored to the words area so it stays clear of the transport. Up only while following is off. */
+/* Placed in the words area, so it stays clear of the transport. */
 .lyrics-follow-pill {
   grid-area: lyrics-body;
   position: absolute;
@@ -1480,7 +1458,6 @@ body.player-stopped::after {
   .lyric-interlude span { animation: none; opacity: 0.6; }
 }
 
-/* Two columns from the same DOM: art and transport left, words right. */
 @media (min-width: 900px) {
   .lyrics-view:not(.is-window) {
     grid-template-columns: minmax(260px, 340px) 1fr;

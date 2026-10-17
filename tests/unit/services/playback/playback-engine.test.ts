@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - playback-engine unit tests
  * Copyright (C) 2025
- *
- * Covers behavioral changes from docs/review/02 batch C:
- *   - H3: installObservers ordering — prime cache BEFORE registering the
- *     property-change handler and BEFORE subscribing.
- *   - H4: getQueue filename → songId parsing is cached per session, with
- *     a cheap startsWith() prefilter to avoid `new URL()` for non-HTTP
- *     filenames.
- *   - M3: enqueue('replace') recovers to a clean idle state on partial
- *     failure mid-loadfile-loop instead of leaving the user with a
- *     half-loaded queue.
- *
- * IPC and net are mocked so no real mpv binary is touched. Real-mpv coverage
- * lives in tests/integration/playback/.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -32,11 +20,9 @@ interface FakeIpc extends EventEmitter {
   onEvent: ReturnType<typeof vi.fn>;
   onDisconnect: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
-  /** Internal: list of registered onPropertyChange handlers, in install order */
   propertyHandlers: Array<(evt: { id: number; name: string; data: unknown }) => void>;
-  /** Internal: list of registered onEvent handlers, in install order */
   eventHandlers: Array<(evt: { event: string; [key: string]: unknown }) => void>;
-  /** Internal: chronological log of (call_kind, name) tuples for ordering tests */
+  /** Every IPC call in order, so the installObservers tests can check the sequence. */
   callOrder: Array<{ kind: string; name?: string }>;
 }
 
@@ -97,7 +83,7 @@ vi.mock('node:fs', () => ({
   existsSync: () => true,
 }));
 
-// The real check spawns mpv, so tests set its answer, whether it has finished, and a run still going.
+// The real check spawns mpv, so tests set its answer, whether it finished, and a run still going.
 const visualizerCheck = vi.hoisted(() => ({
   result: { ok: true, build: 'mpv v0.40.0 with FFmpeg n7.1' } as
     | { ok: true; build: string }
@@ -168,37 +154,28 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-// ---------- H3: installObservers ordering ----------
-
-describe('installObservers ordering (H3)', () => {
+describe('installObservers ordering', () => {
   it('primes the property cache BEFORE registering the change handler and BEFORE subscribing', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
 
-    // ensureRunning will go through tryAttachExisting (existsSync mocked true)
+    // existsSync is mocked true, so ensureRunning attaches to the fake IPC instead of spawning.
     await playbackEngine.ensureRunning();
 
-    // Pull just the ordering-relevant calls — get_property, onPropertyChange, observe
     const sequence = ipc.callOrder
       .map((c) => c.kind)
       .filter((k) => k === 'get_property' || k === 'onPropertyChange' || k === 'observe');
 
-    // Find the indices of the marker calls
     const firstGetProp = sequence.indexOf('get_property');
     const onPropChange = sequence.indexOf('onPropertyChange');
     const firstObserve = sequence.indexOf('observe');
 
-    // All three must have happened
     expect(firstGetProp).toBeGreaterThanOrEqual(0);
     expect(onPropChange).toBeGreaterThanOrEqual(0);
     expect(firstObserve).toBeGreaterThanOrEqual(0);
 
-    // The required ordering: every get_property comes before onPropertyChange,
-    // and onPropertyChange comes before every observe call.
     expect(firstGetProp).toBeLessThan(onPropChange);
     expect(onPropChange).toBeLessThan(firstObserve);
 
-    // Last get_property is also before onPropertyChange (i.e. priming
-    // FULLY completes before the handler is wired).
     const lastGetProp = sequence.lastIndexOf('get_property');
     expect(lastGetProp).toBeLessThan(onPropChange);
   });
@@ -216,8 +193,6 @@ describe('installObservers ordering (H3)', () => {
     expect(sequence.indexOf('attach-event')).toBeLessThan(sequence.indexOf('observe'));
   });
 });
-
-// ---------- client-message broadcast channel ----------
 
 describe('client-message channel', () => {
   it('forwards an mpv client-message as a message state change', async () => {
@@ -250,17 +225,13 @@ describe('client-message channel', () => {
   });
 });
 
-// ---------- H4: filename cache + cheap prefilter ----------
-
-describe('getQueue filename caching (H4)', () => {
+describe('getQueue filename caching', () => {
   it('caches the songId-from-filename parse across calls', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
 
     const stableUrl = 'http://navidrome.test/rest/stream?id=song-123&u=x&s=y&t=z';
 
-    // get_property for 'playlist' is what getQueue calls. Make it return
-    // the same entry twice across two getQueue invocations.
     // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
@@ -275,9 +246,6 @@ describe('getQueue filename caching (H4)', () => {
 
     expect(r1[0]?.songId).toBe('song-123');
     expect(r2[0]?.songId).toBe('song-123');
-    // Both reads return the same parsed id — a regression in cache logic
-    // would either differ between the two calls (cache returning wrong
-    // value) or throw on the second call (cache mishandling).
     expect(r1[0]?.songId).toBe(r2[0]?.songId);
   });
 
@@ -287,7 +255,6 @@ describe('getQueue filename caching (H4)', () => {
 
     const url = 'http://navidrome.test/rest/stream?id=hot-song';
     let callCount = 0;
-    // Wrap URL to count constructions for our specific test URL only.
     const realUrl = globalThis.URL;
     let parseCount = 0;
     class CountingUrl extends realUrl {
@@ -314,7 +281,6 @@ describe('getQueue filename caching (H4)', () => {
       await playbackEngine.getQueue();
 
       expect(callCount).toBe(3); // 3 IPC reads, since getQueue itself is not cached
-      // Only the first call parses. Later calls reuse the songId from the filename cache.
       expect(parseCount).toBe(parseCountAfterFirst);
     } finally {
       (globalThis as unknown as { URL: typeof URL }).URL = realUrl;
@@ -346,7 +312,6 @@ describe('getQueue filename caching (H4)', () => {
     expect(result[0]?.songId).toBeNull();
     expect(result[1]?.songId).toBeNull();
 
-    // Neither filename is HTTP, so the prefilter skips `new URL()`.
     expect(urlSpy).not.toHaveBeenCalled();
     await playbackEngine.getQueue();
     expect(urlSpy).not.toHaveBeenCalled();
@@ -370,22 +335,18 @@ describe('getQueue filename caching (H4)', () => {
     const result = await playbackEngine.getQueue();
     expect(result[0]?.songId).toBeNull();
 
-    // Second call hits cache and stays null
     const result2 = await playbackEngine.getQueue();
     expect(result2[0]?.songId).toBeNull();
   });
 });
 
-// ---------- M3: enqueue('replace') rollback on partial failure ----------
-
-describe("enqueue('replace') atomic recovery (M3)", () => {
+describe("enqueue('replace') failure recovery", () => {
   it('recovers to clean idle state when a mid-sequence loadfile fails', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
     const events: StateChangeEvent[] = [];
     playbackEngine.onStateChange((e) => events.push(e));
 
-    // Reset the call recorder so we only see commands from the test below
     ipc.command.mockReset();
     let loadfileCount = 0;
     // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
@@ -405,7 +366,6 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
       playbackEngine.enqueue(['song-1', 'song-2', 'song-3'], 'replace'),
     ).rejects.toThrow(/queue was cleared and is now empty/);
 
-    // The failure path clears and stops after the failing loadfile, so mpv holds no half-loaded queue.
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
     expect(commands.slice(commands.lastIndexOf('loadfile') + 1)).toEqual(['playlist-clear', 'stop']);
     expect(playbackEngine.getCachedProperty('playlist-count')).toBe(0);
@@ -443,14 +403,11 @@ describe("enqueue('replace') atomic recovery (M3)", () => {
   });
 });
 
-// ---------- radio → append demotion ----------
-
 describe("enqueue('append') radio demotion", () => {
   it("demotes append to replace when the queue holds a radio stream", async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
 
-    // hasRadioStream() reads the live playlist. A single non-HTTP entry parses
-    // to songId null, so the queue is seen as holding a radio stream.
+    // A non-HTTP entry parses to songId null, which hasRadioStream reads as radio.
     // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
       const cmd = args[0] as string;
@@ -465,13 +422,9 @@ describe("enqueue('append') radio demotion", () => {
 
     const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
 
-    // The append was demoted to replace because a radio stream was present.
     expect(result).toEqual({ demoted: true });
 
-    // Observe the effective mode the way the other tests do — via the issued
-    // IPC commands. Replace-mode issues an explicit `playlist-clear`; a true
-    // append never clears the playlist. So the presence of playlist-clear is
-    // proof the effective mode became 'replace'.
+    // Only a replace sends playlist-clear, so its presence shows the demotion took effect.
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
     expect(commands).toContain('playlist-clear');
   });
@@ -479,8 +432,6 @@ describe("enqueue('append') radio demotion", () => {
   it("does NOT demote append when the queue holds only real songs", async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
 
-    // Every entry parses to a real songId (HTTP stream URL the engine built),
-    // so hasRadioStream() returns false and append stays append.
     const songUrl = 'http://navidrome.test/rest/stream?id=song-existing&u=x&s=y&t=z';
     // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
     ipc.command.mockImplementation(async (...args: unknown[]) => {
@@ -497,7 +448,6 @@ describe("enqueue('append') radio demotion", () => {
     const result = await playbackEngine.enqueue(['song-1'], 'append');
 
     expect(result).toEqual({ demoted: false });
-    // A genuine append never clears the playlist.
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
     expect(commands).not.toContain('playlist-clear');
   });
@@ -516,9 +466,7 @@ describe("enqueue('append') radio demotion", () => {
   });
 });
 
-// ---------- Issue #4: moveQueueEntry never hijacks the play head ----------
-
-describe('moveQueueEntry play-head preservation (Issue #4)', () => {
+describe('moveQueueEntry play-head preservation', () => {
   it('issues only playlist-move — never set_property playlist-pos — for a from:0 move', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
@@ -529,9 +477,7 @@ describe('moveQueueEntry play-head preservation (Issue #4)', () => {
     const moveCalls = ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move');
     expect(moveCalls).toEqual([['playlist-move', 0, 4]]);
 
-    // The bug was an explicit `set_property playlist-pos 0` that overrode mpv's
-    // native play-head bookkeeping whenever index 0 was involved. mpv already
-    // keeps the playing entry current across a move, so the override is gone.
+    // mpv keeps the playing entry current across a move, so a playlist-pos write only restarts it.
     const posResets = ipc.command.mock.calls.filter(
       (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
     );
@@ -555,9 +501,7 @@ describe('moveQueueEntry play-head preservation (Issue #4)', () => {
   });
 });
 
-// ---------- Issue #5: shuffleQueue keeps the current track playing ----------
-
-describe('shuffleQueue play-head preservation (Issue #5)', () => {
+describe('shuffleQueue play-head preservation', () => {
   it('lifts the post-shuffle current track to index 0 via playlist-move, not a playlist-pos reset', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
     await playbackEngine.ensureRunning();
@@ -572,11 +516,9 @@ describe('shuffleQueue play-head preservation (Issue #5)', () => {
 
     const kinds = ipc.command.mock.calls.map((c) => c[0]);
     expect(kinds).toContain('playlist-shuffle');
-    // Current track lifted to the top WITHOUT restarting playback.
     expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-move')).toEqual([
       ['playlist-move', 3, 0],
     ]);
-    // The old restart-the-head bug must be gone.
     const posResets = ipc.command.mock.calls.filter(
       (c) => c[0] === 'set_property' && c[1] === 'playlist-pos',
     );
@@ -598,7 +540,6 @@ describe('shuffleQueue play-head preservation (Issue #5)', () => {
   });
 });
 
-/** Forget startup calls, then answer `get_property` from a fixed map and every other command with null. */
 function answerProperties(ipc: FakeIpc, props: Record<string, unknown>): void {
   ipc.command.mockClear();
   // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
@@ -608,14 +549,11 @@ function answerProperties(ipc: FakeIpc, props: Record<string, unknown>): void {
   });
 }
 
-/** The issued IPC commands minus reads, with `set_property` folded to "set <name> <value>". */
 function mutatingCommands(ipc: FakeIpc): string[] {
   return ipc.command.mock.calls
     .filter((c) => c[0] !== 'get_property')
     .map((c) => (c[0] === 'set_property' ? `set ${String(c[1])} ${String(c[2])}` : String(c[0])));
 }
-
-// ---------- append into a queue with no current track ----------
 
 describe("enqueue('append') selects a first track when none is current", () => {
   it('selects index 0 paused when appending into an empty queue', async () => {
@@ -653,8 +591,6 @@ describe("enqueue('append') selects a first track when none is current", () => {
     expect(mutatingCommands(ipc)).toEqual(['loadfile']);
   });
 });
-
-// ---------- shuffleQueueFromTop restarts the queue from the new top track ----------
 
 describe('shuffleQueueFromTop', () => {
   it('shuffles and selects index 0 without touching pause while playing', async () => {
@@ -716,8 +652,6 @@ describe('clearQueue', () => {
   });
 });
 
-// ---------- setVolume clamps out-of-range levels to [0, 100] ----------
-
 describe('setVolume clamps to [0, 100]', () => {
   it('clamps a level above 100 down to 100 and issues set_property volume 100', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
@@ -753,38 +687,25 @@ describe('setVolume clamps to [0, 100]', () => {
   });
 });
 
-// ---------- mpv-reconnect: ensureRunning re-attaches after an unexpected IPC drop ----------
-
-describe('ensureRunning reconnect after unexpected disconnect (mpv-reconnect)', () => {
+describe('ensureRunning reconnect after unexpected disconnect', () => {
   it('re-attaches on the FIRST control call after an in-process IPC drop', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
 
-    // First start: engine attaches to the (fake) mpv IPC.
     await playbackEngine.ensureRunning();
     expect(playbackEngine.isRunning()).toBe(true);
 
-    // Fire the disconnect handler the engine registered via installObservers
-    // to simulate mpv dropping the IPC socket unexpectedly. That handler
-    // clears the engine's ipc handle (this.ipc = null) without touching
-    // startPromise.
+    // The engine's own disconnect handler stands in for mpv dropping the socket.
     const disconnectHandler = ipc.onDisconnect.mock.calls[0]?.[0] as (() => void) | undefined;
     expect(disconnectHandler).toBeTypeOf('function');
     disconnectHandler?.();
 
-    // Engine now reports not-running (ipc handle gone).
     expect(playbackEngine.isRunning()).toBe(false);
 
-    // The FIRST mutating control after the disconnect must transparently
-    // re-attach. The bug left a stale settled startPromise, so this first
-    // ensureRunning() no-op'd and requireIpc() threw "mpv IPC is not
-    // connected"; only the second call reconnected. With the fix (finally
-    // clears startPromise unconditionally), the first call reconnects.
+    // A settled startPromise left behind would turn this first call into a no-op that throws.
     await expect(playbackEngine.pause()).resolves.toBeUndefined();
     expect(playbackEngine.isRunning()).toBe(true);
   });
 });
-
-// ---------- previous() on the first entry restarts instead of stopping ----------
 
 describe('previous', () => {
   it('restarts the current track with an absolute seek on the first entry', async () => {
@@ -819,8 +740,6 @@ describe('previous', () => {
   });
 });
 
-// ---------- concurrent attaches share one connection ----------
-
 describe('ensureAttached coalescing', () => {
   it('opens one connection for two concurrent ensureAttached calls', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
@@ -832,8 +751,6 @@ describe('ensureAttached coalescing', () => {
     expect(ipc.onPropertyChange).toHaveBeenCalledTimes(1);
   });
 });
-
-// ---------- song ids come only from Subsonic stream URLs ----------
 
 describe('getQueue song-id parsing', () => {
   it('yields songId null for a non-stream URL that carries an id parameter', async () => {
@@ -849,8 +766,6 @@ describe('getQueue song-id parsing', () => {
     expect(entries[0]).not.toHaveProperty('filename');
   });
 });
-
-// ---------- stream URLs round-trip through getQueue ----------
 
 describe('stream URL round trip', () => {
   function firstLoadfileUrl(ipc: FakeIpc): URL {
@@ -890,8 +805,6 @@ describe('stream URL round trip', () => {
     expect((await playbackEngine.getQueue())[0]?.songId).toBe('s1');
   });
 });
-
-// ---------- seek retries only the transient transcode rejection ----------
 
 describe('seek retry', () => {
   const retryable = 'mpv command error: error running command';
@@ -950,8 +863,6 @@ describe('seek retry', () => {
   });
 });
 
-// ---------- the mutation lock serializes queue operations ----------
-
 describe('mutation lock', () => {
   it('runs a radio load only after a concurrent replace finishes', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
@@ -989,8 +900,6 @@ describe('mutation lock', () => {
   });
 });
 
-// ---------- getQueue merges mpv titles with enqueue metadata ----------
-
 describe('getQueue metadata merge', () => {
   it('prefers the mpv title, fills the rest from the cache, and drops it on a replace', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
@@ -1022,8 +931,6 @@ describe('getQueue metadata merge', () => {
     expect(afterReplace).not.toHaveProperty('artist');
   });
 });
-
-// ---------- caches hold a live queue longer than their cap ----------
 
 describe('queue caches past the cap', () => {
   const cap = MAX_QUEUE_READ_PAGES * QUEUE_READ_PAGE_SIZE;
@@ -1064,8 +971,6 @@ describe('queue caches past the cap', () => {
   });
 });
 
-// ---------- spawn fallback when no mpv can be attached ----------
-
 /** Queue one attach that fails and one spawn connect, so ensureRunning takes the spawn path. */
 function queueSpawnPath(spawnConnects: boolean): { spawnFake: FakeIpc } {
   const attachFake = makeFakeIpc();
@@ -1104,8 +1009,6 @@ describe('spawn fallback', () => {
   });
 });
 
-// ---------- the stale-socket probe guards the spawn ----------
-
 describe('stale socket probe', () => {
   it('fails the start and keeps the socket when a live mpv answers the probe', async () => {
     const attachFake = makeFakeIpc();
@@ -1132,8 +1035,6 @@ describe('stale socket probe', () => {
   });
 });
 
-// ---------- state-change dispatch ----------
-
 describe('onStateChange', () => {
   it('a throwing subscriber does not block later subscribers', async () => {
     const ipc = fakeIpcRef.value as FakeIpc;
@@ -1150,8 +1051,6 @@ describe('onStateChange', () => {
     expect(events).toContainEqual({ kind: 'queue' });
   });
 });
-
-// ---------- queue generation ----------
 
 describe('queue generation', () => {
   it('rises by one on a replace', async () => {
@@ -1187,8 +1086,6 @@ describe('queue generation', () => {
     expect(playbackEngine.getQueueGeneration()).toBe(before);
   });
 });
-
-// ---------- the radio station tag names a station among saved stations sharing a URL ----------
 
 describe('radio station tag', () => {
   const TAG = 'user-data/navidrome-mcp/radio-station-id';
@@ -1248,8 +1145,6 @@ describe('radio station tag', () => {
   });
 });
 
-// ---------- the visualizer filter changes only while mpv is idle, paused or starting a file ----------
-
 describe('visualizer filter sync', () => {
   const LIVE_MPV = { 'mpv-version': 'mpv v0.40.0', 'ffmpeg-version': 'n7.1' };
   const CHECKED = { ok: true, build: 'mpv v0.40.0 with FFmpeg n7.1' } as const;
@@ -1305,7 +1200,7 @@ describe('visualizer filter sync', () => {
     answerProperties(spawnFake, { ...LIVE_MPV, 'idle-active': true });
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
-    // The spawn path creates the wait timer several real event-loop turns in, so time advances in steps.
+    // The spawn path creates the wait timer several event-loop turns in, so time advances in steps.
     let finished = false;
     const started = playbackEngine.ensureRunning().finally(() => { finished = true; });
     for (let waited = 0; !finished && waited <= MPV_VISUALIZER_SPAWN_WAIT_MS * 2; waited += 100) {
@@ -1468,8 +1363,6 @@ describe('songIdForPath', () => {
   });
 });
 
-// ---------- quitMpv is bounded and best effort ----------
-
 describe('quitMpv', () => {
   let engine: typeof playbackEngine;
 
@@ -1521,8 +1414,6 @@ describe('quitMpv', () => {
   });
 });
 
-// ---------- hasControlledMpv gates the MCP exit quit ----------
-
 describe('hasControlledMpv', () => {
   it('stays false through an attach and a read, then turns true on the first control call', async () => {
     // The flag is never cleared, so a fresh module gives a fresh singleton.
@@ -1544,9 +1435,7 @@ describe('hasControlledMpv', () => {
   });
 });
 
-// ---------- quitMpv during an in-flight start ----------
-
-/** quitMpv latches its quit for the life of the engine, so a test that calls it needs a fresh singleton. */
+/** quitMpv latches for the engine's life, so each test that calls it needs a fresh engine. */
 async function loadFreshEngine(): Promise<{
   engine: typeof playbackEngine;
   freshMpvIpc: typeof MpvIpc;

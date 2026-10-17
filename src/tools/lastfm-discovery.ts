@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Last.fm Music Discovery Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Config } from '../config.js';
@@ -63,7 +51,6 @@ interface SimilarTracksResult {
 interface ArtistInfoResult {
   name: string;
   mbid: string | null;
-  // Only with verbose, like the other Last.fm tools.
   url?: string;
   listeners: number;
   playcount: number;
@@ -143,7 +130,8 @@ function readBiography(artistInfo: Record<string, unknown>): string | null {
   return typeof bioSummary === 'string' ? stripWikiHtml(bioSummary) : null;
 }
 
-// Last.fm answers a language with no wiki by an anchor-only summary. A failed fallback keeps the primary result.
+// Last.fm answers a language with no wiki by an anchor-only summary. A failed English fallback
+// leaves the biography null instead of failing the tool.
 async function fetchEnglishBiography(artist: string, apiKey: string): Promise<string | null> {
   try {
     const data = await callLastFmApi('artist.getInfo', { artist, lang: 'en', autocorrect: '1' }, apiKey);
@@ -341,7 +329,8 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
                    type === 'tracks' ? 'chart.getTopTracks' :
                    'chart.getTopTags';
 
-    // chart.getTopTags ignores `page`, so the tags chart is read from row one and sliced to the page.
+    // chart.getTopTags ignores `page`, so the tags chart is read from row one and sliced to the
+    // page.
     const params: Record<string, string> = type === 'tags'
       ? { limit: String(Math.min(page * limit, LASTFM_CHART_MAX_LIMIT)) }
       : { limit: limit.toString(), page: page.toString() };
@@ -394,8 +383,8 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         hasMore: tracks.length === limit,
       };
     } else {
-      // chart.getTopTags has no count field. `taggings` (total applications) is the
-      // closest analogue to popularity, and `reach` (distinct users) rides along.
+      // chart.getTopTags has no count field, so `taggings`, the total tag applications, stands in
+      // for popularity.
       const tagsRaw = data['tags'];
       if (typeof tagsRaw !== 'object' || tagsRaw === null) {
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tags'));

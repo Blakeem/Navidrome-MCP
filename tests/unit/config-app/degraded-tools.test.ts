@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - Degraded-mode tool notice tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * The degraded tools are the only in-band route back to the settings page, so
  * a startup failure reason must lead the notice both tools return.

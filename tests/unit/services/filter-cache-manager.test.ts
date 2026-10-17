@@ -1,14 +1,10 @@
-/**
- * Unit tests for FilterCacheManager - Simplified Implementation
- * Tests the improved logic without complex nested iteration
- */
 import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 import { filterCacheManager, type FilterType } from '../../../src/services/filter-cache-manager.js';
 import { getFilterOptions } from '../../../src/tools/tags.js';
 
-// Mock data matching Navidrome API responses
+// Values mix letter case, so the case-insensitive resolve and listing paths run.
 const mockGenres = [
   { id: 'genre-1', tagName: 'genre', tagValue: 'Rock' },
   { id: 'genre-2', tagName: 'genre', tagValue: 'jazz' },
@@ -29,13 +25,11 @@ const mockTags = [
   { id: 'tag-10', tagName: 'mood', tagValue: 'relaxing' },
 ];
 
-// Create mock client
 const createMockClient = (): NavidromeClient => {
   const client = {
     requestWithLibraryFilter: vi.fn(),
   } as unknown as NavidromeClient;
 
-  // Setup mock responses
   (client.requestWithLibraryFilter as any).mockImplementation((endpoint: string) => {
     if (endpoint.startsWith('/tag')) {
       const allTags = [...mockGenres, ...mockTags];
@@ -52,20 +46,18 @@ const createMockClient = (): NavidromeClient => {
 
 const mockConfig = {} as Config;
 
-describe('FilterCacheManager - Simplified Implementation', () => {
+describe('FilterCacheManager', () => {
   let client: NavidromeClient;
 
   beforeEach(async () => {
-    // Reset singleton state for each test
     filterCacheManager.reset();
 
     client = createMockClient();
 
-    // Initialize the cache manager
     await filterCacheManager.initialize(client, mockConfig);
   });
 
-  describe('Core Functionality - Preserved Behavior', () => {
+  describe('Core Functionality', () => {
     it('should resolve exact case matches', () => {
       expect(filterCacheManager.resolve('genres', 'Rock')).toBe('genre-1');
       expect(filterCacheManager.resolve('genres', 'Classical')).toBe('genre-3');
@@ -96,11 +88,10 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     });
   });
 
-  describe('getAvailableOptions - Simplified Logic', () => {
+  describe('getAvailableOptions', () => {
     it('should return original case values for genres', () => {
       const options = filterCacheManager.getAvailableOptions('genres');
 
-      // Should return original case, sorted
       expect(options).toEqual(['Classical', 'ELECTRONIC', 'jazz', 'Rock']);
       expect(options).toHaveLength(4);
     });
@@ -143,7 +134,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     it('should not include lowercase duplicates', () => {
       const genreOptions = filterCacheManager.getAvailableOptions('genres');
 
-      // Should not contain both 'Rock' and 'rock'
+      // resolve() also keys each value in lowercase, and those keys must not reach the listing.
       expect(genreOptions.filter(opt => opt.toLowerCase() === 'rock')).toHaveLength(1);
       expect(genreOptions).toContain('Rock');
       expect(genreOptions).not.toContain('rock');
@@ -152,15 +143,13 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     it('should preserve original case when original is lowercase', () => {
       const genreOptions = filterCacheManager.getAvailableOptions('genres');
 
-      // 'jazz' is originally lowercase, should remain lowercase
       expect(genreOptions).toContain('jazz');
       expect(genreOptions).not.toContain('Jazz');
     });
   });
 
-  describe('Performance - Simplified Algorithm', () => {
+  describe('Performance', () => {
     it('should handle large datasets efficiently', async () => {
-      // Create a larger mock dataset
       const largeGenres = Array.from({ length: 1000 }, (_, i) => ({
         id: `genre-${i}`,
         tagName: 'genre',
@@ -222,10 +211,8 @@ describe('FilterCacheManager - Simplified Implementation', () => {
     });
 
     it('should handle mixed case scenarios correctly', () => {
-      // Test with data that has same value in different cases
       const mixedOptions = filterCacheManager.getAvailableOptions('genres');
 
-      // Should contain only one version of each logical value
       const lowerCaseSet = new Set(mixedOptions.map(opt => opt.toLowerCase()));
       expect(lowerCaseSet.size).toBe(mixedOptions.length);
     });
@@ -246,10 +233,8 @@ describe('FilterCacheManager - Simplified Implementation', () => {
         const options = filterCacheManager.getAvailableOptions(type);
 
         for (const option of options) {
-          // Every available option should be resolvable
           expect(filterCacheManager.resolve(type, option)).not.toBeNull();
 
-          // Case-insensitive resolution should also work
           expect(filterCacheManager.resolve(type, option.toLowerCase())).not.toBeNull();
           expect(filterCacheManager.resolve(type, option.toUpperCase())).not.toBeNull();
         }
@@ -270,14 +255,11 @@ describe('FilterCacheManager - Simplified Implementation', () => {
 
   describe('getFilterOptions - input validation (FilterOptionsSchema)', () => {
     it('rejects limit=0 instead of silently returning an empty list', async () => {
-      // Regression: limit=0 used to flow into slice(0,0) → [] with no error.
-      // The schema clamps limit to [1,200], so 0 is now rejected.
       await expect(
         getFilterOptions({ filterType: 'genres', limit: 0 }),
       ).rejects.toThrow();
 
-      // Sanity: a valid call against the same cache still returns data, proving
-      // the rejection above is the limit=0 guard and not an empty cache.
+      // A valid call on the same cache returns data, so the rejection above comes from the limit.
       const ok = await getFilterOptions({ filterType: 'genres' });
       expect(ok.available.length).toBeGreaterThan(0);
     });
@@ -307,7 +289,6 @@ describe('FilterCacheManager - Simplified Implementation', () => {
 
     it('defaults limit to 50 when omitted', async () => {
       const result = await getFilterOptions({ filterType: 'genres' });
-      // Only 4 genres exist, so the default cap of 50 returns all of them.
       expect(result.available).toHaveLength(4);
       expect(result.total).toBe(4);
     });
@@ -342,9 +323,7 @@ describe('FilterCacheManager - Simplified Implementation', () => {
 describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () => {
   const disabledConfig = { filterCacheEnabled: false } as Config;
 
-  // Initial genre set returned by the first fetch
   const initialGenres = [{ id: 'genre-1', tagName: 'genre', tagValue: 'Rock' }];
-  // Updated genre set returned after a new genre is added mid-session
   const updatedGenres = [
     { id: 'genre-1', tagName: 'genre', tagValue: 'Rock' },
     { id: 'genre-2', tagName: 'genre', tagValue: 'Shoegaze' },
@@ -391,7 +370,6 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
     await filterCacheManager.initialize(mockClient, disabledConfig);
     const fetchesAfterInit = fetchCount;
 
-    // Simulate a new genre being added to the library
     returnUpdated = true;
 
     await filterCacheManager.ensureFresh();
@@ -407,14 +385,12 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
 
     await filterCacheManager.ensureFresh();
 
-    // No additional fetches should occur when cache is enabled
     expect(fetchCount).toBe(fetchesAfterInit);
   });
 
   it('getFilterOptions re-fetches when disabled and returns updated values', async () => {
     await filterCacheManager.initialize(mockClient, disabledConfig);
 
-    // Simulate new genre added
     returnUpdated = true;
 
     const result = await getFilterOptions({ filterType: 'genres', limit: 50 });
@@ -423,7 +399,7 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
     expect(result.available).toContain('Shoegaze');
   });
 
-  // The loaders refill the maps type by type, so a reader racing a reload must wait for it to finish.
+  // The loaders refill the maps type by type, so a reader racing a reload must wait for it to end.
   it('ensureFresh() joins an in-flight reload even with the cache enabled', async () => {
     await filterCacheManager.initialize(mockClient, { filterCacheEnabled: true } as Config);
     let releaseGenres: (rows: unknown) => void = () => undefined;
@@ -455,8 +431,6 @@ describe('FilterCacheManager - cache disabled (filterCacheEnabled=false)', () =>
 
   it('ensureFresh() resolves successfully when disabled and client is stored', async () => {
     await filterCacheManager.initialize(mockClient, disabledConfig);
-    // After initialization the client reference is stored; ensureFresh() should
-    // complete without error (it re-fetches and resolves).
     await expect(filterCacheManager.ensureFresh()).resolves.toBeUndefined();
   });
 });

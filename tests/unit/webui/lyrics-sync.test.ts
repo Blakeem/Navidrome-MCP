@@ -1,10 +1,5 @@
-/**
- * Coverage for the pure timing module behind the lyrics overlay.
- *
- * That module lives under src/webui/public/, which eslint ignores and tsc cannot
- * see, so this file is its only automated guard. It stays importable here only
- * while it references no browser global, which the purity scan below enforces.
- */
+// src/webui/public/ is outside eslint and type checking, so this file is the only guard on the
+// lyrics timing module. The module stays importable in Node only while it uses no browser global.
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -22,7 +17,7 @@ interface FixtureLine {
   text: string;
 }
 
-// Gaps of a real LRC: mostly 2-to-3 seconds, median 2.5s, plus one instrumental
+// The gaps follow a real LRC, mostly 2 to 3 seconds with a 2.5s median, plus one instrumental
 // break the length of the one in Get Lucky.
 const GAP_PATTERN_MS = [2200, 2500, 2500, 2800, 3000, 2400];
 const FIXTURE_LINE_COUNT = 50;

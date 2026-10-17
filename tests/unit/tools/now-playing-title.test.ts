@@ -1,38 +1,21 @@
 /**
  * Navidrome MCP Server - now_playing title reconciliation / leak tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * Regression for Issue #3 — `now_playing` leaked the raw Subsonic stream URL
- * (with auth token `t` + salt `s`) in `title` during the brief track-load
- * window, before mpv reads file metadata. These tests drive the engine into
- * that window and assert the credential-bearing URL never reaches the result,
- * and that title/artist/album are reconciled by songId instead.
+ * mpv reports the stream URL, with its Subsonic auth token and salt, as media-title until it
+ * reads the file's tags, so now_playing must never pass that title through.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { nowPlaying, resetNowPlayingCache } from '../../../src/tools/playback.js';
 
-// A realistic credential-bearing stream URL, shaped like what mpv reports as
-// `media-title` before metadata loads. Contains the auth token + salt.
 const LEAKY_URL =
   'http://192.168.86.100:4533/rest/stream?u=blake&t=c7d099345f8b1a2b3c4d5e6f&s=603dbb5c&id=song-123&format=raw';
-// mpv's filename fallback for the same stream: the URL-unescaped basename, with no scheme.
+// mpv's filename fallback for the same stream is the URL-unescaped basename, with no scheme.
 const LEAKY_BASENAME = 'stream?u=blake&t=c7d099345f8b1a2b3c4d5e6f&s=603dbb5c&id=song-123&format=raw';
 
 const ensureAttachedMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -42,7 +25,7 @@ const getQueueGenerationMock = vi.hoisted(() => vi.fn());
 const getQueueMock = vi.hoisted(() => vi.fn());
 const ingestQueueMetadataMock = vi.hoisted(() => vi.fn());
 const getRadioStationTagMock = vi.hoisted(() => vi.fn().mockReturnValue(null));
-// Mirrors the engine's parse: only a Subsonic stream URL names a song.
+// Mirrors the engine's parse, where only a Subsonic stream URL names a song.
 const songIdForPathMock = vi.hoisted(() =>
   vi.fn((path: string): string | null => {
     try {
@@ -67,12 +50,11 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   },
 }));
 
-/** Build a getCachedProperty implementation from a property map. */
 function cachedProps(props: Record<string, unknown>): (name: string) => unknown {
   return (name: string) => props[name];
 }
 
-describe('now_playing title reconciliation (Issue #3)', () => {
+describe('now_playing title reconciliation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetNowPlayingCache();
@@ -81,8 +63,6 @@ describe('now_playing title reconciliation (Issue #3)', () => {
   });
 
   it('suppresses a URL-shaped media-title and reconciles the real title by songId', async () => {
-    // Track-load window: mpv reports the stream URL as media-title, no metadata
-    // yet. The current queue entry carries the cache-resolved title/artist/album.
     getCachedPropertyMock.mockImplementation(
       cachedProps({
         'playlist-pos': 0,
@@ -112,7 +92,6 @@ describe('now_playing title reconciliation (Issue #3)', () => {
     expect(result.title).toBe('Real Song Title');
     expect(result.artist).toBe('Real Artist');
     expect(result.album).toBe('Real Album');
-    // The token/salt must NEVER appear anywhere in the serialized result.
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain('c7d099345f8b1a2b3c4d5e6f');
     expect(serialized).not.toContain('603dbb5c');
@@ -144,8 +123,6 @@ describe('now_playing title reconciliation (Issue #3)', () => {
   });
 
   it('never emits a URL-shaped title even if the queue entry also lacks a clean title (no client)', async () => {
-    // Pathological: cache empty AND no client to fall back to. Title must be
-    // omitted entirely rather than leaking the URL.
     getCachedPropertyMock.mockImplementation(
       cachedProps({
         'playlist-pos': 0,
@@ -179,11 +156,9 @@ describe('now_playing title reconciliation (Issue #3)', () => {
         metadata: null,
       }),
     );
-    // Engine cache lost on restart: current entry has no title/artist/album.
     getQueueMock.mockResolvedValue([
       { index: 0, songId: 'song-123', isCurrent: true, isPlaying: true },
     ]);
-    // Mock client returns the song row for the Navidrome fallback.
     const client = {
       request: vi.fn().mockResolvedValue([
         { id: 'song-123', title: 'Restored Title', artist: 'Restored Artist', album: 'Restored Album', duration: 200 },
