@@ -162,3 +162,24 @@ export function writeSettings(settings: SettingsFile): void {
     throw err;
   }
 }
+
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Every store writer sets only some keys, so a save keeps each stored key it does not set, even one
+ * the schema would strip. A posted null, '' or [] replaces the stored value. Only undefined keeps it.
+ */
+export function mergeOntoStored(stored: JsonObject, posted: JsonObject): JsonObject {
+  const merged: JsonObject = { ...stored };
+  for (const [key, value] of Object.entries(posted)) {
+    // Assigning __proto__ would replace the prototype instead of adding a key.
+    if (key === '__proto__' || value === undefined) continue;
+    const storedValue = merged[key];
+    merged[key] = isJsonObject(value) && isJsonObject(storedValue) ? mergeOntoStored(storedValue, value) : value;
+  }
+  return merged;
+}

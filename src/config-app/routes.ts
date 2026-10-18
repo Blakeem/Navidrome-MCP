@@ -8,7 +8,7 @@ import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateMappedSettings } from '../config.js';
 import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
-import { readRawSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import { mergeOntoStored, readRawSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
 import { getSettingsStorePath } from '../config/store-path.js';
 import { parseWebuiTheme, WEBUI_BIND_HOSTS } from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
@@ -102,33 +102,12 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
 
 // The form never loaded a store that readRawSettings rejected, so overwriting it would lose every
 // value not retyped.
-function backupUnusableStore(stored: JsonObject | null): string | null {
+function backupUnusableStore(stored: Record<string, unknown> | null): string | null {
   const storePath = getSettingsStorePath();
   if (stored !== null || !existsSync(storePath)) return null;
   const backupPath = `${storePath}.bak`;
   copyFileSync(storePath, backupPath);
   return backupPath;
-}
-
-type JsonObject = Record<string, unknown>;
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/**
- * The player's gear modal and hand edits write keys this form does not post, so a save keeps them.
- * A cleared field posts null, '' or [] instead of omitting its key, so it replaces the stored value.
- */
-function mergeOntoStored(stored: JsonObject, posted: JsonObject): JsonObject {
-  const merged: JsonObject = { ...stored };
-  for (const [key, value] of Object.entries(posted)) {
-    // Assigning __proto__ would replace the prototype instead of adding a key.
-    if (key === '__proto__' || value === undefined) continue;
-    const storedValue = merged[key];
-    merged[key] = isJsonObject(value) && isJsonObject(storedValue) ? mergeOntoStored(storedValue, value) : value;
-  }
-  return merged;
 }
 
 // The runtime reads a legacy theme such as 'system' as unset, so a save drops it from the file.

@@ -7,7 +7,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
 import type { WebuiTheme } from '../../constants/defaults.js';
-import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../../config/store.js';
+import {
+  mergeOntoStored,
+  readRawSettings,
+  readSettings,
+  writeSettings,
+  SettingsFileSchema,
+  type SettingsFile,
+} from '../../config/store.js';
 import { PlayerSettingsPatchSchema } from '../../schemas/index.js';
 import { playbackEngine } from '../../services/playback/playback-engine.js';
 import { logger } from '../../utils/logger.js';
@@ -60,8 +67,8 @@ export function handleGetPlayerSettings(req: IncomingMessage, res: ServerRespons
 }
 
 /**
- * The write merges only the webui keys into the stored file, so credentials and other settings are
- * never overwritten. `persisted` is false when the change holds for this session only.
+ * The write merges only the request's webui keys onto the unstripped stored file, so every other
+ * stored key survives. `persisted` is false when the change holds for this session only.
  */
 export async function handleSetPlayerSettings(
   req: IncomingMessage,
@@ -76,7 +83,8 @@ export async function handleSetPlayerSettings(
 
   const input = await readValidBody(req, res, PlayerSettingsPatchSchema);
   if (input === null) return;
-  let persistedWebui: NonNullable<SettingsFile['webui']> | null = null;
+  let storedWebui: SettingsFile['webui'] = undefined;
+  let persisted = false;
 
   // The live flags matter to the running process, so they apply before the best-effort write.
   if (input.persistAfterMcpExit !== undefined) {
@@ -90,36 +98,33 @@ export async function handleSetPlayerSettings(
     void playbackEngine.syncVisualizerFilter();
   }
 
-  const current = readSettings();
-  if (current === null) {
+  const stored = readRawSettings();
+  if (stored === null) {
     // No usable store is normal in env-fallback mode. A near-empty file written here would replace
     // that config, since a usable store wins over env.
     logger.warn('player settings: settings.json missing; applied for this session only');
   } else {
-    const webui = { ...(current.webui ?? {}) };
-    if (input.persistAfterMcpExit !== undefined) webui.persistAfterMcpExit = input.persistAfterMcpExit;
-    if (input.autoOpenBrowser !== undefined) webui.autoOpenBrowser = input.autoOpenBrowser;
-    if (input.theme !== undefined) webui.theme = input.theme;
-    if (input.visualizer !== undefined) webui.visualizer = input.visualizer;
-    const merged = { ...current, webui };
+    storedWebui = SettingsFileSchema.safeParse(stored).data?.webui;
+    // The patch schema's keys are the stored webui keys, so the validated body is the webui patch.
+    const merged = mergeOntoStored(stored, { webui: input });
     // A file that does not parse back would leave the store unusable.
     const check = SettingsFileSchema.safeParse(merged);
     if (!check.success) {
       logger.warn('player settings: merged settings failed validation; not writing (applied live only)');
     } else {
       try {
-        writeSettings(merged);
-        persistedWebui = webui;
+        writeSettings(merged as SettingsFile);
+        storedWebui = check.data.webui;
+        persisted = true;
       } catch (err) {
         logger.warn('player settings: failed to persist to settings.json:', err);
       }
     }
   }
 
-  const storedWebui = persistedWebui ?? current?.webui;
   writeJson(res, 200, {
     ...playerSettingsBody(storedWebui?.autoOpenBrowser ?? config.webui.autoOpenBrowser),
-    persisted: persistedWebui !== null,
+    persisted,
   });
   broadcaster.broadcastNow();
 }

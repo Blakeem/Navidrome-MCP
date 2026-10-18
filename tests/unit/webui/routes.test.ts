@@ -13,7 +13,7 @@ import { makeTestConfig } from '../../helpers/test-config.js';
 // player.ts validates merged settings with the real SettingsFileSchema, so only disk I/O is fake.
 vi.mock('../../../src/config/store.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/config/store.js')>();
-  return { ...actual, readSettings: vi.fn(), writeSettings: vi.fn() };
+  return { ...actual, readSettings: vi.fn(), readRawSettings: vi.fn(), writeSettings: vi.fn() };
 });
 
 // Stubbed live flags keep each response deterministic and make each setter observable.
@@ -52,7 +52,7 @@ vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
   };
 });
 
-import { readSettings, writeSettings } from '../../../src/config/store.js';
+import { readRawSettings, readSettings, writeSettings } from '../../../src/config/store.js';
 import { getPersist, setPersist, setTheme, setVisualizer } from '../../../src/web/player-runtime.js';
 import { fetchWithTimeout } from '../../../src/utils/fetch-with-timeout.js';
 import { HEALTH_APP_ID, handleHealth } from '../../../src/webui/routes/health.js';
@@ -369,7 +369,7 @@ describe('handleSetPlayerSettings preserves unrelated stored settings', () => {
       },
       advanced: { debug: true },
     };
-    vi.mocked(readSettings).mockReturnValue(stored);
+    vi.mocked(readRawSettings).mockReturnValue(stored);
     let written: SettingsFile | undefined;
     vi.mocked(writeSettings).mockImplementation((s) => {
       written = s;
@@ -396,11 +396,41 @@ describe('handleSetPlayerSettings preserves unrelated stored settings', () => {
     expect(setPersist).not.toHaveBeenCalled();
     expect(getPersist).toHaveBeenCalled();
   });
+
+  it('keeps stored keys the settings schema does not know', async () => {
+    vi.mocked(readRawSettings).mockReturnValue({
+      navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
+      webui: { theme: 'light', note: 'hand-added' },
+      playback: { mpvPath: '/usr/bin/mpv', someFutureKey: 7 },
+      futureSection: { flag: true },
+    });
+    let written: Record<string, unknown> | undefined;
+    vi.mocked(writeSettings).mockImplementation((s) => {
+      written = s;
+    });
+
+    const cap = fakeRes();
+    await handleSetPlayerSettings(
+      fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ theme: 'dark' }))]),
+      cap.res,
+      LOOPBACK_CONFIG,
+      fakeBroadcaster(),
+    );
+
+    expect(cap.status()).toBe(200);
+    expect(cap.json()).toMatchObject({ persisted: true });
+    expect(written).toEqual({
+      navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
+      webui: { theme: 'dark', note: 'hand-added' },
+      playback: { mpvPath: '/usr/bin/mpv', someFutureKey: 7 },
+      futureSection: { flag: true },
+    });
+  });
 });
 
 describe('handleSetPlayerSettings persistAfterMcpExit', () => {
   it('applies the flag to the running player and persists it', async () => {
-    vi.mocked(readSettings).mockReturnValue({
+    vi.mocked(readRawSettings).mockReturnValue({
       navidrome: { url: 'http://music.local', username: 'admin', password: 'p' },
       webui: { persistAfterMcpExit: false },
     });
@@ -425,7 +455,7 @@ describe('handleSetPlayerSettings persistAfterMcpExit', () => {
 
 describe('handleSetPlayerSettings theme', () => {
   it('applies the theme live, persists it, and broadcasts it to every remote', async () => {
-    vi.mocked(readSettings).mockReturnValue({
+    vi.mocked(readRawSettings).mockReturnValue({
       navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
       webui: { persistAfterMcpExit: true },
     });
@@ -451,7 +481,7 @@ describe('handleSetPlayerSettings theme', () => {
   });
 
   it('accepts a null theme, which returns every device to its own setting', async () => {
-    vi.mocked(readSettings).mockReturnValue({
+    vi.mocked(readRawSettings).mockReturnValue({
       navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
       webui: { theme: 'dark' },
     });
@@ -492,7 +522,7 @@ describe('handleSetPlayerSettings theme', () => {
 
 describe('handleSetPlayerSettings visualizer', () => {
   it('applies the setting live, syncs the mpv filter to it, persists it and broadcasts it', async () => {
-    vi.mocked(readSettings).mockReturnValue({
+    vi.mocked(readRawSettings).mockReturnValue({
       navidrome: { url: 'http://music.local', username: 'admin', password: 'super-secret' },
       webui: { theme: 'dark' },
     });
@@ -528,7 +558,7 @@ describe('handleSetPlayerSettings visualizer', () => {
   });
 
   it('leaves the mpv filter alone when the visualizer is not in the patch', async () => {
-    vi.mocked(readSettings).mockReturnValue(null);
+    vi.mocked(readRawSettings).mockReturnValue(null);
     const sync = vi.spyOn(playbackEngine, 'syncVisualizerFilter');
 
     try {
@@ -565,13 +595,13 @@ describe('handleSetPlayerSettings reports autoOpenBrowser as stored', () => {
   }
 
   it('reports the written value once settings.json is saved', async () => {
-    vi.mocked(readSettings).mockReturnValue(STORED);
+    vi.mocked(readRawSettings).mockReturnValue(STORED);
 
     expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: true, persisted: true });
   });
 
   it('reports the stored value when the write fails', async () => {
-    vi.mocked(readSettings).mockReturnValue(STORED);
+    vi.mocked(readRawSettings).mockReturnValue(STORED);
     vi.mocked(writeSettings).mockImplementationOnce(() => {
       throw new Error('disk full');
     });
@@ -580,7 +610,7 @@ describe('handleSetPlayerSettings reports autoOpenBrowser as stored', () => {
   });
 
   it('reports the launch config value when no settings.json exists to hold the value', async () => {
-    vi.mocked(readSettings).mockReturnValue(null);
+    vi.mocked(readRawSettings).mockReturnValue(null);
 
     expect(await postAutoOpen()).toMatchObject({ autoOpenBrowser: false, persisted: false });
     expect(writeSettings).not.toHaveBeenCalled();
