@@ -453,3 +453,88 @@ describe('getSimilarArtists and getSimilarTracks — url under verbose', () => {
     expect(verbose.similarTracks[0]!.url).toBe('https://last.fm/creep');
   });
 });
+
+// Last.fm sends a one-element list as a bare object, so each read must accept that shape.
+describe('one-element Last.fm containers', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('getSimilarArtists returns one row from a bare artist object', async () => {
+    global.fetch = makeFetch(200, { similarartists: { artist: { name: 'Mogwai', match: '0.8', mbid: '' } } });
+
+    const { getSimilarArtists } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getSimilarArtists(makeConfig(), { artist: 'Explosions in the Sky', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect(result.similarArtists[0]!.name).toBe('Mogwai');
+  });
+
+  it('getSimilarTracks returns one row from a bare track object', async () => {
+    global.fetch = makeFetch(200, {
+      similartracks: { track: { name: 'Creep', match: '0.9', mbid: '', artist: { name: 'Radiohead' } } },
+    });
+
+    const { getSimilarTracks } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getSimilarTracks(makeConfig(), { artist: 'Muse', track: 'Unintended', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect(result.similarTracks[0]!.artist).toBe('Radiohead');
+  });
+
+  it('getArtistInfo returns one tag and one similar artist from bare objects', async () => {
+    global.fetch = makeFetch(200, {
+      artist: {
+        name: 'Radiohead',
+        stats: { listeners: '1', playcount: '1' },
+        bio: { summary: 'An English band.' },
+        tags: { tag: { name: 'alternative' } },
+        similar: { artist: { name: 'Thom Yorke' } },
+      },
+    });
+
+    const { getArtistInfo } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getArtistInfo(makeConfig(), { artist: 'Radiohead' });
+
+    expect(result.tags).toEqual(['alternative']);
+    expect(result.similar).toEqual(['Thom Yorke']);
+  });
+
+  it('getTopTracksByArtist returns one row from a bare track object', async () => {
+    global.fetch = makeFetch(200, { toptracks: { track: { name: 'Creep', playcount: '5', listeners: '2', mbid: '' } } });
+
+    const { getTopTracksByArtist } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTopTracksByArtist(makeConfig(), { artist: 'Radiohead', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect(result.tracks[0]!.name).toBe('Creep');
+  });
+
+  it('getTrendingMusic artists returns one row from a bare artist object', async () => {
+    global.fetch = makeFetch(200, { artists: { artist: { name: 'Taylor Swift', playcount: '9', listeners: '1', mbid: '' } } });
+
+    const { getTrendingMusic } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTrendingMusic(makeConfig(), { type: 'artists', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect((result.items[0] as { name: string }).name).toBe('Taylor Swift');
+  });
+
+  it('getTrendingMusic tracks returns one row from a bare track object', async () => {
+    global.fetch = makeFetch(200, { tracks: { track: { name: 'Song', playcount: '9', listeners: '1', mbid: '', artist: { name: 'Band' } } } });
+
+    const { getTrendingMusic } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTrendingMusic(makeConfig(), { type: 'tracks', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect((result.items[0] as { artist: string }).artist).toBe('Band');
+  });
+
+  it('getTrendingMusic tags returns one row from a bare tag object', async () => {
+    global.fetch = makeFetch(200, { tags: { tag: { name: 'rock', taggings: '9', reach: '1' } } });
+
+    const { getTrendingMusic } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTrendingMusic(makeConfig(), { type: 'tags', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect((result.items[0] as { name: string }).name).toBe('rock');
+  });
+});

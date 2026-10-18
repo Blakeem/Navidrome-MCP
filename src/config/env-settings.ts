@@ -123,6 +123,7 @@ function settingsFromEnvSource(
       port,
       host: get('WEBUI_HOST') ?? null,
       expose: toBool('WEBUI_EXPOSE', get('WEBUI_EXPOSE'), false),
+      allowedHosts: toList(get('WEBUI_ALLOWED_HOSTS')),
       autoOpenBrowser: toBool('WEBUI_AUTO_OPEN_BROWSER', get('WEBUI_AUTO_OPEN_BROWSER'), false),
       persistAfterMcpExit: toBool('WEBUI_PERSIST_AFTER_MCP_EXIT', get('WEBUI_PERSIST_AFTER_MCP_EXIT'), false),
       visualizer: toBool('WEBUI_VISUALIZER', get('WEBUI_VISUALIZER'), true),

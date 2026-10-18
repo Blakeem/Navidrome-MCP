@@ -409,6 +409,7 @@ Every setting below except `webui.theme` is in the **Web UI** section of the set
 | `webui.port` | `8808` | The port the player listens on. Pick another if 8808 is taken on your host. |
 | `webui.host` | `127.0.0.1` | Bind address, one of `127.0.0.1`, `0.0.0.0`, or `::`. Any other value falls back to `127.0.0.1`. A value set here overrides `webui.expose`. |
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the player. |
+| `webui.allowedHosts` | `[]` | Extra host names the player accepts on a LAN bind, such as `music.home.lan`. A LAN bind always accepts an IP address, `localhost`, and this computer's name. Any other host name gets `403`, which blocks DNS rebinding. |
 | `webui.autoOpenBrowser` | `false` | Open the player in your browser when the MCP server starts. Running `navidrome-web` directly always opens a browser. |
 | `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player running after the last MCP server using it closes. |
 | `webui.visualizer` | `true` | Set `false` to remove the visualizer and the audio analysis it adds to mpv. The analysis uses about 2.5% of one CPU core while music plays. |
@@ -467,7 +468,7 @@ When a token is set, every `/mcp` request must carry `Authorization: Bearer <tok
 
 **Host filtering.** On the default bind, loopback with no auth token, the server rejects requests whose `Host` header isn't a loopback name. This blocks DNS rebinding, so a malicious web page can't drive the server through your browser. Setting an `authToken` or binding a non-loopback address turns the automatic filter off, since a remote deployment is reached by names the server can't know in advance. A lured browser can't attach your token, so the bearer token already blocks rebinding. To pin the accepted names, set `transport.allowedHosts`, which applies whenever it is present. Each entry is the exact `Host` header value, with the port when it is not 80 or 443 (such as `mcp.example.com:3000`). Set `transport.allowedOrigins` only for browser clients. It gates the `Origin` header.
 
-The transport also reads `MCP_TRANSPORT` (`stdio` or `http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, `MCP_HTTP_ALLOWED_HOSTS`, and `MCP_HTTP_ALLOWED_ORIGINS` from the environment. The last two take comma-separated lists. The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`, `WEBUI_VISUALIZER`). These follow the rule in [Headless Machines and Containers](#headless-machines-and-containers). They also pre-fill the settings form on first run.
+The transport also reads `MCP_TRANSPORT` (`stdio` or `http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, `MCP_HTTP_ALLOWED_HOSTS`, and `MCP_HTTP_ALLOWED_ORIGINS` from the environment. The last two take comma-separated lists. The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_ALLOWED_HOSTS`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`, `WEBUI_VISUALIZER`). `WEBUI_ALLOWED_HOSTS` takes a comma-separated list. These follow the rule in [Headless Machines and Containers](#headless-machines-and-containers). They also pre-fill the settings form on first run.
 
 > **Single account, shared state.** One process serves every HTTP session with one Navidrome account. So a `set_active_libraries` call changes the library filter for every connected session.
 
@@ -540,7 +541,7 @@ Each visualizer style is one file in `src/webui/public/visualizers/`. To add a s
 
 ## License
 
-- **Code:** [AGPL-3.0](LICENSE)
+- **Code:** [AGPL-3.0-or-later](LICENSE)
 - **Documentation:** CC-BY-SA-4.0
 
 ## Support

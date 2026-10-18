@@ -118,7 +118,7 @@ Facts about the parts in this diagram:
 2. The web player process and the MCP server process each run their own playback engine. Each engine has its own mutation lock, and both drive one mpv [DIRECT: `PLAYBACK-SPEC.md:113-118`, `playback-engine.ts:265`]. No lock spans the two processes.
 3. The web remote HTTP server dispatches through one flat if-chain [DIRECT: `server.ts:97-199`]. A new route is one line there.
 4. The library routes already search songs with `searchAll` and the active-library filter [DIRECT: `routes/library.ts:70-97`].
-5. The snapshot broadcaster sends the entire mpv playlist and the playback status to every SSE client [DIRECT: `broadcaster.ts:198-219`]. The status includes `mpvPath` and `mpvVersion` [DIRECT: `playback-engine.ts:609-626`]. Guests must not receive this snapshot.
+5. The snapshot broadcaster sends the entire mpv playlist and the playback status to every SSE client [DIRECT: `broadcaster.ts:198-219`]. The status carries only `engineRunning`, `volume` and `idle` [DIRECT: `broadcaster.ts:231-233`]. Guests must not receive this snapshot.
 6. The saved-queue tools touch only Navidrome's `/queue` [DIRECT: `src/tools/queue-management.ts:44-111`]. Party Mode does not touch them.
 
 ## Integration point

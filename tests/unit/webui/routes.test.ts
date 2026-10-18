@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { hostname } from 'node:os';
 import type { Config } from '../../../src/config.js';
 import type { SettingsFile } from '../../../src/config/store.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
@@ -110,13 +111,14 @@ function fakeReq(remoteAddress: string, bodyChunks: Buffer[] = [], host = '127.0
   return emitter;
 }
 
-function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: boolean }): Config {
+function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: boolean; allowedHosts?: string[] }): Config {
   return makeTestConfig({
     webui: {
       enabled: true,
       host: webui.host,
       port: 8808,
       expose: webui.expose,
+      allowedHosts: webui.allowedHosts ?? [],
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: false,
       theme: null,
@@ -324,6 +326,18 @@ describe('local-only routes reject a loopback peer with a foreign Host (DNS rebi
     const cap = fakeRes();
     handlePlayerState(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, configWith({ expose: false, host: '0.0.0.0' }));
     expect(cap.json()).toMatchObject({ isLocal: false });
+  });
+});
+
+describe('local-only routes reject a request relayed by a same-host proxy', () => {
+  it('handleShutdown returns 404 to a loopback peer that carries X-Forwarded-For', () => {
+    const cap = fakeRes();
+    const shutdown = vi.fn();
+    const req = fakeReq(LOOPBACK);
+    req.headers['x-forwarded-for'] = '203.0.113.5';
+    handleShutdown(req, cap.res, shutdown);
+    expect(cap.status()).toBe(404);
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });
 
@@ -682,6 +696,7 @@ interface ServerRequestOptions {
   bindHost?: string;
   /** The configured web port. The socket always listens on an ephemeral port. */
   configuredPort?: number;
+  allowedHosts?: string[];
   /** Builds the Host header from the ephemeral port. Defaults to `127.0.0.1:<port>`. */
   hostHeader?: (port: number) => string;
   headers?: Record<string, string>;
@@ -698,7 +713,7 @@ interface ServerReply {
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 async function requestServer(method: string, path: string, options: ServerRequestOptions = {}): Promise<ServerReply> {
-  const config = configWith({ expose: false, host: options.bindHost ?? '127.0.0.1' });
+  const config = configWith({ expose: false, host: options.bindHost ?? '127.0.0.1', allowedHosts: options.allowedHosts });
   if (options.configuredPort !== undefined) config.webui.port = options.configuredPort;
   const server = createServer({
     config,
@@ -802,16 +817,44 @@ describe('Host allowlist', () => {
     expect(reply.status).toBe(403);
   });
 
-  // /healthz is local-only on a LAN bind, so a route every peer may read shows the server-wide
-  // gate is off.
-  it('accepts any Host on a non-loopback bind, but the local-only flag stays off', async () => {
+  // /healthz is local-only on a LAN bind, so a route every peer may read shows the Host gate
+  // passed.
+  it('accepts a LAN IP Host on a non-loopback bind, but the local-only flag stays off', async () => {
     const reply = await requestServer('GET', '/api/player-state', {
       bindHost: '0.0.0.0',
-      hostHeader: (port) => `evil.example:${port}`,
+      hostHeader: (port) => `192.168.1.20:${port}`,
     });
 
     expect(reply.status).toBe(200);
     expect(JSON.parse(reply.body)).toMatchObject({ isLocal: false });
+  });
+
+  it('rejects a DNS name Host on a non-loopback bind with 403', async () => {
+    const reply = await requestServer('GET', '/api/player-state', {
+      bindHost: '0.0.0.0',
+      hostHeader: () => 'evil.example:8808',
+    });
+
+    expect(reply.status).toBe(403);
+    expect(JSON.parse(reply.body)).toEqual({
+      error: 'Forbidden host. Add this host name to webui.allowedHosts to allow it.',
+    });
+  });
+
+  it.each([
+    ['an IPv4 literal', '192.168.1.20:8808'],
+    ['a bracketed IPv6 literal', '[fe80::1]:8808'],
+    ['localhost', 'localhost:8808'],
+    ["this machine's name", `${hostname()}:8808`],
+    ['a name listed in allowedHosts', 'music.home.lan:8808'],
+  ])('accepts %s as Host on a non-loopback bind', async (_label, host) => {
+    const reply = await requestServer('GET', '/api/player-state', {
+      bindHost: '0.0.0.0',
+      allowedHosts: ['music.home.lan'],
+      hostHeader: () => host,
+    });
+
+    expect(reply.status).toBe(200);
   });
 });
 

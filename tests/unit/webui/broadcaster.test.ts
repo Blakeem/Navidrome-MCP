@@ -266,6 +266,30 @@ describe('SseBroadcaster snapshot reads', () => {
     expect(res.writes[0]).toContain('"queue":null');
     expect(res.writes[0]).toContain('"status":null');
   });
+
+  it('sends status without mpvPath and mpvVersion and keeps the fields the browser reads', async () => {
+    const b = newBroadcaster();
+    const inner = internals(b);
+    const res = fakeRes();
+    inner.clients.add(res);
+    playbackReads.nowPlaying.mockResolvedValue({ title: 't' });
+    playbackReads.getPlayQueue.mockResolvedValue({ entries: [] });
+    playbackReads.playbackStatus.mockResolvedValue({
+      engineRunning: true,
+      mpvPath: 'C:\\Users\\alice\\mpv\\mpv.exe',
+      mpvVersion: 'mpv 0.38.0',
+      volume: 70,
+      idle: false,
+    });
+
+    await inner.broadcast();
+
+    expect(res.writes).toHaveLength(1);
+    expect(res.writes[0]).not.toContain('mpvPath');
+    expect(res.writes[0]).not.toContain('mpvVersion');
+    expect(res.writes[0]).not.toContain('alice');
+    expect(res.writes[0]).toContain('"status":{"engineRunning":true,"volume":70,"idle":false}');
+  });
 });
 
 describe('SseBroadcaster build ordering', () => {

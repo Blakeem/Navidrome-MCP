@@ -31,6 +31,7 @@ const BASE: Config = {
     host: '127.0.0.1',
     port: 8808,
     expose: false,
+    allowedHosts: [],
     autoOpenBrowser: false,
     persistAfterMcpExit: false,
     theme: null,

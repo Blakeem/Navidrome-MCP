@@ -123,7 +123,7 @@ OS audio device (speakers, HDMI, USB DAC, connected Bluetooth speaker)
 
 config app (navidrome-config, or hosted by either process)   src/config-app/
   form FIELDS table, public/app.js:7-39 ──► POST /api/settings ──► settings store
-  (the save writes only the FIELDS keys plus webui.theme, routes.ts:74-78, 111-116)
+  (the save merges the posted FIELDS keys onto the stored file and keeps every other key, routes.ts:63-132)
 
 browser web remote page   src/webui/public/
   receives snapshots over SSE, posts to control routes, volume.js reads status.volume
@@ -178,7 +178,7 @@ Why each new part sits where it does:
 - **Audio device module** in `src/services/playback/`. It holds pure functions (parse, filter, match) beside the engine that uses them, so unit tests need no mpv. The one-shot probe reuses the runner pattern of `runMpv` in `visualizer-filter.ts:146-166`, which should move into this module or a shared helper so two copies do not exist.
 - **Device apply step** in the engine's spawn path. The engine is the only part that knows when a new mpv is connected and has not opened an audio output yet. Applying there means the first track opens the right device, with no reload.
 - **Device watcher** in the engine's observer setup. Every attached process already receives every property change (`playback-engine.ts:877-882`), so each engine can react without cross-process coordination. Its one action, pause, is idempotent.
-- **Status fields** in `getStatus()`. The snapshot broadcaster already sends `playbackStatus()` to every web remote (`broadcaster.ts:198-219`), so the web remote gets the current device with no new event type.
+- **Status fields** in `getStatus()`. The snapshot broadcaster sends every web remote only the status fields that `snapshotStatus` picks (`broadcaster.ts:231-233`). Adding the current device to `snapshotStatus` gives the web remote the device with no new event type.
 - **Tool functions** in `src/tools/playback.ts`. The control routes already call these functions (`routes/controls.ts`), so the MCP tools and the web remote share one implementation.
 - **Store key** under `playback`. The device is a playback setting, like `mpvPath` and `transcodeFormat`, and the store is the only state that outlives mpv and is shared by every process.
 
@@ -322,7 +322,7 @@ Options: the two-tool surface (`list_audio_devices` and `set_audio_device`), the
 
 Flip check: no single weight change of 5 or less flips the winner. ROBUST.
 
-The status-folded surface would put the list into every web snapshot, since the broadcaster calls `playbackStatus()` on each change (`broadcaster.ts:198-219`). MPD splits `outputs` from `enableoutput`, and Home Assistant splits `source_list` from `select_source`, which matches the two-tool surface.
+The status-folded surface would put the list into every `playback_status` result. The web snapshot carries only the status fields that `snapshotStatus` picks (`broadcaster.ts:231-233`), so the list reaches the web remote only if that function adds it. MPD splits `outputs` from `enableoutput`, and Home Assistant splits `source_list` from `select_source`, which matches the two-tool surface.
 
 ### Web remote placement
 
@@ -382,7 +382,7 @@ Build steps in dependency order. Each names the parts it adds or changes.
 
 1. **Audio device module.** Add `src/services/playback/audio-devices.ts` with the help-text parser, the list normalizer (one driver, `auto` first, `verbose` keeps all), the match rule, and the one-shot probe. Move `runMpv` out of `visualizer-filter.ts` so both callers share it. Unit tests use recorded help output from Windows, PipeWire, PulseAudio, ALSA and CoreAudio.
 2. **Store key and config projection.** Add `playback.audioDevice` to `SettingsFileSchema` (`src/config/store.ts:55-59`), `ConfigSchema`, `mapStoreToConfig`, `settings.example.json`, and `PLAYBACK_AUDIO_DEVICE` to `buildEnvRuntimeSettings`. Add a `readSavedAudioDevice()` beside `readSavedWebuiSettings()` (`src/config.ts:106-115`).
-3. **Config app preservation.** Make the config app save keep `playback.audioDevice`. The save writes only the form's FIELDS plus `webui.theme` (`src/config-app/routes.ts:74-78`, `:111-116`, `public/app.js:80-131`), so without this step a config app save erases the saved device. The MVP keeps the stored value the way `withStoredPlayerTheme` keeps the theme. A later release turns it into a form field.
+3. **Config app preservation.** No code change. The config app save merges the posted form onto the unstripped stored file, so a stored `playback.audioDevice` survives a save (`src/config-app/routes.ts:63-132`). Add a unit test that pins it. A later release turns it into a form field.
 4. **Engine: spawn flag, apply step and status.** Add `--audio-fallback-to-null=yes` to `buildMpvArgs`. Add the device apply step to `spawnAndConnect` after `installObservers`. Add `audio-device`, `audio-device-list` and `current-ao` to the observed properties. Extend `PlaybackStatus` and `getStatus()`.
 5. **Engine: device watcher and resume check.** Pause on loss. Add the re-open sequence and the missing-device error to `resume` and to `enqueue`, `enqueueRadio` and `jumpToQueueEntry`.
 6. **Tool functions and MCP tools.** Add `listAudioDevices()` and `setAudioDevice()` to `src/tools/playback.ts`, their schemas to `src/schemas/validation.ts`, and the two tool entries to `playback-handlers.ts`. Update `docs/PLAYBACK-SPEC.md` (flags, observed properties, tool table) and the README tool table.
@@ -483,7 +483,7 @@ Pre-mortem: assume the feature shipped and failed.
 | The probe hangs on a broken audio stack | `mpv --audio-device=help` always returns fast. The shared `runMpv` timeout guards it |
 | Unheard tracks get scrobbled while mpv plays to its null output | The device watcher pauses every file that plays to the null output, in every attached process |
 
-Cheapest to guard against now: the config app save, since one line beside `withStoredPlayerTheme` closes it and a unit test proves it. The next cheapest is the watcher's `null` check, which a unit test with recorded `current-ao` sequences covers.
+Cheapest to guard against now: the config app save, which already keeps stored keys the form lacks, so one unit test pins it for the device. The next cheapest is the watcher's `null` check, which a unit test with recorded `current-ao` sequences covers.
 
 ## Sources
 

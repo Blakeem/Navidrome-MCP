@@ -9,6 +9,7 @@ import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { safeNumber } from '../utils/safe-number.js';
 import {
+  asLastFmArray,
   callLastFmApi,
   requireLastFmApiKey,
   stripWikiHtml,
@@ -162,20 +163,17 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
     if (typeof similarArtistsRaw !== 'object' || similarArtistsRaw === null) {
       throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing similarartists'));
     }
-    const similarArtistsContainer = similarArtistsRaw as { artist?: unknown[] };
-    const similarArtists = similarArtistsContainer.artist ?? [];
+    const similarArtistsContainer = similarArtistsRaw as Record<string, unknown>;
+    const similarArtists = asLastFmArray(similarArtistsContainer['artist']);
 
     return {
       count: similarArtists.length,
-      similarArtists: similarArtists.map((a: unknown) => {
-        const artist = a as Record<string, unknown>;
-        return {
-          name: typeof artist['name'] === 'string' ? artist['name'] : '',
-          match: safeNumber(artist['match']),
-          ...verboseUrl(artist, verbose),
-          mbid: typeof artist['mbid'] === 'string' ? artist['mbid'] : null,
-        };
-      }),
+      similarArtists: similarArtists.map((artist: Record<string, unknown>) => ({
+        name: typeof artist['name'] === 'string' ? artist['name'] : '',
+        match: safeNumber(artist['match']),
+        ...verboseUrl(artist, verbose),
+        mbid: typeof artist['mbid'] === 'string' ? artist['mbid'] : null,
+      })),
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_similar_artists', error));
@@ -203,13 +201,12 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
     if (typeof similarTracksRaw !== 'object' || similarTracksRaw === null) {
       throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing similartracks'));
     }
-    const similarTracksContainer = similarTracksRaw as { track?: unknown[] };
-    const similarTracks = similarTracksContainer.track ?? [];
+    const similarTracksContainer = similarTracksRaw as Record<string, unknown>;
+    const similarTracks = asLastFmArray(similarTracksContainer['track']);
 
     return {
       count: similarTracks.length,
-      similarTracks: similarTracks.map((t: unknown) => {
-        const track = t as Record<string, unknown>;
+      similarTracks: similarTracks.map((track: Record<string, unknown>) => {
         const trackArtist = track['artist'] as Record<string, unknown> | undefined;
         const artistName = trackArtist?.['name'];
         return {
@@ -257,10 +254,10 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
       listeners: safeNumber(stats?.['listeners']),
       playcount: safeNumber(stats?.['playcount']),
       biography,
-      tags: ((tags?.['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>) =>
+      tags: asLastFmArray(tags?.['tag']).map((t: Record<string, unknown>) =>
         typeof t['name'] === 'string' ? t['name'] : '',
       ),
-      similar: ((similar?.['artist'] as Record<string, unknown>[] | undefined) ?? []).slice(0, 5).map((a: Record<string, unknown>) => typeof a['name'] === 'string' ? a['name'] : ''),
+      similar: asLastFmArray(similar?.['artist']).slice(0, 5).map((a: Record<string, unknown>) => typeof a['name'] === 'string' ? a['name'] : ''),
     };
     if (verbose) {
       result.url = typeof artistInfo['url'] === 'string' ? artistInfo['url'] : '';
@@ -292,7 +289,7 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
       throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing toptracks'));
     }
     const topTracksContainer = topTracksRaw as Record<string, unknown>;
-    const topTracks = (topTracksContainer['track'] as Record<string, unknown>[] | undefined) ?? [];
+    const topTracks = asLastFmArray(topTracksContainer['track']);
 
     return {
       count: topTracks.length,
@@ -343,7 +340,7 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing artists'));
       }
       const artistsContainer = artistsRaw as Record<string, unknown>;
-      const artists = ((artistsContainer['artist'] as Record<string, unknown>[] | undefined) ?? []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
+      const artists = asLastFmArray(artistsContainer['artist']).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
         rank: pageStart + index + 1,
         name: typeof a['name'] === 'string' ? a['name'] : '',
         playcount: safeNumber(a['playcount']),
@@ -363,7 +360,7 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tracks'));
       }
       const tracksContainer = tracksRaw as Record<string, unknown>;
-      const tracks = ((tracksContainer['track'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>, index: number): TrendingTrackItem => {
+      const tracks = asLastFmArray(tracksContainer['track']).map((t: Record<string, unknown>, index: number): TrendingTrackItem => {
         const artistObj = t['artist'] as Record<string, unknown> | undefined;
         const artistName = artistObj?.['name'];
         return {
@@ -390,7 +387,7 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tags'));
       }
       const tagsContainer = tagsRaw as Record<string, unknown>;
-      const tagRows = (tagsContainer['tag'] as Record<string, unknown>[] | undefined) ?? [];
+      const tagRows = asLastFmArray(tagsContainer['tag']);
       const tags = tagRows.slice(pageStart, pageStart + limit).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
         rank: pageStart + index + 1,
         name: typeof t['name'] === 'string' ? t['name'] : '',

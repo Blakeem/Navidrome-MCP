@@ -114,6 +114,7 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
       host,
       port: webui.port ?? DEFAULT_WEBUI_PORT,
       expose,
+      allowedHosts: cleanList(webui.allowedHosts) ?? [],
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: webui.persistAfterMcpExit ?? false,
       theme: parseWebuiTheme(webui.theme),

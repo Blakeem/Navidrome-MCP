@@ -30,6 +30,7 @@ const FIELDS = [
   ['webui.enabled', 'webuiEnabled', 'bool', true],
   ['webui.port', 'webuiPort', 'int', 8808],
   ['webui.host', 'webuiHost', 'stringOrNull'],
+  ['webui.allowedHosts', 'webuiAllowedHosts', 'csvStringArray'],
   ['webui.expose', 'webuiExpose', 'bool', false],
   ['webui.autoOpenBrowser', 'webuiAutoOpen', 'bool', false],
   ['webui.persistAfterMcpExit', 'webuiPersist', 'bool', false],

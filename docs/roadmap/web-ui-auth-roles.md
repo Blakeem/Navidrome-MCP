@@ -4,7 +4,7 @@
 
 ## Verdict
 
-BUILD. The web remote has no authentication today. With `webui.expose` on, every device on the LAN can control playback and read the library. A web page open in any LAN browser can do the same through DNS rebinding. Node's standard library and the current request pipeline cover every part of the MVP except a QR encoder, which is one small MIT package with no dependencies. MVP effort is 5 to 8 working days [INFERRED]. The full roadmap is 12 to 20 working days, about 2.5 to 4 weeks [INFERRED].
+BUILD. The web remote has no authentication today. With `webui.expose` on, every device on the LAN can control playback and read the library. Node's standard library and the current request pipeline cover every part of the MVP except a QR encoder, which is one small MIT package with no dependencies. MVP effort is 5 to 8 working days [INFERRED]. The full roadmap is 12 to 20 working days, about 2.5 to 4 weeks [INFERRED].
 
 ## Scope
 
@@ -58,7 +58,7 @@ Starting-list claims:
 ┌─ web player process (src/web/main.ts) ────────────────────────────────────────────────────────┐
 │  web remote HTTP server (src/webui/server.ts, plain node:http, flat if-chain dispatcher)      │
 │    the URL parse stage, labeled stage 1                                    server.ts:107-117  │
-│    the host gate, labeled stage 2 (loopback bind only)                     server.ts:120      │
+│    the host gate, labeled stage 2 (every bind)                             server.ts:119-129  │
 │    the JSON gate, labeled stage 3 (every POST needs application/json)      server.ts:127      │
 │    the route table, labeled stage 4                                        server.ts:132-198  │
 │       open routes ─────────── any peer that reaches the port                                  │
@@ -100,7 +100,7 @@ What an unauthenticated LAN peer gets today, route by route. A LAN peer exists o
 
 Gate observations:
 
-- The host gate runs only for a loopback bind (`server.ts:120`). On a LAN bind nothing checks `Host`. A page on `evil.example` that rebinds its name to the host's LAN IP becomes same-origin with the web remote and can call every open route [DERIVED].
+- The host gate runs on every bind. A loopback bind accepts only a loopback `Host` (`server.ts:121`). A LAN bind accepts an IP literal, `localhost`, the machine's host name, `<host name>.local` or a `webui.allowedHosts` entry (`server.ts:125`, `loopback.ts:48`). A page on `evil.example` that rebinds its name to the host's LAN IP sends `Host: evil.example` and gets 403 [DIRECT: code].
 - The JSON gate is today's CSRF defense. A cross-site form cannot send `application/json`, and a cross-origin `fetch` with that type needs a CORS preflight [DIRECT: Fetch spec, 2026-10-06]. The server answers `OPTIONS` with 404 (`server.ts:198`) and sends no CORS headers, so the preflight fails [DIRECT: code].
 - No route reads `Origin` [DIRECT: code].
 - No rate limit exists. No cap bounds SSE clients (`broadcaster.ts:85-93`, `visualizer-hub.ts:42-56`).
@@ -122,7 +122,7 @@ the reverse-proxy scenario  a proxy publishes the remote on the internet. Reache
 | Scenario | Exposure today | What the design must give |
 |---|---|---|
 | the loopback scenario | Other local OS users can control playback. The host gate and the JSON gate stop web pages [DIRECT: code] | Nothing new for a single-user host. A switch that turns loopback trust off on a shared host |
-| the home LAN scenario | Every LAN device can do everything in the route inventory. Web pages can do the same through DNS rebinding [DERIVED] | Per-device enrollment with no typing, per-device revocation, and an end to rebinding |
+| the home LAN scenario | Every LAN device can do everything in the route inventory. The host gate stops DNS-rebinding pages [DIRECT: code] | Per-device enrollment with no typing and per-device revocation |
 | the party Wi-Fi scenario | Every guest can clear the queue and read the library and history. On plain http, a guest who knows a WPA2-Personal passphrase can decrypt another device's captured traffic, cookies included [SINGLE-SOURCE: Vanhoef, 2018-03] | A guest role with fewer permissions, guest grants that expire with the party, one-scan join, and a per-guest identity for Party Mode's limits |
 | the reverse-proxy scenario | The internet gets the route inventory. A same-host nginx with its default `Host` rewrite also opens settings, shutdown and lease [DERIVED: nginx docs and `loopback.ts:32`] | Loopback trust that ignores proxied requests, login throttling, TLS at the proxy, optional forward-auth headers |
 

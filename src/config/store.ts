@@ -62,6 +62,7 @@ export const SettingsFileSchema = z.object({
     port: z.number().optional(),
     host: z.string().nullish(),
     expose: z.boolean().optional(),
+    allowedHosts: z.array(z.string()).nullish(),
     autoOpenBrowser: z.boolean().optional(),
     persistAfterMcpExit: z.boolean().optional(),
     // Not an enum, so an unknown theme reads as unset instead of failing the entire store.
@@ -76,8 +77,25 @@ export const SettingsFileSchema = z.object({
 
 export type SettingsFile = z.infer<typeof SettingsFileSchema>;
 
+interface StoreContents {
+  settings: SettingsFile;
+  raw: Record<string, unknown>;
+}
+
 /** Every failure returns null instead of throwing, so a bad file never crashes startup. */
 export function readSettings(): SettingsFile | null {
+  return readStore()?.settings ?? null;
+}
+
+/**
+ * The schema strips nested keys this build does not know, so a save merges onto this unstripped
+ * object instead. It is null whenever readSettings returns null.
+ */
+export function readRawSettings(): Record<string, unknown> | null {
+  return readStore()?.raw ?? null;
+}
+
+function readStore(): StoreContents | null {
   const path = getSettingsStorePath();
   let raw: string;
   try {
@@ -108,7 +126,8 @@ export function readSettings(): SettingsFile | null {
     logger.warn(`settings.json failed validation (${path}); treating as unconfigured [${issues}]`);
     return null;
   }
-  return result.data;
+  // SettingsFileSchema accepts only a plain object, so a parsed store is one.
+  return { settings: result.data, raw: parsed as Record<string, unknown> };
 }
 
 /**

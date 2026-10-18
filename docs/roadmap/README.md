@@ -17,18 +17,12 @@ code-fix pass ──► release 1 ───────────────�
 
 ## Code-fix pass
 
-Each item is checked before the fix (does the defect reproduce?) and after it.
+Done. Each fix has a unit test that failed on the old code. These items stay open:
 
-- Web remote on a LAN bind skips the Host check, so DNS rebinding can drive the controls (`src/webui/server.ts:119-123`).
-- A same-host reverse proxy or tunnel makes every request look local (`src/webui/loopback.ts:32`).
-- Last.fm list reads use `?? []` instead of `asLastFmArray` at eight sites (`src/tools/lastfm-discovery.ts`).
-- A config app save erases store keys the form lacks (`src/config-app/routes.ts:74-78`).
-- The SSE snapshot sends `mpvPath` and `mpvVersion` to LAN peers (`src/webui/broadcaster.ts:204,219`).
-- No cap on SSE clients (`src/webui/broadcaster.ts:85`, `src/webui/visualizer-hub.ts:42`).
-- Cover art uses `Cache-Control: public` (`src/webui/routes/cover.ts:106`).
-- The config form shows `features.lastFmApiKey` unmasked (`src/config-app/routes.ts:170-180`).
-- The documented Docker mpv path installs mpv 0.35.1, and radio station names need 0.36 or later (`docs/DOCKER.md:66-77`).
-- `package.json` metadata: `license` uses the deprecated `AGPL-3.0` id, `author` is empty, `engines.node` admits Node 20.
+- No cap on SSE clients (`src/webui/broadcaster.ts:85`, `src/webui/visualizer-hub.ts:42`). Web UI Auth + Roles caps streams per user.
+- Cover art uses `Cache-Control: public` (`src/webui/routes/cover.ts:106`). Web UI Auth + Roles changes it to `private`.
+- `engines.node` admits Node 20. Web UI Auth + Roles raises it together with the CI matrix.
+- The empty `author` field, the "Navidrome" name prefix and the licensing paperwork wait on the owner.
 
 ## Audio-Device Selector
 
@@ -54,7 +48,7 @@ Release 1. Roadmap: [audio-device-selector.md](audio-device-selector.md).
 - With the saved speaker off, a play request starts paused. The tool result must say the saved output is not connected.
 - `set_audio_device` needs a value that returns to the OS default output.
 - mpv lists a Bluetooth speaker only while it is connected and active. Pairing alone is not enough.
-- The config app save erases store keys the form lacks, so `playback.audioDevice` needs a form field. The code-fix pass covers the save itself.
+- The config app save keeps stored keys the form lacks, so a saved `playback.audioDevice` survives a config app save with no form field.
 
 ## Web UI Auth + Roles
 
@@ -75,7 +69,7 @@ Release 1. Roadmap: [web-ui-auth-roles.md](web-ui-auth-roles.md). The decisions 
 - `src/webui/auth/` (new): the principal resolver, the role table, the user and device store, and the rate limiter.
 - `src/webui/routes/auth.ts` (new): login, logout, join, and user and device management.
 - `src/webui/broadcaster.ts` and `src/webui/visualizer-hub.ts`: each stream client carries its user, so a revoke closes that user's streams.
-- A user store file beside `settings.json`, mode 0600. It stays out of `settings.json`, since the config app rewrites that file from its form.
+- A user store file beside `settings.json`, mode 0600.
 - `src/config/` and `src/config-app/`: the `webui.auth` settings and form fields.
 - `src/webui/public/`: the login page, the user icon and the user panel.
 - The MCP server's own loopback calls stay exempt: `/api/mcp-lease`, `/healthz`, and the party control routes.

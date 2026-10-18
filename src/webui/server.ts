@@ -15,7 +15,7 @@ import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { SseBroadcaster } from './broadcaster.js';
 import { isJsonContentType, writeError } from './http-helpers.js';
-import { isLoopbackHostHeader } from './loopback.js';
+import { isLoopbackHostHeader, isRebindSafeHostHeader } from './loopback.js';
 import { isLanReachable } from './network.js';
 import { handleCover } from './routes/cover.js';
 import { handleEvents } from './routes/events.js';
@@ -116,9 +116,14 @@ async function handleRequest(
   const path = parsed.pathname;
   const method = req.method ?? 'GET';
 
+  const lanBind = isLanReachable(deps.config.webui.host);
   // DNS-rebinding guard for a loopback bind, the same model as the MCP transport's Host allowlist.
-  if (!isLanReachable(deps.config.webui.host) && !isLoopbackHostHeader(req.headers.host)) {
+  if (!lanBind && !isLoopbackHostHeader(req.headers.host)) {
     writeError(res, 403, 'Forbidden host');
+    return;
+  }
+  if (lanBind && !isRebindSafeHostHeader(req.headers.host, deps.config.webui.allowedHosts)) {
+    writeError(res, 403, 'Forbidden host. Add this host name to webui.allowedHosts to allow it.');
     return;
   }
 

@@ -64,6 +64,8 @@ export const ConfigSchema = z.object({
     host: z.string(),
     port: z.number().int().min(1).max(65535),
     expose: z.boolean(),
+    // A LAN bind always accepts IP literals and this machine's names. Any other Host must be listed.
+    allowedHosts: z.array(z.string()),
     // Off by default so a headless MCP client launch never pops a browser tab.
     autoOpenBrowser: z.boolean(),
     // Off by default, so an MCP-launched player stops with the last MCP server using it.

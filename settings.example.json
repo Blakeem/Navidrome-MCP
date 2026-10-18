@@ -36,6 +36,7 @@
     "port": 8808,
     "host": null,
     "expose": false,
+    "allowedHosts": [],
     "autoOpenBrowser": false,
     "persistAfterMcpExit": false,
     "visualizer": true

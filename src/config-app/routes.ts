@@ -8,7 +8,7 @@ import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateMappedSettings } from '../config.js';
 import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
-import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import { readRawSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
 import { getSettingsStorePath } from '../config/store-path.js';
 import { parseWebuiTheme, WEBUI_BIND_HOSTS } from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
@@ -18,8 +18,8 @@ import { logger, redact } from '../utils/logger.js';
 import { describeFetchError } from '../utils/network-safety.js';
 
 /**
- * Stands in for the Navidrome password and MCP auth token in the browser, so they never leave the
- * process in plaintext. A field still equal to it on Save or Test keeps the seeded value.
+ * Stands in for the Navidrome password, MCP auth token and Last.fm API key in the browser, so they
+ * never leave the process in plaintext. A field still equal to it on Save or Test keeps the seeded value.
  */
 const SECRET_SENTINEL = '********';
 
@@ -64,18 +64,20 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
   const parsed = await parseSettingsBody(req, res);
   if (parsed === null) return;
 
+  const stored = readRawSettings();
+  const settings = withoutLegacyTheme(mergeOntoStored(stored ?? {}, parsed) as SettingsFile);
+
   // Never persist a file the runtime would reject, such as one with a blank URL.
-  const validation = validateForm(parsed);
+  const validation = validateForm(settings);
   if (!validation.ok) {
     writeError(res, 400, ErrorFormatter.configValidation(validation.messages));
     return;
   }
 
-  const stored = readSettings();
   let backupPath: string | null = null;
   try {
     backupPath = backupUnusableStore(stored);
-    writeSettings(withStoredPlayerTheme(parsed, stored));
+    writeSettings(settings);
   } catch (err) {
     logger.error('settings save failed:', err);
     const reason = err instanceof Error ? err.message : String(err);
@@ -98,9 +100,9 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
   });
 }
 
-// The form never loaded a store that readSettings rejected, so overwriting it would lose every
+// The form never loaded a store that readRawSettings rejected, so overwriting it would lose every
 // value not retyped.
-function backupUnusableStore(stored: SettingsFile | null): string | null {
+function backupUnusableStore(stored: JsonObject | null): string | null {
   const storePath = getSettingsStorePath();
   if (stored !== null || !existsSync(storePath)) return null;
   const backupPath = `${storePath}.bak`;
@@ -108,11 +110,31 @@ function backupUnusableStore(stored: SettingsFile | null): string | null {
   return backupPath;
 }
 
-// The player's gear modal owns webui.theme and this form does not carry it, so a save keeps the
-// stored theme.
-function withStoredPlayerTheme(settings: SettingsFile, stored: SettingsFile | null): SettingsFile {
-  const theme = parseWebuiTheme(stored?.webui?.theme);
-  return theme === null ? settings : { ...settings, webui: { ...settings.webui, theme } };
+type JsonObject = Record<string, unknown>;
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The player's gear modal and hand edits write keys this form does not post, so a save keeps them.
+ * A cleared field posts null, '' or [] instead of omitting its key, so it replaces the stored value.
+ */
+function mergeOntoStored(stored: JsonObject, posted: JsonObject): JsonObject {
+  const merged: JsonObject = { ...stored };
+  for (const [key, value] of Object.entries(posted)) {
+    // Assigning __proto__ would replace the prototype instead of adding a key.
+    if (key === '__proto__' || value === undefined) continue;
+    const storedValue = merged[key];
+    merged[key] = isJsonObject(value) && isJsonObject(storedValue) ? mergeOntoStored(storedValue, value) : value;
+  }
+  return merged;
+}
+
+// The runtime reads a legacy theme such as 'system' as unset, so a save drops it from the file.
+function withoutLegacyTheme(settings: SettingsFile): SettingsFile {
+  if (settings.webui === undefined) return settings;
+  return { ...settings, webui: { ...settings.webui, theme: parseWebuiTheme(settings.webui.theme) ?? undefined } };
 }
 
 // The runtime downgrades an unsupported webui.host to a warning, so the form rejects it here,
@@ -177,6 +199,10 @@ function maskSecrets(settings: SettingsFile): SettingsFile {
   if (authToken !== undefined && authToken !== null && authToken !== '') {
     masked = { ...masked, transport: { ...masked.transport, authToken: SECRET_SENTINEL } };
   }
+  const lastFmApiKey = settings.features?.lastFmApiKey;
+  if (lastFmApiKey !== undefined && lastFmApiKey !== null && lastFmApiKey !== '') {
+    masked = { ...masked, features: { ...masked.features, lastFmApiKey: SECRET_SENTINEL } };
+  }
   return masked;
 }
 
@@ -195,6 +221,10 @@ function unmaskSecrets(settings: SettingsFile): SettingsFile {
   if (result.transport?.authToken === SECRET_SENTINEL) {
     const stored = seeded().transport?.authToken ?? null;
     result = { ...result, transport: { ...result.transport, authToken: stored } };
+  }
+  if (result.features?.lastFmApiKey === SECRET_SENTINEL) {
+    const stored = seeded().features?.lastFmApiKey ?? null;
+    result = { ...result, features: { ...result.features, lastFmApiKey: stored } };
   }
   return result;
 }

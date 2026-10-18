@@ -9,7 +9,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleSettingsRoute } from './routes.js';
 import { isJsonContentType, writeError } from '../webui/http-helpers.js';
-import { isLoopbackHostHeader, isLoopbackPeer } from '../webui/loopback.js';
+import { hasProxyForwardingHeader, isLoopbackHostHeader, isLoopbackPeer } from '../webui/loopback.js';
 import { handleStatic } from '../webui/routes/static-files.js';
 import { logger } from '../utils/logger.js';
 
@@ -85,7 +85,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   const method = req.method ?? 'GET';
   const path = (req.url ?? '/').split('?')[0] ?? '/';
 
-  if (!isLoopbackPeer(req)) {
+  if (!isLoopbackPeer(req) || hasProxyForwardingHeader(req)) {
     writeError(res, 403, 'Settings are local-only');
     return;
   }

@@ -99,7 +99,7 @@ Facts about the parts in this diagram:
 4. **At mpv**, the per-uid IPC path makes every process of one user share one mpv (`mpv-process.ts:16-30`). The engine's mutation lock does not span processes (`playback-engine.ts:142-144`) [DIRECT: code].
 5. **At the scrobble trackers**, every process attached to one mpv tracks plays, and the first claim mpv echoes wins (`scrobble-tracker.ts:46-49`, `:394-415`) [DIRECT: code].
 6. **At the web player lifecycle**, an MCP-launched process stops when its last lease closes unless `persistAfterMcpExit` is on, and every shutdown path quits mpv (`src/web/main.ts:76-124`, `player-runtime.ts:42-49`). An exiting MCP server quits mpv only when its own engine controlled it and no web player owns the port (`src/index.ts:189-200`) [DIRECT: code].
-7. **At the web player HTTP server**, the DNS-rebinding Host check runs only for a loopback bind (`server.ts:119-123`), and a request body is capped at 16 KB (`src/webui/http-helpers.ts:11`) [DIRECT: code].
+7. **At the web player HTTP server**, the DNS-rebinding Host check accepts only a loopback `Host` on a loopback bind, and only an IP literal, a name of the machine or a `webui.allowedHosts` entry on a LAN bind (`server.ts:119-129`), and a request body is capped at 16 KB (`src/webui/http-helpers.ts:11`) [DIRECT: code].
 
 ## Integration point
 
@@ -464,7 +464,7 @@ Steps in dependency order. Each step names the parts it adds or changes.
 | Volume | the agent's mpv | Each agent has its own mpv volume, starting at 80 per spawn (`mpv-process.ts:112`). `set_volume` with `player` targets that mpv. |
 | Two controllers on one agent | the engine mutation lock on the agent | Every remote mutation runs in the one agent process, so the engine lock serializes them (`playback-engine.ts:733-737`). The last write wins. |
 | Web remote per agent | the browser routes on the agent | Each agent serves its own web remote. The agent is LAN-exposed, so its browser routes need Web UI Auth + Roles. The web remote on the MCP machine shows only the local player until the player switcher release. |
-| DNS rebinding | the agent API | A LAN bind skips the Host check (`server.ts:119-123`). The required bearer grant defeats a rebinding page, the same rule the MCP transport follows (`src/transport/http.ts:271-273`). |
+| DNS rebinding | the agent API | A LAN bind refuses a `Host` that is not an IP literal, a name of the machine or a `webui.allowedHosts` entry (`server.ts:119-129`). The required bearer grant also defeats a rebinding page, the same rule the MCP transport follows (`src/transport/http.ts:271-273`). |
 | An agent that is the local mpv | the player registry | An agent URL that points at the MCP server's own machine would double-control one mpv. `/info` returns an instance ID, and the registry warns when it matches the local web player's ID. |
 | Duplicate or reserved names | the player registry | Names are case-insensitive and unique. `local` is reserved. Config validation rejects a clash at load. |
 | Token rotation | the agent player target | A 401 fails the tool with a message that names the player and the settings key to update. |

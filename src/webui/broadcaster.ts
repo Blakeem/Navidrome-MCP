@@ -8,6 +8,7 @@ import type { ServerResponse } from 'node:http';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import {
   playbackEngine,
+  type PlaybackStatus,
   type StateChangeEvent,
 } from '../services/playback/playback-engine.js';
 import { SSE_HEARTBEAT_MS } from '../constants/timeouts.js';
@@ -206,7 +207,8 @@ export class SseBroadcaster {
 
     const np = settled(npResult, 'nowPlaying');
     const queue = settled(queueResult, 'queue');
-    const status = settled(statusResult, 'status');
+    const fullStatus = settled(statusResult, 'status');
+    const status = fullStatus === null ? null : snapshotStatus(fullStatus);
 
     // Clients keep their last snapshot rather than receive a frame of three nulls.
     if (np === null && queue === null && status === null) {
@@ -223,6 +225,11 @@ export class SseBroadcaster {
 // A dead peer does not make res.write() throw, so liveness is read from the stream flags.
 function isClosed(res: ServerResponse): boolean {
   return res.destroyed || res.writableEnded;
+}
+
+// LAN peers read this stream, and mpvPath can name the OS user while mpvVersion fingerprints the host.
+function snapshotStatus(status: PlaybackStatus): Pick<PlaybackStatus, 'engineRunning' | 'volume' | 'idle'> {
+  return { engineRunning: status.engineRunning, volume: status.volume, idle: status.idle };
 }
 
 function settled<T>(result: PromiseSettledResult<T>, field: string): T | null {

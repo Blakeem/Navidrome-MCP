@@ -71,10 +71,15 @@ but audio still has to reach a real sound device:
 - **Linux host:** pass one through with `--device /dev/snd` (ALSA), or mount the
   PulseAudio / PipeWire socket and set `PULSE_SERVER`. Publish `8808` and set
   `WEBUI_EXPOSE=true` (the env form of **Expose on LAN** / `webui.expose`) for the
-  remote.
+  remote. Open the remote by the host's IP address. To open it by a host name, list
+  that name in `WEBUI_ALLOWED_HOSTS`, since the container's own name is not the host's.
 - **Docker Desktop (Windows/macOS):** not possible. The engine runs in a Linux VM
   with no audio device. `--device /dev/snd` fails with *no such file or
   directory*, even `--privileged`.
+- **Radio station names:** the `node:22-bookworm-slim` base installs mpv 0.35.1,
+  which lacks the `user-data` property. A radio station that shares its stream URL
+  with another saved station is then named after the first matching station. The
+  correct name needs mpv 0.36 or later.
 
 Without a device, the failure is silent to the assistant: `play_songs` still returns
 `{"success": true}` and mpv accepts the queue, while mpv's ALSA/PipeWire/JACK

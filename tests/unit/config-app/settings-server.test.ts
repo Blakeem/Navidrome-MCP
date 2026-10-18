@@ -114,6 +114,91 @@ describe('settings server seed/save', () => {
     expect(readSettings()?.webui).toMatchObject({ expose: true, theme: 'dark' });
   });
 
+  it('keeps a stored top-level key and the player theme, which the form does not post', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      webui: { theme: 'light', port: 8808 },
+      handAdded: { note: 'kept' },
+    }));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK }, webui: { port: 9000 } });
+    expect(res.status).toBe(200);
+    const after = readSettings();
+    expect(after?.['handAdded']).toEqual({ note: 'kept' });
+    expect(after?.webui).toEqual({ theme: 'light', port: 9000 });
+  });
+
+  it('keeps stored nested keys the settings schema does not know', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      playback: { audioDevice: 'wasapi/{device-id}' },
+      webui: { port: 8808, note: 'kept', auth: { enabled: true } },
+    }));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK }, webui: { port: 9000 } });
+    expect(res.status).toBe(200);
+    const written = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    expect(written['playback']).toEqual({ audioDevice: 'wasapi/{device-id}' });
+    expect(written['webui']).toEqual({ port: 9000, note: 'kept', auth: { enabled: true } });
+  });
+
+  it('keeps a cleared field cleared and replaces a stored value with a posted one', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      transport: { allowedHosts: ['mcp.example.com'], port: 3000 },
+      features: { lastFmApiKey: 'lastfm-secret', lrclibBase: 'https://old.example' },
+    }));
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://new:4533', username: 'u', password: MASK },
+      transport: { allowedHosts: [] },
+      features: { lastFmApiKey: null, lrclibBase: 'https://new.example' },
+    });
+    expect(res.status).toBe(200);
+    const after = readSettings();
+    expect(after?.navidrome?.url).toBe('http://new:4533');
+    expect(after?.transport).toEqual({ allowedHosts: [], port: 3000 });
+    expect(after?.features).toEqual({ lastFmApiKey: null, lrclibBase: 'https://new.example' });
+  });
+
+  it('masks the Last.fm API key in the seed response', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      features: { lastFmApiKey: 'lastfm-secret' },
+    }));
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.features.lastFmApiKey).toBe(MASK);
+  });
+
+  it('keeps the stored Last.fm API key when the form re-submits the mask sentinel', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      features: { lastFmApiKey: 'lastfm-secret' },
+    }));
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: MASK },
+      features: { lastFmApiKey: MASK },
+    });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.features?.lastFmApiKey).toBe('lastfm-secret');
+  });
+
+  it('stores a new Last.fm API key posted by the form', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      features: { lastFmApiKey: 'lastfm-secret' },
+    }));
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: MASK },
+      features: { lastFmApiKey: 'lastfm-new' },
+    });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.features?.lastFmApiKey).toBe('lastfm-new');
+  });
+
   it('rejects an unsupported web host and writes nothing', async () => {
     const base = await start();
     const res = await post(base, {
@@ -232,6 +317,12 @@ describe('settings server seed/save', () => {
       req.end();
     });
     expect(status).toBe(403);
+  });
+
+  it('rejects a loopback request relayed by a same-host proxy with 403', async () => {
+    const base = await start();
+    const res = await fetch(`${base}/api/settings/seed`, { headers: { 'X-Forwarded-For': '203.0.113.5' } });
+    expect(res.status).toBe(403);
   });
 
   // Setup mode in the standalone web player passes idleTimeoutMs, so an idle settings page exits.
