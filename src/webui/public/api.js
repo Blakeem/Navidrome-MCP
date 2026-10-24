@@ -1,4 +1,4 @@
-// Both requests resolve instead of rejecting and log their own failure,
+// Every request resolves instead of rejecting and logs its own failure,
 // so a caller branches on one value.
 
 export async function getJson(url) {
@@ -13,19 +13,29 @@ export async function getJson(url) {
   return null;
 }
 
+// A failed answer keeps its body, so the caller can show the server's error text.
+export function getJsonResult(url) {
+  return requestJson(url);
+}
+
 // The server rejects a POST without a JSON Content-Type, so a bodyless control sends `{}`.
-export async function postJson(path, body = {}) {
+export function postJson(path, body = {}) {
+  return requestJson(path, body);
+}
+
+// A body makes the request a JSON POST. It is serialized inside the try, so an
+// unserializable body resolves too.
+async function requestJson(url, body) {
   try {
-    const res = await fetch(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const init = body === undefined
+      ? undefined
+      : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    const res = await fetch(url, init);
     const text = await res.text().catch(() => '');
-    if (!res.ok) console.warn(`webui: ${path} failed`, res.status, text);
+    if (!res.ok) console.warn(`webui: ${url} failed`, res.status, text);
     return { ok: res.ok, data: parseJson(text) };
   } catch (err) {
-    console.warn(`webui: ${path} failed`, err);
+    console.warn(`webui: ${url} failed`, err);
     return { ok: false, data: null };
   }
 }

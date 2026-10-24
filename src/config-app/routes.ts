@@ -12,6 +12,8 @@ import { mergeOntoStored, readRawSettings, writeSettings, SettingsFileSchema, ty
 import { getSettingsStorePath } from '../config/store-path.js';
 import { parseWebuiTheme, WEBUI_BIND_HOSTS } from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
+import { audioDeviceDriver, filterToOneDriver, probeAudioDevices } from '../services/playback/audio-devices.js';
+import { resolveMpvBinary } from '../services/playback/mpv-process.js';
 import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger, redact } from '../utils/logger.js';
@@ -38,6 +40,10 @@ export async function handleSettingsRoute(
     writeJson(res, 200, FORM_SUGGESTIONS);
     return true;
   }
+  if (method === 'GET' && path === '/api/settings/audio-devices') {
+    await handleAudioDevices(res);
+    return true;
+  }
   if (method === 'POST' && path === '/api/settings') {
     await handleSave(req, res);
     return true;
@@ -55,6 +61,26 @@ function handleSeed(res: ServerResponse): void {
   } catch (err) {
     logger.warn('settings seed failed:', err);
     writeError(res, 500, 'Failed to read settings');
+  }
+}
+
+// A failed probe still answers 200, so the form loads with System default as the only choice. The
+// saved device's driver is kept, so a device picked from another driver does not read as missing.
+async function handleAudioDevices(res: ServerResponse): Promise<void> {
+  try {
+    const playback = buildFormSeed().playback;
+    const binary = resolveMpvBinary(playback?.mpvPath);
+    if (binary === null) {
+      writeJson(res, 200, { devices: [], message: 'mpv was not found' });
+      return;
+    }
+    const savedId = playback?.audioDevice?.id;
+    const preferredDriver = savedId === undefined ? null : audioDeviceDriver(savedId);
+    const devices = filterToOneDriver(await probeAudioDevices(binary), preferredDriver);
+    writeJson(res, 200, { devices });
+  } catch (err) {
+    logger.warn('settings audio device probe failed:', err);
+    writeJson(res, 200, { devices: [], message: err instanceof Error ? err.message : String(err) });
   }
 }
 

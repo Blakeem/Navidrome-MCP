@@ -9,7 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -58,7 +58,7 @@ describe('playLibrarySource', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    enqueueMock.mockResolvedValue({ demoted: false });
+    enqueueMock.mockResolvedValue({ demoted: false, outputMissing: null });
     client = createMockClient();
   });
 
@@ -284,7 +284,7 @@ describe('playLibrarySource', () => {
 
     it('reports a demoted append', async () => {
       client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [songRow('s1')], total: 1 });
-      enqueueMock.mockResolvedValueOnce({ demoted: true });
+      enqueueMock.mockResolvedValueOnce({ demoted: true, outputMissing: null });
 
       const result = await playLibrarySource(client as never, { type: 'song', id: 's1', mode: 'append' });
 

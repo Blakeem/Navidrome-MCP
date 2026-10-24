@@ -34,6 +34,7 @@ Release 1. Roadmap: [audio-device-selector.md](audio-device-selector.md).
 - A saved device is matched by its ID only.
 - When the selected device disappears, playback pauses.
 - The choice is saved in the settings store and applied each time mpv starts.
+- In the `none` access mode, every LAN viewer of the web remote can list the outputs and switch the output. The live status stream carries only a lost-output flag, never a device ID or name. Web UI Auth + Roles limits the output routes to the admin role.
 
 **Integration points**
 - `src/services/playback/audio-devices.ts` (new): parse, filter and match the mpv device list.

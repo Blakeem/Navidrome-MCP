@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, resolveConfigState } from '../../../src/config.js';
+import { loadConfig, readSavedAudioDevice, resolveConfigState, saveAudioDevice } from '../../../src/config.js';
 
 // The node binary stands in for a valid mpv path, since it exists and is executable on every host.
 const EXEC = process.execPath;
@@ -19,7 +19,10 @@ const FALLBACK_ENV_KEYS = [
   'MCP_HTTP_AUTH_TOKEN', 'MCP_HTTP_ALLOWED_HOSTS', 'MCP_HTTP_ALLOWED_ORIGINS',
   // A set feature-gating var would enable radio or lyrics and break the opt-in assertions.
   'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LASTFM_API_KEY',
+  'PLAYBACK_AUDIO_DEVICE',
 ];
+
+const DEVICE = { id: 'wasapi/{2d948da5-7f24-4c77-8553-5c67cb36d700}', name: 'Speakers (Sound BlasterX Katana)' };
 
 describe('config resolution', () => {
   let dir: string;
@@ -107,6 +110,26 @@ describe('config resolution', () => {
       const c = await loadConfig();
       expect(c.features.playback).toBe(true);
       expect(c.mpvPath).toBe(EXEC);
+    });
+
+    it('maps a stored audio device and trims its id', async () => {
+      write({ ...BASE, playback: { audioDevice: { id: ` ${DEVICE.id} `, name: DEVICE.name } } });
+      expect((await loadConfig()).playbackAudioDevice).toEqual(DEVICE);
+    });
+
+    it.each([undefined, null, ''])('maps the stored audio device name %j to null', async (name) => {
+      write({ ...BASE, playback: { audioDevice: { id: DEVICE.id, name } } });
+      expect((await loadConfig()).playbackAudioDevice).toEqual({ id: DEVICE.id, name: null });
+    });
+
+    it.each([
+      ['the id auto', { audioDevice: { id: 'auto', name: 'Autoselect device' } }],
+      ['an empty id', { audioDevice: { id: '  ', name: 'Speakers' } }],
+      ['a null device', { audioDevice: null }],
+      ['an absent key', {}],
+    ])('maps %s to the default output', async (_label, playback) => {
+      write({ ...BASE, playback });
+      expect((await loadConfig()).playbackAudioDevice).toBeNull();
     });
 
     it('flips host to 0.0.0.0 when expose is set and no explicit host', async () => {
@@ -328,6 +351,65 @@ describe('config resolution', () => {
         expect(state.config.features.radioBrowser).toBe(true);
         expect(state.config.features.lyrics).toBe(true);
       }
+    });
+
+    it('maps PLAYBACK_AUDIO_DEVICE to a device with no name', async () => {
+      setEnvCreds();
+      process.env['PLAYBACK_AUDIO_DEVICE'] = DEVICE.id;
+      const state = await resolveConfigState();
+      expect(state.configured).toBe(true);
+      if (state.configured) {
+        expect(state.config.playbackAudioDevice).toEqual({ id: DEVICE.id, name: null });
+      }
+    });
+  });
+
+  describe('readSavedAudioDevice', () => {
+    it('returns the saved device', () => {
+      write({ ...BASE, playback: { audioDevice: DEVICE } });
+      expect(readSavedAudioDevice()).toEqual(DEVICE);
+    });
+
+    it('returns null for a store with no device', () => {
+      write(BASE);
+      expect(readSavedAudioDevice()).toBeNull();
+    });
+
+    it('returns undefined when no store file exists', () => {
+      expect(readSavedAudioDevice()).toBeUndefined();
+    });
+  });
+
+  describe('saveAudioDevice', () => {
+    const readStore = (): Record<string, unknown> => JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+
+    it('writes the device and keeps unknown top-level and nested keys', () => {
+      write({ ...BASE, extra: { kept: true }, playback: { transcodeFormat: 'raw', outputHint: 'kept' } });
+      expect(saveAudioDevice(DEVICE)).toBe(true);
+      expect(readStore()).toEqual({
+        ...BASE,
+        extra: { kept: true },
+        playback: { transcodeFormat: 'raw', outputHint: 'kept', audioDevice: DEVICE },
+      });
+    });
+
+    it('writes null to return to the default output', () => {
+      write({ ...BASE, playback: { audioDevice: DEVICE } });
+      expect(saveAudioDevice(null)).toBe(true);
+      expect(readStore()['playback']).toEqual({ audioDevice: null });
+      expect(readSavedAudioDevice()).toBeNull();
+    });
+
+    it('returns false and writes nothing when no store file exists', () => {
+      expect(saveAudioDevice(DEVICE)).toBe(false);
+      expect(existsSync(file)).toBe(false);
+    });
+
+    it('returns false and writes nothing when the store has no Navidrome URL', () => {
+      const stored = JSON.stringify({ navidrome: { url: '  ' }, playback: { transcodeFormat: 'raw' } });
+      writeFileSync(file, stored);
+      expect(saveAudioDevice(DEVICE)).toBe(false);
+      expect(readFileSync(file, 'utf8')).toBe(stored);
     });
   });
 });

@@ -12,6 +12,7 @@ import type { Config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import {
+  AUDIO_OUTPUT_RESUME_WINDOW_MS,
   MPV_ATTACH_CONNECT_DELAY_MS,
   MPV_ATTACH_CONNECT_RETRIES,
   MPV_QUIT_SOCKET_TIMEOUT_MS,
@@ -20,6 +21,15 @@ import {
 } from '../../constants/timeouts.js';
 import { MAX_QUEUE_READ_PAGES, QUEUE_READ_PAGE_SIZE } from '../../constants/defaults.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
+import {
+  AUTO_DEVICE_ID,
+  findReplacementDevice,
+  NULL_AUDIO_OUTPUT,
+  parseAudioDeviceList,
+  probeAudioDevices,
+  resolveSavedDevice,
+  type AudioDevice,
+} from './audio-devices.js';
 import { MpvIpc } from './mpv-ipc.js';
 import { getDefaultIpcPath, spawnMpv } from './mpv-process.js';
 import {
@@ -55,7 +65,12 @@ const OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [10, 'eof-reached'],
   [11, 'path'],
   [12, 'playlist-path'],
+  [14, 'audio-device'],
+  [15, 'audio-device-list'],
+  [16, 'current-ao'],
 ];
+
+const AUDIO_OUTPUT_PROPERTIES: ReadonlySet<string> = new Set(['audio-device', 'audio-device-list', 'current-ao']);
 
 // Names the saved station a radio stream was played from, since saved stations can share a URL.
 // Observed so every process sharing mpv sees a change. Optional, since mpv before 0.36 lacks it.
@@ -69,12 +84,38 @@ const OPTIONAL_OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
 const SEEK_MAX_ATTEMPTS = 4;
 const SEEK_RETRY_DELAY_MS = 250;
 
+interface SelectedAudioDevice {
+  id: string;
+  name: string | null;
+  connected: boolean;
+}
+
+export interface MissingAudioOutput {
+  id: string;
+  name: string | null;
+}
+
+export interface AudioDeviceReport {
+  selected: SelectedAudioDevice;
+  output: string | null;
+  devices: AudioDevice[];
+  source: 'player' | 'probe';
+}
+
+interface AudioOutputValues {
+  audioDevice: unknown;
+  devices: AudioDevice[];
+  currentAo: unknown;
+}
+
 export interface PlaybackStatus {
   engineRunning: boolean;
   mpvPath: string | null;
   mpvVersion: string | null;
   volume: number | null;
   idle: boolean | null;
+  audioDevice: SelectedAudioDevice | null;
+  audioOutputLost: boolean | null;
 }
 
 export interface QueueEntry {
@@ -167,6 +208,17 @@ class PlaybackEngine {
   private playbackRestarts = 0;
   // A pause and a track start can land together, and each reads the af list before it writes.
   private visualizerSyncChain: Promise<void> = Promise.resolve();
+  // None until an entry point names the saved device, so a bare engine opens mpv's default output.
+  private audioDeviceSource: () => Config['playbackAudioDevice'] = () => null;
+  private saveAudioDevice: (device: AudioDevice) => boolean = () => false;
+  private audioOutputWasLost = false;
+  // A device's return is the change from unlisted to listed, so the previous state is kept.
+  private selectedDeviceWasConnected = true;
+  // Every id ever listed beside the selected device, since none of them can be its re-registered id.
+  private lastListedSelection: { device: AudioDevice; listedBeside: ReadonlySet<string> } | null = null;
+  private replacingDeviceId: string | null = null;
+  // Kept per engine, so only an engine that wrote a loss pause resumes it.
+  private lostOutputPause: { at: number; deviceId: string } | null = null;
 
   private constructor() {}
 
@@ -197,6 +249,18 @@ class PlaybackEngine {
 
   isVisualizerUnsupported(): boolean {
     return this.visualizerRefusal !== null;
+  }
+
+  /**
+   * Read at each spawn, so a device saved after this process started applies. `save` stores the new
+   * id when Windows re-registers the saved device.
+   */
+  setAudioDeviceSource(
+    source: () => Config['playbackAudioDevice'],
+    options: { save?: (device: AudioDevice) => boolean } = {},
+  ): void {
+    this.audioDeviceSource = source;
+    this.saveAudioDevice = options.save ?? ((): boolean => false);
   }
 
   isRunning(): boolean {
@@ -241,9 +305,12 @@ class PlaybackEngine {
     await this.requireIpc().command('set_property', 'pause', true);
   }
 
-  async resume(): Promise<void> {
+  async resume(): Promise<{ outputMissing: MissingAudioOutput | null }> {
     await this.ensureRunning();
-    await this.requireIpc().command('set_property', 'pause', false);
+    const ipc = this.requireIpc();
+    const outputMissing = await this.checkAudioOutput(ipc);
+    if (outputMissing === null) await ipc.command('set_property', 'pause', false);
+    return { outputMissing };
   }
 
   async setVolume(level: number): Promise<number> {
@@ -257,7 +324,7 @@ class PlaybackEngine {
     songIds: readonly string[],
     mode: 'replace' | 'append',
     metadata?: ReadonlyArray<QueueTrackMetadata>,
-  ): Promise<{ demoted: boolean }> {
+  ): Promise<{ demoted: boolean; outputMissing: MissingAudioOutput | null }> {
     if (songIds.length === 0) {
       throw new Error('enqueue requires at least one song ID');
     }
@@ -269,6 +336,8 @@ class PlaybackEngine {
       // `demoted` tells the LLM its requested mode was not honored.
       let effectiveMode = mode;
       let demoted = false;
+      // An append never unpauses, so only a replace checks the output.
+      let outputMissing: MissingAudioOutput | null = null;
       if (effectiveMode === 'append' && await this.hasRadioStream()) {
         logger.warn('enqueue: append demoted to replace because queue contains a radio stream');
         effectiveMode = 'replace';
@@ -283,8 +352,11 @@ class PlaybackEngine {
         if (first === undefined) {
           throw new Error('enqueue requires at least one song ID');
         }
+        outputMissing = await this.checkAudioOutput(ipc);
         this.metadataCache.clear();
         this.ingestMetadata(metadata);
+        // Paused before the load, so the first track never plays on the null output.
+        if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
         // Clear up front so the prior queue is gone even if the first loadfile fails.
         await ipc.command('playlist-clear');
         try {
@@ -292,7 +364,7 @@ class PlaybackEngine {
           for (const id of rest) {
             await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
           }
-          await ipc.command('set_property', 'pause', false);
+          if (outputMissing === null) await ipc.command('set_property', 'pause', false);
         } catch (err) {
           // Both are best effort, since a dead connection re-attaches on the next call.
           try {
@@ -329,7 +401,7 @@ class PlaybackEngine {
         }
       }
 
-      return { demoted };
+      return { demoted, outputMissing };
     });
     this.emitStateChange({ kind: 'queue' });
     return result;
@@ -418,20 +490,25 @@ class PlaybackEngine {
    * Always replaces the entire queue, as Navidrome's web UI does, since an infinite stream among
    * finite tracks breaks skip, queue position and scrobbling.
    */
-  async enqueueRadio(streamUrl: string, stationId: string): Promise<void> {
+  async enqueueRadio(streamUrl: string, stationId: string): Promise<{ outputMissing: MissingAudioOutput | null }> {
     if (streamUrl.trim() === '') {
       throw new Error('enqueueRadio requires a non-empty stream URL');
     }
     await this.ensureRunning();
-    await this.withMutationLock(async () => {
+    const result = await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       this.queueGeneration++;
+      const outputMissing = await this.checkAudioOutput(ipc);
       // Tagged before the load, so a poll never pairs the new stream with the prior station's tag.
       await this.writeRadioStationTag(ipc, stationId);
+      // Paused before the load, so the stream never plays on the null output.
+      if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
       await ipc.command('loadfile', streamUrl, 'replace');
-      await ipc.command('set_property', 'pause', false);
+      if (outputMissing === null) await ipc.command('set_property', 'pause', false);
+      return { outputMissing };
     });
     this.emitStateChange({ kind: 'queue' });
+    return result;
   }
 
   getRadioStationTag(): string | null {
@@ -569,11 +646,15 @@ class PlaybackEngine {
    * mpv stops playback on an index past the end, so the tool layer checks the bound first. No queue
    * event is emitted, since mpv's `playlist-pos` event reaches subscribers.
    */
-  async jumpToQueueEntry(index: number): Promise<void> {
+  async jumpToQueueEntry(index: number): Promise<{ outputMissing: MissingAudioOutput | null }> {
     await this.ensureRunning();
     const ipc = this.requireIpc();
+    const outputMissing = await this.checkAudioOutput(ipc);
+    // An idle mpv can hold pause=false, so the jump would start the track on the null output.
+    if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
     await ipc.command('set_property', 'playlist-pos', index);
-    await ipc.command('set_property', 'pause', false);
+    if (outputMissing === null) await ipc.command('set_property', 'pause', false);
+    return { outputMissing };
   }
 
   /**
@@ -614,17 +695,64 @@ class PlaybackEngine {
         mpvVersion: null,
         volume: null,
         idle: null,
+        audioDevice: null,
+        audioOutputLost: null,
       };
     }
     const volume = this.propertyCache.get('volume');
     const idle = this.propertyCache.get('idle-active');
+    const audioOutput = this.readCachedAudioOutput();
     return {
       engineRunning: true,
       mpvPath: this.mpvBinary,
       mpvVersion: this.mpvVersion,
       volume: typeof volume === 'number' ? volume : null,
       idle: typeof idle === 'boolean' ? idle : null,
+      audioDevice: audioOutput.device,
+      audioOutputLost: audioOutput.lost,
     };
+  }
+
+  /** Never spawns mpv. Without a running mpv the devices come from a headless probe of the binary. */
+  async describeAudioDevices(): Promise<AudioDeviceReport> {
+    await this.ensureAttached();
+    if (this.isRunning()) {
+      const live = await this.readLiveAudioOutput(this.requireIpc());
+      return {
+        selected: this.describeSelectedDevice(live.audioDevice, live.devices),
+        output: typeof live.currentAo === 'string' ? live.currentAo : null,
+        devices: live.devices,
+        source: 'player',
+      };
+    }
+    if (this.mpvBinary === null) {
+      throw new Error(ErrorFormatter.configMissing('Playback', 'mpv binary'));
+    }
+    const devices = await probeAudioDevices(this.mpvBinary);
+    const saved = this.readAudioDeviceSource();
+    const target = saved === null ? null : resolveSavedDevice(saved, devices);
+    const id = target?.id ?? AUTO_DEVICE_ID;
+    const listedName = devices.find((device) => device.id === id)?.name;
+    return {
+      selected: { id, name: listedName ?? target?.name ?? null, connected: isDeviceConnected(id, devices) },
+      output: null,
+      devices,
+      source: 'probe',
+    };
+  }
+
+  /** Never spawns mpv, and returns false when none runs. The pause state stays as it is. */
+  async selectAudioDevice(id: string): Promise<boolean> {
+    await this.ensureAttached();
+    if (!this.isRunning()) return false;
+    const ipc = this.requireIpc();
+    const live = await this.readLiveAudioOutput(ipc);
+    if (live.audioDevice === id && live.currentAo === NULL_AUDIO_OUTPUT) {
+      await this.reopenAudioOutput(ipc, id, live.devices);
+      return true;
+    }
+    await ipc.command('set_property', 'audio-device', id);
+    return true;
   }
 
   songIdForPath(path: string): string | null {
@@ -818,6 +946,7 @@ class PlaybackEngine {
       this.mpvVersion = await this.readMpvVersion(ipc);
 
       await this.installObservers(ipc);
+      await this.applySavedAudioDevice(ipc);
       // Before the caller's first load, so the first track already plays through the filter.
       await this.queueVisualizerSync(ipc, { checkWaitMs: MPV_VISUALIZER_SPAWN_WAIT_MS });
 
@@ -877,8 +1006,12 @@ class PlaybackEngine {
     ipc.onPropertyChange((evt) => {
       this.propertyCache.set(evt.name, evt.data);
       this.emitStateChange({ kind: 'property', name: evt.name, data: evt.data });
-      const quietNow = (evt.name === 'pause' || evt.name === 'idle-active') && evt.data === true;
+      const playStateEvent = evt.name === 'pause' || evt.name === 'idle-active';
+      const quietNow = playStateEvent && evt.data === true;
       if (quietNow && this.visualizerPending && this.visualizerKeepsInSync) void this.queueVisualizerSync(ipc, {});
+      if (AUDIO_OUTPUT_PROPERTIES.has(evt.name)) this.onAudioOutputChange(ipc);
+      if (evt.name === 'pause' && evt.data === false) this.lostOutputPause = null;
+      if (playStateEvent && evt.data === false) void this.pauseOnStartOverLostOutput(ipc);
     });
 
     // mpv sends no property events before observe_property, so this precedes the new snapshot.
@@ -984,6 +1117,209 @@ class PlaybackEngine {
   }
 
   /**
+   * Written even for a device mpv does not list, so mpv opens the null output and never a different
+   * speaker. A device re-registered under a new id is matched by name. An attach skips this, since
+   * the spawning process applied it.
+   */
+  private async applySavedAudioDevice(ipc: MpvIpc): Promise<void> {
+    const saved = this.readAudioDeviceSource();
+    if (saved === null) return;
+    try {
+      const deviceList: unknown = await ipc.command('get_property', 'audio-device-list').catch(() => null);
+      const target = resolveSavedDevice(saved, parseAudioDeviceList(deviceList));
+      await ipc.command('set_property', 'audio-device', target.id);
+      if (target.id !== saved.id) this.storeReplacementDevice(saved.id, { id: target.id, name: target.name ?? saved.id });
+    } catch (err) {
+      logger.warn(`audio device ${saved.id} not applied: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Every attached engine runs this. Each write it makes repeats harmlessly from a second engine.
+  private onAudioOutputChange(ipc: MpvIpc): void {
+    const values = this.readCachedAudioOutputValues();
+    const id = selectedDeviceId(values.audioDevice);
+    const connected = isDeviceConnected(id, values.devices);
+    const returned = connected && !this.selectedDeviceWasConnected;
+    this.selectedDeviceWasConnected = connected;
+    if (connected) this.rememberListedSelection(id, values.devices);
+
+    const replacement = connected ? null : this.findReplacement(id, values.devices);
+    if (replacement !== null) {
+      void this.adoptReplacementDevice(ipc, id, replacement);
+      return;
+    }
+    this.pauseOnLostOutput(ipc, values);
+    if (returned) void this.recoverReturnedOutput(ipc, id);
+  }
+
+  private pauseOnLostOutput(ipc: MpvIpc, values: AudioOutputValues): void {
+    const lost = isAudioOutputLost(values);
+    const newlyLost = lost && !this.audioOutputWasLost;
+    this.audioOutputWasLost = lost;
+    if (newlyLost) {
+      const device = this.describeSelectedDevice(values.audioDevice, values.devices);
+      logger.info(`Audio output lost on device ${device.name ?? device.id}`);
+    }
+    if (!lost || this.isIdleOrPaused()) return;
+    this.lostOutputPause = { at: Date.now(), deviceId: selectedDeviceId(values.audioDevice) };
+    void ipc.command('set_property', 'pause', true).catch((err: unknown) => {
+      logger.debug(`pause on lost audio output failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
+
+  /** A twin that left the list before the selected device did is still a different output. */
+  private rememberListedSelection(id: string, devices: readonly AudioDevice[]): void {
+    const device = devices.find((candidate) => candidate.id === id);
+    if (id === AUTO_DEVICE_ID || device === undefined) return;
+    const earlier = this.lastListedSelection?.device.id === id ? this.lastListedSelection.listedBeside : [];
+    const listedBeside = new Set([...earlier, ...devices.map((candidate) => candidate.id)]);
+    this.lastListedSelection = { device, listedBeside };
+  }
+
+  private findReplacement(id: string, devices: readonly AudioDevice[]): AudioDevice | null {
+    if (id === AUTO_DEVICE_ID) return null;
+    const last = this.lastListedSelection?.device.id === id ? this.lastListedSelection : null;
+    const name = last?.device.name ?? this.savedDeviceName(id);
+    if (name === null) return null;
+    return findReplacementDevice({ id, name }, devices, last?.listedBeside ?? new Set());
+  }
+
+  /**
+   * The pause moves to the new id before the write, so the write's own event can resume it. A failed
+   * write leaves the lost device selected, so it gets the pause a plain loss gets.
+   */
+  private async adoptReplacementDevice(ipc: MpvIpc, lostId: string, replacement: AudioDevice): Promise<void> {
+    if (this.replacingDeviceId === replacement.id) return;
+    this.replacingDeviceId = replacement.id;
+    logger.info(`Audio device ${replacement.name} moved from ${lostId} to ${replacement.id}`);
+    if (this.lostOutputPause?.deviceId === lostId) this.lostOutputPause.deviceId = replacement.id;
+    try {
+      await ipc.command('set_property', 'audio-device', replacement.id);
+      this.storeReplacementDevice(lostId, replacement);
+    } catch (err) {
+      logger.warn(`audio device ${replacement.id} not adopted: ${err instanceof Error ? err.message : String(err)}`);
+      if (this.lostOutputPause?.deviceId === replacement.id) this.lostOutputPause.deviceId = lostId;
+      this.pauseOnLostOutput(ipc, this.readCachedAudioOutputValues());
+    } finally {
+      this.replacingDeviceId = null;
+    }
+  }
+
+  /** Only a saved choice is updated, so a device picked while no store exists stays unsaved. */
+  private storeReplacementDevice(lostId: string, replacement: AudioDevice): void {
+    if (this.readAudioDeviceSource()?.id !== lostId) return;
+    if (!this.saveAudioDevice(replacement)) {
+      logger.warn(`audio device ${replacement.name} moved to ${replacement.id}, but the new id was not saved`);
+    }
+  }
+
+  /**
+   * mpv keeps a returned device on its null output until the output is re-opened. Playback resumes
+   * only when this engine paused for that device moments ago, since a longer outage may be on purpose.
+   */
+  private async recoverReturnedOutput(ipc: MpvIpc, id: string): Promise<void> {
+    const pause = this.lostOutputPause;
+    this.lostOutputPause = null;
+    const resume = pause !== null && pause.deviceId === id && Date.now() - pause.at <= AUDIO_OUTPUT_RESUME_WINDOW_MS;
+    try {
+      const missing = await this.checkAudioOutput(ipc);
+      if (missing === null && resume) await ipc.command('set_property', 'pause', false);
+    } catch (err) {
+      logger.debug(`returned audio output not recovered: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * A loss while paused raised no pause, and mpv sends no new output event when playback starts.
+   * The live read keeps a stale cached `null` output from pausing an output a re-open restored.
+   */
+  private async pauseOnStartOverLostOutput(ipc: MpvIpc): Promise<void> {
+    if (this.isIdleOrPaused() || !isAudioOutputLost(this.readCachedAudioOutputValues())) return;
+    try {
+      const live = await this.readLiveAudioOutput(ipc);
+      if (!isAudioOutputLost(live)) return;
+      await ipc.command('set_property', 'pause', true);
+    } catch (err) {
+      logger.debug(`pause on a start over a lost audio output failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private readCachedAudioOutput(): { device: SelectedAudioDevice; lost: boolean } {
+    const cached = this.readCachedAudioOutputValues();
+    return { device: this.describeSelectedDevice(cached.audioDevice, cached.devices), lost: isAudioOutputLost(cached) };
+  }
+
+  private readCachedAudioOutputValues(): AudioOutputValues {
+    return {
+      audioDevice: this.propertyCache.get('audio-device'),
+      devices: parseAudioDeviceList(this.propertyCache.get('audio-device-list')),
+      currentAo: this.propertyCache.get('current-ao'),
+    };
+  }
+
+  /** A rejected `current-ao` read means no output is open, which is not a loss. */
+  private async readLiveAudioOutput(ipc: MpvIpc): Promise<AudioOutputValues> {
+    const audioDevice = await ipc.command('get_property', 'audio-device');
+    const deviceList = await ipc.command('get_property', 'audio-device-list');
+    const currentAo = await ipc.command('get_property', 'current-ao').catch(() => null);
+    return { audioDevice, devices: parseAudioDeviceList(deviceList), currentAo };
+  }
+
+  /** Reads live values, since the cache can lag a device change. */
+  private async checkAudioOutput(ipc: MpvIpc): Promise<MissingAudioOutput | null> {
+    const live = await this.readLiveAudioOutput(ipc);
+    const id = selectedDeviceId(live.audioDevice);
+    if (!isDeviceConnected(id, live.devices)) return { id, name: this.savedDeviceName(id) };
+    if (live.currentAo !== NULL_AUDIO_OUTPUT) return null;
+    const reopened = await this.reopenAudioOutput(ipc, id, live.devices);
+    return reopened ? null : { id, name: this.savedDeviceName(id) };
+  }
+
+  /**
+   * mpv ignores a write of the value it holds, so a named device is re-opened through `auto`. No
+   * documented write re-opens `auto` itself, so it takes `ao-reload`.
+   */
+  private async reopenAudioOutput(ipc: MpvIpc, id: string, devices: readonly AudioDevice[]): Promise<boolean> {
+    const isAuto = id === AUTO_DEVICE_ID;
+    if (isAuto && !devices.some((device) => device.id !== AUTO_DEVICE_ID)) return false;
+    try {
+      if (isAuto) {
+        await ipc.command('ao-reload');
+      } else {
+        await ipc.command('set_property', 'audio-device', AUTO_DEVICE_ID);
+        await ipc.command('set_property', 'audio-device', id);
+      }
+      return true;
+    } catch (err) {
+      logger.debug(`audio output ${id} not re-opened: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
+  // The source is read only for an unlisted device, since it can read the settings file and
+  // getStatus runs on every status poll.
+  private describeSelectedDevice(audioDevice: unknown, devices: readonly AudioDevice[]): SelectedAudioDevice {
+    const id = selectedDeviceId(audioDevice);
+    const listed = devices.find((device) => device.id === id);
+    const name = listed !== undefined ? listed.name : this.savedDeviceName(id);
+    return { id, name, connected: isDeviceConnected(id, devices) };
+  }
+
+  private savedDeviceName(id: string): string | null {
+    const saved = this.readAudioDeviceSource();
+    return saved !== null && saved.id === id ? saved.name : null;
+  }
+
+  private readAudioDeviceSource(): Config['playbackAudioDevice'] {
+    try {
+      return this.audioDeviceSource();
+    } catch (err) {
+      logger.debug(`audio device setting unreadable, treating it as none: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  }
+
+  /**
    * A spawn still connecting is killed directly, since waiting for it can outlast the caller's exit
    * and leave its detached child running.
    */
@@ -1013,8 +1349,26 @@ class PlaybackEngine {
     this.startPromise = null;
     this.visualizerPending = false;
     this.visualizerRefusal = null;
+    this.audioOutputWasLost = false;
+    this.selectedDeviceWasConnected = true;
+    this.lastListedSelection = null;
+    this.replacingDeviceId = null;
+    this.lostOutputPause = null;
     this.stateChangeHandlers.length = 0;
   }
+}
+
+function selectedDeviceId(audioDevice: unknown): string {
+  return typeof audioDevice === 'string' ? audioDevice : AUTO_DEVICE_ID;
+}
+
+/** `auto` counts as connected, since mpv then opens whatever output the OS offers. */
+function isDeviceConnected(id: string, devices: readonly AudioDevice[]): boolean {
+  return id === AUTO_DEVICE_ID || devices.some((device) => device.id === id);
+}
+
+function isAudioOutputLost(values: AudioOutputValues): boolean {
+  return values.currentAo === NULL_AUDIO_OUTPUT || !isDeviceConnected(selectedDeviceId(values.audioDevice), values.devices);
 }
 
 /**

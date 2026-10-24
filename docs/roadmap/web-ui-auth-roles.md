@@ -86,7 +86,8 @@ What an unauthenticated LAN peer gets today, route by route. A LAN peer exists o
 | `GET /healthz` | 404 off-host on a LAN bind (`routes/health.ts:25`) | Nothing |
 | `GET /api/events` | none | Open the snapshot stream: now playing, queue, status, theme |
 | `GET /api/visualizer`, `GET /api/visualizer/modes` | none | Open the level stream. Opening it starts the mpv level feed (`visualizer-hub.ts:50`) |
-| `POST /api/controls/{pause,resume,next,previous,seek,volume,play-index,clear,shuffle}` | the JSON gate | Control playback, clear and shuffle the queue |
+| `POST /api/controls/{pause,resume,next,previous,seek,volume,audio-device,play-index,clear,shuffle}` | the JSON gate | Control playback, clear and shuffle the queue. Switch the audio output, which saves to `settings.json` |
+| `GET /api/audio-devices` | none | Read the output device ids and names |
 | `POST /api/library/play` | the JSON gate | Replace the queue with any album, artist, playlist or song |
 | `GET /api/library/{search,artist-albums,album-songs}` | none | Read the entire library |
 | `GET /api/library/{recent,favorites}` | none | Read listening history and starred counts |
@@ -178,7 +179,8 @@ the reverse-proxy scenario  a proxy publishes the remote on the internet. Reache
 | Permission | Routes | owner | listener | guest | machine |
 |---|---|---|---|---|---|
 | `player.view` | `GET /api/events`, `/api/visualizer`, `/api/visualizer/modes`, `/api/player-state`, `/api/cover/:id`, `/api/lyrics/:id` | yes | yes | yes | Remote Player Agent decides |
-| `player.control` | `POST /api/controls/*` | yes | yes | no | Remote Player Agent decides |
+| `player.control` | `POST /api/controls/*` except `audio-device` | yes | yes | no | Remote Player Agent decides |
+| `player.output` | `GET /api/audio-devices`, `POST /api/controls/audio-device` | yes | no | no | no |
 | `library.browse` | `GET /api/library/{search,artist-albums,album-songs}`, `GET /api/playlists` | yes | yes | no (Party Mode decides) | Remote Player Agent decides |
 | `library.history` | `GET /api/library/{recent,favorites}` | yes | yes | no | no |
 | `library.play` | `POST /api/library/play` | yes | yes | no | Remote Player Agent decides |
@@ -204,7 +206,7 @@ The machine column takes effect with the machine grant release. Until then, only
 // settings.json, MVP fields
 "webui": {
   "auth": {
-    "anonymousRole": "none",   // none | guest | listener. listener reproduces today's LAN behavior
+    "anonymousRole": "none",   // none | guest | listener. listener reproduces today's LAN behavior except the audio output routes, which need owner
     "trustLoopback": true,     // false makes the host browser enroll like any other device
     "allowedHosts": []         // DNS names the host gate accepts on a LAN bind, such as "music.home.arpa:8808"
   }
@@ -365,7 +367,7 @@ What a LAN peer gets when the settings store has no `webui.auth` block. This dec
 | Extension fit (0.10) | 3 | 5 | 5 |
 | Weighted total | 3.70 | 4.10 | 3.95 |
 
-- The open-LAN default sets `anonymousRole: "listener"`, which is today's behavior.
+- The open-LAN default sets `anonymousRole: "listener"`, which is today's behavior except the audio output routes. Those need owner.
 - The enrolled-LAN default sets `anonymousRole: "none"` and keeps loopback trust.
 - The enrolled-everywhere default sets `anonymousRole: "none"` and turns loopback trust off. The host browser then enrolls like any device, and the auto-open path (`src/web/main.ts:50-54`) needs a one-time token URL. The lease route and the health route stay open to loopback peers in every posture.
 
@@ -470,7 +472,7 @@ Steps in dependency order. Each names the parts it adds or changes.
 
 ### Device enrollment MVP
 
-- Capability: phones and tablets join by scanning an invite QR from the host. The owner lists and revokes devices. A guest invite gives a view-only display, such as a TV showing now playing, lyrics and the visualizer. `anonymousRole` restores today's open LAN in one line.
+- Capability: phones and tablets join by scanning an invite QR from the host. The owner lists and revokes devices. A guest invite gives a view-only display, such as a TV showing now playing, lyrics and the visualizer. `anonymousRole: "listener"` restores today's open LAN in one line, except the audio output routes, which need owner.
 - Parts: the shared secret helpers, the settings fields, the grant store, the role table, the principal resolver, the host gate extension, the origin gate, the auth routes, the redeem limiter, the stream registry, the join view, the devices panel, the invite command.
 - Acceptance check:
   1. With `webui.expose` on and default settings, a new LAN client gets 401 from every `/api` route except `/api/auth/session` and `/api/auth/redeem`.
@@ -479,7 +481,7 @@ Steps in dependency order. Each names the parts it adds or changes.
   4. The host browser at 127.0.0.1 works with no enrollment. The MCP lease and the port-as-lock probe work unchanged.
   5. A request through a same-host nginx never gets owner permissions.
   6. A `Host: evil.example` request to a LAN bind gets 403.
-  7. `anonymousRole: "listener"` reproduces today's LAN behavior.
+  7. `anonymousRole: "listener"` reproduces today's LAN behavior, except the audio output routes, which return 403 to a listener.
   8. The route-by-role table test passes, and `pnpm check:all`, `pnpm test:run` and `pnpm build` are clean.
 - Effort: 5 to 8 working days [INFERRED].
 

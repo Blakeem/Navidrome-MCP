@@ -96,6 +96,8 @@ const EXPECTED_PLAYBACK_TOOLS = [
   'pause',
   'resume',
   'set_volume',
+  'list_audio_devices',
+  'set_audio_device',
   'playback_status',
   'play_songs',
   'play_albums',

@@ -32,7 +32,7 @@ A Raspberry Pi or an always-on machine with speech to text (such as Whisper) and
 
 > Requires `mpv`.
 
-A web player at `http://localhost:8808` controls local playback from any browser. It shows the current song with cover art, transport and seek controls, volume, and a live queue. Click a queue entry to jump to it. Enable **Expose on LAN** to use the player from a phone or tablet. [MPV Remote setup](#mpv-remote-setup) covers setup, lifetime, and security.
+A web player at `http://localhost:8808` controls local playback from any browser. It shows the current song with cover art, transport and seek controls, volume, and a live queue. Click a queue entry to jump to it. The output button beside the volume slider picks the audio output. Enable **Expose on LAN** to use the player from a phone or tablet. [MPV Remote setup](#mpv-remote-setup) covers setup, lifetime, and security.
 
 [![MPV Remote web interface](images/remote-small.png)](images/remote-large.png)
 
@@ -218,8 +218,10 @@ A category with **requires** in its heading only appears once that setting is fi
 | `previous` | Skip to the previous track |
 | `seek` | Move within the current track (absolute or relative) |
 | `set_volume` | Set mpv's internal volume (0-100) |
+| `list_audio_devices` | List the audio outputs mpv can play to. `verbose: true` shows every audio driver |
+| `set_audio_device` | Play through the output with the given `id`, or `auto` for the system default. The choice is saved |
 | `now_playing` | Current song ID, title, artist, album, position, duration and queue index. Radio reports the station and its ICY title |
-| `playback_status` | Engine health probe (running, mpv version, idle) without spawning mpv |
+| `playback_status` | Engine health probe (running, mpv version, idle, audio device) without spawning mpv |
 | `get_play_queue` | One page of the live queue (`limit`, `offset`) with metadata and the current-track index |
 | `clear_play_queue` | Clear the queue and stop playback |
 | `shuffle_play_queue` | Randomize queue order without changing membership. The current track keeps playing and moves to the top |
@@ -300,6 +302,7 @@ These settings are optional.
 - **Radio Browser user agent:** enables global station discovery.
 - **Lyrics provider (LRCLIB) and user agent:** enables LRCLIB lyrics.
 - **mpv path:** the mpv binary location if it's not on `PATH`. Blank auto-detects.
+- **Audio output:** the speaker or headphones mpv plays through. **System default** uses the output the operating system selects.
 - **Transcode format:** defaults to `raw`, which streams the original file for best quality and reliable seeking. Set a codec such as `mp3` or `opus` for slow or metered links. The bitrate applies only when a codec is set.
 - **Web UI:** the MPV Remote settings, listed in [Configuration](#configuration).
 - **Transport:** how MCP clients reach the server, described in [HTTP Transport](#http-transport).
@@ -315,6 +318,7 @@ The settings page binds loopback only, so a host with no browser, such as a VPS 
 - `LYRICS_PROVIDER=lrclib` with `LRCLIB_USER_AGENT` enables LRCLIB lyrics.
 - `NAVIDROME_DEFAULT_LIBRARIES` sets the default library IDs, comma separated.
 - `MPV_PATH` sets the mpv binary location.
+- `PLAYBACK_AUDIO_DEVICE` sets the audio output by its id from `list_audio_devices`.
 - `DEBUG=true` turns on verbose logs.
 
 [HTTP Transport](#http-transport) lists the transport variables.
@@ -425,13 +429,13 @@ Every setting below except `webui.theme` is in the **Web UI** section of the set
 
 The web UI has **no authentication**. Anyone who can reach the port can use two groups of features.
 
-- **Control:** playback transport, volume, queue jumps, shuffling, clearing the queue, and starting any library source.
-- **Read:** library search and browsing, recently played history, playlist names, starred counts, cover art, live now-playing and queue state, lyrics of queued songs, and the host's LAN addresses.
+- **Control:** playback transport, volume, the audio output, queue jumps, shuffling, clearing the queue, and starting any library source.
+- **Read:** library search and browsing, recently played history, playlist names, starred counts, cover art, live now-playing and queue state, lyrics of queued songs, the names of the host's audio outputs, and the host's LAN addresses.
 
 Who can reach the port depends on the bind address.
 
 - With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
-- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's fine on a trusted home network. **Do not expose it to the public internet.** There is no rate limiting. Player settings and the power button stay loopback only, so a phone on your LAN can't change settings or shut the player down. The main settings page is never exposed. Once exposed, `GET /healthz` returns `404` off the host to avoid leaking a version fingerprint. Check the player's health from its host.
+- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's fine on a trusted home network. **Do not expose it to the public internet.** There is no rate limiting. Player settings and the power button stay loopback only, so a phone on your LAN can't change settings other than the audio output or shut the player down. The main settings page is never exposed. Once exposed, `GET /healthz` returns `404` off the host to avoid leaking a version fingerprint. Check the player's health from its host.
 
 ### HTTP Transport
 

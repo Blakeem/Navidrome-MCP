@@ -113,6 +113,8 @@ function buildMpvArgs(ipcPath: string): string[] {
     '--audio-display=no',
     '--ytdl=no',
     '--vo=null',
+    // A lost output then leaves the track loaded on the null output, so the engine can pause it.
+    '--audio-fallback-to-null=yes',
   ];
 }
 

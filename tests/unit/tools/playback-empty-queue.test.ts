@@ -15,10 +15,10 @@ const ensureAttachedMock = vi.fn().mockResolvedValue(undefined);
 const isRunningMock = vi.fn();
 const nextMock = vi.fn().mockResolvedValue(undefined);
 const previousMock = vi.fn().mockResolvedValue(undefined);
-const resumeMock = vi.fn().mockResolvedValue(undefined);
+const resumeMock = vi.fn().mockResolvedValue({ outputMissing: null });
 const pauseMock = vi.fn().mockResolvedValue(undefined);
 const seekMock = vi.fn().mockResolvedValue(undefined);
-const jumpMock = vi.fn().mockResolvedValue(undefined);
+const jumpMock = vi.fn().mockResolvedValue({ outputMissing: null });
 const clearQueueMock = vi.fn().mockResolvedValue(undefined);
 const shuffleQueueMock = vi.fn().mockResolvedValue(undefined);
 const moveQueueEntryMock = vi.fn().mockResolvedValue(undefined);
@@ -180,6 +180,15 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
     expect(result.paused).toBe(false);
   });
 
+  it('resume reports a missing audio output as a failure', async () => {
+    resumeMock.mockResolvedValueOnce({ outputMissing: { id: 'wasapi/{katana}', name: 'Speakers (Katana)' } });
+    const result = await resume({});
+    expect(result).toEqual({
+      success: false,
+      message: "The selected audio device 'Speakers (Katana)' is not connected. Turn it on, then call resume, or call set_audio_device to pick another output.",
+    });
+  });
+
   it('pause pauses and reports success', async () => {
     const result = await pause({});
     expect(pauseMock).toHaveBeenCalledTimes(1);
@@ -201,7 +210,17 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
   it('play_queue_index jumps and reports success', async () => {
     const result = await playQueueIndex({ index: 2 });
     expect(jumpMock).toHaveBeenCalledWith(2);
-    expect(result.success).toBe(true);
+    expect(result).toEqual({ success: true });
+  });
+
+  it('play_queue_index reports a missing audio output as paused', async () => {
+    jumpMock.mockResolvedValueOnce({ outputMissing: { id: 'auto', name: null } });
+    const result = await playQueueIndex({ index: 2 });
+    expect(result).toEqual({
+      success: true,
+      paused: true,
+      message: 'No audio output device is available. Connect one, then call resume.',
+    });
   });
 
   it('move_in_play_queue lands a forward move at the final index `to`', async () => {

@@ -3,13 +3,25 @@
  * such as a validation failure or a URL that carries credentials, so no test reaches the network.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConfigServer } from '../../../src/config-app/server.js';
 import { readSettings } from '../../../src/config/store.js';
+import { probeAudioDevices } from '../../../src/services/playback/audio-devices.js';
+import { resolveMpvBinary } from '../../../src/services/playback/mpv-process.js';
+
+// The audio device route would otherwise shell out to a real mpv.
+vi.mock('../../../src/services/playback/audio-devices.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/services/playback/audio-devices.js')>();
+  return { ...actual, probeAudioDevices: vi.fn() };
+});
+vi.mock('../../../src/services/playback/mpv-process.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/services/playback/mpv-process.js')>();
+  return { ...actual, resolveMpvBinary: vi.fn(() => null) };
+});
 
 const MASK = '********';
 
@@ -29,6 +41,7 @@ describe('settings server seed/save', () => {
   });
 
   afterEach(async () => {
+    vi.clearAllMocks();
     if (server) { await server.close(); server = null; }
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
@@ -131,14 +144,14 @@ describe('settings server seed/save', () => {
   it('keeps stored nested keys the settings schema does not know', async () => {
     writeFileSync(file, JSON.stringify({
       navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
-      playback: { audioDevice: 'wasapi/{device-id}' },
+      playback: { outputHint: 'kept' },
       webui: { port: 8808, note: 'kept', auth: { enabled: true } },
     }));
     const base = await start();
     const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK }, webui: { port: 9000 } });
     expect(res.status).toBe(200);
     const written = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-    expect(written['playback']).toEqual({ audioDevice: 'wasapi/{device-id}' });
+    expect(written['playback']).toEqual({ outputHint: 'kept' });
     expect(written['webui']).toEqual({ port: 9000, note: 'kept', auth: { enabled: true } });
   });
 
@@ -159,6 +172,88 @@ describe('settings server seed/save', () => {
     expect(after?.navidrome?.url).toBe('http://new:4533');
     expect(after?.transport).toEqual({ allowedHosts: [], port: 3000 });
     expect(after?.features).toEqual({ lastFmApiKey: null, lrclibBase: 'https://new.example' });
+  });
+
+  it('lists the probed audio devices narrowed to one driver, using the stored mpv path', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      playback: { mpvPath: '/opt/mpv/mpv' },
+    }));
+    vi.mocked(resolveMpvBinary).mockReturnValue('/opt/mpv/mpv');
+    vi.mocked(probeAudioDevices).mockResolvedValue([
+      { id: 'auto', name: 'Autoselect device' },
+      { id: 'wasapi/{a}', name: 'Speakers' },
+      { id: 'openal/Speakers', name: 'Speakers (OpenAL)' },
+      { id: 'wasapi/{b}', name: 'Headphones' },
+    ]);
+    const base = await start();
+    const res = await fetch(`${base}/api/settings/audio-devices`);
+    expect(res.status).toBe(200);
+    expect(await getJson(res)).toEqual({
+      devices: [
+        { id: 'auto', name: 'Autoselect device' },
+        { id: 'wasapi/{a}', name: 'Speakers' },
+        { id: 'wasapi/{b}', name: 'Headphones' },
+      ],
+    });
+    expect(resolveMpvBinary).toHaveBeenCalledWith('/opt/mpv/mpv');
+    expect(probeAudioDevices).toHaveBeenCalledWith('/opt/mpv/mpv');
+  });
+
+  it("narrows the probed audio devices to the saved device's driver", async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      playback: { audioDevice: { id: 'openal/Speakers', name: 'Speakers (OpenAL)' } },
+    }));
+    vi.mocked(resolveMpvBinary).mockReturnValue('/usr/bin/mpv');
+    vi.mocked(probeAudioDevices).mockResolvedValue([
+      { id: 'auto', name: 'System default' },
+      { id: 'wasapi/{a}', name: 'Speakers' },
+      { id: 'openal/Speakers', name: 'Speakers (OpenAL)' },
+    ]);
+    const base = await start();
+    const res = await fetch(`${base}/api/settings/audio-devices`);
+    expect(await getJson(res)).toEqual({
+      devices: [
+        { id: 'auto', name: 'System default' },
+        { id: 'openal/Speakers', name: 'Speakers (OpenAL)' },
+      ],
+    });
+  });
+
+  it('answers an empty audio device list with a message when no mpv is found', async () => {
+    vi.mocked(resolveMpvBinary).mockReturnValue(null);
+    const base = await start();
+    const res = await fetch(`${base}/api/settings/audio-devices`);
+    expect(res.status).toBe(200);
+    expect(await getJson(res)).toEqual({ devices: [], message: 'mpv was not found' });
+    expect(probeAudioDevices).not.toHaveBeenCalled();
+  });
+
+  it('answers an empty audio device list with the error text when the probe fails', async () => {
+    vi.mocked(resolveMpvBinary).mockReturnValue('/usr/bin/mpv');
+    vi.mocked(probeAudioDevices).mockRejectedValue(new Error('mpv audio device probe exited with code 1'));
+    const base = await start();
+    const res = await fetch(`${base}/api/settings/audio-devices`);
+    expect(res.status).toBe(200);
+    expect(await getJson(res)).toEqual({ devices: [], message: 'mpv audio device probe exited with code 1' });
+  });
+
+  it('stores a posted audio device and clears it when the form posts null', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      playback: { audioDevice: { id: 'wasapi/{old}', name: 'Old speakers' }, mpvPath: '/opt/mpv/mpv' },
+    }));
+    const base = await start();
+    const navidrome = { url: 'http://h:4533', username: 'u', password: MASK };
+
+    const chosen = await post(base, { navidrome, playback: { audioDevice: { id: 'wasapi/{b}', name: null } } });
+    expect(chosen.status).toBe(200);
+    expect(readSettings()?.playback).toEqual({ audioDevice: { id: 'wasapi/{b}', name: null }, mpvPath: '/opt/mpv/mpv' });
+
+    const cleared = await post(base, { navidrome, playback: { audioDevice: null } });
+    expect(cleared.status).toBe(200);
+    expect(readSettings()?.playback).toEqual({ audioDevice: null, mpvPath: '/opt/mpv/mpv' });
   });
 
   it('masks the Last.fm API key in the seed response', async () => {

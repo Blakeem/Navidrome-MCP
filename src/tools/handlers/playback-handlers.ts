@@ -28,6 +28,8 @@ import {
   pause,
   resume,
   setVolume,
+  listAudioDevices,
+  setAudioDevice,
   playbackStatus,
   playSongs,
   playAlbums,
@@ -46,7 +48,7 @@ import {
   playQueueIndex,
 } from '../playback.js';
 
-const QUEUE_MODE_DESCRIPTION = "'replace' clears the queue and starts playback. 'append' adds to the end without clearing or unpausing. When the queue holds a radio stream, 'append' acts as 'replace': the station is removed, playback starts, and the result carries `demoted: true`. When no track is current (the queue is empty, finished, or mpv just started), 'append' loads the first new track paused, so use 'replace' or call resume to start playback. Defaults to 'replace'.";
+const QUEUE_MODE_DESCRIPTION = "'replace' clears the queue and starts playback. 'append' adds to the end without clearing or unpausing. When the queue holds a radio stream, 'append' acts as 'replace': the station is removed, playback starts, and the result carries `demoted: true`. When the selected audio output is not connected, 'replace' and an 'append' acting as 'replace' keep playback paused, and the result carries `paused: true` and `message`. When no track is current (the queue is empty, finished, or mpv just started), 'append' loads the first new track paused, so use 'replace' or call resume to start playback. Defaults to 'replace'.";
 
 const ALBUM_SHUFFLE_PROPERTIES = {
   shuffleAlbums: {
@@ -73,7 +75,7 @@ const tools: Tool[] = [
   },
   {
     name: 'resume',
-    description: 'Resume local audio playback (mpv). Reports nothing to resume when no playback is active (does not start mpv). Use a play tool to begin.',
+    description: 'Resume local audio playback (mpv). Reports nothing to resume when no playback is active (does not start mpv). Stays paused when the selected audio output is not connected. Use a play tool to begin.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -96,8 +98,40 @@ const tools: Tool[] = [
     },
   },
   {
+    name: 'list_audio_devices',
+    description: 'List the audio outputs mpv can play to, such as speakers, HDMI, a USB DAC or a connected Bluetooth speaker. Each device has an `id` and a `name`. `selected` is the current choice, and `connected: false` means it is off or out of range. A Bluetooth speaker is listed only while the OS has it connected, so pairing alone is not enough. On Windows 10 one Bluetooth speaker can appear twice, so prefer the Stereo entry over Hands-Free. Shows one audio driver. `verbose: true` shows every driver. Does not start mpv.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verbose: {
+          type: 'boolean',
+          description: 'When true, list the devices of every audio driver. Defaults to false.',
+          default: false,
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'set_audio_device',
+    description: 'Play through the audio output with this `id` from list_audio_devices, or `auto` for the system default. When mpv is running it switches at once and keeps the position. The choice is saved and applies each time mpv starts. If the chosen output disconnects, playback pauses. Does not start mpv.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 512,
+          description: 'A device `id` from list_audio_devices, or `auto` for the system default.',
+        },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'playback_status',
-    description: 'Probe the playback engine. Returns whether mpv is currently spawned, its detected path/version, and current volume/idle state. Does NOT spawn mpv if the engine is not already running.',
+    description: 'Probe the playback engine. Returns whether mpv is currently spawned, its detected path/version, current volume/idle state, `audioDevice` (the selected audio output with its `id`, `name` and `connected`) and `audioOutputLost` (true when mpv has no working audio output). Does NOT spawn mpv if the engine is not already running.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -106,7 +140,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_songs',
-    description: "Play one or many songs through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end of the queue without clearing or unpausing. `shuffle: true` randomizes only the new batch before queueing. `skipped` counts requested IDs that are unknown or outside the active libraries.",
+    description: "Play one or many songs through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. When the selected audio output is not connected, playback stays paused and the result carries `paused: true` and `message`. `mode: 'append'` adds to the end of the queue without clearing or unpausing. `shuffle: true` randomizes only the new batch before queueing. `skipped` counts requested IDs that are unknown or outside the active libraries.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -134,7 +168,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_albums',
-    description: "Play one or many albums through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. `mode: 'append'` adds to the end without clearing or unpausing. With neither shuffle flag, albums play in input order with natural track order. `shuffleAlbums` randomizes album order. `shuffleSongs` randomizes tracks.",
+    description: "Play one or many albums through the local speakers via mpv. `mode: 'replace'` (default) clears the play queue and starts playback. When the selected audio output is not connected, playback stays paused and the result carries `paused: true` and `message`. `mode: 'append'` adds to the end without clearing or unpausing. With neither shuffle flag, albums play in input order with natural track order. `shuffleAlbums` randomizes album order. `shuffleSongs` randomizes tracks.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -200,7 +234,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_playlist',
-    description: "ONE-SHOT load a Navidrome playlist into the local mpv queue. Fetches every track in the playlist AND enqueues them in a single call. PREFER THIS over the two-step pattern (`get_playlist_tracks` → `play_songs`), since passing every `songId` back through the LLM wastes context tokens, especially for long playlists. Takes a `playlistId` (a Navidrome playlist ID, NOT a playlist name). Obtain it from the `list_playlists` tool. `mode: 'replace'` (default) clears the queue and starts playback. `mode: 'append'` adds to the end without clearing or unpausing. `shuffle: true` Fisher-Yates the playlist's tracks before queueing. Throws if the playlist has no tracks.",
+    description: "ONE-SHOT load a Navidrome playlist into the local mpv queue. Fetches every track in the playlist AND enqueues them in a single call. PREFER THIS over the two-step pattern (`get_playlist_tracks` → `play_songs`), since passing every `songId` back through the LLM wastes context tokens, especially for long playlists. Takes a `playlistId` (a Navidrome playlist ID, NOT a playlist name). Obtain it from the `list_playlists` tool. `mode: 'replace'` (default) clears the queue and starts playback. When the selected audio output is not connected, playback stays paused and the result carries `paused: true` and `message`. `mode: 'append'` adds to the end without clearing or unpausing. `shuffle: true` Fisher-Yates the playlist's tracks before queueing. Throws if the playlist has no tracks.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -353,7 +387,7 @@ const tools: Tool[] = [
   },
   {
     name: 'play_queue_index',
-    description: "Jump directly to the play-queue entry at the given index, like clicking a track row in the web UI. Does NOT reorder the queue, only moves the play head. Unpauses if paused. An index past the end is rejected. Reports an empty queue when nothing is playing (does not start mpv). Discovery flow: call `get_play_queue` first to find the index of the target track. For adjacent moves prefer `next`/`previous`.",
+    description: "Jump directly to the play-queue entry at the given index, like clicking a track row in the web UI. Does NOT reorder the queue, only moves the play head. Unpauses if paused. When the selected audio output is not connected, playback stays paused and the result carries `paused: true` and `message`. An index past the end is rejected. Reports an empty queue when nothing is playing (does not start mpv). Discovery flow: call `get_play_queue` first to find the index of the target track. For adjacent moves prefer `next`/`previous`.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -385,6 +419,10 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
           return resume(args);
         case 'set_volume':
           return setVolume(args);
+        case 'list_audio_devices':
+          return listAudioDevices(args);
+        case 'set_audio_device':
+          return setAudioDevice(args);
         case 'playback_status':
           return playbackStatus(args);
         case 'play_songs':

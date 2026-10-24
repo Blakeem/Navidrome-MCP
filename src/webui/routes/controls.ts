@@ -5,15 +5,17 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { PlayQueueIndexSchema, SeekSchema, SetVolumeSchema } from '../../schemas/index.js';
+import { PlayQueueIndexSchema, SeekSchema, SetAudioDeviceSchema, SetVolumeSchema } from '../../schemas/index.js';
 import {
   clearPlayQueue,
+  listAudioDevices,
   next,
   pause,
   playQueueIndex,
   previous,
   resume,
   seek,
+  setAudioDevice,
   setVolume,
   shuffleQueueFromTop,
 } from '../../tools/playback.js';
@@ -53,6 +55,16 @@ export async function handleVolume(req: IncomingMessage, res: ServerResponse): P
   const body = await readValidBody(req, res, SetVolumeSchema);
   if (body === null) return;
   return runAction(res, () => setVolume(body));
+}
+
+export function handleAudioDevices(res: ServerResponse): Promise<void> {
+  return runAction(res, () => listAudioDevices({}));
+}
+
+export async function handleAudioDevice(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readValidBody(req, res, SetAudioDeviceSchema);
+  if (body === null) return;
+  return runAction(res, () => setAudioDevice(body));
 }
 
 export async function handlePlayQueueIndex(req: IncomingMessage, res: ServerResponse): Promise<void> {

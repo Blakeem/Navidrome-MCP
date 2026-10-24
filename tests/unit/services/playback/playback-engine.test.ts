@@ -422,7 +422,7 @@ describe("enqueue('append') radio demotion", () => {
 
     const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
 
-    expect(result).toEqual({ demoted: true });
+    expect(result).toEqual({ demoted: true, outputMissing: null });
 
     // Only a replace sends playlist-clear, so its presence shows the demotion took effect.
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
@@ -447,7 +447,7 @@ describe("enqueue('append') radio demotion", () => {
 
     const result = await playbackEngine.enqueue(['song-1'], 'append');
 
-    expect(result).toEqual({ demoted: false });
+    expect(result).toEqual({ demoted: false, outputMissing: null });
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
     expect(commands).not.toContain('playlist-clear');
   });
@@ -462,7 +462,7 @@ describe("enqueue('append') radio demotion", () => {
 
     const result = await playbackEngine.enqueue(['song-1'], 'append');
 
-    expect(result).toEqual({ demoted: true });
+    expect(result).toEqual({ demoted: true, outputMissing: null });
   });
 });
 

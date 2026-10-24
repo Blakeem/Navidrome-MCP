@@ -33,6 +33,8 @@ vi.mock('../../../src/tools/playback.js', () => ({
   // Only the three above are asserted.
   resume: vi.fn(),
   setVolume: vi.fn(),
+  listAudioDevices: vi.fn(),
+  setAudioDevice: vi.fn(),
   playbackStatus: vi.fn(),
   playAlbums: vi.fn(),
   playAlbumsSearch: vi.fn(),

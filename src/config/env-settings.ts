@@ -85,6 +85,8 @@ function settingsFromEnvSource(
   const transportType = toTransportType(get('MCP_TRANSPORT'));
   const transportPort = toInt('MCP_HTTP_PORT', get('MCP_HTTP_PORT'), DEFAULT_MCP_HTTP_PORT);
 
+  const audioDeviceId = get('PLAYBACK_AUDIO_DEVICE');
+
   return {
     navidrome: {
       url: get('NAVIDROME_URL') ?? '',
@@ -117,6 +119,7 @@ function settingsFromEnvSource(
       mpvPath: get('MPV_PATH') ?? null,
       transcodeFormat: get('PLAYBACK_TRANSCODE_FORMAT') ?? DEFAULT_TRANSCODE_FORMAT,
       transcodeBitrate: get('PLAYBACK_TRANSCODE_BITRATE') ?? DEFAULT_TRANSCODE_BITRATE,
+      audioDevice: audioDeviceId !== undefined ? { id: audioDeviceId, name: null } : null,
     },
     webui: {
       enabled: toBool('WEBUI_ENABLED', get('WEBUI_ENABLED'), true),

@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 const ensureRunningMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({

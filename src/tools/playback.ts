@@ -6,8 +6,10 @@
 
 import type { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
+import { saveAudioDevice } from '../config.js';
 import {
   LibraryPlayRequestSchema,
+  ListAudioDevicesSchema,
   MoveInPlayQueueSchema,
   PlayAlbumsSchema,
   PlayAlbumsSearchSchema,
@@ -17,14 +19,26 @@ import {
   PlaySongsSchema,
   PlaySongsSearchSchema,
   SeekSchema,
+  SetAudioDeviceSchema,
   SetVolumeSchema,
 } from '../schemas/index.js';
 import {
+  AUTO_DEVICE,
+  AUTO_DEVICE_ID,
+  audioDeviceDriver,
+  filterToOneDriver,
+  NULL_AUDIO_OUTPUT,
+  type AudioDevice,
+} from '../services/playback/audio-devices.js';
+import {
   playbackEngine,
+  type AudioDeviceReport,
+  type MissingAudioOutput,
   type PlaybackStatus,
   type QueueEntry,
   type QueueTrackMetadata,
 } from '../services/playback/playback-engine.js';
+import { missingAudioOutputMessage, missingOutputFields, type MissingOutputFields } from './missing-audio-output.js';
 import { fisherYatesShuffle, orderQueueSongs } from './queue-order.js';
 import { fetchRadioStations } from './radio.js';
 import {
@@ -50,7 +64,7 @@ interface PauseResult {
 
 interface ResumeResult {
   success: boolean;
-  // Omitted when no entry is current. Then `success` is false and `message` says why.
+  // Omitted when `success` is false. Then `message` says why.
   paused?: false;
   message?: string;
 }
@@ -60,23 +74,37 @@ interface SetVolumeResult {
   volume: number;
 }
 
+interface ListAudioDevicesResult extends Omit<AudioDeviceReport, 'output'> {
+  // Omitted when no output is open.
+  output?: string;
+}
+
+type SetAudioDeviceResult =
+  | {
+    success: true;
+    device: { id: string; name: string };
+    applied: 'now' | 'next-start';
+    persisted: boolean;
+  }
+  | { success: false; message: string };
+
 // Play results do not echo `mode`, since the engine turns 'append' into 'replace' when the queue
 // holds a radio stream. `demoted` reports that change.
-interface PlaySongsResult {
+interface PlaySongsResult extends MissingOutputFields {
   success: true;
   count: number;
   skipped?: number;
   demoted?: true;
 }
 
-interface PlayAlbumsResult {
+interface PlayAlbumsResult extends MissingOutputFields {
   success: true;
   albumCount: number;
   trackCount: number;
   demoted?: true;
 }
 
-interface PlayAlbumsSearchResult {
+interface PlayAlbumsSearchResult extends MissingOutputFields {
   success: true;
   matchCount: number;
   albumCount: number;
@@ -85,20 +113,26 @@ interface PlayAlbumsSearchResult {
   demoted?: true;
 }
 
-interface PlaySongsSearchResult {
+interface EnqueuedAlbumSet extends MissingOutputFields {
+  albumCount: number;
+  trackCount: number;
+  demoted?: true;
+}
+
+interface PlaySongsSearchResult extends MissingOutputFields {
   success: true;
   count: number;
   appliedFilters?: Record<string, string>;
   demoted?: true;
 }
 
-interface PlayPlaylistResult {
+interface PlayPlaylistResult extends MissingOutputFields {
   success: true;
   count: number;
   demoted?: true;
 }
 
-interface PlaySongSetResult {
+interface PlaySongSetResult extends MissingOutputFields {
   success: true;
   count: number;
   demoted?: true;
@@ -185,6 +219,7 @@ interface RemoveFromPlayQueueResult {
 
 interface PlayQueueIndexResult {
   success: boolean;
+  paused?: true;
   message?: string;
 }
 
@@ -240,7 +275,8 @@ export async function resume(_args: unknown): Promise<ResumeResult> {
         message: noCurrentEntryMessage(queue, 'Nothing to resume. No active playback. Start something with a play tool.'),
       };
     }
-    await playbackEngine.resume();
+    const { outputMissing } = await playbackEngine.resume();
+    if (outputMissing !== null) return { success: false, message: missingAudioOutputMessage(outputMissing) };
     return { success: true, paused: false };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('resume', error));
@@ -262,6 +298,77 @@ export async function setVolume(args: unknown): Promise<SetVolumeResult> {
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('set_volume', error));
   }
+}
+
+export async function listAudioDevices(args: unknown): Promise<ListAudioDevicesResult> {
+  let parsed: z.infer<typeof ListAudioDevicesSchema>;
+  try {
+    parsed = ListAudioDevicesSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('list_audio_devices', error));
+  }
+
+  try {
+    const verbose = parsed.verbose === true;
+    logger.debug(`playback: list_audio_devices verbose=${verbose}`);
+    const report = await playbackEngine.describeAudioDevices();
+    const out: ListAudioDevicesResult = {
+      selected: report.selected,
+      devices: verbose ? report.devices : oneDriverDevices(report),
+      source: report.source,
+    };
+    if (report.output !== null) out.output = report.output;
+    return out;
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('list_audio_devices', error));
+  }
+}
+
+export async function setAudioDevice(args: unknown): Promise<SetAudioDeviceResult> {
+  let parsed: z.infer<typeof SetAudioDeviceSchema>;
+  try {
+    parsed = SetAudioDeviceSchema.parse(args);
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('set_audio_device', error));
+  }
+
+  try {
+    const { id } = parsed;
+    logger.debug(`playback: set_audio_device id=${id}`);
+    const report = await playbackEngine.describeAudioDevices();
+    const device = findAudioDevice(id, report);
+    const applied = await playbackEngine.selectAudioDevice(id) ? 'now' : 'next-start';
+    const persisted = saveAudioDevice(id === AUTO_DEVICE_ID ? null : device);
+    if (applied === 'next-start' && !persisted) {
+      return {
+        success: false,
+        message: 'No mpv is running and no settings.json could store the choice, so it cannot be kept. Set PLAYBACK_AUDIO_DEVICE, or start playback first and call set_audio_device again.',
+      };
+    }
+    return { success: true, device, applied, persisted };
+  } catch (error) {
+    throw new Error(ErrorFormatter.toolExecution('set_audio_device', error));
+  }
+}
+
+/** mpv fails the current track on a write of an unlisted id, so an unknown id is rejected first. */
+function findAudioDevice(id: string, report: AudioDeviceReport): AudioDevice {
+  if (id === AUTO_DEVICE_ID) return { ...AUTO_DEVICE };
+  const device = report.devices.find((candidate) => candidate.id === id);
+  if (device !== undefined) return { id: device.id, name: device.name };
+  const choices = oneDriverDevices(report).map((choice) => `${choice.id} (${choice.name})`);
+  throw new Error(`Unknown audio device id '${id}'. Valid ids: ${choices.join(', ')}.`);
+}
+
+function oneDriverDevices(report: AudioDeviceReport): AudioDevice[] {
+  return filterToOneDriver(report.devices, preferredAudioDriver(report));
+}
+
+/** mpv's null output is no real driver, so it gives no preference. */
+function preferredAudioDriver(report: AudioDeviceReport): string | null {
+  if (report.output !== null && report.output !== NULL_AUDIO_OUTPUT) return report.output;
+  if (report.selected.id !== AUTO_DEVICE_ID) return audioDeviceDriver(report.selected.id);
+  return null;
 }
 
 /**
@@ -305,7 +412,7 @@ export async function playSongs(client: NavidromeClient, args: unknown): Promise
       throw new Error('No playable songs in the active libraries for the requested IDs');
     }
 
-    const { demoted } = await playbackEngine.enqueue(enqueueIds, parsed.mode, metadata);
+    const { demoted, outputMissing } = await playbackEngine.enqueue(enqueueIds, parsed.mode, metadata);
 
     const out: PlaySongsResult = {
       success: true,
@@ -313,7 +420,7 @@ export async function playSongs(client: NavidromeClient, args: unknown): Promise
     };
     if (skipped > 0) out.skipped = skipped;
     if (demoted) out.demoted = true;
-    return out;
+    return { ...out, ...missingOutputFields(outputMissing) };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_songs', error));
   }
@@ -343,7 +450,7 @@ async function enqueueAlbumsByIds(
   albumIds: readonly string[],
   mode: z.infer<typeof PlayAlbumsSchema>['mode'],
   shuffle: Pick<z.infer<typeof PlayAlbumsSchema>, 'shuffleSongs' | 'shuffleAlbums'>,
-): Promise<{ albumCount: number; trackCount: number; demoted?: true }> {
+): Promise<EnqueuedAlbumSet> {
   const rows = await fetchAlbumSetSongs(client, albumIds, 'Album set');
   if (rows.length === 0) {
     throw new Error('No tracks found in the active libraries for these album IDs. Check the IDs with search_albums, or the active libraries with get_user_details.');
@@ -351,14 +458,14 @@ async function enqueueAlbumsByIds(
 
   const ordered = orderQueueSongs(rows, shuffle);
   const ids = ordered.map((row) => row.songId);
-  const { demoted } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
+  const { demoted, outputMissing } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
 
-  const out: { albumCount: number; trackCount: number; demoted?: true } = {
+  const out: EnqueuedAlbumSet = {
     albumCount: new Set(rows.map((row) => row.albumId)).size,
     trackCount: ids.length,
   };
   if (demoted) out.demoted = true;
-  return out;
+  return { ...out, ...missingOutputFields(outputMissing) };
 }
 
 export async function playAlbumsSearch(
@@ -433,7 +540,7 @@ export async function playSongsSearch(
       return entry;
     });
 
-    const { demoted } = await playbackEngine.enqueue(songIds, mode, metadata);
+    const { demoted, outputMissing } = await playbackEngine.enqueue(songIds, mode, metadata);
 
     const out: PlaySongsSearchResult = {
       success: true,
@@ -443,7 +550,7 @@ export async function playSongsSearch(
       out.appliedFilters = result.appliedFilters;
     }
     if (demoted) out.demoted = true;
-    return out;
+    return { ...out, ...missingOutputFields(outputMissing) };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_songs_search', error));
   }
@@ -473,14 +580,14 @@ export async function playPlaylist(client: NavidromeClient, args: unknown): Prom
 
     // The engine caches metadata by songId, not by queue position, so the unshuffled rows still
     // describe the shuffled `ordered` list.
-    const { demoted } = await playbackEngine.enqueue(ordered, parsed.mode, rows.map(toQueueMetadata));
+    const { demoted, outputMissing } = await playbackEngine.enqueue(ordered, parsed.mode, rows.map(toQueueMetadata));
 
     const out: PlayPlaylistResult = {
       success: true,
       count: ordered.length,
     };
     if (demoted) out.demoted = true;
-    return out;
+    return { ...out, ...missingOutputFields(outputMissing) };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_playlist', error));
   }
@@ -540,14 +647,14 @@ export async function playLibrarySource(
 
     const ordered = orderQueueSongs(rows, { shuffleSongs, shuffleAlbums });
     const ids = ordered.map((row) => row.songId);
-    const { demoted } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
+    const { demoted, outputMissing } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
 
     const out: PlaySongSetResult = {
       success: true,
       count: ids.length,
     };
     if (demoted) out.demoted = true;
-    return out;
+    return { ...out, ...missingOutputFields(outputMissing) };
   } catch (error) {
     if (error instanceof EmptyLibrarySourceError) throw error;
     throw new Error(ErrorFormatter.toolExecution('play_library_source', error));
@@ -1073,12 +1180,13 @@ export async function playQueueIndex(args: unknown): Promise<PlayQueueIndexResul
         `index ${parsed.index} is not in the play queue. The queue holds ${entryCount(queue.count)}. Call get_play_queue for the current indices.`,
       );
     }
+    let outputMissing: MissingAudioOutput | null;
     try {
-      await playbackEngine.jumpToQueueEntry(parsed.index);
+      ({ outputMissing } = await playbackEngine.jumpToQueueEntry(parsed.index));
     } catch (error) {
       throw queueIndexError(error, `index ${parsed.index}`);
     }
-    return { success: true };
+    return { success: true, ...missingOutputFields(outputMissing) };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('play_queue_index', error));
   }

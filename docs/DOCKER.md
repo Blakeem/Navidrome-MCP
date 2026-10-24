@@ -81,10 +81,10 @@ but audio still has to reach a real sound device:
   with another saved station is then named after the first matching station. The
   correct name needs mpv 0.36 or later.
 
-Without a device, the failure is silent to the assistant: `play_songs` still returns
-`{"success": true}` and mpv accepts the queue, while mpv's ALSA/PipeWire/JACK
-backends all fail in the log and playback goes straight to idle. Nothing plays and
-the LLM is not told. Prefer running the server on the host when you want audio.
+Without a device, mpv's ALSA, PipeWire and JACK backends fail, and mpv falls back to
+its null output. The engine pauses playback, and the play tools return `paused: true`
+with a message that no audio output device is available. Prefer running the server on
+the host when you want audio.
 
 ## Mounting a settings.json
 

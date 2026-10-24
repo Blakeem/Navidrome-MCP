@@ -112,6 +112,11 @@
         <label>mpv binary path <span class="hint">leave blank to auto-detect on PATH</span>
           <input id="mpvPath" type="text" placeholder="(auto-detect)" />
         </label>
+        <label>Audio output <span class="hint">the speaker or headphones mpv plays through</span>
+          <select id="audioDevice">
+            <option value="" data-name="">System default</option>
+          </select>
+        </label>
         <label>Transcode format <span class="hint"><code>raw</code> = original file; or a codec like <code>mp3</code>, <code>opus</code></span>
           <input id="transcodeFormat" type="text" placeholder="raw" />
         </label>

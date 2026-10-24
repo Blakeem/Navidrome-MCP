@@ -25,6 +25,7 @@ const BASE: Config = {
   lrclibBase: 'https://lrclib.net',
   playbackTranscodeFormat: 'raw',
   playbackTranscodeBitrate: '192',
+  playbackAudioDevice: null,
   filterCacheEnabled: true,
   webui: {
     enabled: true,

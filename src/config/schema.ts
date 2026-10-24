@@ -53,6 +53,8 @@ export const ConfigSchema = z.object({
   // or 'opus' transcodes at `playbackTranscodeBitrate` for limited bandwidth.
   playbackTranscodeFormat: z.string(),
   playbackTranscodeBitrate: z.string(),
+  // Null plays to the OS default output.
+  playbackAudioDevice: z.object({ id: z.string().min(1), name: z.string().nullable() }).nullable(),
 
   // Off re-fetches tag lists on each filter resolution so mid-session library edits show at once.
   filterCacheEnabled: z.boolean(),

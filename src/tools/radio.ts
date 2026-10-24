@@ -20,6 +20,7 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
 import { hasControlChars, isHttpUrlScheme } from '../utils/network-safety.js';
+import { missingOutputFields, type MissingOutputFields } from './missing-audio-output.js';
 import { validateRadioStream } from './radio-validation.js';
 
 /**
@@ -354,7 +355,7 @@ export async function getRadioStation(
 
 // `station.id` is not echoed, since the LLM just sent it. `name` and `streamUrl` stay, since the
 // LLM knew only the id.
-interface PlayRadioStationResult {
+interface PlayRadioStationResult extends MissingOutputFields {
   success: true;
   station: {
     name: string;
@@ -381,7 +382,7 @@ export async function playRadioStation(
       throw new Error(`Radio station "${station.name}" has no stream URL`);
     }
 
-    await playbackEngine.enqueueRadio(station.streamUrl, station.id);
+    const { outputMissing } = await playbackEngine.enqueueRadio(station.streamUrl, station.id);
 
     return {
       success: true,
@@ -389,6 +390,7 @@ export async function playRadioStation(
         name: station.name,
         streamUrl: station.streamUrl,
       },
+      ...missingOutputFields(outputMissing),
     };
   } catch (error) {
     logger.error('Error playing radio station:', error);

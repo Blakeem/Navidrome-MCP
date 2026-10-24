@@ -56,6 +56,7 @@ export const SettingsFileSchema = z.object({
     mpvPath: z.string().nullish(),
     transcodeFormat: z.string().nullish(),
     transcodeBitrate: z.string().nullish(),
+    audioDevice: z.object({ id: z.string(), name: z.string().nullish() }).nullish(),
   }).optional(),
   webui: z.object({
     enabled: z.boolean().optional(),

@@ -60,6 +60,12 @@ export const SCROBBLE_CLAIM_ECHO_TIMEOUT_MS = 5000;
 /** The headless mpv filter check took 313 ms when measured. */
 export const MPV_VISUALIZER_VALIDATE_TIMEOUT_MS = 10_000;
 
+export const MPV_AUDIO_DEVICE_PROBE_TIMEOUT_MS = 5000;
+
+/** Windows re-registered a lost output under a new id within 1 s when measured. A longer outage may
+ *  mean the device was turned off on purpose, so playback then stays paused. */
+export const AUDIO_OUTPUT_RESUME_WINDOW_MS = 5000;
+
 /** A check that timed out or failed to start says nothing about the filter, so its result is
  *  dropped after this delay and the next request reruns it. */
 export const MPV_VISUALIZER_VALIDATE_RETRY_MS = 60_000;

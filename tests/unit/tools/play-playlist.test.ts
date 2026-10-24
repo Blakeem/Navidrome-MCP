@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import { logger } from '../../../src/utils/logger.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 const ensureRunningMock = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
@@ -41,7 +41,7 @@ describe('play_playlist', () => {
   beforeEach(() => {
     client = createMockClient();
     enqueueMock.mockClear();
-    enqueueMock.mockResolvedValue({ demoted: false });
+    enqueueMock.mockResolvedValue({ demoted: false, outputMissing: null });
     ensureRunningMock.mockClear();
   });
 
@@ -240,7 +240,7 @@ describe('play_playlist', () => {
 
   it('surfaces engine demotion in the result', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: trackPage(0, 2), total: 2 });
-    enqueueMock.mockResolvedValueOnce({ demoted: true });
+    enqueueMock.mockResolvedValueOnce({ demoted: true, outputMissing: null });
 
     const result = await playPlaylist(client as never, {
       playlistId: 'pl-demote',

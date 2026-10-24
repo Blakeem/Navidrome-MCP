@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -52,6 +52,20 @@ describe('play_songs active-library lookup', () => {
 
     expect(enqueueMock.mock.calls[0]?.[0]).toEqual(['song-1', 'song-3']);
     expect(result).toEqual({ success: true, count: 2, skipped: 1 });
+  });
+
+  it('keeps success and reports paused with a message when the audio output is missing', async () => {
+    client.requestWithLibraryFilter.mockResolvedValueOnce([{ id: 'song-1', title: 'One' }]);
+    enqueueMock.mockResolvedValueOnce({ demoted: false, outputMissing: { id: 'wasapi/{katana}', name: null } });
+
+    const result = await playSongs(client as never, { songIds: ['song-1'] });
+
+    expect(result).toEqual({
+      success: true,
+      count: 1,
+      paused: true,
+      message: "The selected audio device 'wasapi/{katana}' is not connected. Turn it on, then call resume, or call set_audio_device to pick another output.",
+    });
   });
 
   // Navidrome paginates even an id-filtered read, so each chunk must span its own length.

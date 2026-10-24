@@ -232,6 +232,8 @@ main {
 .topbar [data-tip]::after { left: auto; right: 0; }
 /* The clear button ends the queue header, where a rightward tip would scroll a phone sideways. */
 #clear-queue[data-tip]::after { left: auto; right: 0; }
+/* The output button ends the volume row, where a rightward tip would scroll a phone sideways. */
+#btn-audio-device[data-tip]::after { left: auto; right: 0; }
 [data-tip]::after {
   content: attr(data-tip);
   position: absolute;
@@ -581,6 +583,8 @@ main {
   justify-content: center;
 }
 .volume-icon:hover { color: var(--text); }
+.volume-icon.is-lost,
+.volume-icon.is-lost:hover { color: var(--bad); }
 .volume-icon svg { width: 22px; height: 22px; }
 
 .volume-slider { flex: 1; }
@@ -825,6 +829,31 @@ main {
 }
 .network-list a:hover { text-decoration: underline; }
 
+.audio-device-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.audio-device-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.audio-device-note {
+  flex: none;
+  font-size: 0.78rem;
+  color: var(--bad);
+}
+
 .primary-btn {
   background: var(--accent);
   color: var(--on-fill);
@@ -1038,7 +1067,8 @@ body.player-stopped::after {
 .mode-toggle input:disabled + .mode-toggle-btn { opacity: 0.4; pointer-events: none; }
 /* z-index lifts the selected button so its accent border draws over the shared edge. */
 .mode-toggle input:checked + .mode-toggle-btn,
-.shuffle-toggle[aria-pressed="true"] {
+.shuffle-toggle[aria-pressed="true"],
+.audio-device-btn[aria-pressed="true"] {
   z-index: 1;
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 22%, transparent);

@@ -303,6 +303,15 @@ export const SetVolumeSchema = z.strictObject({
   level: z.number().finite(),
 });
 
+export const ListAudioDevicesSchema = z.strictObject({
+  verbose: z.boolean().optional(),
+});
+
+// Not IdSchema, since mpv device ids carry characters such as `/`, `{`, `}`, `.`, `:` and `=`.
+export const SetAudioDeviceSchema = z.strictObject({
+  id: z.string().trim().min(1).max(512),
+});
+
 export const SeekSchema = z.strictObject({
   seconds: z.number(),
   mode: z.enum(['absolute', 'relative']).default('relative'),

@@ -32,6 +32,8 @@ import { handleLyrics } from './routes/lyrics.js';
 import { handleNetworkInfo } from './routes/network-info.js';
 import { handleListPlaylists } from './routes/playlists.js';
 import {
+  handleAudioDevice,
+  handleAudioDevices,
   handleClear,
   handleNext,
   handlePause,
@@ -154,6 +156,8 @@ async function handleRequest(
   if (method === 'POST' && path === '/api/controls/previous') return handlePrevious(res);
   if (method === 'POST' && path === '/api/controls/seek')       return handleSeek(req, res);
   if (method === 'POST' && path === '/api/controls/volume')     return handleVolume(req, res);
+  if (method === 'GET'  && path === '/api/audio-devices')         return handleAudioDevices(res);
+  if (method === 'POST' && path === '/api/controls/audio-device') return handleAudioDevice(req, res);
   if (method === 'POST' && path === '/api/controls/play-index') return handlePlayQueueIndex(req, res);
   if (method === 'POST' && path === '/api/controls/clear')      return handleClear(res);
   if (method === 'POST' && path === '/api/controls/shuffle')    return handleShuffle(res);

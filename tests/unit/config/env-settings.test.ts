@@ -16,7 +16,7 @@ const ENV_KEYS = [
   'RADIO_BROWSER_USER_AGENT', 'RADIO_BROWSER_BASE',
   'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE',
   'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT', 'MCP_HTTP_EXPOSE',
-  'MCP_HTTP_AUTH_TOKEN', 'WEBUI_ENABLED', 'NAVIDROME_DEFAULT_LIBRARIES',
+  'MCP_HTTP_AUTH_TOKEN', 'WEBUI_ENABLED', 'NAVIDROME_DEFAULT_LIBRARIES', 'PLAYBACK_AUDIO_DEVICE',
 ];
 
 describe('buildFormSeed', () => {
@@ -56,6 +56,16 @@ describe('buildFormSeed', () => {
     expect(seed.navidrome?.url).toBe('http://env-only:4533');
     expect(seed.navidrome?.username).toBe('envuser');
     expect(seed.navidrome?.password).toBe('envpass');
+  });
+
+  it('imports PLAYBACK_AUDIO_DEVICE as a device id with no name', () => {
+    process.env['PLAYBACK_AUDIO_DEVICE'] = 'openal';
+    expect(buildFormSeed().playback?.audioDevice).toEqual({ id: 'openal', name: null });
+  });
+
+  it.each([undefined, '  '])('leaves the audio device null for PLAYBACK_AUDIO_DEVICE %j', (value) => {
+    if (value !== undefined) process.env['PLAYBACK_AUDIO_DEVICE'] = value;
+    expect(buildFormSeed().playback?.audioDevice).toBeNull();
   });
 
   it('pre-fills working radio + lyrics defaults on first run (no store, no env)', () => {

@@ -49,6 +49,8 @@ vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
     seek: vi.fn(),
     setVolume: vi.fn(),
     playQueueIndex: vi.fn(),
+    listAudioDevices: vi.fn(),
+    setAudioDevice: vi.fn(),
   };
 });
 
@@ -69,7 +71,14 @@ import { handlePlayQueueIndex, handleSeek, handleVolume } from '../../../src/web
 import { handleNetworkInfo } from '../../../src/webui/routes/network-info.js';
 import { isLanReachable } from '../../../src/webui/network.js';
 import { playbackEngine } from '../../../src/services/playback/playback-engine.js';
-import { playQueueIndex, seek, setVolume, shuffleQueueFromTop } from '../../../src/tools/playback.js';
+import {
+  listAudioDevices,
+  playQueueIndex,
+  seek,
+  setAudioDevice,
+  setVolume,
+  shuffleQueueFromTop,
+} from '../../../src/tools/playback.js';
 import { createServer } from '../../../src/webui/server.js';
 
 interface CapturedRes {
@@ -791,6 +800,49 @@ describe('POST /api/controls/shuffle', () => {
     expect(reply.status).toBe(200);
     expect(JSON.parse(reply.body)).toEqual({ success: true });
     expect(shuffleQueueFromTop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('audio output routes', () => {
+  it('GET /api/audio-devices returns the list tool result as 200 JSON', async () => {
+    const result = {
+      selected: { id: 'auto', name: null, connected: true },
+      devices: [{ id: 'auto', name: 'Autoselect device' }, { id: 'wasapi/{a}', name: 'Speakers' }],
+      source: 'probe' as const,
+    };
+    vi.mocked(listAudioDevices).mockResolvedValue(result);
+
+    const reply = await requestServer('GET', '/api/audio-devices');
+
+    expect(reply.status).toBe(200);
+    expect(JSON.parse(reply.body)).toEqual(result);
+    expect(listAudioDevices).toHaveBeenCalledWith({});
+  });
+
+  it.each([
+    ['a missing', {}],
+    ['an empty', { id: '' }],
+    ['a blank', { id: '   ' }],
+  ])('POST /api/controls/audio-device rejects %s id with 400 and never calls the tool', async (_label, body) => {
+    const reply = await requestServer('POST', '/api/controls/audio-device', { headers: JSON_HEADERS, body: JSON.stringify(body) });
+
+    expect(reply.status).toBe(400);
+    expect((JSON.parse(reply.body) as { error: string }).error).not.toBe('');
+    expect(setAudioDevice).not.toHaveBeenCalled();
+  });
+
+  it('POST /api/controls/audio-device forwards a valid id and returns the tool result', async () => {
+    const result = { success: true as const, device: { id: 'wasapi/{a}', name: 'Speakers' }, applied: 'now' as const, persisted: true };
+    vi.mocked(setAudioDevice).mockResolvedValue(result);
+
+    const reply = await requestServer('POST', '/api/controls/audio-device', {
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ id: 'wasapi/{a}' }),
+    });
+
+    expect(reply.status).toBe(200);
+    expect(JSON.parse(reply.body)).toEqual(result);
+    expect(setAudioDevice).toHaveBeenCalledWith({ id: 'wasapi/{a}' });
   });
 });
 

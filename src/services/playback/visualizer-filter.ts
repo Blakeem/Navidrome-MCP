@@ -9,8 +9,8 @@
  * clients that request log messages. The filter's main path passes the audio through untouched.
  */
 
-import { spawn } from 'node:child_process';
 import { MPV_VISUALIZER_VALIDATE_RETRY_MS, MPV_VISUALIZER_VALIDATE_TIMEOUT_MS } from '../../constants/timeouts.js';
+import { runMpv } from './mpv-run.js';
 
 export const VISUALIZER_FILTER_LABEL = 'navidrome-viz';
 export const VISUALIZER_BAND_COUNT = 16;
@@ -38,13 +38,6 @@ export const VISUALIZER_BAND_CENTERS_HZ: readonly number[] = Array.from(
 export type VisualizerValidation = { ok: true; build: string } | { ok: false; reason: string; retry: boolean };
 
 type VisualizerAction = 'install' | 'remove' | 'defer' | 'none';
-
-/** `failure` is set when the run timed out or never started, and then `code` means nothing. */
-interface MpvRun {
-  code: number | null;
-  output: string;
-  failure: string | null;
-}
 
 const VISUALIZER_GRAPH = buildVisualizerGraph();
 const VALIDATION_ARGS: readonly string[] = [
@@ -123,7 +116,10 @@ function forgetValidationLater(mpvBinary: string, validation: Promise<Visualizer
 }
 
 async function runValidation(mpvBinary: string): Promise<VisualizerValidation> {
-  const [check, version] = await Promise.all([runMpv(mpvBinary, VALIDATION_ARGS), runMpv(mpvBinary, ['--version'])]);
+  const [check, version] = await Promise.all([
+    runMpv(mpvBinary, VALIDATION_ARGS, MPV_VISUALIZER_VALIDATE_TIMEOUT_MS),
+    runMpv(mpvBinary, ['--version'], MPV_VISUALIZER_VALIDATE_TIMEOUT_MS),
+  ]);
   const failure = check.failure ?? version.failure;
   if (failure !== null) return { ok: false, reason: failure, retry: true };
   if (check.code !== 0) {
@@ -141,28 +137,6 @@ function parseVersionOutput(output: string): string | null {
   const mpvVersion = /^(mpv \S+)/.exec(lines[0] ?? '')?.[1];
   const ffmpegVersion = lines.map((line) => /^FFmpeg version: (\S+)/.exec(line)?.[1]).find((match) => match !== undefined);
   return mpvBuildId(mpvVersion, ffmpegVersion);
-}
-
-function runMpv(mpvBinary: string, args: readonly string[]): Promise<MpvRun> {
-  return new Promise((resolve) => {
-    let output = '';
-    const child = spawn(mpvBinary, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    const timer = setTimeout(() => {
-      child.kill();
-      resolve({ code: null, output, failure: `mpv did not finish in ${MPV_VISUALIZER_VALIDATE_TIMEOUT_MS} ms` });
-    }, MPV_VISUALIZER_VALIDATE_TIMEOUT_MS);
-    const collect = (chunk: Buffer): void => { output += chunk.toString('utf8'); };
-    child.stdout.on('data', collect);
-    child.stderr.on('data', collect);
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      resolve({ code: null, output, failure: err.message });
-    });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code, output, failure: null });
-    });
-  });
 }
 
 /**

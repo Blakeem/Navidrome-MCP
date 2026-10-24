@@ -2,6 +2,7 @@
 // request, so an edit to this folder needs a build and a page reload.
 
 import { getJson } from './api.js';
+import { bindAudioDevice, renderAudioDevice } from './audio-device.js';
 import { connect } from './connection.js';
 import { bindPowerButton, setLocalPeer } from './local-controls.js';
 import { snapLyricsClock } from './lyrics-clock.js';
@@ -26,6 +27,7 @@ function applySnapshot(raw) {
   renderNowPlaying(nowPlaying);
   renderTransport(nowPlaying);
   renderVolume(status);
+  renderAudioDevice(status);
   renderQueue(queue, playingIndex(nowPlaying));
   syncLyricsToSnapshot(nowPlaying);
   if (player !== null) applyTheme(player.theme);
@@ -49,6 +51,7 @@ function bootstrap() {
   applyThemeHint();
   bindTransport();
   bindVolume();
+  bindAudioDevice();
   bindQueue();
   bindPlayDialog();
   bindNetworkInfo();

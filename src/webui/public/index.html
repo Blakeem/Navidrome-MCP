@@ -140,6 +140,11 @@
         aria-label="Volume"
       />
       <span id="volume-label" class="volume-label">--</span>
+      <button type="button" class="volume-icon" id="btn-audio-device" aria-label="Audio output" data-tip="Audio output">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M17 2H7c-1.1 0-2 .9-2 2v16c0 1.1.9 1.99 2 1.99L17 22c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-5 2c1.1 0 2 .9 2 2s-.9 2-2 2c-1.11 0-2-.9-2-2s.89-2 2-2zm0 16c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/>
+        </svg>
+      </button>
     </section>
 
     <section class="queue" aria-label="Play queue">
@@ -268,6 +273,21 @@
         <button type="button" class="btn-secondary" id="lyrics-offset-up" aria-label="Increase sync offset by 100 ms">+100 ms</button>
       </div>
       <p class="modal-hint">A positive offset runs the words ahead of the audio.</p>
+    </form>
+  </dialog>
+
+  <dialog id="audio-device-dialog" class="modal" aria-labelledby="audio-device-title">
+    <form method="dialog" class="modal-content">
+      <header class="modal-header">
+        <h2 id="audio-device-title">Audio output</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
+      <ul class="audio-device-list" id="audio-device-list"></ul>
+      <p class="modal-hint" id="audio-device-status" aria-live="polite"></p>
     </form>
   </dialog>
 

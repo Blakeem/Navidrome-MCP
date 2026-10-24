@@ -57,6 +57,8 @@ Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-
 src/services/playback/
 ├── mpv-process.ts        # spawn, binary detection, stable IPC path
 ├── mpv-ipc.ts            # JSON-IPC client (net socket + line framing, request_id correlation)
+├── mpv-run.ts            # one headless mpv run with a timeout, shared by the filter check and the device probe
+├── audio-devices.ts      # audio output device parsing, the one-driver filter and the device probe
 ├── playback-engine.ts    # high-level facade; the only thing handlers use
 ├── visualizer-filter.ts  # the visualizer's mpv audio filter, its validation run and install rule
 └── visualizer-log.ts     # groups the filter's log lines into level records
@@ -82,8 +84,9 @@ At startup the engine uses `playback.mpvPath` from settings.json when it is set 
 | `playback.mpvPath` | `null` (auto-detect) | Binary location |
 | `playback.transcodeFormat` | `raw` | Stream format requested from Navidrome. `raw` streams the original file. |
 | `playback.transcodeBitrate` | `192` | Max kbps, applied only when a codec is set |
+| `playback.audioDevice` | `null` | The output mpv plays to, saved by `set_audio_device`. `null` plays to the system default. |
 
-`MPV_PATH`, `PLAYBACK_TRANSCODE_FORMAT` and `PLAYBACK_TRANSCODE_BITRATE` are read only by the env fallback when no usable store exists, and to pre-fill the first-run settings form.
+`MPV_PATH`, `PLAYBACK_TRANSCODE_FORMAT`, `PLAYBACK_TRANSCODE_BITRATE` and `PLAYBACK_AUDIO_DEVICE` are read only by the env fallback when no usable store exists, and to pre-fill the first-run settings form.
 
 ## mpv Process Flags
 
@@ -104,6 +107,7 @@ mpv \
   --audio-display=no           # don't display cover art
   --ytdl=no                    # disable yt-dlp wrapper (security + reliability)
   --vo=null                    # belt + suspenders for headless
+  --audio-fallback-to-null=yes # a lost output keeps the track on the null output, so it can pause
 ```
 
 stdout/stderr from mpv are line-forwarded to `logger.debug()` so they never pollute the MCP stdio channel.
@@ -149,6 +153,9 @@ mpv's IPC is newline-delimited JSON, bidirectional. Every command gets a respons
 - `idle-active` — queue exhausted
 - `volume` — current volume
 - `eof-reached` — end of file
+- `audio-device`: the selected output device id
+- `audio-device-list`: the output devices mpv can open
+- `current-ao`: the open audio output driver, `null` on mpv's null output
 - Lifecycle events: `start-file`, `end-file`, `playback-restart` (logged; not yet acted on)
 
 The IPC client maintains a property cache so `now_playing` reads the cache first. It falls back to a `getQueue` IPC and Navidrome lookups for radio naming, duration repair and metadata repair, and a per-file cache skips the repeat on later polls. The full `playlist` property is fetched on-demand by `get_play_queue` rather than observed (would be noisy during loadfile loops).
@@ -167,13 +174,13 @@ The codebase has three distinct queue-like concepts. Their tool names are kept u
 
 The `play_` verb prefix consistently means "affect what's audibly coming out of the speakers right now." The `_play_queue` noun suffix means "operate on the live mpv playlist as a whole."
 
-### Implemented tools (19 playback + 1 radio)
+### Implemented tools (21 playback + 1 radio)
 
 #### Playback start
 
 | Tool | Args | Effect |
 |---|---|---|
-| `play_songs` | `{ songIds: string[], mode?: 'replace' \| 'append', shuffle?: boolean }` (defaults `'replace'`, `false`) | Play one or many songs. `replace` clears the play queue and unpauses; `append` adds to the end without clearing or unpausing. When no track is current (the queue is empty, finished, or mpv just started), `append` loads the first new track paused. `shuffle: true` Fisher-Yates the new batch only. |
+| `play_songs` | `{ songIds: string[], mode?: 'replace' \| 'append', shuffle?: boolean }` (defaults `'replace'`, `false`) | Play one or many songs. `replace` clears the play queue and unpauses. Playback stays paused when the selected audio output is not connected. `append` adds to the end without clearing or unpausing. When no track is current (the queue is empty, finished, or mpv just started), `append` loads the first new track paused. `shuffle: true` Fisher-Yates the new batch only. |
 | `play_albums` | `{ albumIds: string[], mode?: 'replace' \| 'append', shuffleAlbums?: boolean, shuffleSongs?: boolean }` (defaults `'replace'`, `false`, `false`) | Play one or many albums. With neither flag, albums play in input order with natural track order. `shuffleAlbums` randomizes the album order, and each album keeps its track order. `shuffleSongs` alone shuffles every track across all albums. Both together shuffle the album order and the tracks within each album. Empty albums silently skipped; all-empty throws. |
 | `play_playlist` | `{ playlistId: string, mode?: 'replace' \| 'append', shuffle?: boolean }` | Load a saved playlist's tracks into the play queue. |
 
@@ -181,8 +188,8 @@ The `play_` verb prefix consistently means "affect what's audibly coming out of 
 
 | Tool | Args | Effect |
 |---|---|---|
-| `play_albums_search` | All `search_albums` args (`query`, `limit`, `offset`, `genre`, `mediaType`, `country`, `releaseType`, `recordLabel`, `mood`, `sort`, `order`, `randomSeed`, `year`, `starred`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) plus `shuffleAlbums?: boolean` and `shuffleSongs?: boolean` (both default `false`) | Run `search_albums` with the given filters → resolve each matching album's tracks → apply shuffle → enqueue. Empty search result throws `"No albums matched the search filters"`. Empty albums silently skipped; if every match resolves to zero tracks, throws `"No tracks found across all albums"`. Headline use case: `{ starred: true, sort: 'random', limit: 5 }` plays 5 random starred albums. Returns `{ success, matchCount, albumCount, trackCount, appliedFilters?, demoted? }`. |
-| `play_songs_search` | All `search_songs` args (same filter set as above; `sort` enum is `'title' \| 'artist' \| 'album' \| 'year' \| 'duration' \| 'playCount' \| 'rating' \| 'recently_added' \| 'starred_at' \| 'random'`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) and `shuffle?: boolean` (default `false`) | Run `search_songs` with the given filters → optionally Fisher-Yates the matched IDs → enqueue. Empty search result throws `"No songs matched the search filters"`. Headline use case: `{ starred: true, limit: 500 }` plays every starred song. Returns `{ success, count, appliedFilters?, demoted? }`. |
+| `play_albums_search` | All `search_albums` args (`query`, `limit`, `offset`, `genre`, `mediaType`, `country`, `releaseType`, `recordLabel`, `mood`, `sort`, `order`, `randomSeed`, `year`, `starred`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) plus `shuffleAlbums?: boolean` and `shuffleSongs?: boolean` (both default `false`) | Run `search_albums` with the given filters → resolve each matching album's tracks → apply shuffle → enqueue. Empty search result throws `"No albums matched the search filters"`. Empty albums silently skipped; if every match resolves to zero tracks, throws `"No tracks found across all albums"`. Headline use case: `{ starred: true, sort: 'random', limit: 5 }` plays 5 random starred albums. Returns `{ success, matchCount, albumCount, trackCount, appliedFilters?, demoted?, paused?, message? }`. |
+| `play_songs_search` | All `search_songs` args (same filter set as above; `sort` enum is `'title' \| 'artist' \| 'album' \| 'year' \| 'duration' \| 'playCount' \| 'rating' \| 'recently_added' \| 'starred_at' \| 'random'`) PLUS `mode?: 'replace' \| 'append'` (default `'replace'`) and `shuffle?: boolean` (default `false`) | Run `search_songs` with the given filters → optionally Fisher-Yates the matched IDs → enqueue. Empty search result throws `"No songs matched the search filters"`. Headline use case: `{ starred: true, limit: 500 }` plays every starred song. Returns `{ success, count, appliedFilters?, demoted?, paused?, message? }`. |
 
 #### Transport / control
 
@@ -192,6 +199,8 @@ The `play_` verb prefix consistently means "affect what's audibly coming out of 
 | `next` / `previous` | — | `next` sends `playlist-next force`, which stops playback on the last entry, and the result then carries `stopped: true`. `previous` sends `playlist-prev`, and on the first entry it restarts the current track. |
 | `seek` | `{ seconds, mode: 'absolute' \| 'relative' }` (default `'relative'`) | Move within the current track. An absolute target must be 0 or more, since mpv reads a negative one as an offset from the end. A target past the end skips to the next track. |
 | `set_volume` | `{ level }` (any finite number) | mpv internal volume. The engine clamps the level to 0-100. |
+| `list_audio_devices` | `{ verbose?: boolean }` (default `false`) | Returns `{ selected: { id, name, connected }, output?, devices: [{ id, name }], source: 'player' \| 'probe' }`. `devices` holds one audio driver. That driver is `output` unless `output` is mpv's null output (`'null'`). Otherwise it is the selected device's driver when the selection is not `auto`, else the first listed driver. `verbose: true` returns every driver. `output` is omitted when no output is open. Does not start mpv. |
+| `set_audio_device` | `{ id: string }` (an `id` from `list_audio_devices`, or `auto`) | Returns `{ success: true, device: { id, name }, applied: 'now' \| 'next-start', persisted }`. An id that mpv does not list is rejected with the valid choices, since mpv fails the current track on a write of a missing id. `applied` is `now` when a running mpv switched, else `next-start`. `persisted` is true when `settings.json` saved the choice. When the choice neither applied nor persisted, the tool returns `{ success: false, message }`. Does not start mpv. |
 
 #### Queue management
 
@@ -209,7 +218,7 @@ The `play_` verb prefix consistently means "affect what's audibly coming out of 
 | Tool | Returns |
 |---|---|
 | `now_playing` | `{ engineRunning, songId?, title?, artist?, album?, position?, duration?, paused?, queueIndex?, queueLength?, isRadio?, radioStation? }` (cache first, see above. Does NOT spawn mpv). `paused` is omitted when no entry is current, and `duration` is omitted for radio. |
-| `playback_status` | `{ engineRunning, mpvPath, mpvVersion, volume, idle }` (does NOT spawn mpv) |
+| `playback_status` | `{ engineRunning, mpvPath, mpvVersion, volume, idle, audioDevice, audioOutputLost }` (does NOT spawn mpv) |
 
 `now_playing` returns real-time playback state (current title, position, paused). It is **distinct from** `get_play_queue`: "now playing" answers *"what's happening right this second?"*; `get_play_queue` answers *"what's the full ordered list of tracks that are queued up?"*. Same underlying mpv playlist, different granularities and very different payload sizes. When a radio stream is loaded, `now_playing` adds `isRadio: true` and `radioStation: { name }`.
 
@@ -261,6 +270,7 @@ Fail fast. Every error surfaces a structured message via `ErrorFormatter`:
 | mpv exits unexpectedly | Tool call returns error; engine clears IPC state; next call re-attaches or spawns |
 | IPC socket disconnects | Engine clears state; next call attempts re-attach |
 | Navidrome stream URL 4xx/5xx | mpv emits `end-file` with reason `error`, the engine logs it at debug, and mpv moves to the next entry. No tool result or `now_playing` field reports it. |
+| Selected audio output not connected | The play tools, `play_radio_station` and `play_queue_index` keep `success: true`, since the queue loaded, and add `paused: true` and `message`. `resume` returns `{ success: false, message }`. The message names the device, or says that no audio output device is available when the selection is `auto`. |
 | Out-of-range index for `move_in_play_queue` / `remove_from_play_queue` / `play_queue_index` | `move_in_play_queue` rejects a `to` past the last index, and `play_queue_index` rejects an index past the end, each with a bound message, since mpv accepts both without an error. An out-of-range `from` or `remove_from_play_queue` index fails with a message that names the index and points to `get_play_queue`. |
 
 No retry loops, no auto-recovery beyond re-attach.
@@ -278,6 +288,15 @@ The web remote's visualizer reads band levels that mpv measures, since the brows
 - **Heights.** Band medians ranged from -50 dB on a classical track to -21 dB on a pop master when measured, so a fixed dB range pinned loud masters at full height. The browser maps the top 24 dB under a reference that follows the loudest band instead. The reference rises within about 0.3 s, falls 2 dB a second, and restarts with each segment, so every track fills the height and a quieter passage still shows lower.
 - **Modes.** Each drawing mode is a file in `src/webui/public/visualizers/`. `GET /api/visualizer/modes` lists them, so a new file joins the cycle after a build and a page reload. `_template.js` states the contract, and `tests/unit/webui/visualizer-plugins.test.ts` checks it on every file. Each mode draws on a layer of its own, so a crossfade never mixes their compositing, and a mode that throws leaves the cycle.
 - **Limits.** mpv's IPC docs warn that log text can change between releases. A changed format leaves the visualizer at rest without affecting audio. At a gapless change the new file's first levels show during the old file's last 0.28 s.
+
+## Audio Output
+
+mpv's `audio-device-list` entry `name` is the device id here, and its `description` is the device name. The id `auto` is the OS default output.
+
+- **Apply at spawn.** The engine that spawns mpv writes the saved device to `audio-device` after connect, before the first load. It writes the id even when mpv does not list it, so mpv opens its null output and never a different speaker. An engine that attaches to a running mpv writes nothing.
+- **Loss rule.** The output is lost when `current-ao` reads `null`, or when the selected id is not `auto` and is missing from `audio-device-list`. A normal output reload leaves `current-ao` unavailable, which is not a loss.
+- **Pause on loss.** Every attached engine watches the three properties. When the output is lost while a file plays, it pauses mpv. A loss while paused or idle raises no pause, so when playback starts over a cached loss, the engine reads the three properties live and pauses mpv if the output is still lost.
+- **Check before playback starts.** A replace load, a radio load, a queue jump and a resume first read the three properties live. A missing device keeps mpv paused, and the caller receives the missing device. A listed device on the null output is re-opened first. A named device is written as `auto` and then as its id, since mpv ignores a write of the value it holds. `auto` takes `ao-reload` when mpv lists any other device.
 
 ## Out of Scope
 

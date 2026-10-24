@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 const searchAlbumsMock = vi.fn();
 const searchSongsMock = vi.fn();
 
@@ -178,7 +178,7 @@ describe('play_songs_search', () => {
       songs: [{ id: 's1', title: 'T', artist: '', album: 'Al', durationFormatted: '3:05' }],
       appliedFilters: { starred: 'true' },
     });
-    enqueueMock.mockResolvedValueOnce({ demoted: true });
+    enqueueMock.mockResolvedValueOnce({ demoted: true, outputMissing: null });
 
     const result = await playSongsSearch(client as never, { starred: true });
 

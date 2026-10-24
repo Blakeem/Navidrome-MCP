@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { readSavedWebuiSettings, type Config } from './config.js';
+import { readSavedAudioDevice, readSavedWebuiSettings, saveAudioDevice, type Config } from './config.js';
 import { NavidromeClient } from './client/navidrome-client.js';
 import { libraryManager } from './services/library-manager.js';
 import { filterCacheManager } from './services/filter-cache-manager.js';
@@ -39,6 +39,14 @@ export async function createRuntime(config: Config): Promise<Runtime> {
     // Read at each mpv spawn, so a visualizer toggle saved after this process started applies.
     playbackEngine.setVisualizerSource(
       () => config.webui.enabled && (readSavedWebuiSettings()?.visualizer ?? config.webui.visualizer),
+    );
+    // A saved null means the OS default, so only a missing store falls back to the startup config.
+    playbackEngine.setAudioDeviceSource(
+      () => {
+        const saved = readSavedAudioDevice();
+        return saved === undefined ? config.playbackAudioDevice : saved;
+      },
+      { save: saveAudioDevice },
     );
   }
 

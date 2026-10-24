@@ -39,6 +39,15 @@ function resolveWebuiHost(host: string | undefined): string | undefined {
   return '127.0.0.1';
 }
 
+// The id `auto` is mpv's OS default output, the same as no saved device.
+function mapAudioDevice(
+  device: NonNullable<SettingsFile['playback']>['audioDevice'],
+): RawConfigInput['playbackAudioDevice'] {
+  const id = nonEmpty(device?.id);
+  if (id === undefined || id === 'auto') return null;
+  return { id, name: nonEmpty(device?.name) ?? null };
+}
+
 /** `mpvPath` is the caller's resolved mpv binary, and null turns playback off. */
 export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null): RawConfigInput {
   const nav = settings.navidrome ?? {};
@@ -106,6 +115,7 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
     ...(mpvPath !== null ? { mpvPath } : {}),
     playbackTranscodeFormat: nonEmpty(playback.transcodeFormat) ?? DEFAULT_TRANSCODE_FORMAT,
     playbackTranscodeBitrate: nonEmpty(playback.transcodeBitrate) ?? DEFAULT_TRANSCODE_BITRATE,
+    playbackAudioDevice: mapAudioDevice(playback.audioDevice),
 
     filterCacheEnabled: library.filterCacheEnabled ?? true,
 

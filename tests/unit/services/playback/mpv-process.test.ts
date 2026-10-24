@@ -114,6 +114,14 @@ describe('spawnMpv', () => {
       errorSpy.mockRestore();
     }
   });
+
+  it('falls back to the null output when the audio output is lost', () => {
+    vi.mocked(spawn).mockReturnValue(Object.assign(new EventEmitter(), { unref: vi.fn() }) as never);
+
+    spawnMpv('/fake/mpv', '/tmp/fake.sock');
+
+    expect(vi.mocked(spawn).mock.calls.at(-1)?.[1]).toContain('--audio-fallback-to-null=yes');
+  });
 });
 
 describe('resolveMpvBinary', () => {

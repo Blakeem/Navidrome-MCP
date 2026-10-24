@@ -25,6 +25,7 @@ const FIELDS = [
   ['features.lrclibUserAgent', 'lrclibUserAgent', 'stringOrNull'],
   ['features.lrclibBase', 'lrclibBase', 'stringOrNull'],
   ['playback.mpvPath', 'mpvPath', 'pathOrNull'],
+  ['playback.audioDevice', 'audioDevice', 'audioDevice'],
   ['playback.transcodeFormat', 'transcodeFormat', 'string'],
   ['playback.transcodeBitrate', 'transcodeBitrate', 'string'],
   ['webui.enabled', 'webuiEnabled', 'bool', true],
@@ -70,6 +71,9 @@ function populate(seed) {
         break;
       case 'int':
         el.value = raw == null ? '' : String(raw);
+        break;
+      case 'audioDevice':
+        selectAudioDevice(el, raw);
         break;
       default:
         // A <select> such as transport.type needs its default, or it shows no selected option.
@@ -123,12 +127,64 @@ function collect() {
           .map((t) => t.trim())
           .filter((t) => t !== '');
         break;
+      case 'audioDevice': {
+        // The label may carry a "(not connected)" suffix, so the name comes from data-name.
+        const name = el.selectedOptions[0]?.dataset.name ?? '';
+        value = el.value === '' ? null : { id: el.value, name: name === '' ? null : name };
+        break;
+      }
       default:
         value = el.value;
     }
     setPath(out, path, value);
   }
   return out;
+}
+
+// The empty option already stands for mpv's `auto` device.
+const AUTO_DEVICE_ID = 'auto';
+
+// A failed probe leaves only System default, so the form still loads and saves.
+async function loadAudioDevices() {
+  try {
+    const res = await fetch('/api/settings/audio-devices');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.devices) ? data.devices : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function fillAudioDevices(devices) {
+  const select = document.getElementById('audioDevice');
+  for (const device of devices) {
+    if (device.id === AUTO_DEVICE_ID) continue;
+    select.appendChild(buildAudioDeviceOption(device.id, device.name, device.name || device.id));
+  }
+}
+
+// A saved device missing from the probe gets its own option, so a save keeps it.
+function selectAudioDevice(select, device) {
+  const id = device != null && typeof device.id === 'string' ? device.id : '';
+  if (id === '' || id === AUTO_DEVICE_ID) {
+    select.value = '';
+    return;
+  }
+  const listed = Array.from(select.options).some((option) => option.value === id);
+  if (!listed) {
+    const name = typeof device.name === 'string' ? device.name : '';
+    select.appendChild(buildAudioDeviceOption(id, name, `${name || id} (not connected)`));
+  }
+  select.value = id;
+}
+
+function buildAudioDeviceOption(id, name, label) {
+  const option = document.createElement('option');
+  option.value = id;
+  option.dataset.name = name;
+  option.textContent = label;
+  return option;
 }
 
 // Mirrors the server's webui.host rule, so a bad value is flagged before a round trip.
@@ -248,13 +304,21 @@ async function onSave(event) {
   }
 }
 
-async function init() {
+// The options go in before populate() picks one, so a slow probe cannot reset the field.
+async function loadForm() {
+  const devicesRequest = loadAudioDevices();
   try {
     const res = await fetch('/api/settings/seed');
-    if (res.ok) populate(await res.json());
+    const seed = res.ok ? await res.json() : null;
+    fillAudioDevices(await devicesRequest);
+    if (seed !== null) populate(seed);
   } catch (_) {
     showStatus('Could not load existing settings; starting blank.', 'err');
   }
+}
+
+async function init() {
+  await loadForm();
   // Fetched after populate(), so only fields left blank get a hint.
   try {
     const res = await fetch('/api/settings/suggestions');

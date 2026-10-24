@@ -29,7 +29,8 @@
   "playback": {
     "mpvPath": null,
     "transcodeFormat": "raw",
-    "transcodeBitrate": "192"
+    "transcodeBitrate": "192",
+    "audioDevice": null
   },
   "webui": {
     "enabled": true,

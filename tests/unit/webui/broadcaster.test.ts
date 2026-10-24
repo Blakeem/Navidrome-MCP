@@ -267,7 +267,7 @@ describe('SseBroadcaster snapshot reads', () => {
     expect(res.writes[0]).toContain('"status":null');
   });
 
-  it('sends status without mpvPath and mpvVersion and keeps the fields the browser reads', async () => {
+  it('sends status without mpvPath, mpvVersion or the audio device and keeps the fields the browser reads', async () => {
     const b = newBroadcaster();
     const inner = internals(b);
     const res = fakeRes();
@@ -280,6 +280,8 @@ describe('SseBroadcaster snapshot reads', () => {
       mpvVersion: 'mpv 0.38.0',
       volume: 70,
       idle: false,
+      audioDevice: { id: 'wasapi/{speaker}', name: 'Speakers', connected: true },
+      audioOutputLost: false,
     });
 
     await inner.broadcast();
@@ -288,7 +290,10 @@ describe('SseBroadcaster snapshot reads', () => {
     expect(res.writes[0]).not.toContain('mpvPath');
     expect(res.writes[0]).not.toContain('mpvVersion');
     expect(res.writes[0]).not.toContain('alice');
-    expect(res.writes[0]).toContain('"status":{"engineRunning":true,"volume":70,"idle":false}');
+    expect(res.writes[0]).not.toContain('audioDevice');
+    expect(res.writes[0]).not.toContain('wasapi/{speaker}');
+    expect(res.writes[0]).not.toContain('Speakers');
+    expect(res.writes[0]).toContain('"status":{"engineRunning":true,"volume":70,"idle":false,"audioOutputLost":false}');
   });
 });
 

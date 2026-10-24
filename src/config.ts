@@ -7,7 +7,14 @@
 import { ErrorFormatter } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { ConfigSchema, type Config } from './config/schema.js';
-import { readSettings, type SettingsFile } from './config/store.js';
+import {
+  mergeOntoStored,
+  readRawSettings,
+  readSettings,
+  SettingsFileSchema,
+  writeSettings,
+  type SettingsFile,
+} from './config/store.js';
 import { mapStoreToConfig } from './config/map-config.js';
 import { getSettingsStorePath } from './config/store-path.js';
 import { buildEnvRuntimeSettings } from './config/env-settings.js';
@@ -118,4 +125,41 @@ export function readSavedWebuiSettings(): Config['webui'] | null {
 export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
   const webui = readSavedWebuiSettings();
   return webui === null ? null : { port: webui.port, host: webui.host };
+}
+
+/**
+ * Reads the store on each call, so a running process sees a device another process saved. Undefined
+ * means no usable store, and the caller keeps its startup config.
+ */
+export function readSavedAudioDevice(): Config['playbackAudioDevice'] | undefined {
+  const settings = readSettings();
+  if (settings === null) return undefined;
+  const result = validateMappedSettings(settings, null);
+  return result.ok ? result.config.playbackAudioDevice : undefined;
+}
+
+/**
+ * Without a store holding a Navidrome URL the process runs from env. A usable store wins over env, so
+ * writing a near-empty file then would replace that config.
+ */
+export function saveAudioDevice(device: Config['playbackAudioDevice']): boolean {
+  const stored = readRawSettings();
+  if (stored === null) return false;
+  const storedUrl = SettingsFileSchema.safeParse(stored).data?.navidrome?.url;
+  if (storedUrl === undefined || storedUrl.trim() === '') return false;
+
+  const merged = mergeOntoStored(stored, { playback: { audioDevice: device } });
+  // A file that does not parse back would leave the store unusable.
+  if (!SettingsFileSchema.safeParse(merged).success) {
+    logger.warn('audio device: merged settings failed validation, so the choice was not saved');
+    return false;
+  }
+
+  try {
+    writeSettings(merged as SettingsFile);
+    return true;
+  } catch (err) {
+    logger.warn('audio device: failed to write settings.json:', err);
+    return false;
+  }
 }

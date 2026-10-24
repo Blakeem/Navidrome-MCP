@@ -227,9 +227,17 @@ function isClosed(res: ServerResponse): boolean {
   return res.destroyed || res.writableEnded;
 }
 
-// LAN peers read this stream, and mpvPath can name the OS user while mpvVersion fingerprints the host.
-function snapshotStatus(status: PlaybackStatus): Pick<PlaybackStatus, 'engineRunning' | 'volume' | 'idle'> {
-  return { engineRunning: status.engineRunning, volume: status.volume, idle: status.idle };
+// LAN peers read this stream with no login. mpvPath can name the host or its owner, and mpvVersion
+// fingerprints the host. Device names stay on the device route, which answers only when asked.
+function snapshotStatus(
+  status: PlaybackStatus,
+): Pick<PlaybackStatus, 'engineRunning' | 'volume' | 'idle' | 'audioOutputLost'> {
+  return {
+    engineRunning: status.engineRunning,
+    volume: status.volume,
+    idle: status.idle,
+    audioOutputLost: status.audioOutputLost,
+  };
 }
 
 function settled<T>(result: PromiseSettledResult<T>, field: string): T | null {
