@@ -106,22 +106,31 @@ export async function getUserDetails(client: NavidromeClient): Promise<UserDetai
 
 /**
  * X-Total-Count counts an artist shared by two libraries once and is readable by non-admins,
- * unlike the per-library stats, which serve only as the fallback for a missing header.
+ * unlike the per-library stats. A count is null when Navidrome omits the header.
  */
-async function fetchActiveLibraryTotals(
+export async function fetchActiveLibraryCounts(
   client: NavidromeClient,
-  activeLibraries: readonly LibraryTotals[],
-): Promise<LibraryTotals> {
+): Promise<{ [K in keyof LibraryTotals]: number | null }> {
   const [songs, albums, artists] = await Promise.all([
     client.requestWithLibraryFilterAndMeta<unknown>('/song?_start=0&_end=1'),
     client.requestWithLibraryFilterAndMeta<unknown>('/album?_start=0&_end=1'),
     client.requestWithLibraryFilterAndMeta<unknown>('/artist?_start=0&_end=1'),
   ]);
 
+  return { totalSongs: songs.total, totalAlbums: albums.total, totalArtists: artists.total };
+}
+
+/** The per-library stats serve only as the fallback for a missing X-Total-Count header. */
+async function fetchActiveLibraryTotals(
+  client: NavidromeClient,
+  activeLibraries: readonly LibraryTotals[],
+): Promise<LibraryTotals> {
+  const counts = await fetchActiveLibraryCounts(client);
+
   return {
-    totalSongs: songs.total ?? activeLibraries.reduce((sum, lib) => sum + lib.totalSongs, 0),
-    totalAlbums: albums.total ?? activeLibraries.reduce((sum, lib) => sum + lib.totalAlbums, 0),
-    totalArtists: artists.total ?? activeLibraries.reduce((sum, lib) => sum + lib.totalArtists, 0),
+    totalSongs: counts.totalSongs ?? activeLibraries.reduce((sum, lib) => sum + lib.totalSongs, 0),
+    totalAlbums: counts.totalAlbums ?? activeLibraries.reduce((sum, lib) => sum + lib.totalAlbums, 0),
+    totalArtists: counts.totalArtists ?? activeLibraries.reduce((sum, lib) => sum + lib.totalArtists, 0),
   };
 }
 

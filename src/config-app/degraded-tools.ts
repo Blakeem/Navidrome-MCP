@@ -74,7 +74,10 @@ export function registerDegradedTools(server: Server, settingsUrl: string, failu
     },
     {
       name: 'test_connection',
-      description: 'Report Navidrome MCP configuration/connection status.',
+      description:
+        'Report why Navidrome MCP is in setup mode, with the startup error, if any, and the settings page URL. ' +
+        'It does not contact Navidrome, and it always returns an error result, since no Navidrome tools work until ' +
+        'the server is configured and restarted. Use it to tell the user how to finish setup.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
   ];

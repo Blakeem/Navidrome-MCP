@@ -30,7 +30,9 @@ describe('Test Connection Tool - Live Connection Testing', () => {
 
       expect(result.success).toBe(true);
       expect(typeof result.message).toBe('string');
-      expect(result.message).toMatch(/successfully connected/i);
+      expect(result.message).toMatch(/^Connected to Navidrome /);
+      expect(result.navidrome.serverVersion).toEqual(expect.any(String));
+      expect(result.library.totalSongs).toEqual(expect.any(Number));
     });
 
     it.skipIf(shouldSkipLiveTests())('should return detailed server info when requested', async () => {
@@ -148,10 +150,76 @@ describe('Test Connection Tool - Live Connection Testing', () => {
   });
 });
 
+function createConnectedClient(
+  scanStatusBody: unknown = { status: 'ok' },
+  total: number | null = 0,
+): ReturnType<typeof createMockClient> {
+  const client = createMockClient();
+  client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total });
+  client.subsonicRequest.mockResolvedValue(scanStatusBody);
+  return client;
+}
+
+describe('Test Connection Tool - Navidrome status', () => {
+  it('reports the server version, scan state, and active-library counts', async () => {
+    const client = createConnectedClient({
+      status: 'ok',
+      version: '1.16.1',
+      type: 'navidrome',
+      serverVersion: '0.62.0 (1b46b977)',
+      openSubsonic: true,
+      scanStatus: { scanning: false, count: 16731, lastScan: '2026-10-16T19:26:41-07:00' },
+    });
+    client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
+      const totals: Record<string, number> = { '/song': 16731, '/album': 2303, '/artist': 5082 };
+      return Promise.resolve({ data: [], total: totals[endpoint.split('?')[0] ?? ''] ?? null });
+    });
+
+    const result = await testConnection(client as unknown as NavidromeClient, makeTestConfig(), {});
+
+    expect(client.subsonicRequest).toHaveBeenCalledWith('/getScanStatus');
+    expect(result.message).toBe(
+      'Connected to Navidrome 0.62.0 (1b46b977). REST and Subsonic authentication both succeeded.',
+    );
+    expect(result.navidrome).toEqual({
+      serverVersion: '0.62.0 (1b46b977)',
+      subsonicApiVersion: '1.16.1',
+      openSubsonic: true,
+      scanning: false,
+      lastScan: '2026-10-16T19:26:41-07:00',
+    });
+    expect(result.library).toEqual({ totalSongs: 16731, totalAlbums: 2303, totalArtists: 5082 });
+  });
+
+  it('reports nulls when an older Navidrome omits the version, scan fields, and count headers', async () => {
+    const client = createConnectedClient({ status: 'ok', scanStatus: { lastScan: '0001-01-01T00:00:00Z' } }, null);
+
+    const result = await testConnection(client as unknown as NavidromeClient, makeTestConfig(), {});
+
+    expect(result.message).toMatch(/^Connected to Navidrome \(version not reported\)\./);
+    expect(result.navidrome).toEqual({
+      serverVersion: null,
+      subsonicApiVersion: null,
+      openSubsonic: false,
+      scanning: null,
+      lastScan: null,
+    });
+    expect(result.library).toEqual({ totalSongs: null, totalAlbums: null, totalArtists: null });
+  });
+
+  it('fails the check when the Subsonic credentials are rejected', async () => {
+    const client = createConnectedClient();
+    client.subsonicRequest.mockRejectedValue(new Error('Wrong username or password'));
+
+    await expect(
+      testConnection(client as unknown as NavidromeClient, makeTestConfig(), {}),
+    ).rejects.toThrow(/test_connection.*Wrong username or password/);
+  });
+});
+
 describe('Test Connection Tool - feature inventory', () => {
   it('lists every tool each enabled feature registers', async () => {
-    const client = createMockClient();
-    client.request.mockResolvedValue([]);
+    const client = createConnectedClient();
     const config = makeTestConfig({ features: { lastfm: true, radioBrowser: true, lyrics: true, playback: true } });
 
     const result = await testConnection(client as unknown as NavidromeClient, config, { includeServerInfo: true });
@@ -165,8 +233,7 @@ describe('Test Connection Tool - feature inventory', () => {
   });
 
   it('reports playback disabled with no tools when mpv is absent', async () => {
-    const client = createMockClient();
-    client.request.mockResolvedValue([]);
+    const client = createConnectedClient();
 
     const result = await testConnection(client as unknown as NavidromeClient, makeTestConfig(), { includeServerInfo: true });
 

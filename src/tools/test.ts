@@ -4,20 +4,47 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { getPackageVersion } from '../utils/version.js';
 import { TestConnectionSchema } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
+import { nullIfGoZeroTime } from '../utils/go-time.js';
+import { fetchActiveLibraryCounts } from './library.js';
 import { LASTFM_TOOL_NAMES } from './handlers/lastfm-handlers.js';
 import { LRCLIB_TOOL_NAMES } from './handlers/lyrics-handlers.js';
 import { PLAYBACK_TOOL_NAMES } from './handlers/playback-handlers.js';
 import { RADIO_BROWSER_TOOL_NAMES, RADIO_PLAYBACK_TOOL_NAMES } from './handlers/radio-handlers.js';
 
+/** Older Navidrome releases omit the OpenSubsonic fields, so every field is optional. */
+const ScanStatusResponseSchema = z.object({
+  version: z.string().optional(),
+  serverVersion: z.string().optional(),
+  openSubsonic: z.boolean().optional(),
+  scanStatus: z.object({
+    scanning: z.boolean().optional(),
+    lastScan: z.string().optional(),
+  }).optional(),
+});
+
 interface TestConnectionResult {
   success: true;
   message: string;
+  navidrome: {
+    serverVersion: string | null;
+    subsonicApiVersion: string | null;
+    openSubsonic: boolean;
+    scanning: boolean | null;
+    lastScan: string | null;
+  };
+  /** Covers the active libraries. A count is null when Navidrome did not report it. */
+  library: {
+    totalSongs: number | null;
+    totalAlbums: number | null;
+    totalArtists: number | null;
+  };
   serverInfo?: {
     url: string;
     authenticated: boolean;
@@ -57,16 +84,25 @@ export async function testConnection(
     const params = TestConnectionSchema.parse(args);
     logger.debug('Tool testConnection called with args:', params);
 
-    const queryParams = new URLSearchParams({
-      _start: '0',
-      _end: '1',
-    });
-
-    await client.request(`/song?${queryParams.toString()}`);
+    // REST uses the JWT and Subsonic uses salted-MD5, so each call proves a separate auth path.
+    const [library, scanStatusBody] = await Promise.all([
+      fetchActiveLibraryCounts(client),
+      client.subsonicRequest('/getScanStatus'),
+    ]);
+    const scanStatus = ScanStatusResponseSchema.parse(scanStatusBody);
+    const serverVersion = scanStatus.serverVersion ?? null;
 
     const result: TestConnectionResult = {
       success: true,
-      message: 'Successfully connected to Navidrome server',
+      message: `Connected to Navidrome ${serverVersion ?? '(version not reported)'}. REST and Subsonic authentication both succeeded.`,
+      navidrome: {
+        serverVersion,
+        subsonicApiVersion: scanStatus.version ?? null,
+        openSubsonic: scanStatus.openSubsonic ?? false,
+        scanning: scanStatus.scanStatus?.scanning ?? null,
+        lastScan: nullIfGoZeroTime(scanStatus.scanStatus?.lastScan),
+      },
+      library,
     };
 
     if (params.includeServerInfo) {

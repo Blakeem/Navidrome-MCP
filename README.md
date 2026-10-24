@@ -97,7 +97,7 @@ A category with **requires** in its heading only appears once that setting is fi
 
 | Tool | Description |
 |------|-------------|
-| `test_connection` | Verify Navidrome connectivity and report feature/tool availability |
+| `test_connection` | Verify Navidrome connectivity and report the Navidrome version, scan state, library counts, and feature/tool availability |
 
 ### Library Management
 

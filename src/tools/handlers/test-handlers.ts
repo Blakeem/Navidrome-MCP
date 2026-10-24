@@ -14,7 +14,11 @@ import { ErrorFormatter } from '../../utils/error-formatter.js';
 const tools: Tool[] = [
   {
     name: 'test_connection',
-    description: 'Test the connection to the Navidrome server',
+    description:
+      'Check that Navidrome is reachable and accepts this server\'s credentials on both its REST and Subsonic APIs. ' +
+      'Returns the Navidrome version, library scan state, and song, album and artist counts for the active libraries. ' +
+      'Use it to confirm the server is up or to diagnose failing tools. Returns an error result when Navidrome is unreachable or rejects the credentials. ' +
+      'For the account and per-library details, use get_user_details.',
     inputSchema: {
       type: 'object',
       properties: {
