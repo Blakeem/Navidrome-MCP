@@ -10,8 +10,8 @@ import { GuestNicknameSchema, GuestQueueAddSchema, GuestSearchQuerySchema, Queue
 import { fetchSongMetadata } from '../../tools/queue-sources.js';
 import { searchAll } from '../../tools/search/index.js';
 import { logger } from '../../utils/logger.js';
-import type { AuthService } from '../auth/auth-service.js';
-import type { GuestSession } from '../auth/auth-store.js';
+import { jukeboxNameOf, jukeboxNicknameOf, type AuthService } from '../auth/auth-service.js';
+import type { SessionRecord } from '../auth/auth-store.js';
 import type { GuestQueue } from '../jukebox/guest-queue.js';
 import { readValidBody, runAction, writeError, writeJson, writeTooManyRequests } from '../http-helpers.js';
 
@@ -26,22 +26,36 @@ const ALREADY_STARTED = 'That song already started playing, so only the host can
 const SIGNED_OUT = 'You are no longer signed in to the jukebox, so the song was not added.';
 const NICKNAME_SIGNED_OUT = 'You are no longer signed in to the jukebox, so the name was not changed.';
 const REMOVE_SIGNED_OUT = 'You are no longer signed in to the jukebox, so the song was not removed.';
+const SEARCH_SIGNED_OUT = 'You are no longer signed in to the jukebox, so the search did not run.';
 
-function guestLabel(session: GuestSession): string {
-  return session.nickname ?? session.label;
+// The host logs as the host, so neither its nickname nor a guest label names it in a log line.
+const HOST_LOG_NAME = 'the host';
+
+type LiveCheck = Pick<AuthService, 'isLiveJukeboxSession'>;
+
+function logNameOf(session: SessionRecord): string {
+  return session.role === 'admin' ? HOST_LOG_NAME : jukeboxNameOf(session);
 }
 
-/** Only the fields the guest page shows, so the rest of each library row stays with the host. */
+/**
+ * Only the fields the guest page shows, so the rest of each library row stays with the host. The host
+ * searches from the guest page only while a code is live.
+ */
 export async function handleGuestSearch(
   res: ServerResponse,
   client: NavidromeClient,
   guests: GuestQueue,
-  session: GuestSession,
+  auth: LiveCheck,
+  session: SessionRecord,
   rawQuery: string | null,
 ): Promise<void> {
   const parsedQuery = GuestSearchQuerySchema.safeParse(rawQuery);
   if (!parsedQuery.success) {
     writeError(res, 400, parsedQuery.error.issues[0]?.message ?? 'Invalid query');
+    return;
+  }
+  if (!auth.isLiveJukeboxSession(session.id)) {
+    writeJson(res, 401, { error: SEARCH_SIGNED_OUT, code: 'signed-out' });
     return;
   }
   const waitMs = guests.searches.tryTake(session.id);
@@ -62,17 +76,24 @@ export async function handleGuestSearch(
   });
 }
 
-/** A refusal carries a `code`, so the guest page branches on it instead of on the message text. */
+/**
+ * A refusal carries a `code`, so the guest page branches on it instead of on the message text. The
+ * session is checked before the library read, so a host with no live code never reaches Navidrome.
+ */
 export async function handleGuestAdd(
   req: IncomingMessage,
   res: ServerResponse,
   client: NavidromeClient,
   guests: GuestQueue,
-  auth: Pick<AuthService, 'isLiveGuest'>,
-  session: GuestSession,
+  auth: LiveCheck,
+  session: SessionRecord,
 ): Promise<void> {
   const input = await readValidBody(req, res, GuestQueueAddSchema);
   if (input === null) return;
+  if (!auth.isLiveJukeboxSession(session.id)) {
+    writeJson(res, 401, { error: SIGNED_OUT, code: 'signed-out' });
+    return;
+  }
 
   try {
     const [song] = await fetchSongMetadata(client, [input.songId], { scopeToActiveLibraries: true });
@@ -81,7 +102,7 @@ export async function handleGuestAdd(
       return;
     }
     const result = await guests.add(
-      { sessionId: session.id, currentLabel: () => guestLabel(session), isLive: () => auth.isLiveGuest(session.id) },
+      { sessionId: session.id, isHost: session.role === 'admin', currentLabel: () => jukeboxNameOf(session), isLive: () => auth.isLiveJukeboxSession(session.id) },
       song,
     );
     switch (result.kind) {
@@ -101,11 +122,11 @@ export async function handleGuestAdd(
         writeTooManyRequests(res, result.waitMs, 'songs added at once');
         return;
       case 'untracked':
-        logger.warn(`webui: mpv reported no entry id for a song ${guestLabel(session)} added, so the guest ledger skips it`);
+        logger.warn(`webui: mpv reported no entry id for a song ${logNameOf(session)} added, so the guest ledger skips it`);
         writeError(res, 502, UNTRACKED);
         return;
       case 'added':
-        logger.info(`webui: ${guestLabel(session)} added a song to the queue`);
+        logger.info(`webui: ${logNameOf(session)} added a song to the queue`);
         writeJson(res, 200, { ok: true, entryId: result.entryId, remaining: result.remaining });
         return;
     }
@@ -119,18 +140,18 @@ export async function handleGuestRemove(
   req: IncomingMessage,
   res: ServerResponse,
   guests: GuestQueue,
-  auth: Pick<AuthService, 'isLiveGuest'>,
-  session: GuestSession,
+  auth: LiveCheck,
+  session: SessionRecord,
 ): Promise<void> {
   const input = await readValidBody(req, res, QueueEntryRemoveSchema);
   if (input === null) return;
-  if (!auth.isLiveGuest(session.id)) {
+  if (!auth.isLiveJukeboxSession(session.id)) {
     writeRemoveSignedOut(res);
     return;
   }
 
   try {
-    const result = await guests.remove({ sessionId: session.id, isLive: () => auth.isLiveGuest(session.id) }, input.entryId);
+    const result = await guests.remove({ sessionId: session.id, isLive: () => auth.isLiveJukeboxSession(session.id) }, input.entryId);
     switch (result.kind) {
       case 'signed-out':
         writeRemoveSignedOut(res);
@@ -142,7 +163,7 @@ export async function handleGuestRemove(
         writeJson(res, 409, { error: ALREADY_STARTED, code: 'started' });
         return;
       case 'removed':
-        logger.info(`webui: ${guestLabel(session)} removed one of their songs from the queue`);
+        logger.info(`webui: ${logNameOf(session)} removed one of their songs from the queue`);
         writeJson(res, 200, { ok: true, remaining: result.remaining });
         return;
     }
@@ -153,24 +174,28 @@ export async function handleGuestRemove(
 
 /**
  * A ban or sign-out can land while the body is read, so the session is checked again before any write.
- * A name already stored spends no budget, since the Change name form or a second tab may save the name the server holds.
- * The new name reaches the host's guest list and the songs the guest already queued.
+ * A name the server already holds spends no budget, since a second tab may save it again.
  */
 export async function handleGuestNickname(
   req: IncomingMessage,
   res: ServerResponse,
-  auth: Pick<AuthService, 'isLiveGuest' | 'takeNicknameToken' | 'setGuestNickname'>,
-  guests: Pick<GuestQueue, 'relabel'>,
-  session: GuestSession,
+  auth: Pick<AuthService, 'isLiveJukeboxSession' | 'jukeboxNameConflict' | 'takeNicknameToken' | 'setJukeboxNickname'>,
+  guests: Pick<GuestQueue, 'relabel' | 'ledger'>,
+  session: SessionRecord,
 ): Promise<void> {
   const input = await readValidBody(req, res, GuestNicknameSchema);
   if (input === null) return;
-  if (!auth.isLiveGuest(session.id)) {
+  if (!auth.isLiveJukeboxSession(session.id)) {
     writeJson(res, 401, { error: NICKNAME_SIGNED_OUT, code: 'signed-out' });
     return;
   }
-  if (input.nickname === session.nickname) {
+  if (input.nickname === jukeboxNicknameOf(session)) {
     writeJson(res, 200, { ok: true, nickname: input.nickname });
+    return;
+  }
+  const nameConflict = auth.jukeboxNameConflict(input.nickname, session.role, guests.ledger.addedByNames());
+  if (nameConflict !== null) {
+    writeError(res, 400, nameConflict);
     return;
   }
 
@@ -179,9 +204,9 @@ export async function handleGuestNickname(
     writeTooManyRequests(res, waitMs, 'name changes');
     return;
   }
-  auth.setGuestNickname(session, input.nickname);
-  guests.relabel(session.id, guestLabel(session));
-  logger.info(`webui: ${session.label} changed their nickname`);
+  auth.setJukeboxNickname(session, input.nickname);
+  guests.relabel(session.id, jukeboxNameOf(session));
+  logger.info(`webui: ${session.role === 'guest' ? session.label : HOST_LOG_NAME} changed their nickname`);
   writeJson(res, 200, { ok: true, nickname: input.nickname });
 }
 

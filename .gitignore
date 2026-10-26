@@ -43,7 +43,6 @@ pids
 *.backup
 .tmp/
 temp/
-tat:q
 .serena/
 
 debug/
@@ -58,5 +57,6 @@ code-review/
 claude-code-review-workflow/
 claude-code-feature-workflow/
 aipg/
+.playwright-mcp/
 .claude/commands
 docs/roadmap/commercialization.md

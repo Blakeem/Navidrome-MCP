@@ -252,14 +252,14 @@ export class SseBroadcaster {
 
   // The version follows the queue with no guest's songs marked, which most guests receive.
   private recordGuestQueue(snapshot: Snapshot): void {
-    const queueJson = JSON.stringify(toGuestQueue(snapshot.queueEntries, NO_GUEST_SONGS));
+    const queueJson = JSON.stringify(toGuestQueue(snapshot.queueEntries, NO_GUEST_SONGS, this.guests.ledger));
     if (queueJson === this.guestQueueJson) return;
     this.guestQueueJson = queueJson;
     this.guestQueueVersion += 1;
   }
 
   private guestQueueJsonFor(snapshot: Snapshot, mine: readonly number[]): string {
-    return mine.length === 0 ? this.guestQueueJson : JSON.stringify(toGuestQueue(snapshot.queueEntries, new Set(mine)));
+    return mine.length === 0 ? this.guestQueueJson : JSON.stringify(toGuestQueue(snapshot.queueEntries, new Set(mine), this.guests.ledger));
   }
 
   private handleDrain(res: ServerResponse): void {
@@ -321,16 +321,20 @@ function hostSnapshotJson(snapshot: Snapshot, ledger: GuestLedger): string {
 }
 
 /**
- * The items keep the order of the entries, so each entry's mpv id names the guest who added its item.
- * `entryId` lets the page remove an item by id. `guestWaiting` marks a guest song that has not started.
+ * The items keep the order of the entries, so each entry's mpv id names who added its item. `entryId`
+ * lets the page remove an item by id. `addedBy` names the adder of a labeled song. `fromGuestPage`
+ * marks a song a guest or the host added from the guest page, and `guestWaiting` one of those that
+ * has not started.
  */
 function toHostQueue(entries: QueueEntry[], ledger: GuestLedger): ReturnType<typeof toPlayQueueResult> {
   const result = toPlayQueueResult(entries);
   const items = result.items.map((item, i) => {
     const entryId = entries[i]?.entryId ?? null;
-    const guestLabel = entryId === null ? null : ledger.guestLabelOf(entryId);
-    if (entryId === null || guestLabel === null) return { ...item, entryId };
-    return ledger.isStarted(entryId) ? { ...item, entryId, guestLabel } : { ...item, entryId, guestLabel, guestWaiting: true };
+    const addedBy = entryId === null ? null : ledger.addedByOf(entryId);
+    if (entryId === null || addedBy === null) return { ...item, entryId };
+    if (!ledger.isFromGuestPage(entryId)) return { ...item, entryId, addedBy };
+    const guestPageItem = { ...item, entryId, addedBy, fromGuestPage: true };
+    return ledger.isStarted(entryId) ? guestPageItem : { ...guestPageItem, guestWaiting: true };
   });
   return { ...result, items };
 }

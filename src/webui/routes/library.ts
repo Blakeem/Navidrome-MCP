@@ -15,6 +15,7 @@ import {
   transformSongsToDTO,
 } from '../../transformers/index.js';
 import { readValidBody, runAction, writeError, writeJson } from '../http-helpers.js';
+import type { GuestQueue } from '../jukebox/guest-queue.js';
 
 const LIBRARY_RECENT_LIMIT = 5;
 const LIBRARY_SEARCH_LIMIT = 10;
@@ -136,17 +137,21 @@ export async function handleLibraryAlbumSongs(
   });
 }
 
+/** `hostLabels` is the jukebox that labels the loaded songs as the host's, or null when no label applies. */
 export async function handleLibraryPlay(
   req: IncomingMessage,
   res: ServerResponse,
   client: NavidromeClient,
+  hostLabels: Pick<GuestQueue, 'labelAdminPageSongs'> | null,
 ): Promise<void> {
   const body = await readValidBody(req, res, LibraryPlayRequestSchema);
   if (body === null) return;
 
   // An empty source is 409 with a code, so the remote branches on the code, not the message text.
   try {
-    const result = await playLibrarySource(client, body);
+    const result = await playLibrarySource(client, body, hostLabels === null ? undefined : (entryIds, songs): void => {
+      hostLabels.labelAdminPageSongs(entryIds, songs);
+    });
     writeJson(res, 200, result);
   } catch (err) {
     if (err instanceof EmptyLibrarySourceError) {

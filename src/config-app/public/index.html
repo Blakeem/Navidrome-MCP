@@ -173,13 +173,13 @@
           </select>
           <span class="warn" id="webuiAdminAccessWarn" hidden></span>
         </label>
-        <label id="jukeboxGuestQueueLimitRow">Guest song limit <span class="hint">how many unplayed songs each jukebox guest may add to the queue at a time, from 1 to 20. The Guests dialog in the player changes it without a restart</span>
+        <label id="jukeboxGuestQueueLimitRow">Guest song limit <span class="hint">songs each jukebox guest may have waiting, from 1 to 20. The player's Guests dialog changes it live</span>
           <input id="jukeboxGuestQueueLimit" type="number" min="1" max="20" placeholder="3" />
         </label>
         <label>Public URL <span class="hint">The internet address of this player, such as <code>https://jukebox.duckdns.org:8808</code>. Use https:// when the HTTPS files are set.</span>
           <input id="webuiPublicUrl" type="text" placeholder="(none)" />
         </label>
-        <label>HTTPS certificate file <span class="hint">PEM certificate chain, such as Let's Encrypt <code>fullchain.pem</code>. HTTPS is recommended when guests reach the player from the internet. Set both files to serve HTTPS, or leave both blank to serve HTTP</span>
+        <label>HTTPS certificate file <span class="hint">PEM certificate chain, such as Let's Encrypt <code>fullchain.pem</code>. Set both files for HTTPS, or leave both blank for HTTP</span>
           <input id="webuiTlsCert" type="text" placeholder="(HTTP)" />
         </label>
         <label>HTTPS key file <span class="hint">PEM private key for the certificate, such as <code>privkey.pem</code>. The player reloads a renewed pair within a minute</span>
@@ -191,11 +191,11 @@
         </label>
         <label class="check">
           <input id="webuiPersist" type="checkbox" />
-          <span>Keep playing after the MCP server closes <span class="hint">the player and mpv survive when you close the AI. Unchecked, they stop with the last AI client using them.</span></span>
+          <span>Keep playing after the MCP server closes <span class="hint">unchecked, the player stops when the last AI client closes</span></span>
         </label>
         <label class="check">
           <input id="webuiVisualizer" type="checkbox" />
-          <span>Show a music visualizer in the player <span class="hint">beside the track info. Off also removes its audio analysis from mpv, which uses about 2.5% of one CPU core while music plays.</span></span>
+          <span>Show a music visualizer in the player <span class="hint">beside the track info. Its audio analysis uses about 2.5% of one CPU core while music plays</span></span>
         </label>
         <h3 class="subhead">Advanced</h3>
         <label>Bind host <span class="hint">usually leave blank. An explicit host overrides Expose on LAN. <code>0.0.0.0</code> or <code>::</code> exposes the player to your network, with no login when Access is Open</span>

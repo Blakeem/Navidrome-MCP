@@ -79,6 +79,12 @@ export function renderVisualizer(player, np) {
   refresh();
 }
 
+// No snapshot arrives after a card stops the events stream, so the card closes the levels stream here.
+export function stopVisualizer() {
+  enabled = false;
+  refresh();
+}
+
 function refresh() {
   const visible = document.visibilityState === 'visible';
   const wantStream = enabled && visible && hasTrack && !evicted;

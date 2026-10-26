@@ -31,11 +31,14 @@ export function setProgressVar(el, percent) {
   el.style.setProperty('--progress', `${clamped}%`);
 }
 
-export function buildIcon(className, pathData) {
+// Material Icons paths use the 24 unit box, and Material Symbols paths use this one.
+export const SYMBOL_VIEWBOX = '0 -960 960 960';
+
+export function buildIcon(className, pathData, viewBox = '0 0 24 24') {
   const svg = document.createElementNS(SVG_NS, 'svg');
   const path = document.createElementNS(SVG_NS, 'path');
   svg.setAttribute('class', className);
-  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('viewBox', viewBox);
   svg.setAttribute('aria-hidden', 'true');
   path.setAttribute('fill', 'currentColor');
   path.setAttribute('d', pathData);

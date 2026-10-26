@@ -82,7 +82,7 @@ describe('setSecurityHeaders', () => {
 });
 
 describe('writeTooManyRequests', () => {
-  it('answers 429 with Retry-After rounded up to whole seconds and names the refused attempts', () => {
+  it('answers 429 with Retry-After rounded up to whole seconds, the exact wait, and the refused attempts', () => {
     const headers: Record<string, string> = {};
     let status = 0;
     let body = '';
@@ -96,6 +96,6 @@ describe('writeTooManyRequests', () => {
 
     expect(status).toBe(429);
     expect(headers['Retry-After']).toBe('5');
-    expect(JSON.parse(body)).toEqual({ error: 'Too many searches. Try again in 5 seconds.' });
+    expect(JSON.parse(body)).toEqual({ error: 'Too many searches. Try again in 5 seconds.', retryAfterMs: 4001 });
   });
 });

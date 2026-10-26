@@ -1,5 +1,6 @@
-// The welcome shows once per guest session. "Got it" closes the card only after the typed nickname is
-// stored through the guest nickname route. The header close button and Escape discard a typed name.
+// The welcome shows once per guest session, and once per admin session for the host. "Got it" closes
+// the card only after the typed nickname is stored through the guest nickname route. The header close
+// button and Escape discard a typed name.
 
 import { byId, setHidden } from './dom.js';
 import { currentNickname, saveNickname } from './guest-name.js';
@@ -11,7 +12,6 @@ const SEEN_KEY = 'navidrome-mcp.guest-welcome-seen';
 const dialog = byId('guest-welcome');
 const text = byId('guest-welcome-text');
 const expiry = byId('guest-welcome-expiry');
-const nicknameFields = byId('guest-nickname-fields');
 const nicknameInput = byId('guest-nickname');
 const nicknameSave = byId('guest-nickname-save');
 const nicknameStatus = byId('guest-nickname-status');
@@ -36,18 +36,21 @@ export function bindWelcome() {
   });
 }
 
-// The label and the join time together name one guest session, so a new session shows the welcome again.
-export function maybeShowWelcome(jukebox, canQueue) {
+// The label and the join time together name one guest or admin session, so a new session shows the welcome again.
+export function maybeShowWelcome(jukebox, isHost) {
   const marker = `${jukebox.label}|${String(jukebox.joinedAt)}`;
   if (shownMarker === marker || prefRead(SEEN_KEY) === marker) return;
   shownMarker = marker;
   prefWrite(SEEN_KEY, marker);
-  text.textContent = `You joined as ${jukebox.nickname ?? jukebox.label}. This page shows what is playing, what comes next and the lyrics.${queueText(jukebox, canQueue)}`;
-  expiry.textContent = jukeboxEndText(jukebox.expiresAt);
+  const name = jukebox.nickname ?? jukebox.label;
+  text.textContent = isHost
+    ? `You are adding songs as ${name}.${queueText(jukebox)}`
+    : `You joined as ${name}. This page shows what is playing, what comes next and the lyrics.${queueText(jukebox)}`;
+  // The host keeps its admin session past the code, so its welcome names no expiry.
+  expiry.textContent = isHost ? '' : jukeboxEndText(jukebox.expiresAt);
+  setHidden(expiry, isHost);
   nicknameInput.value = jukebox.nickname ?? '';
   nicknameStatus.textContent = '';
-  // The host previews this page under its admin session, which holds no guest nickname.
-  setHidden(nicknameFields, !canQueue);
   dialog.showModal();
 }
 
@@ -56,8 +59,8 @@ export function closeWelcome() {
   dialog.close();
 }
 
-function queueText(jukebox, canQueue) {
-  if (!canQueue || typeof jukebox.limit !== 'number') return '';
+function queueText(jukebox) {
+  if (typeof jukebox.limit !== 'number') return '';
   const songs = jukebox.limit === 1 ? '1 song' : `${jukebox.limit} songs`;
   return ` You can add up to ${songs} at a time to the end of the queue, and remove your own songs before they start playing.`;
 }

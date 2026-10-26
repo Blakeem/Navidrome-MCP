@@ -822,6 +822,8 @@ main {
 }
 
 .modal-hint { font-size: 0.82rem; }
+/* Out of the flow while empty, so an idle status line adds no gap, yet it stays in place for screen readers to announce. */
+.modal-hint[aria-live]:empty { position: absolute; }
 
 .network-list {
   list-style: none;
@@ -866,7 +868,8 @@ main {
   gap: 6px;
 }
 
-.audio-device-btn {
+/* .btn-secondary comes later and sets its own display, so the pair outranks it. */
+.btn-secondary.audio-device-btn {
   width: 100%;
   display: flex;
   align-items: center;
@@ -907,7 +910,20 @@ main {
 .btn-secondary:not(:disabled):hover { border-color: var(--accent); }
 .btn-secondary:disabled { opacity: 0.4; cursor: default; }
 .btn-secondary.danger:not(:disabled):hover { color: var(--on-fill); background: var(--bad); border-color: var(--bad); }
-
+.primary-btn,
+.btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.primary-btn[hidden],
+.btn-secondary[hidden] { display: none; }
+.primary-btn svg,
+.btn-secondary svg { flex: none; width: 18px; height: 18px; }
+.primary-btn.danger { background: var(--bad); }
+.primary-btn.danger:not(:disabled):hover { filter: brightness(1.1); }
+.btn-secondary.small { min-height: 32px; padding: 4px 10px; font-size: 0.85rem; gap: 6px; }
+.btn-secondary.small svg { width: 16px; height: 16px; }
+/* Equal tiles with the icon over the label, so a row of actions fits one line even at phone width. */
+.action-tiles { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.action-tiles .btn-secondary { flex-direction: column; gap: 4px; padding: 10px 4px; font-size: 0.82rem; line-height: 1.2; text-align: center; }
+.action-tiles .btn-secondary svg { width: 20px; height: 20px; }
 /* Settings modal checkbox rows */
 .modal-content label.check {
   display: flex;
@@ -918,7 +934,8 @@ main {
   cursor: pointer;
 }
 .modal-content label.check input { margin-top: 3px; accent-color: var(--accent); }
-.modal-content label.check .modal-hint { display: block; margin-top: 2px; }
+/* :not([hidden]) keeps this display from overriding the hidden attribute on a conditional hint. */
+.modal-content label.check .modal-hint:not([hidden]) { display: block; margin-top: 2px; }
 
 .settings-group {
   display: grid;
@@ -1603,14 +1620,14 @@ body.player-stopped::after {
 }
 .jukebox-warn { color: var(--warn); }
 .jukebox-state,
-.jukebox-lifetime-field,
-.jukebox-confirm { display: grid; gap: 10px; }
+.jukebox-confirm { display: grid; gap: 14px; }
+.jukebox-lifetime-field { display: grid; gap: 6px; }
 .jukebox-warn[hidden],
 .jukebox-state[hidden],
 .jukebox-confirm[hidden],
 .mode-toggle[hidden] { display: none; }
-.jukebox-buttons,
-.modal-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.jukebox-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.jukebox-manage { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
 .jukebox-confirm {
   padding: 12px;
   border: 1px solid var(--border);
@@ -1654,8 +1671,35 @@ body.player-stopped::after {
 .jukebox-fullscreen p { margin: 0; font-size: 1.25rem; text-align: center; }
 
 /* Guests dialog: the guests and banned sections */
-.jukebox-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.guest-ban { display: grid; gap: 8px; }
+#guest-list li,
+#ban-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 12px;
+  padding: 10px 0;
+  background: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+}
+#guest-list li:last-child,
+#ban-list li:last-child { border-bottom: 0; }
+.guest-info { min-width: 0; display: grid; gap: 2px; }
+.guest-row-actions { display: flex; gap: 8px; }
+/* At phone width the details need the full row, so the actions move under them. */
+@media (max-width: 480px) {
+  #guest-list li,
+  #ban-list li { grid-template-columns: minmax(0, 1fr); }
+  .guest-row-actions { justify-self: end; }
+}
+.guest-ban {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.guest-limit-row input { flex: 0 0 6rem; }
 .guest-ban[hidden],
 #guest-list:empty,
 #ban-list:empty { display: none; }
@@ -1688,9 +1732,13 @@ body.player-stopped::after {
 }
 .guest-who .guest-jukebox { flex: 1 1 14rem; }
 .guest-name-form { padding: 4px 4px 0; }
+/* The welcome opens with no click, so focus goes to its title, where it shows no ring and a screen reader reads it first. */
+#guest-welcome-title:focus { outline: none; }
+.nickname-fields { display: grid; gap: 6px; }
+.nickname-fields label .modal-hint { display: block; margin-top: 2px; }
 .guest-name-form .btn-secondary { flex: none; }
 .guest-name .guest-add-status { padding: 4px; }
-.guest-preview {
+.guest-host-banner {
   margin: 0;
   padding: 10px 14px;
   border: 1px solid var(--border);
@@ -1698,8 +1746,8 @@ body.player-stopped::after {
   background: var(--surface-2);
   font-size: 0.9rem;
 }
-.guest-preview[hidden] { display: none; }
-.guest-preview a { color: var(--accent); }
+.guest-host-banner[hidden] { display: none; }
+.guest-host-banner a { color: var(--accent); }
 .guest-qrow { cursor: default; }
 .guest-queue-more { margin: 8px 14px 0; }
 .guest-lyrics-toggle { margin-left: auto; }
@@ -1718,7 +1766,6 @@ body.player-stopped::after {
 }
 .guest-lyrics-lines.is-synced li { color: var(--text-muted); transition: color 160ms; }
 .guest-lyrics-lines.is-synced li.active { color: var(--text); font-weight: 600; }
-#guest-nickname-fields[hidden] { display: none; }
 /* The shared `main { display: flex; }` rule outranks the user-agent [hidden] rule. */
 .guest-page main[hidden] { display: none; }
 .guest-add[hidden] { display: none; }
@@ -1727,7 +1774,41 @@ body.player-stopped::after {
 .guest-add-status { margin: 0; padding: 4px 14px; font-size: 0.9rem; color: var(--text-muted); }
 .guest-add-status:empty { display: none; }
 .guest-results { max-height: 40svh; }
-.guest-add-btn { flex: none; }
+/* The minimum width fits the longest label, so the row stays still while the label changes. */
+.guest-add-btn { flex: none; min-width: 8.5rem; padding-inline: 12px; }
+.guest-add-btn[data-state="pending"],
+.guest-add-btn[data-state="added"],
+.guest-add-btn[data-state="removing"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.guest-add-btn[data-state="pending"]:disabled,
+.guest-add-btn[data-state="removing"]:disabled { opacity: 0.7; cursor: progress; }
+/* guest-add.js keeps Add songs in place by hand, so the browser's own anchoring must not shift it twice. */
+.guest-page { overflow-anchor: none; }
+.guest-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 20;
+  max-width: min(480px, calc(100% - 32px));
+  margin: 0;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: var(--shadow);
+  font-size: 0.9rem;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 8px);
+  transition: opacity 160ms, transform 160ms;
+}
+.guest-toast.is-shown { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) {
+  .guest-toast { transition: none; }
+}
 .queue-list li.mine .qtitle { color: var(--accent); }
 .queue-list .qguest {
   align-self: flex-start;

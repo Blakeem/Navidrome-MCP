@@ -11,6 +11,8 @@ import type { AuthService, BrowserDevice, MintedSession } from '../auth/auth-ser
 import type { GuestSession, SessionRecord } from '../auth/auth-store.js';
 import { outsideLevelMessage, principalRole, resolvePrincipal, sourcePassesLevel, type Principal } from '../auth/principal.js';
 import { readValidBody, writeError, writeJson, writeTooManyRequests } from '../http-helpers.js';
+import type { GuestQueue } from '../jukebox/guest-queue.js';
+import type { QueuedNames } from '../jukebox/jukebox-names.js';
 import { isLocalRequest } from '../loopback.js';
 import { classifySource, networkKey, sourceAddress } from '../source-address.js';
 
@@ -26,6 +28,7 @@ const NO_ADMIN_PASSWORD =
  * Public in every mode, so the page learns whether to show the login view before any gated call. An
  * admin session outside the access level reads as anonymous, with the refusal its owner can act on.
  * `isLocal` lets the page hide the system settings and Shut down, which only a local request holds.
+ * `jukeboxOpen` tells an admin session's guest page whether the host can queue, or shows the closed card.
  */
 export function handleAuthSession(req: IncomingMessage, res: ServerResponse, auth: AuthService): void {
   const principal = resolvePrincipal(req, auth);
@@ -34,6 +37,7 @@ export function handleAuthSession(req: IncomingMessage, res: ServerResponse, aut
     role: principalRole(principal),
     ...(principal.kind === 'admin' || principal.kind === 'guest' ? { csrfToken: principal.session.csrfToken } : {}),
     ...(principal.kind === 'outside-level' ? { outsideLevelMessage: outsideLevelMessage(principal.level) } : {}),
+    ...(principal.kind === 'admin' && auth.mode === 'jukebox' ? { jukeboxOpen: auth.hasJukeboxCode() } : {}),
     adminLoginAvailable: auth.mode !== 'none' && sourcePassesLevel(req, auth.adminAccess),
     isLocal: isLocalRequest(req),
     yourAddress: sourceAddress(req.socket.remoteAddress),
@@ -96,10 +100,10 @@ export function handleLogout(req: IncomingMessage, res: ServerResponse, auth: Au
 
 /**
  * Public in mode `jukebox`, so a guest page with the code from the QR code signs in. An admin the
- * access level admits already sees the guest page, so for the live code its session stays
- * and no guest session is minted for it. Neither the code nor the device id reaches a log.
+ * access level admits already queues from the guest page as the host, so for the live code its
+ * session stays and no guest session is minted for it. Neither the code nor the device id reaches a log.
  */
-export async function handleJoin(req: IncomingMessage, res: ServerResponse, auth: AuthService): Promise<void> {
+export async function handleJoin(req: IncomingMessage, res: ServerResponse, auth: AuthService, guests: Pick<GuestQueue, 'ledger'>): Promise<void> {
   res.setHeader('X-Robots-Tag', 'noindex');
   if (auth.mode !== 'jukebox') {
     writeError(res, 404, 'Not found');
@@ -115,13 +119,14 @@ export async function handleJoin(req: IncomingMessage, res: ServerResponse, auth
     else writeInvalidJoin(res, requester);
     return;
   }
-
   const address = sourceAddress(req.socket.remoteAddress);
   const nickname = input.nickname ?? null;
   const device = auth.deviceOf(req);
   const current = principal.kind === 'guest' ? principal.session : null;
+  // The ledger can hold thousands of admin page songs, so the names are read only for a join that names itself.
+  const queuedNames = (): QueuedNames => guests.ledger.addedByNames();
   // A guest session is live only under the live code, so this join mints nothing.
-  const rejoin = current === null ? null : auth.join(input.key, nickname, address, current, device.id);
+  const rejoin = current === null ? null : auth.join(input.key, nickname, address, current, device.id, queuedNames);
   // A guest that rejoins with the live code keeps its session and spends no join from its network's budget.
   if (rejoin?.kind !== 'kept') {
     const publicSource = classifySource(req.socket.remoteAddress) === 'public';
@@ -133,7 +138,7 @@ export async function handleJoin(req: IncomingMessage, res: ServerResponse, auth
     }
   }
 
-  const result = rejoin ?? auth.join(input.key, nickname, address, null, device.id);
+  const result = rejoin ?? auth.join(input.key, nickname, address, null, device.id, queuedNames);
   switch (result.kind) {
     case 'invalid':
       writeInvalidJoin(res, requester);
@@ -145,6 +150,9 @@ export async function handleJoin(req: IncomingMessage, res: ServerResponse, auth
     case 'full':
       logger.warn(`webui: jukebox join refused from ${requester}, since the jukebox is full`);
       writeError(res, 403, JUKEBOX_FULL);
+      return;
+    case 'name-taken':
+      writeError(res, 400, result.message);
       return;
     case 'kept': {
       const cookies = deviceCookies(auth, device, result.session);

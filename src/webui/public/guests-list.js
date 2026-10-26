@@ -2,11 +2,14 @@
 // renders through textContent only.
 
 import { getJson, postJson } from './api.js';
-import { byId, setHidden } from './dom.js';
+import { buildIcon, byId, setHidden, SYMBOL_VIEWBOX } from './dom.js';
 import { formatDateTime } from './time-format.js';
 
 const ADDRESS_CLASS_LABELS = { loopback: 'this computer', lan: 'local network', public: 'internet' };
 const DEFAULT_NETWORK_BAN_HOURS = '24';
+const ICON_REMOVE = 'M640-520v-80h240v80H640Zm-280 40q-66 0-113-47t-47-113q0-66 47-113t113-47q66 0 113 47t47 113q0 66-47 113t-113 47ZM40-160v-112q0-34 17.5-62.5T104-378q62-31 126-46.5T360-440q66 0 130 15.5T616-378q29 15 46.5 43.5T680-272v112H40Zm80-80h480v-32q0-11-5.5-20T580-306q-54-27-109-40.5T360-360q-56 0-111 13.5T140-306q-9 5-14.5 14t-5.5 20v32Zm240-320q33 0 56.5-23.5T440-640q0-33-23.5-56.5T360-720q-33 0-56.5 23.5T280-640q0 33 23.5 56.5T360-560Zm0-80Zm0 400Z';
+const ICON_BAN = 'M480-80q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q54 0 104-17.5t92-50.5L228-676q-33 42-50.5 92T160-480q0 134 93 227t227 93Zm252-124q33-42 50.5-92T800-480q0-134-93-227t-227-93q-54 0-104 17.5T284-732l448 448Z';
+const ICON_UNBAN = 'M240-160h480v-400H240v400Zm240-120q33 0 56.5-23.5T560-360q0-33-23.5-56.5T480-440q-33 0-56.5 23.5T400-360q0 33 23.5 56.5T480-280ZM240-160v-400 400Zm0 80q-33 0-56.5-23.5T160-160v-400q0-33 23.5-56.5T240-640h280v-80q0-83 58.5-141.5T720-920q83 0 141.5 58.5T920-720h-80q0-50-35-85t-85-35q-50 0-85 35t-35 85v80h120q33 0 56.5 23.5T800-560v400q0 33-23.5 56.5T720-80H240Z';
 
 const guestStatus = byId('guest-list-status');
 const guestList = byId('guest-list');
@@ -60,6 +63,7 @@ function renderGuests(guests) {
 
 function buildGuestRow(guest) {
   const li = document.createElement('li');
+  const info = document.createElement('div');
   const head = document.createElement('span');
   const dot = document.createElement('span');
   const name = document.createElement('strong');
@@ -75,12 +79,14 @@ function buildGuestRow(guest) {
   head.append(dot, name);
   details.className = 'modal-hint';
   details.textContent = `Joined ${formatDateTime(guest.joinedAt)} · ${guest.networkKey} (${ADDRESS_CLASS_LABELS[guest.addressClass] ?? guest.addressClass})`;
-  actions.className = 'jukebox-actions';
+  info.className = 'guest-info';
+  info.append(head, details, buildSongs(guest.songs));
+  actions.className = 'guest-row-actions';
   actions.append(
-    buildButton('Remove', 'btn-secondary', (event) => void removeGuest(guest, event.currentTarget)),
-    buildButton('Ban', 'btn-secondary', () => openBanPanel(guest)),
+    buildButton('Remove', ICON_REMOVE, 'btn-secondary small', (event) => void removeGuest(guest, event.currentTarget)),
+    buildButton('Ban', ICON_BAN, 'btn-secondary small danger', () => openBanPanel(guest)),
   );
-  li.append(head, details, buildSongs(guest.songs), actions);
+  li.append(info, actions);
   return li;
 }
 
@@ -106,11 +112,11 @@ function buildSongs(songs) {
   return details;
 }
 
-function buildButton(text, className, onClick) {
+function buildButton(text, iconPath, className, onClick) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = className;
-  button.textContent = text;
+  button.append(buildIcon('', iconPath, SYMBOL_VIEWBOX), text);
   button.addEventListener('click', onClick);
   return button;
 }
@@ -130,7 +136,7 @@ async function removeGuest(guest, button) {
 function openBanPanel(guest) {
   const loopback = guest.addressClass === 'loopback';
   banTarget = guest;
-  banTitle.textContent = `Ban ${displayName(guest)}? They are signed out, and their songs that have not started leave the queue. The ban blocks their browser until the jukebox closes. A private window or another device gets around it.`;
+  banTitle.textContent = `Ban ${displayName(guest)}? They are signed out and their waiting songs leave the queue. Their browser stays blocked until the jukebox closes, but a private window or another device gets around it.`;
   banHours.value = loopback ? '0' : DEFAULT_NETWORK_BAN_HOURS;
   banHours.disabled = loopback;
   banRotate.checked = false;
@@ -193,6 +199,7 @@ function renderBans(bans) {
 
 function buildBanRow(ban) {
   const li = document.createElement('li');
+  const info = document.createElement('div');
   const name = document.createElement('strong');
   const details = document.createElement('span');
   const actions = document.createElement('div');
@@ -202,9 +209,11 @@ function buildBanRow(ban) {
   details.textContent = ban.kind === 'network'
     ? `Network ${ban.networkKey} blocked until ${formatDateTime(ban.expiresAt)}`
     : `Browser blocked until ${formatDateTime(ban.expiresAt)}, when the jukebox code expires`;
-  actions.className = 'jukebox-actions';
-  actions.appendChild(buildButton('Unban', 'btn-secondary', (event) => void liftBan(ban, event.currentTarget)));
-  li.append(name, details, actions);
+  info.className = 'guest-info';
+  info.append(name, details);
+  actions.className = 'guest-row-actions';
+  actions.appendChild(buildButton('Unban', ICON_UNBAN, 'btn-secondary small', (event) => void liftBan(ban, event.currentTarget)));
+  li.append(info, actions);
   return li;
 }
 

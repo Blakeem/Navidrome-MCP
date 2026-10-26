@@ -5,13 +5,17 @@
  */
 
 import type { QueueEntry, QueueTrackMetadata, ReplaceMarks } from '../../services/playback/playback-engine.js';
+import type { QueuedNames } from './jukebox-names.js';
 
 interface LedgerEntry {
-  sessionId: string;
+  /** The guest or host session that added the song from the guest page, or null for a song the admin page added. */
+  sessionId: string | null;
   /** Kept whole, so a song re-added after a replace still shows its title. */
   song: QueueTrackMetadata;
-  /** The guest's current nickname or label, kept so the host still sees it after a sign-out. */
-  guestLabel: string;
+  /** The adder's current nickname or label, which the queue shows as Added by. It stays after a sign-out. */
+  addedBy: string;
+  /** The host added the song from either page. The name checks read it to tell host names from guest names, and a log line never names the host by its nickname. */
+  byHost: boolean;
   addedAt: number;
   started: boolean;
   /** Orders this record against a queue read, see `recordSequence`. */
@@ -33,7 +37,8 @@ interface HeldEntry {
 
 /**
  * Keyed by mpv entry id, which survives a move. It lives in memory, so a web player restart forgets
- * it, and the guest songs stay queued as plain songs.
+ * it, and the labeled songs stay queued as plain songs. Only a guest page song counts toward a limit,
+ * waits for its adder and returns after a replace. An admin page song only carries its label.
  */
 export class GuestLedger {
   private readonly entries = new Map<number, LedgerEntry>();
@@ -66,6 +71,11 @@ export class GuestLedger {
     return this.entries.size === 0 && this.held.length === 0;
   }
 
+  /** Admin page songs count toward no limit, so only guest page songs need the queue read on every mpv event. */
+  tracksGuestPageSongs(): boolean {
+    return this.held.length > 0 || this.restoring.length > 0 || [...this.entries.values()].some(isGuestPageEntry);
+  }
+
   ownerOf(entryId: number): string | null {
     return this.entries.get(entryId)?.sessionId ?? null;
   }
@@ -78,22 +88,43 @@ export class GuestLedger {
     return this.entries.get(entryId)?.started === true;
   }
 
-  guestLabelOf(entryId: number): string | null {
-    return this.entries.get(entryId)?.guestLabel ?? null;
+  addedByOf(entryId: number): string | null {
+    return this.entries.get(entryId)?.addedBy ?? null;
   }
 
-  /** Renames the guest's songs, held ones included, so a changed nickname shows on songs already queued. */
-  relabel(sessionId: string, guestLabel: string): void {
-    const heldEntries = this.held.map((held) => held.entry);
-    for (const entry of [...this.entries.values(), ...heldEntries, ...this.restoring]) {
-      if (entry.sessionId === sessionId) entry.guestLabel = guestLabel;
+  /** Null for a song the host added, so only a guest's song names its adder. */
+  guestLabelOf(entryId: number): string | null {
+    const entry = this.entries.get(entryId);
+    return entry === undefined || entry.byHost ? null : entry.addedBy;
+  }
+
+  isFromGuestPage(entryId: number): boolean {
+    return isGuestPageEntry(this.entries.get(entryId));
+  }
+
+  /** Renames the session's songs, held ones included, so a changed nickname shows on songs already queued. */
+  relabel(sessionId: string, addedBy: string): void {
+    for (const entry of this.everyEntry()) {
+      if (entry.sessionId === sessionId) entry.addedBy = addedBy;
     }
+  }
+
+  /** Held songs count, since they return to the queue still showing their name. A library play adds one Host per song, so names repeat. */
+  addedByNames(): QueuedNames {
+    const host = new Set<string>();
+    const guest = new Set<string>();
+    for (const entry of this.everyEntry()) (entry.byHost ? host : guest).add(entry.addedBy);
+    return { host: [...host], guest: [...guest] };
+  }
+
+  private everyEntry(): LedgerEntry[] {
+    return [...this.entries.values(), ...this.held.map((held) => held.entry), ...this.restoring];
   }
 
   /**
    * Drops the entries mpv no longer holds and starts the current entry while mpv plays, so an entry
-   * selected paused stays unplayed. An unknown pause state starts nothing. An unplayed entry that a
-   * song replace removed is held instead, and dropped once that replace fails. Returns true on a change.
+   * selected paused stays unplayed. An unknown pause state starts nothing. An unplayed guest page entry
+   * that a song replace removed is held instead, and dropped once that replace fails. Returns true on a change.
    */
   reconcile(queue: readonly QueueEntry[], paused: boolean | null, queueReadSequence: number, marks: ReplaceReads): boolean {
     const queuedById = new Map<number, QueueEntry>();
@@ -117,7 +148,7 @@ export class GuestLedger {
       // A new mpv instance numbers its entries from 1 again, so an id naming another song is a different entry.
       if (queued === undefined || queued.songId !== entry.song.songId) {
         this.entries.delete(entryId);
-        if (replaced && !entry.started) this.held.push({ entry, generationBefore });
+        if (replaced && !entry.started && isGuestPageEntry(entry)) this.held.push({ entry, generationBefore });
         changed = true;
       } else if (!entry.started && queued.isCurrent && paused === false) {
         entry.started = true;
@@ -186,17 +217,26 @@ export class GuestLedger {
   }
 
   /**
-   * A guest song waits until it starts, and a held one waits to return. Any other entry waits while
-   * it sits after the current entry.
+   * Any entry after the current one waits to play, and a guest page song that never started waits wherever
+   * it sits. The guest snapshot sends this rule, so the guest page and the duplicate check agree.
    */
+  waitingRule(queue: readonly QueueEntry[]): (queued: QueueEntry) => boolean {
+    const currentIndex = queue.findIndex((queued) => queued.isCurrent);
+    return (queued) => {
+      const entry = queued.entryId === undefined ? undefined : this.entries.get(queued.entryId);
+      const afterCurrent = currentIndex >= 0 && queued.index > currentIndex;
+      return afterCurrent || (isGuestPageEntry(entry) && !entry.started);
+    };
+  }
+
+  /** A held song also waits, since it returns to the queue. */
   isWaitingInQueue(queue: readonly QueueEntry[], songId: string): boolean {
     if (this.held.some((held) => held.entry.song.songId === songId)) return true;
-    const currentIndex = queue.findIndex((queued) => queued.isCurrent);
-    return queue.some((queued) => {
-      if (queued.songId !== songId) return false;
-      const entry = queued.entryId === undefined ? undefined : this.entries.get(queued.entryId);
-      if (entry !== undefined) return !entry.started;
-      return currentIndex >= 0 && queued.index > currentIndex;
-    });
+    const isWaiting = this.waitingRule(queue);
+    return queue.some((queued) => queued.songId === songId && isWaiting(queued));
   }
+}
+
+function isGuestPageEntry(entry: LedgerEntry | undefined): entry is LedgerEntry {
+  return typeof entry?.sessionId === 'string';
 }

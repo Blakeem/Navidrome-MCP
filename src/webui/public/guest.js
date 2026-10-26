@@ -4,30 +4,35 @@
 import { getJson, getJsonResult, postJoin, setCsrfToken, setLoginRequiredHandler } from './api.js';
 import { connect, setConnState, stopConnection } from './connection.js';
 import { byId, setHidden, setProgressVar } from './dom.js';
-import { bindGuestAdd, renderSlots, showGuestAdd } from './guest-add.js';
+import { bindGuestAdd, keepAddSongsInPlace, renderAddState, renderSlots, showGuestAdd } from './guest-add.js';
 import { bindGuestLyrics, showGuestLyrics, tickGuestLyrics } from './guest-lyrics.js';
 import { bindGuestQueue, renderGuestQueue } from './guest-queue.js';
 import { bindChangeName, rememberNickname, showChangeName } from './guest-name.js';
 import { bindWelcome, closeWelcome, maybeShowWelcome, jukeboxEndText } from './guest-welcome.js';
 import { renderNowPlaying } from './now-playing.js';
-import { guestEndCard, guestView, keyFromHash, offersAdminLogin } from './page-view.js';
+import { guestEndCard, guestView, hostPollView, keyFromHash } from './page-view.js';
 import { durationSeconds, positionSeconds, rebaseClock } from './playback-clock.js';
 import { prefRead, prefRemove, prefWrite } from './prefs.js';
 import { playingIndex, queueSongId, storeSnapshot } from './snapshot.js';
 import { applyTheme, applyThemeHint } from './theme.js';
 import { formatTime } from './time-format.js';
-import { bindVisualizer, renderVisualizer } from './visualizer.js';
+import { bindVisualizer, renderVisualizer, stopVisualizer } from './visualizer.js';
 
 const GUEST_PATH = '/guest';
 const TICK_MS = 250;
 const HTTP_FORBIDDEN = 403;
 const CLOSED_TITLE = 'The jukebox is closed.';
+const HOST_CLOSED_HELP = 'Open it from the player.';
 const JOIN_TITLE = 'Join the jukebox';
 const JOIN_HELP = 'Scan the QR code from the host.';
 const REJOIN_TITLE = 'Scan the jukebox QR code again';
 // A guest session can end while the jukebox stays open, such as on its idle expiry, so the title names only the session.
 const ENDED_TITLE = 'Your jukebox session ended';
-const PREVIEW_ENDED_TITLE = 'Your admin session ended';
+const HOST_ENDED_TITLE = 'Your admin session ended';
+const HOST_LOGIN_LINK = 'Log in again';
+const HOST_PLAYER_LINK = 'Open the player';
+// The closed card holds no events stream, so the host page reads the session again until the jukebox opens.
+const HOST_OPEN_POLL_MS = 5000;
 // The end reason outlives a reload, since the ended session leaves the server nothing to say why.
 const ENDED_REASON_KEY = 'navidrome-mcp.guest-end-reason';
 // A refusal carries the server's error text, so a reply with no body means the request never got an answer.
@@ -43,18 +48,17 @@ const progress = byId('guest-progress');
 const positionLabel = byId('guest-position');
 const durationLabel = byId('guest-duration');
 const jukeboxLine = byId('guest-jukebox');
-const preview = byId('guest-preview');
-const adminLogin = byId('guest-admin-login');
+const hostBanner = byId('guest-host-banner');
+const hostLink = byId('guest-host-link');
+const hostLinkAnchor = hostLink.querySelector('a');
 
 let started = false;
 let tickTimer = null;
+let hostOpenTimer = null;
 // The server omits an unchanged queue from a snapshot, so the page keeps the last one it received.
 let guestQueue = null;
-// Only a guest session adds songs. The host previews this page under its admin session.
-let canQueue = false;
-let isPreview = false;
-// The session read at load decides the admin login link on every later card.
-let pageSession = null;
+// An admin session uses this page as the host, under the same rules as a guest.
+let isHost = false;
 // Set once an end card shows, so a later 401 with no reason keeps the reason the stream sent.
 let endShown = false;
 // The last jukebox view, so a saved nickname re-renders the line before the next snapshot arrives.
@@ -71,22 +75,26 @@ function applySnapshot({ nowPlaying, queue, visualizer, theme, jukebox }) {
   applyTheme(theme);
   if (queue !== undefined) guestQueue = queue;
   const stored = storeSnapshot({ nowPlaying, queue: guestQueue });
-  rebaseClock(stored.nowPlaying);
-  renderNowPlaying(stored.nowPlaying);
   const index = playingIndex(stored.nowPlaying);
-  renderGuestQueue(stored.queue, index, stored.nowPlaying?.paused);
-  showGuestLyrics(index === null ? null : queueSongId(index), stored.nowPlaying?.isRadio === true);
-  renderVisualizer({ visualizer }, stored.nowPlaying);
-  if (jukebox) renderJukebox(jukebox);
+  rebaseClock(stored.nowPlaying);
+  keepAddSongsInPlace(() => {
+    renderNowPlaying(stored.nowPlaying);
+    renderGuestQueue(stored.queue, index, stored.nowPlaying?.paused);
+    showGuestLyrics(index === null ? null : queueSongId(index), stored.nowPlaying?.isRadio === true);
+    renderVisualizer({ visualizer }, stored.nowPlaying);
+    if (jukebox) renderJukebox(jukebox);
+  });
+  renderAddState(stored.queue?.items ?? []);
 }
 
 function renderJukebox(jukebox) {
   lastJukebox = jukebox;
   rememberNickname(jukebox.nickname);
   const name = jukebox.nickname ? `${jukebox.nickname} (${jukebox.label})` : jukebox.label;
-  jukeboxLine.textContent = `You are ${name}. ${jukeboxEndText(jukebox.expiresAt)}`;
+  // The host keeps its admin session past the code, so only a guest reads when it is signed out.
+  jukeboxLine.textContent = isHost ? `You are ${name}.` : `You are ${name}. ${jukeboxEndText(jukebox.expiresAt)}`;
   renderSlots(jukebox);
-  maybeShowWelcome(jukebox, canQueue);
+  maybeShowWelcome(jukebox, isHost);
 }
 
 function tick() {
@@ -99,9 +107,11 @@ function tick() {
 }
 
 // Every card holds no stream, so the indicator leaves its first Connecting state. The error line is
-// red, so the help and hint lines carry the neutral text.
-function showJoinCard(card, title, { help = '', hint = '', error = '' } = {}) {
+// red, so the help and hint lines carry the neutral text. `adminLink` is the text of the link to the player.
+function showJoinCard(title, { help = '', hint = '', error = '', adminLink = '' } = {}) {
+  stopHostOpenPoll();
   stopConnection();
+  stopVisualizer();
   setConnState('disconnected');
   closeWelcome();
   showGuestAdd(false);
@@ -114,28 +124,58 @@ function showJoinCard(card, title, { help = '', hint = '', error = '' } = {}) {
   joinStatus.textContent = error;
   setHidden(joinHelp, help === '');
   setHidden(joinHint, hint === '');
-  setHidden(adminLogin, !offersAdminLogin(card, pageSession));
+  hostLinkAnchor.textContent = adminLink;
+  // Only a host page shows the link, so a removed or banned guest never sees an admin link.
+  setHidden(hostLink, !isHost || adminLink === '');
+}
+
+function showHostClosedCard() {
+  showJoinCard(CLOSED_TITLE, { help: HOST_CLOSED_HELP, adminLink: HOST_PLAYER_LINK });
+  hostOpenTimer = window.setInterval(() => void startWhenJukeboxOpens(), HOST_OPEN_POLL_MS);
+}
+
+function stopHostOpenPoll() {
+  if (hostOpenTimer !== null) window.clearInterval(hostOpenTimer);
+  hostOpenTimer = null;
+}
+
+// A read that resolves after another card replaced the closed card finds the poll stopped and changes nothing.
+async function startWhenJukeboxOpens() {
+  const { ok, data } = await getJsonResult('/api/auth/session');
+  if (hostOpenTimer === null) return;
+  const view = hostPollView(ok ? data : null);
+  if (view === 'host') startGuestView(data.csrfToken, data.role);
+  else if (view === 'closed') showJoinCard(CLOSED_TITLE);
+  else if (view === 'ended') showJoinCard(HOST_ENDED_TITLE, { adminLink: HOST_LOGIN_LINK });
 }
 
 function showEndCard(reason) {
   endShown = true;
-  showJoinCard('join', ENDED_TITLE, guestEndCard(reason));
+  showJoinCard(ENDED_TITLE, guestEndCard(reason));
 }
 
 // The stream's ended event names the reason. A 401, a 403 refusal, or a closed stream with no session
-// left carries none. An admin preview ends with the admin session, which says nothing about the code.
+// left carries none.
 function showEnded(reason) {
   if (reason === undefined && endShown) return;
   if (tickTimer !== null) window.clearInterval(tickTimer);
   tickTimer = null;
-  if (isPreview) {
+  if (isHost) {
     endShown = true;
-    showJoinCard('join', PREVIEW_ENDED_TITLE);
+    void showHostEnded(reason);
     return;
   }
   // An empty stored reason keeps a reasonless end apart from no end, and reads back as the fallback text.
   prefWrite(ENDED_REASON_KEY, reason ?? '');
   showEndCard(reason);
+}
+
+// The host keeps its admin session when the jukebox closes, so an end reason or a live admin session
+// means the jukebox closed, and anything else means the admin session ended.
+async function showHostEnded(reason) {
+  const jukeboxClosed = reason !== undefined || (await readJukeboxSession())?.role === 'admin';
+  if (jukeboxClosed) showHostClosedCard();
+  else showJoinCard(HOST_ENDED_TITLE, { adminLink: HOST_LOGIN_LINK });
 }
 
 function isJukeboxSession(session) {
@@ -157,14 +197,14 @@ async function checkSessionEnded() {
 
 // A live session follows a join that succeeded, so the stored end reason no longer applies.
 function startGuestView(csrfToken, role) {
+  stopHostOpenPoll();
   prefRemove(ENDED_REASON_KEY);
   endShown = false;
   setCsrfToken(csrfToken ?? null);
-  canQueue = role === 'guest';
-  isPreview = role === 'admin';
-  showGuestAdd(canQueue);
-  showChangeName(canQueue);
-  setHidden(preview, !isPreview);
+  isHost = role === 'admin';
+  showGuestAdd(true);
+  showChangeName(true);
+  setHidden(hostBanner, !isHost);
   joinView.hidden = true;
   main.hidden = false;
   if (!started) {
@@ -197,7 +237,7 @@ async function join(key) {
     startGuestView(session.csrfToken, session.role);
     return;
   }
-  showJoinCard('join', REJOIN_TITLE, { error: data?.error ?? NO_ANSWER });
+  showJoinCard(REJOIN_TITLE, { error: data?.error ?? NO_ANSWER });
 }
 
 async function bootstrap() {
@@ -216,17 +256,21 @@ async function bootstrap() {
   });
 
   const session = await getJson('/api/auth/session');
-  pageSession = session;
   const view = guestView(session, key !== null);
   if (view === 'closed') {
-    showJoinCard('closed', CLOSED_TITLE);
+    showJoinCard(CLOSED_TITLE);
     return;
   }
   if (view === 'join-key') {
     await join(key);
     return;
   }
-  if (view === 'guest' || view === 'preview') {
+  if (view === 'host-closed') {
+    isHost = true;
+    showHostClosedCard();
+    return;
+  }
+  if (view === 'guest' || view === 'host') {
     startGuestView(session.csrfToken, session.role);
     return;
   }
@@ -236,7 +280,7 @@ async function bootstrap() {
     showEndCard(endReason);
     return;
   }
-  showJoinCard('join', JOIN_TITLE, { help: JOIN_HELP, error: session === null ? NO_ANSWER : '' });
+  showJoinCard(JOIN_TITLE, { help: JOIN_HELP, error: session === null ? NO_ANSWER : '' });
 }
 
 void bootstrap();

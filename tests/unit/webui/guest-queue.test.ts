@@ -83,8 +83,8 @@ function fakeEngine(queue: QueueEntry[] = [], paused: boolean | null = false): F
   return engine;
 }
 
-const ANA = { sessionId: 'session-ana', currentLabel: () => 'Ana', isLive: () => true };
-const BO = { sessionId: 'session-bo', currentLabel: () => 'Guest 2', isLive: () => true };
+const ANA = { sessionId: 'session-ana', isHost: false, currentLabel: () => 'Ana', isLive: () => true };
+const BO = { sessionId: 'session-bo', isHost: false, currentLabel: () => 'Guest 2', isLive: () => true };
 
 function song(songId: string): { songId: string; title: string } {
   return { songId, title: `Title ${songId}` };
@@ -96,7 +96,7 @@ function guestQueue(engine: FakeEngine, limit = 3): GuestQueue {
 
 describe('GuestLedger', () => {
   const record = (ledger: GuestLedger, entryId: number, songId: string, sessionId = 'session-ana'): void => {
-    ledger.record(entryId, { sessionId, song: { songId }, guestLabel: 'Ana', addedAt: 0 });
+    ledger.record(entryId, { sessionId, song: { songId }, addedBy: 'Ana', byHost: false, addedAt: 0 });
   };
 
   it('drops an entry mpv no longer holds, and one whose id now names another song', () => {
@@ -157,13 +157,23 @@ describe('GuestLedger', () => {
     const queue = [entry(2, 'so-2'), entry(3, 'so-3')];
     // Entry 1 left the queue under a pending replace, so the ledger holds it.
     ledger.reconcile(queue, false, ledger.recordSequence(), { generation: 0, pending: true, generationBeforeRead: 0 });
-    expect(ledger.guestLabelOf(1)).toBeNull();
+    expect(ledger.addedByOf(1)).toBeNull();
 
     ledger.relabel('session-ana', 'Anna');
     ledger.reconcile(queue, false, ledger.recordSequence(), { generation: 1, pending: false, generationBeforeRead: 1 });
 
-    expect([2, 3].map((id) => ledger.guestLabelOf(id))).toEqual(['Anna', 'Ana']);
-    expect(ledger.takeRestorable().map((held) => [held.song.songId, held.guestLabel])).toEqual([['so-1', 'Anna']]);
+    expect([2, 3].map((id) => ledger.addedByOf(id))).toEqual(['Anna', 'Ana']);
+    expect(ledger.takeRestorable().map((held) => [held.song.songId, held.addedBy])).toEqual([['so-1', 'Anna']]);
+  });
+
+  it('lists the names on queued and held songs by whether the host or a guest added them', () => {
+    const ledger = new GuestLedger();
+    record(ledger, 1, 'so-1');
+    ledger.record(2, { sessionId: null, song: { songId: 'so-2' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+    ledger.reconcile([entry(2, 'so-2')], false, ledger.recordSequence(), { generation: 0, pending: true, generationBeforeRead: 0 });
+
+    expect(ledger.addedByOf(1)).toBeNull();
+    expect(ledger.addedByNames()).toEqual({ host: ['Host'], guest: ['Ana'] });
   });
 
   it('stops renaming the songs takeRestorable returned once finishRestore ends their tracking', () => {
@@ -175,11 +185,11 @@ describe('GuestLedger', () => {
     const taken = ledger.takeRestorable();
 
     ledger.relabel('session-ana', 'Anna');
-    expect(taken.map((held) => held.guestLabel)).toEqual(['Anna']);
+    expect(taken.map((held) => held.addedBy)).toEqual(['Anna']);
 
     ledger.finishRestore(taken);
     ledger.relabel('session-ana', 'Ann');
-    expect(taken.map((held) => held.guestLabel)).toEqual(['Anna']);
+    expect(taken.map((held) => held.addedBy)).toEqual(['Anna']);
   });
 
   it('reads a host song as waiting only after the current entry, and a guest song until it starts', () => {
@@ -194,6 +204,90 @@ describe('GuestLedger', () => {
     ledger.reconcile(queue, false, ledger.recordSequence(), NO_REPLACE_READS);
     expect(ledger.isWaitingInQueue(queue, 'guest-current')).toBe(false);
   });
+
+  it('holds a guest page song a replace removed but drops an admin page song, so only the guest page song returns', () => {
+    const ledger = new GuestLedger();
+    record(ledger, 1, 'so-1');
+    ledger.record(2, { sessionId: null, song: { songId: 'so-2' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+
+    ledger.reconcile([], false, ledger.recordSequence(), { generation: 0, pending: true, generationBeforeRead: 0 });
+    ledger.reconcile([], false, ledger.recordSequence(), { generation: 1, pending: false, generationBeforeRead: 1 });
+
+    expect(ledger.takeRestorable().map((held) => held.song.songId)).toEqual(['so-1']);
+    expect(ledger.addedByOf(2)).toBeNull();
+  });
+
+  it('tells a guest page song from an admin page song, and counts only the guest page song for its session', () => {
+    const ledger = new GuestLedger();
+    record(ledger, 1, 'so-1');
+    ledger.record(2, { sessionId: null, song: { songId: 'so-2' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+
+    expect([1, 2, 3].map((id) => ledger.isFromGuestPage(id))).toEqual([true, false, false]);
+    expect(ledger.addedByOf(2)).toBe('Host');
+    expect(ledger.unplayedCount('session-ana')).toBe(1);
+  });
+
+  it('reads an admin page song as waiting only after the current entry, like an unlabeled song', () => {
+    const ledger = new GuestLedger();
+    ledger.record(1, { sessionId: null, song: { songId: 'skipped' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+    ledger.record(3, { sessionId: null, song: { songId: 'next' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+    const queue = [entry(1, 'skipped'), entry(2, 'current', true), entry(3, 'next')];
+    reindex(queue);
+
+    expect(ledger.isWaitingInQueue(queue, 'skipped')).toBe(false);
+    expect(ledger.isWaitingInQueue(queue, 'next')).toBe(true);
+  });
+
+  it('reads a started guest page song as waiting again once the host goes back before it, since it plays again', () => {
+    const ledger = new GuestLedger();
+    record(ledger, 2, 'guest-song');
+    const playing = [entry(1, 'earlier'), entry(2, 'guest-song', true)];
+    const wentBack = [entry(1, 'earlier', true), entry(2, 'guest-song')];
+    reindex(playing);
+    reindex(wentBack);
+    ledger.reconcile(playing, false, ledger.recordSequence(), NO_REPLACE_READS);
+
+    expect(ledger.isWaitingInQueue(playing, 'guest-song')).toBe(false);
+    expect(ledger.isWaitingInQueue(wentBack, 'guest-song')).toBe(true);
+    expect(wentBack.map(ledger.waitingRule(wentBack))).toEqual([false, true]);
+    expect(ledger.unplayedCount('session-ana')).toBe(0);
+  });
+});
+
+describe('GuestQueue.labelAdminPageSongs', () => {
+  it('labels each loaded song Host under no session, and tells the pages', () => {
+    const guests = guestQueue(fakeEngine([]));
+    const onChange = vi.fn();
+    guests.watch(onChange);
+
+    guests.labelAdminPageSongs([7, 8], [song('so-1'), song('so-2')]);
+
+    expect([7, 8].map((id) => [guests.ledger.addedByOf(id), guests.ledger.ownerOf(id)])).toEqual([['Host', null], ['Host', null]]);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('labels none when mpv gave a song no id, since the ids no longer line up with the songs', () => {
+    const guests = guestQueue(fakeEngine([]));
+
+    guests.labelAdminPageSongs([7], [song('so-1'), song('so-2')]);
+
+    expect(guests.ledger.isEmpty()).toBe(true);
+  });
+
+  it('drops the admin page songs mpv no longer holds with one queue read, and reads none on an mpv event after that', async () => {
+    const engine = fakeEngine([{ ...entry(8, 'so-2'), index: 0 }]);
+    const guests = guestQueue(engine);
+    guests.labelAdminPageSongs([7], [song('so-1')]);
+    guests.labelAdminPageSongs([8], [song('so-2')]);
+
+    await vi.waitFor(() => { expect(guests.ledger.addedByOf(7)).toBeNull(); });
+    const reads = engine.getQueue.mock.calls.length;
+    engine.emit({ kind: 'queue' });
+    await Promise.resolve();
+
+    expect(guests.ledger.addedByOf(8)).toBe('Host');
+    expect(engine.getQueue.mock.calls.length).toBe(reads);
+  });
 });
 
 describe('GuestQueue.add', () => {
@@ -206,7 +300,7 @@ describe('GuestQueue.add', () => {
     expect(result).toEqual({ kind: 'added', entryId: 100, remaining: 2 });
     expect(engine.enqueue).toHaveBeenCalledWith(['so-1'], 'append', [song('so-1')], { refuseRadioQueue: true });
     expect(guests.ledger.ownerOf(100)).toBe('session-ana');
-    expect(guests.ledger.guestLabelOf(100)).toBe('Ana');
+    expect(guests.ledger.addedByOf(100)).toBe('Ana');
   });
 
   it('records the label the guest holds when the append lands, not the one it held when the add began', async () => {
@@ -225,7 +319,7 @@ describe('GuestQueue.add', () => {
     releaseAppend?.();
     await pending;
 
-    expect(guests.ledger.guestLabelOf(100)).toBe('Anna');
+    expect(guests.ledger.addedByOf(100)).toBe('Anna');
   });
 
   it('refuses while a radio stream plays, before it spends a rate token', async () => {
@@ -395,7 +489,7 @@ describe('GuestQueue.add', () => {
     const guests = new GuestQueue(engine as never, () => limit);
     await guests.add(ANA, song('so-1'));
     limit = 1;
-    guests.ledger.record(7, { sessionId: ANA.sessionId, song: { songId: 'so-7' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(7, { sessionId: ANA.sessionId, song: { songId: 'so-7' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
 
     expect(guests.counts(ANA.sessionId)).toEqual({ limit: 1, remaining: 0 });
   });
@@ -476,8 +570,8 @@ describe('GuestQueue.remove', () => {
 });
 
 describe('GuestQueue across a host replace', () => {
-  const CY = { sessionId: 'session-cy', currentLabel: () => 'Guest 3', isLive: () => true };
-  const DEE = { sessionId: 'session-dee', currentLabel: () => 'Guest 4', isLive: () => true };
+  const CY = { sessionId: 'session-cy', isHost: false, currentLabel: () => 'Guest 3', isLive: () => true };
+  const DEE = { sessionId: 'session-dee', isHost: false, currentLabel: () => 'Guest 4', isLive: () => true };
   const GENERATION_RISE: StateChangeEvent = { kind: 'property', name: REPLACE_GENERATION_PROPERTY, data: 1 };
 
   /** Ana, Bo and Cy each queue one song after the host song, as entries 100, 101 and 102. */
@@ -513,7 +607,7 @@ describe('GuestQueue across a host replace', () => {
     await vi.waitFor(() => { expect(songIds(engine)).toEqual(['new-1', 'new-2', 'so-1', 'so-2', 'so-3']); });
     expect(engine.enqueue).toHaveBeenLastCalledWith(['so-1', 'so-2', 'so-3'], 'append', [song('so-1'), song('so-2'), song('so-3')], { refuseRadioQueue: true });
     expect([103, 104, 105].map((id) => guests.ledger.ownerOf(id))).toEqual([ANA.sessionId, BO.sessionId, CY.sessionId]);
-    expect(guests.ledger.guestLabelOf(103)).toBe('Ana');
+    expect(guests.ledger.addedByOf(103)).toBe('Ana');
     expect(guests.counts(ANA.sessionId)).toEqual({ limit: 1, remaining: 0 });
   });
 
@@ -560,7 +654,7 @@ describe('GuestQueue across a host replace', () => {
     releaseAppend?.();
 
     await vi.waitFor(() => { expect(guests.ledger.ownerOf(103)).toBe(ANA.sessionId); });
-    expect([103, 104, 105].map((id) => guests.ledger.guestLabelOf(id))).toEqual(['Anna', 'Guest 2', 'Guest 3']);
+    expect([103, 104, 105].map((id) => guests.ledger.addedByOf(id))).toEqual(['Anna', 'Guest 2', 'Guest 3']);
   });
 
   it.each([
@@ -713,9 +807,9 @@ describe('GuestQueue across a host replace', () => {
     await vi.waitFor(() => { expect(guests.ledger.isEmpty()).toBe(true); });
 
     const dropped = takeRestorable.mock.results.flatMap((result) => (result.type === 'return' ? result.value : []));
-    expect(dropped.map((guestSong) => guestSong.guestLabel)).toEqual(['Ana', 'Guest 2', 'Guest 3']);
+    expect(dropped.map((guestSong) => guestSong.addedBy)).toEqual(['Ana', 'Guest 2', 'Guest 3']);
     guests.relabel(ANA.sessionId, 'Anna');
-    expect(dropped.map((guestSong) => guestSong.guestLabel)).toEqual(['Ana', 'Guest 2', 'Guest 3']);
+    expect(dropped.map((guestSong) => guestSong.addedBy)).toEqual(['Ana', 'Guest 2', 'Guest 3']);
     warn.mockRestore();
   });
 
@@ -797,7 +891,7 @@ describe('GuestQueue.removeGuestSongs', () => {
     await guests.add(ANA, song('so-1'));
     await guests.add(BO, song('so-2'));
     engine.queue.push(entry(102, 'so-3'));
-    guests.ledger.record(102, { sessionId: ANA.sessionId, song: song('so-3'), guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(102, { sessionId: ANA.sessionId, song: song('so-3'), addedBy: 'Ana', byHost: false, addedAt: 0 });
     engine.queue[0] = entry(1, 'host-song');
     engine.queue[1] = entry(100, 'so-1', true);
     reindex(engine.queue);
@@ -839,7 +933,7 @@ describe('GuestQueue.removeGuestSongs', () => {
     const { engine, guests } = await jukeboxQueue();
     engine.queue.push(entry(103, 'so-4'));
     reindex(engine.queue);
-    guests.ledger.record(103, { sessionId: ANA.sessionId, song: song('so-4'), guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(103, { sessionId: ANA.sessionId, song: song('so-4'), addedBy: 'Ana', byHost: false, addedAt: 0 });
     const removeWhileAttached = engine.removeQueueEntryById.getMockImplementation();
     engine.removeQueueEntryById.mockImplementation((entryId: number) => {
       if (entryId !== 103) return removeWhileAttached?.(entryId);
@@ -965,7 +1059,7 @@ describe('GuestQueue.removeGuestSongs', () => {
     await vi.waitFor(() => { expect(guests.ledger.ownerOf(100)).toBeNull(); });
     engine.queue.push(entry(201, 'so-3'));
     reindex(engine.queue);
-    guests.ledger.record(201, { sessionId: ANA.sessionId, song: song('so-3'), guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(201, { sessionId: ANA.sessionId, song: song('so-3'), addedBy: 'Ana', byHost: false, addedAt: 0 });
     engine.running = false;
 
     expect(await guests.removeGuestSongs(ANA.sessionId)).toEqual({ removed: 1, stayed: 1 });

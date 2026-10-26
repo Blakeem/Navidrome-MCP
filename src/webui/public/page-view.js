@@ -26,12 +26,6 @@ export function loginCard(session) {
   return session.outsideLevelMessage === undefined ? 'unavailable' : 'outside-level';
 }
 
-// The root sends a jukebox visitor without an admin session to the guest page, so every join card,
-// a failed or ended join included, links a host to the login. The closed card has no join.
-export function offersAdminLogin(card, session) {
-  return card === 'join' && session?.adminLoginAvailable === true;
-}
-
 export function adminView(session) {
   if (!isLoginMode(session) || session.role === 'admin') return 'player';
   return loginCard(session);
@@ -43,12 +37,21 @@ export function keyFromHash(hash) {
 }
 
 // Outside mode jukebox the join route answers 404, so a key in the address cannot help.
+// An admin session queues as the host while a code is live, and sees the closed card otherwise.
 export function guestView(session, hasKey) {
   if (session !== null && session.mode !== JUKEBOX_MODE) return 'closed';
   if (hasKey) return 'join-key';
   if (session?.role === 'guest') return 'guest';
-  if (session?.role === 'admin') return 'preview';
+  if (session?.role === 'admin') return session.jukeboxOpen === true ? 'host' : 'host-closed';
   return 'join';
+}
+
+// The host's closed card polls the session until a code is live. No answer keeps the card, and an
+// answer with no admin session means the admin session ended.
+export function hostPollView(session) {
+  if (session === null) return 'host-closed';
+  const view = guestView(session, false);
+  return view === 'host' || view === 'host-closed' || view === 'closed' ? view : 'ended';
 }
 
 // A 401 or a refused session read carries no reason, and any end can reach the page that way, so the text names none.

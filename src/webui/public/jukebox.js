@@ -30,6 +30,7 @@ const lanSelect = byId('jukebox-lan-select');
 const status = byId('jukebox-status');
 const fullscreenBtn = byId('jukebox-fullscreen-btn');
 const copyBtn = byId('jukebox-copy');
+const copyLabel = byId('jukebox-copy-label');
 const downloadBtn = byId('jukebox-download');
 const newBtn = byId('jukebox-new');
 const closeBtn = byId('jukebox-close');
@@ -133,7 +134,7 @@ function renderLink() {
   setHidden(lanSelect, !showsLan || view.links.lan.length < 2);
   setHidden(qr, link === null);
   setHidden(copyBtn, link === null || !navigator.clipboard);
-  copyBtn.textContent = 'Copy link';
+  copyLabel.textContent = 'Copy link';
   fullscreenBtn.disabled = link === null;
   downloadBtn.disabled = link === null;
   if (link === null) {
@@ -224,9 +225,9 @@ async function copyLink() {
   if (link === null) return;
   try {
     await navigator.clipboard.writeText(link.url);
-    copyBtn.textContent = 'Copied';
+    copyLabel.textContent = 'Copied';
   } catch {
-    copyBtn.textContent = 'Copy failed';
+    copyLabel.textContent = 'Copy failed';
   }
 }
 

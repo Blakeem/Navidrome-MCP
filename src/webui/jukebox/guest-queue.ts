@@ -18,6 +18,7 @@ import { logger } from '../../utils/logger.js';
 import { getGuestQueueLimit } from '../../web/player-runtime.js';
 import { TokenBuckets } from '../auth/token-bucket.js';
 import { GuestLedger, type GuestSong } from './guest-ledger.js';
+import { HOST_JUKEBOX_LABEL } from './jukebox-names.js';
 
 const MINUTE_MS = 60_000;
 const GUEST_SEARCHES_PER_MINUTE = 30;
@@ -43,8 +44,10 @@ type GuestQueueEngine = Pick<
   | 'removeQueueEntryById'
 >;
 
+/** A guest session, or the admin session that queues from the guest page as the host. */
 interface QueueingGuest {
   sessionId: string;
+  isHost: boolean;
   /** Read when the song is recorded, since a rename can land while the add awaits its turn. */
   currentLabel: () => string;
   /** Read again after the queue reads, since a ban or sign-out can land while an add or removal awaits them. */
@@ -62,7 +65,7 @@ type AddResult =
 
 type RemoveResult = { kind: 'removed'; remaining: number } | { kind: 'not-found' } | { kind: 'started' } | { kind: 'signed-out' };
 
-/** `guestLabel` names the guest who added the removed song, or is null for a host song. */
+/** `guestLabel` names the guest who added the removed song, or is null for a song no guest added. */
 type HostRemoveResult = { kind: 'removed'; guestLabel: string | null } | { kind: 'not-found' } | { kind: 'started' };
 
 /** `stayed` counts the queued songs left in place because no mpv was attached. */
@@ -74,7 +77,7 @@ interface GuestSongRemoval {
 /** `stayed` marks an entry left in place because no mpv was attached, and `skipped` one that started or that mpv no longer holds. */
 type UnstartedRemoval = 'removed' | 'stayed' | 'skipped';
 
-/** Owns the guest ledger and the per-session rate limits of the guest search and add routes. */
+/** Owns the guest ledger and the per-session rate limits of the guest search and add routes, which the host shares. */
 export class GuestQueue {
   readonly ledger = new GuestLedger();
   readonly searches = new TokenBuckets(GUEST_SEARCHES_PER_MINUTE, MINUTE_MS);
@@ -139,9 +142,28 @@ export class GuestQueue {
     this.adds.take(guest.sessionId);
     const [entryId] = entryIds;
     if (entryId === undefined) return { kind: 'untracked' };
-    this.ledger.record(entryId, { sessionId: guest.sessionId, song, guestLabel: guest.currentLabel(), addedAt: this.now() });
+    this.ledger.record(entryId, { sessionId: guest.sessionId, song, addedBy: guest.currentLabel(), byHost: guest.isHost, addedAt: this.now() });
     this.onChange();
     return { kind: 'added', entryId, remaining: this.counts(guest.sessionId).remaining };
+  }
+
+  /**
+   * Labels the songs an admin page add or replace loaded as the host's. When mpv gives any song no id, the
+   * ids no longer line up with the songs, so none is labeled.
+   */
+  labelAdminPageSongs(entryIds: readonly number[], songs: readonly QueueTrackMetadata[]): void {
+    if (entryIds.length !== songs.length) {
+      logger.debug(`webui: ${String(songs.length - entryIds.length)} admin page song ids missing, so none are labeled`);
+      return;
+    }
+    const addedAt = this.now();
+    songs.forEach((song, index) => {
+      const entryId = entryIds[index];
+      if (entryId !== undefined) this.ledger.record(entryId, { sessionId: null, song, addedBy: HOST_JUKEBOX_LABEL, byHost: true, addedAt });
+    });
+    this.onChange();
+    // No mpv event refreshes the ledger while it holds only admin page songs, so this read drops the ones mpv no longer holds.
+    this.queueRefresh();
   }
 
   /**
@@ -248,9 +270,9 @@ export class GuestQueue {
     }
   }
 
-  /** Also lets the broadcast carry the guest's new nickname to every open page. */
-  relabel(sessionId: string, guestLabel: string): void {
-    this.ledger.relabel(sessionId, guestLabel);
+  /** Also lets the broadcast carry the guest's or host's new nickname to every open page. */
+  relabel(sessionId: string, addedBy: string): void {
+    this.ledger.relabel(sessionId, addedBy);
     this.onChange();
   }
 
@@ -352,9 +374,12 @@ export class GuestQueue {
     }
   }
 
-  // One refresh at a time, and events during one coalesce into one more.
   private scheduleRefresh(): void {
-    if (this.ledger.isEmpty()) return;
+    if (this.ledger.tracksGuestPageSongs()) this.queueRefresh();
+  }
+
+  // One refresh at a time, and events during one coalesce into one more.
+  private queueRefresh(): void {
     if (this.refreshing) {
       this.refreshAgain = true;
       return;

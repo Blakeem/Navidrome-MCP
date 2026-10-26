@@ -8,7 +8,7 @@ const count = byId('guest-queue-count');
 const more = byId('guest-queue-more');
 const rows = createQueueList(byId('guest-queue-list'), {
   role: 'guest',
-  onRemove: (item) => removeSong(item.entryId),
+  onRemove: removeSong,
 });
 
 // A tap on the toggle redraws from the last snapshot, since the server sends the queue only when it changes.

@@ -34,12 +34,12 @@
       <p class="modal-help" id="guest-join-help" aria-live="polite" hidden></p>
       <p class="modal-help" id="guest-join-hint" hidden></p>
       <p class="login-status" id="guest-join-status" role="alert"></p>
-      <p class="modal-help" id="guest-admin-login" hidden><a href="/admin">Admin login</a></p>
+      <p class="modal-help" id="guest-host-link" hidden><a href="/admin"></a></p>
     </div>
   </section>
 
   <main id="guest-main" hidden>
-    <p class="guest-preview" id="guest-preview" hidden>Guest view. Songs cannot be added from an admin session. <a href="/admin">Open the player</a></p>
+    <p class="guest-host-banner" id="guest-host-banner" hidden>You are on the guest page as the host. <a href="/admin">Open the player</a></p>
 
     <section class="now-playing-card" aria-label="Now playing">
       <div class="cover" id="cover">
@@ -70,7 +70,7 @@
     <div class="guest-name">
       <div class="guest-who">
         <p class="guest-jukebox" id="guest-jukebox" aria-live="polite"></p>
-        <button type="button" class="btn-secondary" id="guest-name-change" hidden>Change name</button>
+        <button type="button" class="btn-secondary" id="guest-name-change" hidden><svg viewBox="0 -960 960 960" aria-hidden="true"><path fill="currentColor" d="M200-200h57l391-391-57-57-391 391v57Zm-80 80v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.5T817-647L290-120H120Zm640-584-56-56 56 56Zm-141 85-28-29 57 57-29-28Z"/></svg>Change name</button>
       </div>
       <form class="lib-search guest-name-form" id="guest-name-form" hidden>
         <input type="text" id="guest-name-input" aria-label="Nickname" maxlength="24" autocomplete="nickname" required />
@@ -108,15 +108,17 @@
         <input type="search" id="guest-search-input" aria-label="Search songs" maxlength="100" autocomplete="off" required />
         <button type="submit" class="primary-btn">Search</button>
       </form>
-      <p class="guest-add-status" id="guest-add-status" aria-live="polite"></p>
+      <p class="guest-add-status" id="guest-search-status" aria-live="polite"></p>
       <ol class="queue-list guest-results" id="guest-results"></ol>
     </section>
   </main>
 
+  <p class="guest-toast" id="guest-toast" role="status"></p>
+
   <dialog id="guest-welcome" class="modal" aria-labelledby="guest-welcome-title">
     <form method="dialog" class="modal-content">
       <header class="modal-header">
-        <h2 id="guest-welcome-title">Welcome to the jukebox</h2>
+        <h2 id="guest-welcome-title" tabindex="-1" autofocus>Welcome to the jukebox</h2>
         <button type="submit" class="modal-close" aria-label="Close">
           <svg viewBox="0 -960 960 960" aria-hidden="true">
             <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
@@ -125,7 +127,7 @@
       </header>
       <p class="modal-help" id="guest-welcome-text"></p>
       <p class="modal-help" id="guest-welcome-expiry"></p>
-      <div id="guest-nickname-fields" hidden>
+      <div class="nickname-fields">
         <label class="modal-help" for="guest-nickname">Nickname (optional) <span class="modal-hint">1 to 24 letters, digits, spaces or . , ' ! ? - _</span></label>
         <div class="lib-search">
           <input type="text" id="guest-nickname" maxlength="24" autocomplete="nickname" />

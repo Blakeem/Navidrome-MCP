@@ -35,7 +35,7 @@ export function rememberNickname(nickname) {
   storedNickname = nickname;
 }
 
-// An admin previewing the page holds no guest session, so it has no name to change.
+// Every join card hides the control, since only a live guest or host session has a name to change.
 export function showChangeName(visible) {
   available = visible;
   closeForm();

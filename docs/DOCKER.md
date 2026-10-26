@@ -7,10 +7,10 @@ endpoint you can run next to Navidrome.
 ## What each deployment shape gives you
 
 The transport decides who can reach the MCP protocol. It does not move where the
-audio comes out, since the MPV Remote is a control panel, not an audio stream. The
+audio comes out, since the Jukebox Remote is a control panel, not an audio stream. The
 machine that runs the server is always the machine that makes the sound.
 
-| Deployment | MCP reachable from | Local audio (mpv) | MPV Remote web UI |
+| Deployment | MCP reachable from | Local audio (mpv) | Jukebox Remote web UI |
 |---|---|---|---|
 | **stdio** (default) | the client that spawned it, same machine | ✅ plays on your machine | ✅ `localhost:8808`, LAN with **Expose on LAN** |
 | **HTTP on your machine** | any host that can reach `host:3000` | ✅ plays on your machine | ✅ same as stdio |
@@ -57,7 +57,7 @@ slack. The image's `HEALTHCHECK` sets `--start-period=10s`. In Kubernetes, use a
 
 mpv is not installed, so the container registers the library toolset only: the 20
 playback tools (`play_songs`, `pause`, `seek`, `set_volume`, the mpv play-queue
-tools, ...) are absent from `tools/list`, and the MPV Remote web UI never starts.
+tools, ...) are absent from `tools/list`, and the Jukebox Remote web UI never starts.
 Everything else (search, playlists, ratings, listening history, radio, Last.fm,
 lyrics) works as it does over stdio. Radio discovery and LRCLIB lyrics stay off
 until their env vars are set, as listed in

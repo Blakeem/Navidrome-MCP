@@ -20,6 +20,7 @@ import {
 import { logger } from '../../utils/logger.js';
 import { constantTimeEqual, hashPassword, isPasswordHash, randomToken, sha256Hex, verifyPassword } from '../../utils/secrets.js';
 import { endSseStream } from '../http-helpers.js';
+import { HOST_JUKEBOX_LABEL, type QueuedNames } from '../jukebox/jukebox-names.js';
 import { classifySource, networkKey } from '../source-address.js';
 import { isTlsEnabled } from '../tls.js';
 import {
@@ -34,6 +35,7 @@ import {
   type SessionRecord,
 } from './auth-store.js';
 import { LoginThrottle } from './login-throttle.js';
+import { nameSkeleton } from './name-skeleton.js';
 import { deviceCookieName, readCookieValues, serializeDeviceCookie, serializeSessionCookie, sessionCookieName } from './session-cookie.js';
 import { TokenBuckets } from './token-bucket.js';
 
@@ -57,14 +59,12 @@ export const MAX_GUESTS_PER_CODE = 100;
 const PUBLIC_JOINS_PER_HOUR = 10;
 const LOCAL_JOINS_PER_HOUR = 60;
 const NICKNAME_CHANGES_PER_HOUR = 10;
-const HOST_JUKEBOX_LABEL = 'Host';
 // A phone may close the stream of a page in the background, so a recent request also counts as online.
 const GUEST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const BAN_ID_BYTES = 16;
 const DEVICE_ID_BYTES = 16;
 // The base64url form of DEVICE_ID_BYTES, so a forged cookie of any other shape never reaches the store.
 const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
-// The guest page reads this last event to say why its jukebox ended.
 const GUEST_ENDED_EVENT = 'ended';
 
 /**
@@ -98,6 +98,24 @@ export interface GuestJukebox {
   joinedAt: number;
 }
 
+/** An admin session queues from the guest page as the host, under the host nickname or `Host`. */
+export function jukeboxNameOf(session: SessionRecord): string {
+  return session.role === 'guest' ? session.nickname ?? session.label : session.hostNickname ?? HOST_JUKEBOX_LABEL;
+}
+
+export function jukeboxNicknameOf(session: SessionRecord): string | null {
+  return session.role === 'guest' ? session.nickname : session.hostNickname;
+}
+
+const GUEST_NAME_TAKEN = 'A guest already uses that name. Pick another nickname.';
+const GUEST_LABEL_RESERVED = 'Names such as Guest 1 are for guests. Pick another nickname.';
+// A join assigns the next `Guest <n>` label with no name check, so the host may not take one before a guest gets it.
+const GUEST_LABEL_SKELETON = new RegExp(`^${nameSkeleton('Guest')}[${nameSkeleton('0123456789')}]+$`, 'u');
+
+function hostNameTaken(hostName: string): string {
+  return `${hostName} is the host's name. Pick another nickname.`;
+}
+
 export interface GuestStatus {
   session: GuestSession;
   online: boolean;
@@ -114,7 +132,8 @@ type JoinResult =
   | { kind: 'kept'; session: GuestSession }
   | { kind: 'invalid' }
   | { kind: 'full' }
-  | { kind: 'banned' };
+  | { kind: 'banned' }
+  | { kind: 'name-taken'; message: string };
 
 /** `presented` is false when the request carried no usable device cookie, so `id` is new. */
 export interface BrowserDevice {
@@ -194,10 +213,21 @@ async function resolveEnvAdminHash(password: string | null, storedHash: string |
   return hashPassword(password);
 }
 
+/** `guestPage` marks a guest page stream, which an admin session holds while it queues as the host. */
+interface OpenStream {
+  address: string | undefined;
+  guestPage: boolean;
+}
+
 /** Only the guest page reads an end reason, so a null reason destroys the stream. */
 function closeStream(res: ServerResponse, endReason: GuestEndReason | null): void {
   if (endReason === null) res.destroy();
-  else endSseStream(res, GUEST_ENDED_EVENT, { reason: endReason });
+  else endGuestStream(res, endReason);
+}
+
+/** The guest page reads this last event to say why its jukebox ended. */
+export function endGuestStream(res: ServerResponse, reason: GuestEndReason): void {
+  endSseStream(res, GUEST_ENDED_EVENT, { reason });
 }
 
 /**
@@ -217,7 +247,7 @@ export class AuthService {
   private readonly readSavedAdminHash: () => string | null | undefined;
   private readonly sessions = new Map<string, SessionRecord>();
   // Each open stream keeps its own source address, since a network ban closes the streams opened from it.
-  private readonly streams = new Map<string, Map<ServerResponse, string | undefined>>();
+  private readonly streams = new Map<string, Map<ServerResponse, OpenStream>>();
   private readonly publicJoins: TokenBuckets;
   private readonly localJoins: TokenBuckets;
   private readonly nicknameChanges: TokenBuckets;
@@ -346,6 +376,7 @@ export class AuthService {
       credentialEpoch: this.credentialEpoch,
       csrfToken: randomToken(CSRF_TOKEN_BYTES),
       lastAddress: address,
+      hostNickname: null,
     };
     this.sessions.set(session.id, session);
     this.persist();
@@ -448,14 +479,37 @@ export class AuthService {
     return (publicSource ? this.publicJoins : this.localJoins).tryTake(budgetKey);
   }
 
-  /** Spends one name change from the guest session's budget. Returns 0 then, or the wait in milliseconds. */
+  /** Spends one name change from the guest or host session's budget. Returns 0 then, or the wait in milliseconds. */
   takeNicknameToken(sessionId: string): number {
     return this.nicknameChanges.tryTake(sessionId);
   }
 
-  /** The store write is batched, as for a last-seen update. */
-  setGuestNickname(session: GuestSession, nickname: string): void {
-    session.nickname = nickname;
+  /**
+   * Only the host's songs may show a host name, so a guest may not take one that reads as `Host` or a host nickname.
+   * The host may not take a guest's name or label. Returns the refusal message, or null when the name is free.
+   */
+  jukeboxNameConflict(nickname: string, role: SessionRecord['role'], queuedNames: QueuedNames): string | null {
+    const now = this.now();
+    const skeleton = nameSkeleton(nickname);
+    const liveSessions = [...this.sessions.values()].filter((session) => this.isLive(session, now));
+    const readsAsNickname = (name: string): boolean => nameSkeleton(name) === skeleton;
+    if (role === 'admin') {
+      if (GUEST_LABEL_SKELETON.test(skeleton)) return GUEST_LABEL_RESERVED;
+      const liveGuestNames = liveSessions.filter((session) => session.role === 'guest').map(jukeboxNameOf);
+      return [...liveGuestNames, ...queuedNames.guest].some(readsAsNickname) ? GUEST_NAME_TAKEN : null;
+    }
+    const hostNames = [HOST_JUKEBOX_LABEL];
+    for (const session of liveSessions) {
+      if (session.role === 'admin' && session.hostNickname !== null) hostNames.push(session.hostNickname);
+    }
+    const takenName = [...hostNames, ...queuedNames.host].find(readsAsNickname);
+    return takenName === undefined ? null : hostNameTaken(takenName);
+  }
+
+  /** The store write is batched, as for a last-seen update. An admin session stores the host nickname. */
+  setJukeboxNickname(session: SessionRecord, nickname: string): void {
+    if (session.role === 'guest') session.nickname = nickname;
+    else session.hostNickname = nickname;
     this.markDirty(this.now());
   }
 
@@ -463,8 +517,9 @@ export class AuthService {
    * A banned browser is refused before its key is checked, so a new code tells it the same reason. A
    * requester that already holds a guest session for the current code keeps it, and a nickname it
    * sends is ignored. The nickname route changes a stored name, since a kept join spends no budget.
+   * The name check runs last, so only a holder of the live code learns a host nickname.
    */
-  join(key: string, nickname: string | null, address: string, current: GuestSession | null, deviceId: string): JoinResult {
+  join(key: string, nickname: string | null, address: string, current: GuestSession | null, deviceId: string, queuedNames: () => QueuedNames): JoinResult {
     const now = this.now();
     if (this.isDeviceBanned(deviceId, now)) return { kind: 'banned' };
     const jukeboxCode = this.matchLiveJukeboxCode(key, now);
@@ -473,6 +528,8 @@ export class AuthService {
       return { kind: 'kept', session: current };
     }
     if (this.countGuests(jukeboxCode) >= MAX_GUESTS_PER_CODE) return { kind: 'full' };
+    const nameConflict = nickname === null ? null : this.jukeboxNameConflict(nickname, 'guest', queuedNames());
+    if (nameConflict !== null) return { kind: 'name-taken', message: nameConflict };
 
     jukeboxCode.lastGuestNumber += 1;
     const secret = randomToken(SESSION_SECRET_BYTES);
@@ -500,14 +557,18 @@ export class AuthService {
     return this.matchLiveJukeboxCode(key, this.now()) !== null;
   }
 
-  /** Null once the session is gone. An admin previews the guest page under the host label. */
+  /**
+   * Null once the session is gone. An admin session uses the guest page as the host while a code exists.
+   * An expired code stays until the sweep, so the sweep ends the host's stream with its reason.
+   */
   guestJukeboxFor(sessionId: string): GuestJukebox | null {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return null;
-    const expiresAt = this.jukeboxCode?.expiresAt ?? null;
-    return session.role === 'guest'
-      ? { label: session.label, nickname: session.nickname, expiresAt, joinedAt: session.createdAt }
-      : { label: HOST_JUKEBOX_LABEL, nickname: null, expiresAt, joinedAt: session.createdAt };
+    if (session.role === 'guest') {
+      return { label: session.label, nickname: session.nickname, expiresAt: this.jukeboxCode?.expiresAt ?? null, joinedAt: session.createdAt };
+    }
+    if (this.jukeboxCode === null) return null;
+    return { label: HOST_JUKEBOX_LABEL, nickname: session.hostNickname, expiresAt: this.jukeboxCode.expiresAt, joinedAt: session.createdAt };
   }
 
   /** Online means an open stream, or a request within `GUEST_ONLINE_WINDOW_MS`. */
@@ -521,8 +582,12 @@ export class AuthService {
       }));
   }
 
-  isLiveGuest(sessionId: string): boolean {
-    return this.liveGuest(sessionId, this.now()) !== null;
+  /** A guest session queues while it is live, and an admin session queues as the host only while a code is live too. */
+  isLiveJukeboxSession(sessionId: string): boolean {
+    const now = this.now();
+    const session = this.sessions.get(sessionId);
+    if (session === undefined || !this.isLive(session, now)) return false;
+    return session.role === 'guest' || this.liveJukeboxCode(now) !== null;
   }
 
   /** Ends the guest session and its streams. The jukebox code still admits the guest. */
@@ -603,13 +668,13 @@ export class AuthService {
   }
 
   /** Logout, expiry and a password change close the session's streams at once through this. */
-  trackStream(sessionId: string, res: ServerResponse, address: string | undefined): void {
+  trackStream(sessionId: string, res: ServerResponse, address: string | undefined, guestPage = false): void {
     let open = this.streams.get(sessionId);
     if (open === undefined) {
       open = new Map();
       this.streams.set(sessionId, open);
     }
-    open.set(res, address);
+    open.set(res, { address, guestPage });
     const tracked = open;
     res.once('close', () => {
       tracked.delete(res);
@@ -716,12 +781,25 @@ export class AuthService {
     return this.guestSessions().filter((session) => session.keyId === jukeboxCode.id && this.isLive(session, now)).length;
   }
 
-  /** Revocation and expiry both sign out every guest and close their streams. */
+  /**
+   * Revocation and expiry both sign out every guest and close their streams. The host keeps its admin
+   * session, so only its guest page streams close, with the same reason.
+   */
   private endJukebox(reason: GuestEndReason): void {
     const now = this.now();
     for (const session of this.guestSessions()) this.removeSession(session.id, this.endReasonOf(session, now, reason));
+    this.closeHostGuestPageStreams(reason);
     this.jukeboxCode = null;
     this.dropGuestBans();
+  }
+
+  private closeHostGuestPageStreams(reason: GuestEndReason): void {
+    for (const [sessionId, open] of this.streams) {
+      if (this.sessions.get(sessionId)?.role !== 'admin') continue;
+      for (const [res, stream] of open) {
+        if (stream.guestPage) closeStream(res, reason);
+      }
+    }
   }
 
   /**
@@ -768,13 +846,16 @@ export class AuthService {
   private closeStreamsOn(key: string): void {
     for (const [sessionId, open] of this.streams) {
       const endReason = this.sessions.get(sessionId)?.role === 'guest' ? 'removed' : null;
-      for (const [res, address] of open) {
+      for (const [res, { address }] of open) {
         if (classifySource(address) !== 'loopback' && networkKey(address) === key) closeStream(res, endReason);
       }
     }
   }
 
-  /** An admin session, or a guest cookie this browser replaced, has no page to tell, so its streams close with no reason. */
+  /**
+   * An admin session's pages, its guest page included, read a missing reason as the admin session ending,
+   * and a guest cookie this browser replaced has no page left to tell, so these streams close with no reason.
+   */
   private removeSession(sessionId: string, endReason: GuestEndReason | null): boolean {
     if (!this.sessions.delete(sessionId)) return false;
     for (const res of this.streams.get(sessionId)?.keys() ?? []) closeStream(res, endReason);

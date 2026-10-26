@@ -25,6 +25,8 @@ const AdminSessionSchema = z.object({
   ...sessionFields,
   role: z.literal('admin'),
   credentialEpoch: z.string().min(1),
+  /** The nickname the host queues under from the guest page. A session stored before it existed reads as none. */
+  hostNickname: z.string().nullable().default(null),
 });
 
 /** A session or ban stored before device cookies existed has no device id, so it reads as null. */

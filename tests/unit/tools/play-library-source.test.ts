@@ -75,6 +75,17 @@ describe('playLibrarySource', () => {
       expect(enqueueMock).toHaveBeenCalledWith(['so1'], 'append', expect.any(Array));
     });
 
+    it('hands the loaded songs and their mpv ids to onQueued, and keeps them out of the result', async () => {
+      client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [songRow('so1'), songRow('so2')], total: 2 });
+      enqueueMock.mockResolvedValueOnce({ demoted: false, outputMissing: null, entryIds: [41, 42] });
+      const onQueued = vi.fn();
+
+      const result = await playLibrarySource(client as never, { type: 'album', id: 'al1', mode: 'replace' }, onQueued);
+
+      expect(onQueued).toHaveBeenCalledWith([41, 42], [expect.objectContaining({ songId: 'so1' }), expect.objectContaining({ songId: 'so2' })]);
+      expect(result).toEqual({ success: true, count: 2 });
+    });
+
     it('reads an album in album order', async () => {
       client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [songRow('s1')], total: 1 });
 

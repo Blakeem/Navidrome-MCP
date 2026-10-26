@@ -90,11 +90,14 @@ export function writeRedirect(res: ServerResponse, location: string): void {
   res.end();
 }
 
-/** `refused` names what was refused, such as "login attempts" or "searches", in the message the page shows. */
+/**
+ * `refused` names what was refused, such as "login attempts" or "searches", in the message the page shows.
+ * `retryAfterMs` lets the guest page send a refused add again by itself.
+ */
 export function writeTooManyRequests(res: ServerResponse, waitMs: number, refused: string): void {
   const retryAfterSeconds = Math.ceil(waitMs / 1000);
   res.setHeader('Retry-After', String(retryAfterSeconds));
-  writeError(res, 429, `Too many ${refused}. Try again in ${String(retryAfterSeconds)} seconds.`);
+  writeJson(res, 429, { error: `Too many ${refused}. Try again in ${String(retryAfterSeconds)} seconds.`, retryAfterMs: waitMs });
 }
 
 /** The retry directive goes first, so the browser learns it even if the stream drops at once. */

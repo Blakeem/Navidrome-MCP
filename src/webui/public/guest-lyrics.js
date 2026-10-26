@@ -2,6 +2,7 @@
 // shows the lines in a read-only panel built from the same data and line-timing modules.
 
 import { byId, setHidden } from './dom.js';
+import { keepAddSongsInPlace } from './guest-add.js';
 import { lyricsFor } from './lyrics-data.js';
 import { findActiveLine } from './lyrics-sync.js';
 import { positionSeconds } from './playback-clock.js';
@@ -74,9 +75,14 @@ function scrollToActive(behavior) {
   list.scrollTo({ top: row.offsetTop - list.clientHeight / 3, behavior });
 }
 
+// The answer can arrive while the reader is in Add songs, which sits below this panel.
 async function loadLyrics(songId, mine) {
   const dto = await lyricsFor(songId);
   if (mine !== generation) return;
+  keepAddSongsInPlace(() => showLyrics(dto));
+}
+
+function showLyrics(dto) {
   if (dto === null) {
     status.textContent = 'The lyrics lookup failed.';
     return;

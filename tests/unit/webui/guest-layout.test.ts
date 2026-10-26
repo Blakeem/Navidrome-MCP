@@ -40,11 +40,34 @@ describe('guest header search button', () => {
     const add = read('guest-add.js');
     expect(add).toContain('section.scrollIntoView(');
     expect(add).toContain('input.focus({ preventScroll: true })');
-    expect(add).toContain('setHidden(jump, !canQueue)');
+    expect(add).toContain('setHidden(jump, !visible)');
+  });
+
+  it('keeps Add songs in place when a snapshot or a lyrics answer redraws the sections above it', () => {
+    expect(read('guest.js')).toMatch(/keepAddSongsInPlace\(\(\) => \{\s*renderNowPlaying\([\s\S]*?renderGuestQueue\([\s\S]*?renderJukebox\(jukebox\);\s*\}\);/);
+    expect(read('guest-lyrics.js')).toContain('keepAddSongsInPlace(() => showLyrics(dto));');
+    expect(read('styles.css')).toContain('.guest-page { overflow-anchor: none; }');
+  });
+
+  it('reports add and remove results in a toast outside the page flow', () => {
+    expect(HTML.indexOf('id="guest-toast"')).toBeGreaterThan(HTML.indexOf('</main>'));
+    expect(HTML).toMatch(/<p class="guest-toast" id="guest-toast" role="status"><\/p>/);
+    expect(read('styles.css')).toMatch(/\.guest-toast \{\s*position: fixed;/);
+  });
+
+  it('asks before an Added button removes the song', () => {
+    expect(read('guest-add.js')).toContain("window.confirm(removeConfirmText(song, 'guest'))");
   });
 
   it('hides on every join card, since the header outlives the main view', () => {
     expect(read('guest.js')).toMatch(/function showJoinCard[\s\S]*?showGuestAdd\(false\)/);
+  });
+});
+
+describe('guest page visualizer', () => {
+  it('closes the levels stream on every join card, since no snapshot arrives to close it', () => {
+    expect(read('guest.js')).toMatch(/function showJoinCard[\s\S]*?stopVisualizer\(\);/);
+    expect(read('visualizer.js')).toMatch(/export function stopVisualizer\(\) \{\s*enabled = false;\s*refresh\(\);/);
   });
 });
 
@@ -91,9 +114,31 @@ describe('guest queue preview', () => {
   });
 });
 
+// A removed or banned guest sees the join card, so its only admin link is the one a host page shows.
+describe('guest join card', () => {
+  it('links to the admin page only from the host link line', () => {
+    const start = HTML.indexOf('id="guest-join"');
+    const joinCard = HTML.slice(start, HTML.indexOf('</section>', start));
+    const hostLine = /<p[^>]*id="guest-host-link"[^>]*hidden><a href="\/admin"><\/a><\/p>/;
+
+    expect(start).toBeGreaterThan(-1);
+    expect(joinCard).toMatch(hostLine);
+    expect(joinCard.replace(hostLine, '')).not.toContain('/admin');
+    expect(read('guest.js')).toContain("setHidden(hostLink, !isHost || adminLink === '');");
+    for (const file of ['guest.js', 'guest-welcome.js', 'guest-name.js', 'guest-add.js', 'page-view.js']) {
+      expect(read(file)).not.toContain('/admin');
+    }
+  });
+
+  it('writes the Copy link feedback to its label, so the button keeps its icon', () => {
+    expect(read('jukebox.js')).not.toMatch(/copyBtn\.textContent/);
+    expect(read('index.html')).toMatch(/id="jukebox-copy"[^>]*><svg[\s\S]*?<\/svg><span id="jukebox-copy-label">Copy link<\/span>/);
+  });
+});
+
 describe('guest nickname controls', () => {
   it('puts a hidden Change name button and an inline Save and Cancel form under the You are line', () => {
-    expect(HTML).toMatch(/id="guest-name-change"[^>]*hidden>Change name</);
+    expect(HTML).toMatch(/id="guest-name-change"[^>]*hidden><svg[^>]*><path[^>]*\/><\/svg>Change name</);
     expect(HTML).toMatch(/<form[^>]*id="guest-name-form"[^>]*hidden>/);
     expect(HTML).toMatch(/id="guest-name-save">Save</);
     expect(HTML).toMatch(/id="guest-name-cancel">Cancel</);
@@ -108,10 +153,33 @@ describe('guest nickname controls', () => {
     expect(read('api.js')).toContain("requestJson('/api/guest/nickname', { nickname })");
   });
 
-  it('hides the controls for the admin preview and on every join card', () => {
+  it('shows the controls to a guest and the host, and hides them on every join card', () => {
     const guest = read('guest.js');
-    expect(guest).toContain('showChangeName(canQueue);');
+    expect(guest).toContain('showChangeName(true);');
     expect(guest).toMatch(/function showJoinCard[\s\S]*?showChangeName\(false\)/);
-    expect(read('guest-welcome.js')).toContain('setHidden(nicknameFields, !canQueue)');
+    expect(HTML).toContain('<div class="nickname-fields">');
+  });
+});
+
+describe('guest page for the host', () => {
+  it('shows the host banner with its player link inside the main view only', () => {
+    const banner = /<p class="guest-host-banner" id="guest-host-banner" hidden>You are on the guest page as the host\. <a href="\/admin">Open the player<\/a><\/p>/;
+    expect(HTML.slice(HTML.indexOf('<main id="guest-main"'), HTML.indexOf('</main>'))).toMatch(banner);
+    expect(read('guest.js')).toContain('setHidden(hostBanner, !isHost);');
+  });
+
+  it('welcomes the host by the name it uses, with the song limit and no expiry line', () => {
+    const welcome = read('guest-welcome.js');
+    expect(welcome).toContain('`You are adding songs as ${name}.${queueText(jukebox)}`');
+    expect(welcome).toContain("expiry.textContent = isHost ? '' : jukeboxEndText(jukebox.expiresAt);");
+    expect(welcome).toContain(' You can add up to ${songs} at a time to the end of the queue, and remove your own songs before they start playing.');
+  });
+
+  it('shows the closed card with the player link while no code is live', () => {
+    const guest = read('guest.js');
+    expect(guest).toContain("const CLOSED_TITLE = 'The jukebox is closed.';");
+    expect(guest).toContain("const HOST_CLOSED_HELP = 'Open it from the player.';");
+    expect(guest).toContain("const HOST_PLAYER_LINK = 'Open the player';");
+    expect(guest).toMatch(/view === 'host-closed'\) \{\s*isHost = true;\s*showHostClosedCard\(\);/);
   });
 });

@@ -25,11 +25,9 @@ export type Permission = (typeof PERMISSIONS)[number];
 
 type SessionRole = 'admin' | 'guest';
 
-/** The guest song limit and its ledger count guest sessions, so the admin queues through the host routes instead. */
-const GUEST_ONLY: ReadonlySet<Permission> = new Set(['jukebox.queue']);
-
+/** The admin holds `jukebox.queue` too, so it queues from the guest page as the host under the guest rules. */
 const ROLE_PERMISSIONS: Readonly<Record<SessionRole, ReadonlySet<Permission>>> = {
-  admin: new Set(PERMISSIONS.filter((permission) => !GUEST_ONLY.has(permission))),
+  admin: new Set(PERMISSIONS),
   guest: new Set(['jukebox.view', 'jukebox.queue', 'auth.self', 'player.media']),
 };
 

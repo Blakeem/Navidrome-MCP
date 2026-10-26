@@ -390,7 +390,8 @@ export const JukeboxCodeCreateSchema = z.strictObject({
 });
 
 // Indic vowel signs and decomposed accents are combining marks (\p{M}), so a name in letters needs them too.
-const GUEST_NICKNAME_PATTERN = /^[\p{L}\p{M}\p{Nd} .,'!?_-]{1,24}$/u;
+// An invisible letter or mark such as U+3164 would let `Host` and a blank name pass, so none is allowed.
+const GUEST_NICKNAME_PATTERN = /^(?!.*\p{Default_Ignorable_Code_Point})[\p{L}\p{M}\p{Nd} .,'!?_-]{1,24}$/u;
 
 const GuestNicknameField = z.string().trim().normalize('NFC').regex(GUEST_NICKNAME_PATTERN, {
   error: "nickname must be 1 to 24 letters, digits, spaces or . , ' ! ? - _",

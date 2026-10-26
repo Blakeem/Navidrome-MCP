@@ -12,12 +12,15 @@ import { hashPassword, randomToken } from '../../../src/utils/secrets.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 
 const stubbed = vi.hoisted(() => ({
+  /** Each stub call in order, so a test can check what the dispatcher passed a handler. */
+  calls: [] as Array<{ name: string; args: unknown[] }>,
   /** Replaces each `handle*` export with a stub that answers 200 on the response argument it receives. */
   stubHandlers<T extends Record<string, unknown>>(actual: T): T {
     const stubs: Record<string, unknown> = { ...actual };
     for (const [name, value] of Object.entries(actual)) {
       if (!name.startsWith('handle') || typeof value !== 'function') continue;
       stubs[name] = (...args: unknown[]): void => {
+        stubbed.calls.push({ name, args });
         const res = args.find((arg) => typeof (arg as { writeHead?: unknown } | null)?.writeHead === 'function') as
           | { writeHead: (status: number) => void; end: (body: string) => void }
           | undefined;
@@ -47,9 +50,10 @@ vi.mock('../../../src/webui/routes/player.js', async (importOriginal) => stubbed
 vi.mock('../../../src/webui/routes/static-files.js', async (importOriginal) => stubbed.stubHandlers(await importOriginal()));
 
 import { AuthService, type GuestStatus } from '../../../src/webui/auth/auth-service.js';
+import type { QueuedNames } from '../../../src/webui/jukebox/jukebox-names.js';
 import { outsideLevelMessage } from '../../../src/webui/auth/principal.js';
 import { GuestQueue } from '../../../src/webui/jukebox/guest-queue.js';
-import { adminView, guestEndCard, guestView, keyFromHash, offersAdminLogin } from '../../../src/webui/public/page-view.js';
+import { adminView, guestEndCard, guestView, hostPollView, keyFromHash } from '../../../src/webui/public/page-view.js';
 import { MAX_OPEN_STREAMS, REFUSED_STREAM_RETRY_MS, STREAM_EVICTED_EVENT } from '../../../src/webui/stream-limiter.js';
 import { createServer, listRoutes } from '../../../src/webui/server.js';
 
@@ -57,6 +61,7 @@ const LOOPBACK = '127.0.0.1';
 const LAN_PEER = '192.168.1.50';
 const INTERNET_PEER = '203.0.113.5';
 const PASSWORD = 'correct horse battery';
+const NO_QUEUED_NAMES = (): QueuedNames => ({ host: [], guest: [] });
 
 const broadcastNow = vi.fn();
 let adminHash = '';
@@ -212,7 +217,7 @@ function adminHeaders(auth: AuthService): Record<string, string> {
 /** Starts a jukebox when none is active, then joins it as a new guest whose browser holds its device cookie. */
 function guestHeaders(auth: AuthService, key = auth.createJukeboxCode(24, false).key): Record<string, string> {
   const deviceId = newDeviceId();
-  const joined = auth.join(key, null, LAN_PEER, null, deviceId);
+  const joined = auth.join(key, null, LAN_PEER, null, deviceId, NO_QUEUED_NAMES);
   if (joined.kind !== 'joined') throw new Error(`join failed: ${joined.kind}`);
   return { cookie: `ndmcp-web-8808=${joined.token}; ndmcp-device-8808=${deviceId}`, 'x-csrf-token': joined.session.csrfToken };
 }
@@ -235,8 +240,8 @@ describe('route access table', () => {
   const NO_JUKEBOX = { open: 404, openRemote: 404, passwordAdmin: 404, passwordAnonymous: 404 } as const;
   const JUKEBOX_VIEW: Expected = { ...NO_JUKEBOX, admin: 200, anonymous: 401, guest: 200 };
   const JUKEBOX_MANAGE: Expected = { ...NO_JUKEBOX, admin: 200, anonymous: 401, guest: 403 };
-  // The empty query or body fails validation once a guest reaches the route.
-  const JUKEBOX_QUEUE: Expected = { ...NO_JUKEBOX, admin: 403, anonymous: 401, guest: 400 };
+  // The empty query or body fails validation once a guest or the host reaches the route.
+  const JUKEBOX_QUEUE: Expected = { ...NO_JUKEBOX, admin: 400, anonymous: 401, guest: 400 };
 
   /** Keyed by method and path. A prefix route is requested with a sample id. */
   const TABLE: Record<string, Expected & { request?: string }> = {
@@ -389,7 +394,7 @@ describe('page router', () => {
     { mode: 'jukebox', visitor: 'anonymous outside level', from: REMOTE, headers: noSession, root: '/guest', admin: 'unavailable', ...JOIN },
     { mode: 'jukebox', visitor: 'guest session inside level', from: LOCAL, headers: guestHeaders, root: '/guest', admin: 'login', guest: 'guest', guestWithKey: 'join-key' },
     { mode: 'jukebox', visitor: 'guest session outside level', from: REMOTE, headers: guestHeaders, root: '/guest', admin: 'unavailable', guest: 'guest', guestWithKey: 'join-key' },
-    { mode: 'jukebox', visitor: 'admin session', from: LOCAL, headers: adminHeaders, root: '/admin', admin: 'player', guest: 'preview', guestWithKey: 'join-key' },
+    { mode: 'jukebox', visitor: 'admin session', from: LOCAL, headers: adminHeaders, root: '/admin', admin: 'player', guest: 'host-closed', guestWithKey: 'join-key' },
     { mode: 'jukebox', visitor: 'admin session outside level', from: REMOTE, headers: adminHeaders, root: '/guest', admin: 'outside-level', ...JOIN },
   ] as const;
 
@@ -408,29 +413,6 @@ describe('page router', () => {
     expect({ admin: adminView(session), guest: guestView(session, false), guestWithKey: guestView(session, true) })
       .toEqual({ admin: row.admin, guest: row.guest, guestWithKey: row.guestWithKey });
     expect([adminPage.status, guestPage.status]).toEqual([200, 200]);
-  });
-
-  it.each([
-    { visitor: 'anonymous inside level', from: LOCAL, adminLink: true },
-    { visitor: 'anonymous outside level', from: REMOTE, adminLink: false },
-  ])('mode jukebox, $visitor, the join card shows the admin login link is $adminLink', async ({ from, adminLink }) => {
-    const config = lanConfig();
-    const auth = new AuthService(config);
-
-    const session: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', from)).body);
-
-    expect({ guest: guestView(session, false), adminLink: offersAdminLogin('join', session) }).toEqual({ guest: 'join', adminLink });
-  });
-
-  // A failed or ended join shows the join card again, so the link stays for the session read at load.
-  it('keeps the admin login link on a join card after a failed join, and never shows it on the closed card', async () => {
-    const config = lanConfig();
-    const auth = new AuthService(config);
-
-    const session: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', LOCAL)).body);
-
-    expect({ join: offersAdminLogin('join', session), closed: offersAdminLogin('closed', session), unread: offersAdminLogin('join', null) })
-      .toEqual({ join: true, closed: false, unread: false });
   });
 
   it('names each guest end reason, and names no cause for a missing or unknown reason', () => {
@@ -586,7 +568,7 @@ describe('auth routes', () => {
     expect(cookie).toMatch(/^ndmcp-web-8808=[^;]+; HttpOnly; SameSite=Strict; Path=\/; Max-Age=\d+$/);
     const session = await dispatch(config, auth, '/api/auth/session', { host: '127.0.0.1:8808', headers: { cookie: cookie.split(';')[0] ?? '' } });
     expect(JSON.parse(session.body)).toEqual({
-      mode: 'jukebox', role: 'admin', csrfToken, adminLoginAvailable: true, isLocal: true, yourAddress: LOOPBACK,
+      mode: 'jukebox', role: 'admin', csrfToken, adminLoginAvailable: true, isLocal: true, yourAddress: LOOPBACK, jukeboxOpen: false,
     });
   });
 
@@ -746,6 +728,47 @@ describe('jukebox join route', () => {
 
     expect(reply.status).toBe(400);
     expect(JSON.parse(reply.body).error).toContain('nickname');
+  });
+
+  it("refuses a guest join with the host's name and mints no session", async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+    const { key } = auth.createJukeboxCode(2, false);
+
+    const replies = [await join(config, auth, { key, nickname: 'HOST' }), await join(config, auth, { key, nickname: 'Hоst' })];
+
+    for (const reply of replies) expect([reply.status, JSON.parse(reply.body)]).toEqual([400, { error: "Host is the host's name. Pick another nickname." }]);
+    expect(auth.listGuests()).toEqual([]);
+  });
+
+  it("answers a wrong key or a banned browser with the host's name by the join refusal, so it never reads the host nickname", async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+    const { key } = auth.createJukeboxCode(2, false);
+    auth.setJukeboxNickname(auth.createSession(LOOPBACK).session, 'Bob');
+    const banned = auth.join(key, null, LAN_PEER, null, newDeviceId(), NO_QUEUED_NAMES);
+    if (banned.kind !== 'joined') throw new Error(`join failed: ${banned.kind}`);
+    auth.banGuest(banned.session.id, 0, LOOPBACK);
+
+    const wrongKey = await join(config, auth, { key: 'not-the-key', nickname: 'b0b' });
+    const bannedBrowser = await join(config, auth, { key, nickname: 'b0b' }, { headers: { cookie: `ndmcp-device-8808=${banned.session.deviceId}` } });
+
+    expect([wrongKey.status, JSON.parse(wrongKey.body)]).toEqual([403, { error: 'This jukebox code is not valid, closed or expired.' }]);
+    expect(bannedBrowser.status).toBe(403);
+    expect(bannedBrowser.body).not.toContain('Bob');
+  });
+
+  it('refuses a guest join with the name a queued host song shows after its admin session ended', async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+    const { key } = auth.createJukeboxCode(2, false);
+    const guests = new GuestQueue();
+    guests.ledger.record(7, { sessionId: 'session-gone', song: { songId: 'so-1' }, addedBy: 'DJ Bo', byHost: true, addedAt: 0 });
+
+    const reply = await join(config, auth, { key, nickname: 'dj bo' }, { guests });
+
+    expect([reply.status, JSON.parse(reply.body)]).toEqual([400, { error: "DJ Bo is the host's name. Pick another nickname." }]);
+    expect(auth.listGuests()).toEqual([]);
   });
 
   it('keeps the session and the stored nickname of a guest that joins again, with no new cookie', async () => {
@@ -969,6 +992,82 @@ describe('guest sessions at the gate', () => {
   });
 });
 
+describe('the host on the guest page at the gate', () => {
+  function hostOptions(auth: AuthService): RequestOptions {
+    return { host: '127.0.0.1:8808', headers: adminHeaders(auth) };
+  }
+
+  it('tells an admin session whether the jukebox is open, so its guest page picks the host view or the closed card', async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+    const options = hostOptions(auth);
+
+    const closed: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', options)).body);
+    auth.createJukeboxCode(2, false);
+    const open: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', options)).body);
+    const anonymous: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', { host: '127.0.0.1:8808' })).body);
+
+    expect([guestView(closed, false), guestView(open, false)]).toEqual(['host-closed', 'host']);
+    expect(anonymous).not.toHaveProperty('jukeboxOpen');
+  });
+
+  it("keeps the host's closed card on no answer, and ends it when the jukebox opens or the admin session ends", async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+    const options = hostOptions(auth);
+
+    const closed: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', options)).body);
+    auth.createJukeboxCode(2, false);
+    const open: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', options)).body);
+    const signedOut: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', { host: '127.0.0.1:8808' })).body);
+
+    expect([hostPollView(null), hostPollView(closed), hostPollView(open), hostPollView(signedOut)]).toEqual(['host-closed', 'host-closed', 'host', 'ended']);
+    expect(hostPollView({ mode: 'password', role: 'admin' })).toBe('closed');
+  });
+
+  it('ends the host guest stream as a closed jukebox while no code is live, and streams once one is', async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+    const options = hostOptions(auth);
+
+    const closed = await dispatch(config, auth, '/api/guest/events', options);
+    auth.createJukeboxCode(2, false);
+    const open = await dispatch(config, auth, '/api/guest/events', options);
+
+    expect(closed.status).toBe(200);
+    expect(closed.res.body).toBe('event: ended\ndata: {"reason":"closed"}\n\n');
+    expect([open.status, open.res.body]).toEqual([200, '']);
+  });
+
+  it('answers the host search with the signed-out refusal while no code is live', async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+
+    const reply = await dispatch(config, auth, '/api/guest/search?q=daft', hostOptions(auth));
+
+    expect(reply.status).toBe(401);
+    expect(JSON.parse(reply.body)).toMatchObject({ code: 'signed-out' });
+  });
+
+  it('hands the jukebox to the library play route only for an admin session in mode jukebox', async () => {
+    const guests = new GuestQueue();
+    const play = async (config: Config, auth: AuthService, options: RequestOptions): Promise<unknown> => {
+      stubbed.calls.length = 0;
+      await dispatch(config, auth, '/api/library/play', { ...options, method: 'POST', guests });
+      return stubbed.calls.find((call) => call.name === 'handleLibraryPlay')?.args[3];
+    };
+    const jukebox = lanConfig();
+    const jukeboxAuth = new AuthService(jukebox);
+    const password = lanConfig({ mode: 'password' });
+    const passwordAuth = new AuthService(password);
+    const open = lanConfig({ mode: 'none', adminPasswordHash: null });
+
+    expect(await play(jukebox, jukeboxAuth, hostOptions(jukeboxAuth))).toBe(guests);
+    expect(await play(password, passwordAuth, hostOptions(passwordAuth))).toBeNull();
+    expect(await play(open, new AuthService(open), { host: '127.0.0.1:8808' })).toBeNull();
+  });
+});
+
 describe('guest nickname route', () => {
   const NOW = 1_700_000_000_000;
   const NICKNAME_PATH = '/api/guest/nickname';
@@ -987,7 +1086,7 @@ describe('guest nickname route', () => {
   }
 
   function joinGuest(auth: AuthService, key: string, peer = LAN_PEER): { headers: Record<string, string>; sessionId: string } {
-    const joined = auth.join(key, null, peer, null, newDeviceId());
+    const joined = auth.join(key, null, peer, null, newDeviceId(), NO_QUEUED_NAMES);
     if (joined.kind !== 'joined') throw new Error(`join failed: ${joined.kind}`);
     return { headers: { cookie: `ndmcp-web-8808=${joined.token}`, 'x-csrf-token': joined.session.csrfToken }, sessionId: joined.session.id };
   }
@@ -1001,8 +1100,8 @@ describe('guest nickname route', () => {
     const onChange = vi.fn();
     const guests = watchedGuests(onChange);
     const ana = joinGuest(auth, key);
-    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, guestLabel: 'Guest 1', addedAt: 0 });
-    guests.ledger.record(8, { sessionId: 'session-other', song: { songId: 'so-2' }, guestLabel: 'Guest 2', addedAt: 0 });
+    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, addedBy: 'Guest 1', byHost: false, addedAt: 0 });
+    guests.ledger.record(8, { sessionId: 'session-other', song: { songId: 'so-2' }, addedBy: 'Guest 2', byHost: false, addedAt: 0 });
 
     const reply = await rename(config, auth, ana.headers, { nickname: ' Ana ' }, guests);
     const list = await dispatch(config, auth, '/api/jukebox/guests', { host: '127.0.0.1:8808', headers: adminHeaders(auth), guests });
@@ -1011,7 +1110,7 @@ describe('guest nickname route', () => {
     expect(JSON.parse(reply.body)).toEqual({ ok: true, nickname: 'Ana' });
     expect(auth.guestJukeboxFor(ana.sessionId)?.nickname).toBe('Ana');
     expect((JSON.parse(list.body) as { guests: Array<{ nickname: string }> }).guests[0]?.nickname).toBe('Ana');
-    expect([guests.ledger.guestLabelOf(7), guests.ledger.guestLabelOf(8)]).toEqual(['Ana', 'Guest 2']);
+    expect([guests.ledger.addedByOf(7), guests.ledger.addedByOf(8)]).toEqual(['Ana', 'Guest 2']);
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
@@ -1042,14 +1141,30 @@ describe('guest nickname route', () => {
     expect(auth.guestJukeboxFor(ana.sessionId)?.nickname).toBeNull();
   });
 
-  it('refuses an admin session and an anonymous request', async () => {
+  it('stores the host nickname for an admin session and relabels its guest page songs, and refuses an anonymous request', async () => {
     const { config, auth } = setup();
+    const guests = watchedGuests(() => undefined);
+    const headers = adminHeaders(auth);
+    const hostId = auth.findSession({ headers: { cookie: headers['cookie'] } } as IncomingMessage)?.id ?? '';
+    guests.ledger.record(7, { sessionId: hostId, song: { songId: 'so-1' }, addedBy: 'Host', byHost: true, addedAt: 0 });
 
-    const admin = await dispatch(config, auth, NICKNAME_PATH, { method: 'POST', host: '127.0.0.1:8808', headers: adminHeaders(auth), body: { nickname: 'Ana' } });
+    const admin = await dispatch(config, auth, NICKNAME_PATH, { method: 'POST', host: '127.0.0.1:8808', headers, body: { nickname: 'DJ Bo' }, guests });
     const anonymous = await rename(config, auth, {}, { nickname: 'Ana' });
 
-    expect(admin.status).toBe(403);
+    expect([admin.status, JSON.parse(admin.body)]).toEqual([200, { ok: true, nickname: 'DJ Bo' }]);
+    expect(auth.guestJukeboxFor(hostId)).toMatchObject({ label: 'Host', nickname: 'DJ Bo' });
+    expect(guests.ledger.addedByOf(7)).toBe('DJ Bo');
+    expect(auth.listGuests()).toEqual([]);
     expect(anonymous.status).toBe(401);
+  });
+
+  it('answers an admin session with the signed-out refusal once the jukebox closes', async () => {
+    const { config, auth } = setup();
+    auth.revokeJukeboxCode();
+
+    const admin = await dispatch(config, auth, NICKNAME_PATH, { method: 'POST', host: '127.0.0.1:8808', headers: adminHeaders(auth), body: { nickname: 'DJ Bo' } });
+
+    expect([admin.status, JSON.parse(admin.body).code]).toEqual([401, 'signed-out']);
   });
 
   it('allows 10 changes an hour per session, then answers 429 with Retry-After and keeps the last name', async () => {
@@ -1079,6 +1194,96 @@ describe('guest nickname route', () => {
     }
 
     expect((await rename(config, auth, ana.headers, { nickname: 'Ana B' })).status).toBe(200);
+  });
+
+  it.each([
+    ['a Cyrillic o', 'Hоst'],
+    ['an accent', 'Hóst'],
+    ['spaced letters', 'H o s t'],
+    ['a zero for the o', 'H0ST'],
+  ])("refuses a guest the host's name written with %s", async (_label, nickname) => {
+    const { config, auth, key } = setup();
+    const ana = joinGuest(auth, key);
+
+    const reply = await rename(config, auth, ana.headers, { nickname });
+
+    expect([reply.status, JSON.parse(reply.body)]).toEqual([400, { error: "Host is the host's name. Pick another nickname." }]);
+    expect(auth.guestJukeboxFor(ana.sessionId)?.nickname).toBeNull();
+  });
+
+  it.each([
+    ['a trailing combining grapheme joiner', 'Host͏'],
+    ['a trailing Hangul filler', 'Hostㅤ'],
+    ['Hangul fillers alone', 'ㅤㅤ'],
+  ])('refuses a nickname with %s, since an invisible character shows as nothing', async (_label, nickname) => {
+    const { config, auth, key } = setup();
+    const ana = joinGuest(auth, key);
+
+    const reply = await rename(config, auth, ana.headers, { nickname });
+
+    expect(reply.status).toBe(400);
+    expect(JSON.parse(reply.body)).toHaveProperty('error', expect.stringContaining('nickname must be 1 to 24 letters') as string);
+    expect(auth.guestJukeboxFor(ana.sessionId)?.nickname).toBeNull();
+  });
+
+  it("refuses a guest the host nickname of a live admin session, and frees it once that session ends", async () => {
+    const { config, auth, key } = setup();
+    const ana = joinGuest(auth, key);
+    const host = auth.createSession(LOOPBACK).session;
+    auth.setJukeboxNickname(host, 'DJ Bo');
+
+    const refused = await rename(config, auth, ana.headers, { nickname: 'dj bo' });
+    auth.deleteSession(host.id);
+    const freed = await rename(config, auth, ana.headers, { nickname: 'DJ Bo' });
+
+    expect([refused.status, JSON.parse(refused.body)]).toEqual([400, { error: "DJ Bo is the host's name. Pick another nickname." }]);
+    expect(freed.status).toBe(200);
+  });
+
+  it('refuses the host a name a live guest shows, and lets it take Host', async () => {
+    const { config, auth, key } = setup();
+    const ana = joinGuest(auth, key);
+    joinGuest(auth, key);
+    expect((await rename(config, auth, ana.headers, { nickname: 'Ana' })).status).toBe(200);
+    const hostHeaders = adminHeaders(auth);
+    const hostRename = (nickname: string): Promise<Reply> =>
+      dispatch(config, auth, NICKNAME_PATH, { method: 'POST', host: '127.0.0.1:8808', headers: hostHeaders, body: { nickname } });
+
+    const replies = [await hostRename('ANA'), await hostRename('Guest 2'), await hostRename('Host')];
+
+    expect(replies.map((reply) => [reply.status, JSON.parse(reply.body)])).toEqual([
+      [400, { error: 'A guest already uses that name. Pick another nickname.' }],
+      [400, { error: 'Names such as Guest 1 are for guests. Pick another nickname.' }],
+      [200, { ok: true, nickname: 'Host' }],
+    ]);
+  });
+
+  it('refuses the host a guest label no guest holds yet and the name of a queued guest song, and lets it take Guest', async () => {
+    const { config, auth } = setup();
+    const guests = new GuestQueue();
+    guests.ledger.record(7, { sessionId: 'session-gone', song: { songId: 'so-1' }, addedBy: 'Mike', byHost: false, addedAt: 0 });
+    const hostHeaders = adminHeaders(auth);
+    const hostRename = (nickname: string): Promise<Reply> =>
+      dispatch(config, auth, NICKNAME_PATH, { method: 'POST', host: '127.0.0.1:8808', headers: hostHeaders, body: { nickname }, guests });
+
+    const replies = [await hostRename('guest 10'), await hostRename('MIKE'), await hostRename('Guest')];
+
+    expect(replies.map((reply) => [reply.status, JSON.parse(reply.body)])).toEqual([
+      [400, { error: 'Names such as Guest 1 are for guests. Pick another nickname.' }],
+      [400, { error: 'A guest already uses that name. Pick another nickname.' }],
+      [200, { ok: true, nickname: 'Guest' }],
+    ]);
+  });
+
+  it('refuses a guest the name a queued host song shows after its admin session ended', async () => {
+    const { config, auth, key } = setup();
+    const ana = joinGuest(auth, key);
+    const guests = new GuestQueue();
+    guests.ledger.record(7, { sessionId: 'session-gone', song: { songId: 'so-1' }, addedBy: 'DJ Bo', byHost: true, addedAt: 0 });
+
+    const reply = await rename(config, auth, ana.headers, { nickname: 'DJ Bo' }, guests);
+
+    expect([reply.status, JSON.parse(reply.body)]).toEqual([400, { error: "DJ Bo is the host's name. Pick another nickname." }]);
   });
 });
 
@@ -1113,7 +1318,7 @@ describe('jukebox code routes', () => {
     expect(internet?.qrSvg).toMatch(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg"/);
     const key = internet?.url.split('#k=')[1] ?? '';
     expect(body.links.lan).toEqual([{ label: 'Wi-Fi · 192.168.1.20', url: `http://192.168.1.20:8808/guest#k=${key}`, qrSvg: expect.stringMatching(/^<svg /) as unknown }]);
-    expect(auth.join(key, null, LAN_PEER, null, newDeviceId()).kind).toBe('joined');
+    expect(auth.join(key, null, LAN_PEER, null, newDeviceId(), NO_QUEUED_NAMES).kind).toBe('joined');
 
     const again = await dispatch(config, auth, '/api/jukebox/code', { host: '127.0.0.1:8808', headers });
     expect(again.status).toBe(200);
@@ -1226,7 +1431,7 @@ describe('guest management routes', () => {
   }
 
   function joinAs(auth: AuthService, key: string, peer: string, nickname: string | null = null): { headers: Record<string, string>; sessionId: string } {
-    const joined = auth.join(key, nickname, peer, null, newDeviceId());
+    const joined = auth.join(key, nickname, peer, null, newDeviceId(), NO_QUEUED_NAMES);
     if (joined.kind !== 'joined') throw new Error(`join failed: ${joined.kind}`);
     return { headers: { cookie: `ndmcp-web-8808=${joined.token}`, 'x-csrf-token': joined.session.csrfToken }, sessionId: joined.session.id };
   }
@@ -1249,7 +1454,7 @@ describe('guest management routes', () => {
     joinAs(auth, key, LAN_PEER);
     joinAs(auth, key, OTHER_LAN_PEER);
     auth.createSession(OTHER_LAN_PEER);
-    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1', title: 'Song One', artist: 'Band' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1', title: 'Song One', artist: 'Band' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
 
     const reply = await dispatch(config, auth, '/api/jukebox/guests', { host: '127.0.0.1:8808', headers: admin, guests });
 
@@ -1276,7 +1481,7 @@ describe('guest management routes', () => {
   it('lists no songs for a guest while no mpv is attached', async () => {
     const { config, auth, admin, key, guests } = setup();
     const ana = joinAs(auth, key, LAN_PEER);
-    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, guestLabel: 'Guest 1', addedAt: 0 });
+    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, addedBy: 'Guest 1', byHost: false, addedAt: 0 });
 
     const reply = await dispatch(config, auth, '/api/jukebox/guests', { host: '127.0.0.1:8808', headers: admin, guests });
 
@@ -1286,7 +1491,7 @@ describe('guest management routes', () => {
   it('signs a guest out and keeps its songs, and the guest can join again', async () => {
     const { config, auth, admin, key, guests } = setup();
     const ana = joinAs(auth, key, LAN_PEER);
-    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, guestLabel: 'Guest 1', addedAt: 0 });
+    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, addedBy: 'Guest 1', byHost: false, addedAt: 0 });
     const info = vi.spyOn(logger, 'info');
 
     const reply = await post(config, auth, '/api/jukebox/guests/remove', admin, { sessionId: ana.sessionId }, guests);
@@ -1371,7 +1576,7 @@ describe('guest management routes', () => {
   it('counts the queued songs that stay and logs it when no mpv is attached', async () => {
     const { config, auth, admin, key, guests } = setup();
     const ana = joinAs(auth, key, LAN_PEER);
-    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, guestLabel: 'Guest 1', addedAt: 0 });
+    guests.ledger.record(7, { sessionId: ana.sessionId, song: { songId: 'so-1' }, addedBy: 'Guest 1', byHost: false, addedAt: 0 });
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
 
     const reply = await post(config, auth, '/api/jukebox/guests/ban', admin, { sessionId: ana.sessionId, networkBanHours: 0 }, guests);

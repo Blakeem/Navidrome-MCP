@@ -15,17 +15,19 @@ function removeSubject(item, role) {
   return item.title ?? (role === 'guest' ? 'your song' : 'Unknown title');
 }
 
-/** Null means the removal runs at once. Only a song a guest added asks first. */
+/** Null means the removal runs at once. On the admin page only a song added from the guest page asks first. */
 export function removeConfirmText(item, role) {
   if (role === 'guest') return `${removeLabel(item, role)}?`;
-  return item.guestLabel ? `Remove ${queueTitle(item)}? ${item.guestLabel} added it.` : null;
+  return item.fromGuestPage === true ? `Remove ${queueTitle(item)}? ${item.addedBy} added it.` : null;
 }
 
-/** Null means Clear runs at once, since no guest song waits to be lost. */
+/** Null means Clear runs at once, since no song added from the guest page waits to be lost. */
 export function clearConfirmText(items) {
   const waiting = items.filter((item) => item.guestWaiting === true).length;
   if (waiting === 0) return null;
-  return waiting === 1 ? 'Clear the queue? 1 guest song is removed.' : `Clear the queue? ${waiting} guest songs are removed.`;
+  return waiting === 1
+    ? 'Clear the queue? 1 song added from the guest page is removed.'
+    : `Clear the queue? ${waiting} songs added from the guest page are removed.`;
 }
 
 export function removeLabel(item, role) {
@@ -172,9 +174,9 @@ export function createQueueList(list, { role, onPlay, onRemove }) {
   return { render };
 }
 
-// The badge text sits inside the admin button, whose aria-label replaces it, so the label names the guest too.
+// The badge text sits inside the admin button, whose aria-label replaces it, so the label names the adder too.
 function rowAriaLabel(item, isCurrent) {
-  const titleLabel = item.guestLabel ? `${queueTitle(item)}, added by ${item.guestLabel}` : queueTitle(item);
+  const titleLabel = item.addedBy ? `${queueTitle(item)}, added by ${item.addedBy}` : queueTitle(item);
   return isCurrent ? `Currently playing: ${titleLabel}` : `Play track ${item.index + 1}: ${titleLabel}`;
 }
 
@@ -183,6 +185,6 @@ function fillRowText(li, item) {
   li.querySelector('.qnum').textContent = String(item.index + 1);
   li.querySelector('.qtitle').textContent = queueTitle(item);
   li.querySelector('.qartist').textContent = parts.join(' · ');
-  li.querySelector('.qguest').textContent = item.guestLabel ? `Added by ${item.guestLabel}` : '';
+  li.querySelector('.qguest').textContent = item.addedBy ? `Added by ${item.addedBy}` : '';
   li.querySelector('.qdur').textContent = item.duration ? formatTime(item.duration) : '';
 }

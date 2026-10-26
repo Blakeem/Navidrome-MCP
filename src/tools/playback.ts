@@ -630,11 +630,13 @@ export class EmptyLibrarySourceError extends Error {
 
 /**
  * The web remote is the only caller. Every browse source resolves to one row list, so the remote's
- * two shuffle toggles order every source the same way.
+ * two shuffle toggles order every source the same way. `onQueued` receives the loaded songs and
+ * their mpv ids, so the jukebox can label them as the host's.
  */
 export async function playLibrarySource(
   client: NavidromeClient,
   args: unknown,
+  onQueued?: (entryIds: readonly number[], songs: readonly QueueTrackMetadata[]) => void,
 ): Promise<PlaySongSetResult> {
   let parsed: LibraryPlayRequest;
   try {
@@ -656,7 +658,9 @@ export async function playLibrarySource(
 
     const ordered = orderQueueSongs(rows, { shuffleSongs, shuffleAlbums });
     const ids = ordered.map((row) => row.songId);
-    const { demoted, outputMissing } = await playbackEngine.enqueue(ids, mode, ordered.map(toQueueMetadata));
+    const songs = ordered.map(toQueueMetadata);
+    const { demoted, outputMissing, entryIds } = await playbackEngine.enqueue(ids, mode, songs);
+    onQueued?.(entryIds, songs);
 
     const out: PlaySongSetResult = {
       success: true,

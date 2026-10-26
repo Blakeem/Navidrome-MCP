@@ -388,7 +388,7 @@ describe('SseBroadcaster guest clients', () => {
         engineRunning: true, queueIndex: 0, queueLength: 1, paused: false, position: 12, duration: 200,
         songId: 'so-1', title: 'T', artist: 'A', album: 'Al',
       },
-      queue: { items: [{ index: 0, entryId: 7, songId: 'so-1', title: 'T', artist: 'A', duration: 200, isCurrent: true, mine: false }], length: 1 },
+      queue: { items: [{ index: 0, entryId: 7, songId: 'so-1', title: 'T', artist: 'A', duration: 200, isCurrent: true, mine: false, waiting: false }], length: 1 },
       visualizer: true,
       theme: null,
       jukebox: { ...JUKEBOX, limit: 3, remaining: 3 },
@@ -416,9 +416,9 @@ describe('SseBroadcaster guest clients', () => {
     expect(secondBase).toEqual(firstBase);
   });
 
-  it("marks only a guest's own unplayed songs, counts its slots, and names the guest on the host queue", async () => {
+  it("marks only a guest's own unplayed songs, counts its slots, and names the guest on both queues", async () => {
     const guests = new GuestQueue({ isRunning: () => true } as never, () => 2);
-    guests.ledger.record(8, { sessionId: 'session-1', song: { songId: 'so-2' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(8, { sessionId: 'session-1', song: { songId: 'so-2' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
     const b = newBroadcaster(guests);
     const inner = internals(b);
     const host = fakeRes();
@@ -445,21 +445,60 @@ describe('SseBroadcaster guest clients', () => {
     });
     const hostItems = (snapshotOf(host)['queue'] as { items: Array<Record<string, unknown>> }).items;
     expect(hostItems[0]).toMatchObject({ entryId: 7 });
-    expect(hostItems[0]).not.toHaveProperty('guestLabel');
-    expect(hostItems[0]).not.toHaveProperty('guestWaiting');
-    expect(hostItems[1]).toMatchObject({ entryId: 8, guestLabel: 'Ana', guestWaiting: true });
+    for (const field of ['addedBy', 'fromGuestPage', 'guestWaiting']) expect(hostItems[0]).not.toHaveProperty(field);
+    expect(hostItems[1]).toMatchObject({ entryId: 8, addedBy: 'Ana', fromGuestPage: true, guestWaiting: true });
     for (const guestView of [owner, other]) {
       const guestItems = (snapshotOf(guestView)['queue'] as { items: Array<Record<string, unknown>> }).items;
+      expect(guestItems[0]).not.toHaveProperty('addedBy');
+      expect(guestItems[1]).toHaveProperty('addedBy', 'Ana');
       for (const item of guestItems) {
-        expect(item).not.toHaveProperty('guestLabel');
+        expect(item).not.toHaveProperty('fromGuestPage');
         expect(item).not.toHaveProperty('guestWaiting');
       }
     }
   });
 
+  it('names an admin page song Host on both queues, as neither a guest page song nor a waiting one', async () => {
+    const guests = new GuestQueue({ isRunning: () => true } as never);
+    guests.labelAdminPageSongs([7], [{ songId: 'so-1' }]);
+    const b = newBroadcaster(guests);
+    const inner = internals(b);
+    const host = fakeRes();
+    const guest = fakeRes();
+    inner.clients.set(host, HOST_VIEW);
+    inner.clients.set(guest, { kind: 'guest', sessionId: 'session-1', jukebox: () => JUKEBOX });
+    primeReads();
+    playbackReads.getPlayQueueEntries.mockResolvedValue([{ index: 0, entryId: 7, songId: 'so-1', isCurrent: false, isPlaying: false }]);
+
+    await inner.broadcast();
+
+    const [hostItem] = (snapshotOf(host)['queue'] as { items: Array<Record<string, unknown>> }).items;
+    expect(hostItem).toMatchObject({ entryId: 7, addedBy: 'Host' });
+    expect(hostItem).not.toHaveProperty('fromGuestPage');
+    expect(hostItem).not.toHaveProperty('guestWaiting');
+    expect(snapshotOf(guest)).toMatchObject({ queue: { items: [{ entryId: 7, addedBy: 'Host', mine: false }] }, jukebox: { remaining: 3 } });
+  });
+
+  it('resends the queue to every guest when a nickname change relabels a song', async () => {
+    const guests = new GuestQueue({ isRunning: () => true } as never);
+    guests.ledger.record(7, { sessionId: 'session-1', song: { songId: 'so-1' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+    const b = newBroadcaster(guests);
+    const inner = internals(b);
+    const other = fakeRes();
+    inner.clients.set(other, { kind: 'guest', sessionId: 'session-2', jukebox: () => JUKEBOX });
+    primeReads();
+    playbackReads.getPlayQueueEntries.mockResolvedValue([{ index: 0, entryId: 7, songId: 'so-1', isCurrent: false, isPlaying: false }]);
+
+    await inner.broadcast();
+    guests.ledger.relabel('session-1', 'DJ Bo');
+    await inner.broadcast();
+
+    expect(snapshotsOf(other)[1]).toHaveProperty('queue.items.0.addedBy', 'DJ Bo');
+  });
+
   it('names the guest of a started song on the host queue but no longer counts it as waiting', async () => {
     const guests = new GuestQueue({ isRunning: () => true } as never);
-    guests.ledger.record(7, { sessionId: 'session-1', song: { songId: 'so-1' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(7, { sessionId: 'session-1', song: { songId: 'so-1' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
     guests.ledger.reconcile([{ index: 0, entryId: 7, songId: 'so-1', isCurrent: true, isPlaying: true }], false, 1, {
       generation: 0,
       pending: false,
@@ -475,7 +514,7 @@ describe('SseBroadcaster guest clients', () => {
     await inner.broadcast();
 
     const [item] = (snapshotOf(host)['queue'] as { items: Array<Record<string, unknown>> }).items;
-    expect(item).toMatchObject({ entryId: 7, guestLabel: 'Ana' });
+    expect(item).toMatchObject({ entryId: 7, addedBy: 'Ana', fromGuestPage: true });
     expect(item).not.toHaveProperty('guestWaiting');
   });
 
@@ -488,12 +527,24 @@ describe('SseBroadcaster guest clients', () => {
     inner.clients.set(owner, { kind: 'guest', sessionId: 'session-1', jukebox: () => JUKEBOX });
     inner.clients.set(other, { kind: 'guest', sessionId: 'session-2', jukebox: () => JUKEBOX });
     primeReads();
+    playbackReads.getPlayQueueEntries.mockResolvedValue([
+      { index: 0, entryId: 6, songId: 'so-0', isCurrent: true, isPlaying: true },
+      { index: 1, entryId: 7, songId: 'so-1', isCurrent: false, isPlaying: false },
+    ]);
+    guests.ledger.record(7, { sessionId: 'session-1', song: { songId: 'so-1' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
 
     await inner.broadcast();
-    guests.ledger.record(7, { sessionId: 'session-1', song: { songId: 'so-1' }, guestLabel: 'Ana', addedAt: 0 });
+    // The song plays once and the host goes back a song. It still waits after the current one, so only its owner's own songs change.
+    guests.ledger.reconcile([{ index: 1, entryId: 7, songId: 'so-1', isCurrent: true, isPlaying: true }], false, 1, {
+      generation: 0,
+      pending: false,
+      generationBeforeRead: 0,
+    });
     await inner.broadcast();
 
-    expect(snapshotsOf(owner)[1]).toHaveProperty('queue.items.0.mine', true);
+    expect(snapshotsOf(owner)[0]).toHaveProperty('queue.items.1.mine', true);
+    expect(snapshotsOf(owner)[1]).toHaveProperty('queue.items.1.mine', false);
+    expect(snapshotsOf(owner)[1]).toHaveProperty('queue.items.1.waiting', true);
     expect(snapshotsOf(other)[1]).not.toHaveProperty('queue');
   });
 

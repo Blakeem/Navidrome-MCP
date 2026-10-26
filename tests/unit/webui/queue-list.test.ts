@@ -4,18 +4,27 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-// The admin and guest queues share these rules, so a removal asks first only for a song a guest added.
+// The admin and guest queues share these rules, so an admin removal asks first only for a song added from the guest page.
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { canRemove, clearConfirmText, hasMoreWaiting, queueWindow, removeConfirmText, removeLabel, removeRefused } from '../../../src/webui/public/queue-list.js';
 
 const hostSong = { index: 1, entryId: 7, songId: 'so-1', title: 'Host Song' };
-const guestSong = { index: 2, entryId: 8, songId: 'so-2', title: 'Guest Song', guestLabel: 'Ana', guestWaiting: true };
+const guestSong = { index: 2, entryId: 8, songId: 'so-2', title: 'Guest Song', addedBy: 'Ana', fromGuestPage: true, guestWaiting: true };
+const adminPageSong = { index: 3, entryId: 9, songId: 'so-3', title: 'Admin Song', addedBy: 'Host' };
 
 describe('removeConfirmText', () => {
   it('removes a host or AI song for the admin at once', () => {
     expect(removeConfirmText(hostSong, 'admin')).toBeNull();
+  });
+
+  it('removes a song the admin page labeled Host at once', () => {
+    expect(removeConfirmText(adminPageSong, 'admin')).toBeNull();
+  });
+
+  it("asks the admin first for the host's own guest page song, which counts as a guest song", () => {
+    expect(removeConfirmText({ ...guestSong, addedBy: 'Host' }, 'admin')).toBe('Remove Guest Song? Host added it.');
   });
 
   it("asks the admin first for a guest's song and names the guest", () => {
@@ -27,7 +36,7 @@ describe('removeConfirmText', () => {
   });
 
   it('names an untitled song by the row fallback', () => {
-    expect(removeConfirmText({ index: 0, entryId: 3, songId: null, guestLabel: 'Bo' }, 'admin')).toBe('Remove Unknown title? Bo added it.');
+    expect(removeConfirmText({ index: 0, entryId: 3, songId: null, addedBy: 'Bo', fromGuestPage: true }, 'admin')).toBe('Remove Unknown title? Bo added it.');
   });
 
   it('names an untitled song of the guest as its own', () => {
@@ -73,13 +82,13 @@ describe('removeRefused', () => {
 
 describe('clearConfirmText', () => {
   it('clears at once while no guest song waits', () => {
-    expect(clearConfirmText([hostSong, { ...guestSong, guestWaiting: undefined }])).toBeNull();
+    expect(clearConfirmText([hostSong, adminPageSong, { ...guestSong, guestWaiting: undefined }])).toBeNull();
     expect(clearConfirmText([])).toBeNull();
   });
 
   it('asks first and counts the waiting guest songs', () => {
-    expect(clearConfirmText([hostSong, guestSong])).toBe('Clear the queue? 1 guest song is removed.');
-    expect(clearConfirmText([guestSong, { ...guestSong, entryId: 9 }])).toBe('Clear the queue? 2 guest songs are removed.');
+    expect(clearConfirmText([hostSong, adminPageSong, guestSong])).toBe('Clear the queue? 1 song added from the guest page is removed.');
+    expect(clearConfirmText([guestSong, { ...guestSong, entryId: 9 }])).toBe('Clear the queue? 2 songs added from the guest page are removed.');
   });
 });
 

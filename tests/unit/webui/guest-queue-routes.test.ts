@@ -9,8 +9,10 @@ import { join } from 'node:path';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { readSettings, writeSettings } from '../../../src/config/store.js';
 import { QueueEntryStartedError, type QueueEntry } from '../../../src/services/playback/playback-engine.js';
+import { logger } from '../../../src/utils/logger.js';
 import { getGuestQueueLimit, getJukeboxShareLink, setGuestQueueLimit, setJukeboxShareLink } from '../../../src/web/player-runtime.js';
-import type { GuestSession } from '../../../src/webui/auth/auth-store.js';
+import type { AdminSession, GuestSession } from '../../../src/webui/auth/auth-store.js';
+import { GuestLedger } from '../../../src/webui/jukebox/guest-ledger.js';
 import { GuestQueue } from '../../../src/webui/jukebox/guest-queue.js';
 import { handleQueueRemove } from '../../../src/webui/routes/controls.js';
 import { handleGuestAdd, handleGuestNickname, handleGuestRemove, handleGuestSearch } from '../../../src/webui/routes/guest-queue.js';
@@ -97,6 +99,7 @@ let client: MockNavidromeClient;
 let queue: QueueEntry[];
 let guests: GuestQueue;
 const ana = guestSession('session-ana', 'Ana');
+const LIVE = { isLiveJukeboxSession: () => true };
 
 beforeEach(() => {
   client = createMockClient();
@@ -119,7 +122,7 @@ describe('GET /api/guest/search', () => {
     ['101-character', 'a'.repeat(101)],
   ])('refuses a %s query with 400 and no Navidrome call', async (_label, rawQuery) => {
     const cap = fakeRes();
-    await handleGuestSearch(cap.res, asClient(), guests, ana, rawQuery);
+    await handleGuestSearch(cap.res, asClient(), guests, LIVE, ana, rawQuery);
 
     expect(cap.status()).toBe(400);
     expect(cap.json()['error']).toBe('Enter 1 to 100 characters to search.');
@@ -130,7 +133,7 @@ describe('GET /api/guest/search', () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [songRow('so-1')], total: 1 });
     const cap = fakeRes();
 
-    await handleGuestSearch(cap.res, asClient(), guests, ana, '  daft ');
+    await handleGuestSearch(cap.res, asClient(), guests, LIVE, ana, '  daft ');
 
     const endpoints = client.requestWithLibraryFilterAndMeta.mock.calls.map((call) => call[0]);
     expect(endpoints).toHaveLength(1);
@@ -142,12 +145,12 @@ describe('GET /api/guest/search', () => {
 
   it('allows 30 searches a minute per guest, then answers 429 with Retry-After', async () => {
     client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
-    for (let i = 0; i < 30; i++) await handleGuestSearch(fakeRes().res, asClient(), guests, ana, 'q');
+    for (let i = 0; i < 30; i++) await handleGuestSearch(fakeRes().res, asClient(), guests, LIVE, ana, 'q');
     const cap = fakeRes();
 
-    await handleGuestSearch(cap.res, asClient(), guests, ana, 'q');
+    await handleGuestSearch(cap.res, asClient(), guests, LIVE, ana, 'q');
     const other = fakeRes();
-    await handleGuestSearch(other.res, asClient(), guests, guestSession('session-bo'), 'q');
+    await handleGuestSearch(other.res, asClient(), guests, LIVE, guestSession('session-bo'), 'q');
 
     expect(cap.status()).toBe(429);
     expect(Number(cap.header('Retry-After'))).toBeGreaterThan(0);
@@ -157,24 +160,50 @@ describe('GET /api/guest/search', () => {
 
 describe('POST /api/guest/nickname', () => {
   it('answers 401 and writes nothing when the session ended while the body was read', async () => {
-    const auth = { isLiveGuest: vi.fn(() => false), takeNicknameToken: vi.fn(() => 0), setGuestNickname: vi.fn() };
+    const auth = { isLiveJukeboxSession: vi.fn(() => false), jukeboxNameConflict: vi.fn(() => null), takeNicknameToken: vi.fn(() => 0), setJukeboxNickname: vi.fn() };
     const relabel = vi.fn();
     const cap = fakeRes();
 
-    await handleGuestNickname(fakeReq({ nickname: 'Ana B' }), cap.res, auth, { relabel }, guestSession('session-ana', 'Ana'));
+    await handleGuestNickname(fakeReq({ nickname: 'Ana B' }), cap.res, auth, { relabel, ledger: new GuestLedger() }, guestSession('session-ana', 'Ana'));
 
     expect([cap.status(), cap.json()['code']]).toEqual([401, 'signed-out']);
-    expect(auth.isLiveGuest).toHaveBeenCalledWith('session-ana');
+    expect(auth.isLiveJukeboxSession).toHaveBeenCalledWith('session-ana');
     expect(auth.takeNicknameToken).not.toHaveBeenCalled();
-    expect(auth.setGuestNickname).not.toHaveBeenCalled();
+    expect(auth.setJukeboxNickname).not.toHaveBeenCalled();
     expect(relabel).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 with the name conflict for the trimmed name and spends no name change', async () => {
+    const taken = "Host is the host's name. Pick another nickname.";
+    const auth = { isLiveJukeboxSession: vi.fn(() => true), jukeboxNameConflict: vi.fn(() => taken), takeNicknameToken: vi.fn(() => 0), setJukeboxNickname: vi.fn() };
+    const relabel = vi.fn();
+    const cap = fakeRes();
+
+    await handleGuestNickname(fakeReq({ nickname: ' hOST ' }), cap.res, auth, { relabel, ledger: new GuestLedger() }, guestSession('session-ana', 'Ana'));
+
+    expect([cap.status(), cap.json()]).toEqual([400, { error: taken }]);
+    expect(auth.jukeboxNameConflict).toHaveBeenCalledWith('hOST', 'guest', { host: [], guest: [] });
+    expect(auth.takeNicknameToken).not.toHaveBeenCalled();
+    expect(auth.setJukeboxNickname).not.toHaveBeenCalled();
+    expect(relabel).not.toHaveBeenCalled();
+  });
+
+  it('answers a re-save of the stored name with 200 before the name check, so a name taken since then stays', async () => {
+    const auth = { isLiveJukeboxSession: vi.fn(() => true), jukeboxNameConflict: vi.fn(() => 'A guest already uses that name. Pick another nickname.'), takeNicknameToken: vi.fn(() => 0), setJukeboxNickname: vi.fn() };
+    const cap = fakeRes();
+
+    await handleGuestNickname(fakeReq({ nickname: 'DJ Bo' }), cap.res, auth, { relabel: vi.fn(), ledger: new GuestLedger() }, { id: 'session-host', role: 'admin', hostNickname: 'DJ Bo' } as AdminSession);
+
+    expect([cap.status(), cap.json()]).toEqual([200, { ok: true, nickname: 'DJ Bo' }]);
+    expect(auth.jukeboxNameConflict).not.toHaveBeenCalled();
+    expect(auth.takeNicknameToken).not.toHaveBeenCalled();
   });
 });
 
 describe('POST /api/guest/queue', () => {
-  async function add(songId: string, session = ana, isLiveGuest: (sessionId: string) => boolean = () => true): Promise<Captured> {
+  async function add(songId: string, session = ana, isLiveJukeboxSession: (sessionId: string) => boolean = () => true): Promise<Captured> {
     const cap = fakeRes();
-    await handleGuestAdd(fakeReq({ songId }), cap.res, asClient(), guests, { isLiveGuest }, session);
+    await handleGuestAdd(fakeReq({ songId }), cap.res, asClient(), guests, { isLiveJukeboxSession }, session);
     return cap;
   }
 
@@ -186,7 +215,7 @@ describe('POST /api/guest/queue', () => {
     expect(client.requestWithLibraryFilter).toHaveBeenCalledWith(expect.stringMatching(/^\/song\?id=so-1&/));
     expect(cap.status()).toBe(200);
     expect(cap.json()).toEqual({ ok: true, entryId: 50, remaining: 1 });
-    expect(guests.ledger.guestLabelOf(50)).toBe('Ana');
+    expect(guests.ledger.addedByOf(50)).toBe('Ana');
   });
 
   it('answers 404 for a song outside the active libraries', async () => {
@@ -209,8 +238,8 @@ describe('POST /api/guest/queue', () => {
 
   it('answers 429 limit once the guest holds the limit of unplayed songs', async () => {
     client.requestWithLibraryFilter.mockImplementation((endpoint: string) => Promise.resolve([songRow(new URL(endpoint, 'http://x').searchParams.get('id') ?? '')]));
-    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, guestLabel: 'Ana', addedAt: 0 });
-    guests.ledger.record(61, { sessionId: ana.id, song: { songId: 'so-61' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
+    guests.ledger.record(61, { sessionId: ana.id, song: { songId: 'so-61' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
     queue.push({ index: 1, entryId: 60, songId: 'so-60', isCurrent: false, isPlaying: false });
     queue.push({ index: 2, entryId: 61, songId: 'so-61', isCurrent: false, isPlaying: false });
 
@@ -219,6 +248,8 @@ describe('POST /api/guest/queue', () => {
     expect([cap.status(), cap.json()['code']]).toEqual([429, 'limit']);
     expect(cap.json()['error']).toContain('2 songs waiting');
     expect(cap.header('Retry-After')).toBeUndefined();
+    // The guest page sends a refusal with a wait again, so the limit refusal must carry none.
+    expect(cap.json()).not.toHaveProperty('retryAfterMs');
   });
 
   it('answers 409 duplicate for a song already waiting', async () => {
@@ -230,7 +261,7 @@ describe('POST /api/guest/queue', () => {
     expect([cap.status(), cap.json()['code']]).toEqual([409, 'duplicate']);
   });
 
-  it('answers 429 with Retry-After for a second add within 5 seconds', async () => {
+  it('answers 429 with Retry-After and the wait the guest page retries after for a second add within 5 seconds', async () => {
     client.requestWithLibraryFilter.mockImplementation((endpoint: string) => Promise.resolve([songRow(new URL(endpoint, 'http://x').searchParams.get('id') ?? '')]));
     await add('so-1');
 
@@ -238,6 +269,7 @@ describe('POST /api/guest/queue', () => {
 
     expect(cap.status()).toBe(429);
     expect(Number(cap.header('Retry-After'))).toBeGreaterThan(0);
+    expect(cap.json()['retryAfterMs']).toBeGreaterThan(0);
   });
 
   it('answers 502 and says the song was added when mpv reports no entry id', async () => {
@@ -254,12 +286,12 @@ describe('POST /api/guest/queue', () => {
 
   it('answers 401 and queues nothing when the session ended before the add ran', async () => {
     client.requestWithLibraryFilter.mockResolvedValue([songRow('so-1')]);
-    const isLiveGuest = vi.fn(() => false);
+    const isLiveJukeboxSession = vi.fn(() => false);
 
-    const cap = await add('so-1', ana, isLiveGuest);
+    const cap = await add('so-1', ana, isLiveJukeboxSession);
 
     expect([cap.status(), cap.json()['code']]).toEqual([401, 'signed-out']);
-    expect(isLiveGuest).toHaveBeenCalledWith(ana.id);
+    expect(isLiveJukeboxSession).toHaveBeenCalledWith(ana.id);
     expect(queue.map((queued) => queued.songId)).toEqual(['host-song']);
     expect(guests.ledger.isEmpty()).toBe(true);
   });
@@ -282,14 +314,14 @@ describe('POST /api/guest/queue', () => {
 });
 
 describe('POST /api/guest/queue/remove', () => {
-  async function remove(entryId: unknown, session = ana, isLiveGuest: (sessionId: string) => boolean = () => true): Promise<Captured> {
+  async function remove(entryId: unknown, session = ana, isLiveJukeboxSession: (sessionId: string) => boolean = () => true): Promise<Captured> {
     const cap = fakeRes();
-    await handleGuestRemove(fakeReq({ entryId }), cap.res, guests, { isLiveGuest }, session);
+    await handleGuestRemove(fakeReq({ entryId }), cap.res, guests, { isLiveJukeboxSession }, session);
     return cap;
   }
 
   beforeEach(() => {
-    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
     queue.push({ index: 1, entryId: 60, songId: 'so-60', isCurrent: false, isPlaying: false });
   });
 
@@ -304,15 +336,15 @@ describe('POST /api/guest/queue/remove', () => {
   it('answers 401 and removes nothing when the session ended while the body was read', async () => {
     const engine = fakeEngine(queue);
     guests = new GuestQueue(engine as never, () => 2);
-    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, guestLabel: 'Ana', addedAt: 0 });
-    const isLiveGuest = vi.fn(() => false);
+    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
+    const isLiveJukeboxSession = vi.fn(() => false);
     const onChange = vi.fn();
     guests.watch(onChange);
 
-    const cap = await remove(60, ana, isLiveGuest);
+    const cap = await remove(60, ana, isLiveJukeboxSession);
 
     expect([cap.status(), cap.json()['code']]).toEqual([401, 'signed-out']);
-    expect(isLiveGuest).toHaveBeenCalledWith(ana.id);
+    expect(isLiveJukeboxSession).toHaveBeenCalledWith(ana.id);
     expect(engine['getQueue']).not.toHaveBeenCalled();
     expect(queue.map((queued) => queued.entryId)).toEqual([1, 60]);
     expect(guests.ledger.ownerOf(60)).toBe(ana.id);
@@ -320,13 +352,13 @@ describe('POST /api/guest/queue/remove', () => {
   });
 
   it('answers 401 and removes nothing when the session ended while the queue was read', async () => {
-    const isLiveGuest = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    const isLiveJukeboxSession = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
 
-    const cap = await remove(60, ana, isLiveGuest);
+    const cap = await remove(60, ana, isLiveJukeboxSession);
 
     expect([cap.status(), cap.json()['code']]).toEqual([401, 'signed-out']);
     expect(cap.json()['error']).toContain('song was not removed');
-    expect(isLiveGuest).toHaveBeenCalledTimes(2);
+    expect(isLiveJukeboxSession).toHaveBeenCalledTimes(2);
     expect(queue.map((queued) => queued.entryId)).toEqual([1, 60]);
     expect(guests.ledger.ownerOf(60)).toBe(ana.id);
   });
@@ -355,7 +387,7 @@ describe('POST /api/guest/queue/remove', () => {
       return Promise.resolve(false);
     });
     guests = new GuestQueue(engine as never, () => 2);
-    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
 
     expect((await remove(60)).status()).toBe(404);
     expect(guests.ledger.ownerOf(60)).toBe(ana.id);
@@ -363,6 +395,137 @@ describe('POST /api/guest/queue/remove', () => {
 
   it.each([-1, 1.5, '60'])('answers 400 for entry id %s', async (entryId) => {
     expect((await remove(entryId)).status()).toBe(400);
+  });
+});
+
+describe('the host on the guest page', () => {
+  const host = { id: 'session-host', role: 'admin', hostNickname: null } as AdminSession;
+  const NO_CODE = { isLiveJukeboxSession: () => false };
+
+  function hostAdd(songId: string, session: AdminSession = host): Promise<Captured> {
+    const cap = fakeRes();
+    return handleGuestAdd(fakeReq({ songId }), cap.res, asClient(), guests, LIVE, session).then(() => cap);
+  }
+
+  beforeEach(() => {
+    client.requestWithLibraryFilter.mockImplementation((endpoint: string) => Promise.resolve([songRow(new URL(endpoint, 'http://x').searchParams.get('id') ?? '')]));
+  });
+
+  it('adds under its admin session id, labeled Host, logged as the host, and counts toward its own limit', async () => {
+    const info = vi.spyOn(logger, 'info');
+
+    const cap = await hostAdd('so-1');
+
+    expect(cap.json()).toEqual({ ok: true, entryId: 50, remaining: 1 });
+    expect(guests.ledger.ownerOf(50)).toBe(host.id);
+    expect(guests.ledger.addedByOf(50)).toBe('Host');
+    expect(guests.counts(host.id).remaining).toBe(1);
+    expect(guests.counts(ana.id).remaining).toBe(2);
+    expect(info).toHaveBeenCalledWith('webui: the host added a song to the queue');
+    expect(info.mock.calls.flat().join(' ')).not.toContain(host.id);
+    info.mockRestore();
+  });
+
+  it('adds under its host nickname once it set one', async () => {
+    await hostAdd('so-1', { ...host, hostNickname: 'DJ Bo' });
+
+    expect(guests.ledger.addedByOf(50)).toBe('DJ Bo');
+  });
+
+  it('meets the guest song limit, the add rate and the duplicate rule', async () => {
+    guests.ledger.record(60, { sessionId: host.id, song: { songId: 'so-60' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+    guests.ledger.record(61, { sessionId: host.id, song: { songId: 'so-61' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+    queue.push({ index: 1, entryId: 60, songId: 'so-60', isCurrent: false, isPlaying: false });
+    queue.push({ index: 2, entryId: 61, songId: 'so-61', isCurrent: false, isPlaying: false });
+
+    const limited = await hostAdd('so-1');
+    guests.ledger.forget(61);
+    queue.pop();
+    const duplicate = await hostAdd('so-60');
+    const added = await hostAdd('so-2');
+    guests.ledger.forget(60);
+    const tooSoon = await hostAdd('so-3');
+
+    expect([limited.status(), limited.json()['code']]).toEqual([429, 'limit']);
+    expect([duplicate.status(), duplicate.json()['code']]).toEqual([409, 'duplicate']);
+    expect(added.status()).toBe(200);
+    expect(tooSoon.status()).toBe(429);
+    expect(Number(tooSoon.header('Retry-After'))).toBeGreaterThan(0);
+  });
+
+  it('meets the guest search rate under its own budget', async () => {
+    client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total: 0 });
+    for (let i = 0; i < 30; i++) await handleGuestSearch(fakeRes().res, asClient(), guests, LIVE, host, 'q');
+    const cap = fakeRes();
+    const guestCap = fakeRes();
+
+    await handleGuestSearch(cap.res, asClient(), guests, LIVE, host, 'q');
+    await handleGuestSearch(guestCap.res, asClient(), guests, LIVE, ana, 'q');
+
+    expect(cap.status()).toBe(429);
+    expect(guestCap.status()).toBe(200);
+  });
+
+  it("removes only its own waiting songs, never a guest's", async () => {
+    guests.ledger.record(60, { sessionId: host.id, song: { songId: 'so-60' }, addedBy: 'Host', byHost: true, addedAt: 0 });
+    guests.ledger.record(61, { sessionId: ana.id, song: { songId: 'so-61' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
+    queue.push({ index: 1, entryId: 60, songId: 'so-60', isCurrent: false, isPlaying: false });
+    queue.push({ index: 2, entryId: 61, songId: 'so-61', isCurrent: false, isPlaying: false });
+    const own = fakeRes();
+    const other = fakeRes();
+
+    await handleGuestRemove(fakeReq({ entryId: 60 }), own.res, guests, LIVE, host);
+    await handleGuestRemove(fakeReq({ entryId: 61 }), other.res, guests, LIVE, host);
+
+    expect([own.status(), own.json()]).toEqual([200, { ok: true, remaining: 2 }]);
+    expect(other.status()).toBe(404);
+    expect(queue.map((queued) => queued.entryId)).toEqual([1, 61]);
+  });
+
+  it('stores the host nickname and relabels its songs', async () => {
+    const auth = { isLiveJukeboxSession: vi.fn(() => true), jukeboxNameConflict: vi.fn(() => null), takeNicknameToken: vi.fn(() => 0), setJukeboxNickname: vi.fn() };
+    const session = { ...host };
+    auth.setJukeboxNickname.mockImplementation((target: AdminSession, nickname: string) => {
+      target.hostNickname = nickname;
+    });
+    const relabel = vi.fn();
+    const cap = fakeRes();
+
+    await handleGuestNickname(fakeReq({ nickname: 'DJ Bo' }), cap.res, auth, { relabel, ledger: new GuestLedger() }, session);
+
+    expect([cap.status(), cap.json()]).toEqual([200, { ok: true, nickname: 'DJ Bo' }]);
+    expect(auth.takeNicknameToken).toHaveBeenCalledWith(host.id);
+    expect(relabel).toHaveBeenCalledWith(host.id, 'DJ Bo');
+  });
+
+  it('lets the host take its own name as its nickname', async () => {
+    const auth = { isLiveJukeboxSession: vi.fn(() => true), jukeboxNameConflict: vi.fn(() => null), takeNicknameToken: vi.fn(() => 0), setJukeboxNickname: vi.fn() };
+    const cap = fakeRes();
+
+    await handleGuestNickname(fakeReq({ nickname: 'Host' }), cap.res, auth, { relabel: vi.fn(), ledger: new GuestLedger() }, { ...host });
+
+    expect([cap.status(), cap.json()]).toEqual([200, { ok: true, nickname: 'Host' }]);
+    expect(auth.setJukeboxNickname).toHaveBeenCalledOnce();
+  });
+
+  it('answers each route with the signed-out refusal while no code is live, and reaches no library or queue', async () => {
+    const search = fakeRes();
+    const add = fakeRes();
+    const remove = fakeRes();
+    const rename = fakeRes();
+    const nicknameAuth = { ...NO_CODE, jukeboxNameConflict: vi.fn(() => null), takeNicknameToken: vi.fn(() => 0), setJukeboxNickname: vi.fn() };
+
+    await handleGuestSearch(search.res, asClient(), guests, NO_CODE, host, 'q');
+    await handleGuestAdd(fakeReq({ songId: 'so-1' }), add.res, asClient(), guests, NO_CODE, host);
+    await handleGuestRemove(fakeReq({ entryId: 60 }), remove.res, guests, NO_CODE, host);
+    await handleGuestNickname(fakeReq({ nickname: 'DJ Bo' }), rename.res, nicknameAuth, { relabel: vi.fn(), ledger: new GuestLedger() }, host);
+
+    for (const cap of [search, add, remove, rename]) expect([cap.status(), cap.json()['code']]).toEqual([401, 'signed-out']);
+    expect(search.json()['error']).toBe('You are no longer signed in to the jukebox, so the search did not run.');
+    expect(client.requestWithLibraryFilterAndMeta).not.toHaveBeenCalled();
+    expect(client.requestWithLibraryFilter).not.toHaveBeenCalled();
+    expect(nicknameAuth.setJukeboxNickname).not.toHaveBeenCalled();
+    expect(queue.map((queued) => queued.entryId)).toEqual([1]);
   });
 });
 
@@ -374,7 +537,7 @@ describe('POST /api/controls/queue/remove', () => {
   }
 
   beforeEach(() => {
-    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
     queue.push(
       { index: 1, entryId: 60, songId: 'so-60', isCurrent: false, isPlaying: false },
       { index: 2, entryId: 61, songId: 'host-next', isCurrent: false, isPlaying: false },
@@ -401,6 +564,40 @@ describe('POST /api/controls/queue/remove', () => {
     expect(guests.counts(ana.id).remaining).toBe(2);
   });
 
+  it('removes a song the admin page labeled Host, names no guest in the log, and drops the label', async () => {
+    guests.labelAdminPageSongs([61], [{ songId: 'host-next' }]);
+    const info = vi.spyOn(logger, 'info');
+
+    const cap = await hostRemove(61);
+
+    expect(cap.status()).toBe(200);
+    expect(queue.map((queued) => queued.entryId)).toEqual([1, 60]);
+    expect(guests.ledger.addedByOf(61)).toBeNull();
+    expect(info).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('removes its own guest page song from the admin page with no log line that names its nickname', async () => {
+    guests.ledger.record(61, { sessionId: 'session-host', song: { songId: 'host-next' }, addedBy: 'DJ Bo', byHost: true, addedAt: 0 });
+    const info = vi.spyOn(logger, 'info');
+
+    const cap = await hostRemove(61);
+
+    expect(cap.status()).toBe(200);
+    expect(queue.map((queued) => queued.entryId)).toEqual([1, 60]);
+    expect(info).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it("logs the guest's name when the host removes a guest's song", async () => {
+    const info = vi.spyOn(logger, 'info');
+
+    expect((await hostRemove(60)).status()).toBe(200);
+
+    expect(info).toHaveBeenCalledWith('webui: the host removed a song Ana added from the queue');
+    info.mockRestore();
+  });
+
   it('answers 404 for an entry the queue no longer holds', async () => {
     const cap = await hostRemove(99);
 
@@ -420,7 +617,7 @@ describe('POST /api/controls/queue/remove', () => {
     const engine = fakeEngine(queue);
     engine['removeQueueEntryById'] = vi.fn(() => Promise.resolve(false));
     guests = new GuestQueue(engine as never, () => 2);
-    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
 
     expect((await hostRemove(60)).status()).toBe(404);
     expect(guests.ledger.ownerOf(60)).toBeNull();
@@ -431,7 +628,7 @@ describe('POST /api/controls/queue/remove', () => {
     engine['isRunning'] = () => false;
     engine['removeQueueEntryById'] = vi.fn(() => Promise.resolve(false));
     guests = new GuestQueue(engine as never, () => 2);
-    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, guestLabel: 'Ana', addedAt: 0 });
+    guests.ledger.record(60, { sessionId: ana.id, song: { songId: 'so-60' }, addedBy: 'Ana', byHost: false, addedAt: 0 });
 
     expect((await hostRemove(60)).status()).toBe(404);
     expect(guests.ledger.ownerOf(60)).toBe(ana.id);

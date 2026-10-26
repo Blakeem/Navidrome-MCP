@@ -8,13 +8,15 @@ import type { Config } from '../../../src/config.js';
 import { logger, redact } from '../../../src/utils/logger.js';
 import { hashPassword, randomToken, verifyPassword } from '../../../src/utils/secrets.js';
 import { AuthService } from '../../../src/webui/auth/auth-service.js';
-import { getAuthStorePath, readAuthFile, readAuthFileWithStatus, writeAuthFile, type SessionRecord } from '../../../src/webui/auth/auth-store.js';
+import type { QueuedNames } from '../../../src/webui/jukebox/jukebox-names.js';
+import { getAuthStorePath, readAuthFile, readAuthFileWithStatus, writeAuthFile, type AdminSession, type SessionRecord } from '../../../src/webui/auth/auth-store.js';
 import { deviceCookieName, readCookieValues, sessionCookieName } from '../../../src/webui/auth/session-cookie.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PORT = makeTestConfig().webui.port;
 const PASSWORD = 'correct horse battery';
+const NO_QUEUED_NAMES = (): QueuedNames => ({ host: [], guest: [] });
 
 function newDeviceId(): string {
   return randomToken(16);
@@ -316,6 +318,28 @@ describe('AuthService streams', () => {
     expect(expiring.destroyed).toBe(true);
     expect(closedEarly.destroyed).toBe(false);
   });
+
+  it("ends only the host's guest page stream when the jukebox closes or expires, with the same reason", () => {
+    const time = clock();
+    const service = new AuthService(jukeboxConfig(), { now: time.now });
+    const admin = service.createSession('127.0.0.1').session;
+    service.createJukeboxCode(1, false);
+    const closedPage = new FakeStream();
+    const player = new FakeStream();
+    service.trackStream(admin.id, closedPage as unknown as ServerResponse, '127.0.0.1', true);
+    service.trackStream(admin.id, player as unknown as ServerResponse, '127.0.0.1');
+
+    service.revokeJukeboxCode();
+    service.createJukeboxCode(1, false);
+    const expiredPage = new FakeStream();
+    service.trackStream(admin.id, expiredPage as unknown as ServerResponse, '127.0.0.1', true);
+    time.advance(60 * 60 * 1000);
+    service.sweep();
+
+    expect(closedPage.written).toEqual([endedFrame('closed')]);
+    expect(expiredPage.written).toEqual([endedFrame('expired')]);
+    expect([player.written, player.destroyed]).toEqual([[], false]);
+  });
 });
 
 describe('AuthService persistence', () => {
@@ -328,7 +352,7 @@ describe('AuthService persistence', () => {
     expect(file.version).toBe(1);
     expect(file.sessions).toEqual([session]);
     expect(Object.keys(session).sort()).toEqual(
-      ['createdAt', 'credentialEpoch', 'csrfToken', 'expiresAt', 'id', 'lastAddress', 'lastSeenAt', 'role', 'secretDigest'],
+      ['createdAt', 'credentialEpoch', 'csrfToken', 'expiresAt', 'hostNickname', 'id', 'lastAddress', 'lastSeenAt', 'role', 'secretDigest'],
     );
     expect(session.credentialEpoch).toMatch(/^[0-9a-f]{16}$/);
     if (process.platform !== 'win32') expect(statSync(getAuthStorePath(PORT)).mode & 0o777).toBe(0o600);
@@ -484,7 +508,7 @@ describe('AuthService jukebox code and guest sessions', () => {
   const HOUR_MS = 60 * 60 * 1000;
 
   function joinGuest(service: AuthService, key: string, nickname: string | null = null): { token: string; label: string; id: string } {
-    const result = service.join(key, nickname, '192.168.1.50', null, newDeviceId());
+    const result = service.join(key, nickname, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES);
     if (result.kind !== 'joined') throw new Error(`join failed: ${result.kind}`);
     return { token: result.token, label: result.session.label, id: result.session.id };
   }
@@ -535,7 +559,7 @@ describe('AuthService jukebox code and guest sessions', () => {
     const first = joinGuest(service, key);
     const second = joinGuest(service, key, 'Ana');
 
-    expect(service.join('not-the-key', null, '192.168.1.50', null, newDeviceId())).toEqual({ kind: 'invalid' });
+    expect(service.join('not-the-key', null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES)).toEqual({ kind: 'invalid' });
     expect([first.label, second.label]).toEqual(['Guest 1', 'Guest 2']);
     expect(service.findSession(requestWithCookie(cookieFor(service, second.token)))).toMatchObject({ role: 'guest', nickname: 'Ana' });
     expect(service.jukeboxStatus().guestCount).toBe(2);
@@ -544,7 +568,7 @@ describe('AuthService jukebox code and guest sessions', () => {
   it('refuses every join while no key is active', () => {
     const service = new AuthService(jukeboxConfig());
 
-    expect(service.join('', null, '192.168.1.50', null, newDeviceId())).toEqual({ kind: 'invalid' });
+    expect(service.join('', null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES)).toEqual({ kind: 'invalid' });
     expect(service.jukeboxStatus()).toEqual({ active: false, createdAt: null, expiresAt: null, guestCount: 0 });
   });
 
@@ -576,7 +600,7 @@ describe('AuthService jukebox code and guest sessions', () => {
     const current = service.findSession(requestWithCookie(cookieFor(service, token)));
     if (current?.role !== 'guest') throw new Error('no guest session');
 
-    const again = service.join(key, 'Bo', '192.168.1.50', current, newDeviceId());
+    const again = service.join(key, 'Bo', '192.168.1.50', current, newDeviceId(), NO_QUEUED_NAMES);
     service.flush();
 
     expect(again).toMatchObject({ kind: 'kept', session: { id: current.id, nickname: 'Ana', label: 'Guest 1' } });
@@ -596,11 +620,11 @@ describe('AuthService jukebox code and guest sessions', () => {
       return stored?.role === 'guest' ? stored.nickname : undefined;
     };
 
-    for (let i = 0; i < 4; i++) service.setGuestNickname(current, i % 2 === 0 ? 'Bo' : 'Cy');
+    for (let i = 0; i < 4; i++) service.setJukeboxNickname(current, i % 2 === 0 ? 'Bo' : 'Cy');
     expect(storedNickname()).toBeNull();
 
     time.advance(5 * 60_000);
-    service.setGuestNickname(current, 'Di');
+    service.setJukeboxNickname(current, 'Di');
     expect(storedNickname()).toBe('Di');
   });
 
@@ -609,7 +633,7 @@ describe('AuthService jukebox code and guest sessions', () => {
     const { key } = service.createJukeboxCode(24, false);
     for (let i = 0; i < 100; i++) joinGuest(service, key);
 
-    expect(service.join(key, null, '192.168.1.50', null, newDeviceId())).toEqual({ kind: 'full' });
+    expect(service.join(key, null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES)).toEqual({ kind: 'full' });
   });
 
   it('slides a guest idle expiry by a day, never past the key expiry', () => {
@@ -681,7 +705,7 @@ describe('AuthService jukebox code and guest sessions', () => {
     const later = joinGuest(service, rotated.key);
 
     expect(rotated.rotated).toBe(true);
-    expect(service.join(first.key, null, '192.168.1.50', null, newDeviceId())).toEqual({ kind: 'invalid' });
+    expect(service.join(first.key, null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES)).toEqual({ kind: 'invalid' });
     expect(service.findSession(requestWithCookie(cookieFor(service, kept.token)))).not.toBeNull();
     expect(later.label).toBe('Guest 2');
 
@@ -778,6 +802,66 @@ describe('AuthService jukebox code and guest sessions', () => {
     expect(service.guestJukeboxFor('gone')).toBeNull();
   });
 
+  it('gives an admin session the host view only while a code is live, under a host nickname a restart keeps', () => {
+    const time = clock();
+    const service = new AuthService(jukeboxConfig(), { now: time.now });
+    const admin = service.createSession('127.0.0.1').session;
+
+    expect(admin.hostNickname).toBeNull();
+    expect(service.guestJukeboxFor(admin.id)).toBeNull();
+    expect(service.isLiveJukeboxSession(admin.id)).toBe(false);
+
+    service.createJukeboxCode(24, false);
+    service.setJukeboxNickname(admin, 'DJ Bo');
+    service.flush();
+    const restarted = new AuthService(jukeboxConfig(), { now: time.now });
+    restarted.claimStore();
+
+    expect(service.isLiveJukeboxSession(admin.id)).toBe(true);
+    expect(restarted.guestJukeboxFor(admin.id)).toMatchObject({ label: 'Host', nickname: 'DJ Bo' });
+    service.revokeJukeboxCode();
+    expect(service.guestJukeboxFor(admin.id)).toBeNull();
+    expect(service.isLiveJukeboxSession(admin.id)).toBe(false);
+  });
+
+  it('keeps the host view through an expiry until the sweep, so the sweep ends the host stream with its reason', () => {
+    const time = clock();
+    const service = new AuthService(jukeboxConfig(), { now: time.now });
+    const admin = service.createSession('127.0.0.1').session;
+    service.createJukeboxCode(1, false);
+
+    time.advance(60 * 60 * 1000 + 1);
+
+    expect(service.isLiveJukeboxSession(admin.id)).toBe(false);
+    expect(service.guestJukeboxFor(admin.id)).toMatchObject({ label: 'Host' });
+    service.sweep();
+    expect(service.guestJukeboxFor(admin.id)).toBeNull();
+  });
+
+  it('keeps the host identity through a new code that signs every guest out', () => {
+    const service = new AuthService(jukeboxConfig());
+    const admin = service.createSession('127.0.0.1').session;
+    const { key } = service.createJukeboxCode(24, false);
+    const guest = joinGuest(service, key);
+    service.setJukeboxNickname(admin, 'DJ Bo');
+
+    service.createJukeboxCode(24, true);
+
+    expect(service.isLiveJukeboxSession(guest.id)).toBe(false);
+    expect(service.isLiveJukeboxSession(admin.id)).toBe(true);
+    expect(service.guestJukeboxFor(admin.id)?.nickname).toBe('DJ Bo');
+    expect(service.listGuests()).toEqual([]);
+  });
+
+  it('reads an admin session stored before host nicknames existed as having none', () => {
+    const service = new AuthService(jukeboxConfig());
+    const legacy: Partial<AdminSession> = { ...service.createSession('127.0.0.1').session };
+    delete legacy.hostNickname;
+    writeAuthFile(PORT, { version: 1, sessions: [legacy as AdminSession], envAdminHash: null });
+
+    expect(readAuthFile(PORT).sessions[0]).toMatchObject({ role: 'admin', hostNickname: null });
+  });
+
   it('allows 10 joins an hour from an internet network and 60 from a LAN one', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
@@ -796,7 +880,7 @@ describe('AuthService guest management and bans', () => {
   const HOST = '127.0.0.1';
 
   function joinFrom(service: AuthService, key: string, address: string, nickname: string | null = null): string {
-    const result = service.join(key, nickname, address, null, newDeviceId());
+    const result = service.join(key, nickname, address, null, newDeviceId(), NO_QUEUED_NAMES);
     if (result.kind !== 'joined') throw new Error(`join failed: ${result.kind}`);
     return result.session.id;
   }
@@ -934,14 +1018,14 @@ describe('AuthService guest management and bans', () => {
     const id = joinFrom(service, key, '192.168.1.50');
     const stream = new FakeStream();
     service.trackStream(id, stream as unknown as ServerResponse, '192.168.1.50');
-    expect(service.isLiveGuest(id)).toBe(true);
+    expect(service.isLiveJukeboxSession(id)).toBe(true);
 
     expect(service.signOutGuest(id)?.id).toBe(id);
-    expect(service.isLiveGuest(id)).toBe(false);
+    expect(service.isLiveJukeboxSession(id)).toBe(false);
     expect(stream.written).toEqual([endedFrame('removed')]);
     expect(service.listGuests()).toEqual([]);
     expect(readAuthFile(PORT).sessions).toEqual([]);
-    expect(service.join(key, null, '192.168.1.50', null, newDeviceId()).kind).toBe('joined');
+    expect(service.join(key, null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES).kind).toBe('joined');
   });
 
   it('refuses to sign out or ban an admin session or an unknown id', () => {
@@ -1023,7 +1107,7 @@ describe('AuthService guest management and bans', () => {
   it('refuses a banned browser with any key before minting a session, and admits it again once the ban is lifted', () => {
     const { service, key } = jukeboxAt();
     const deviceId = newDeviceId();
-    const joined = service.join(key, null, '192.168.1.50', null, deviceId);
+    const joined = service.join(key, null, '192.168.1.50', null, deviceId, NO_QUEUED_NAMES);
     if (joined.kind !== 'joined') throw new Error(`join failed: ${joined.kind}`);
     expect(joined.session.deviceId).toBe(deviceId);
 
@@ -1031,18 +1115,18 @@ describe('AuthService guest management and bans', () => {
     const ban = service.listBans()[0];
 
     expect(ban).toMatchObject({ kind: 'guest', deviceId });
-    expect(service.join(key, null, '192.168.1.50', null, deviceId)).toEqual({ kind: 'banned' });
-    expect(service.join('not-the-key', null, '192.168.1.50', null, deviceId)).toEqual({ kind: 'banned' });
+    expect(service.join(key, null, '192.168.1.50', null, deviceId, NO_QUEUED_NAMES)).toEqual({ kind: 'banned' });
+    expect(service.join('not-the-key', null, '192.168.1.50', null, deviceId, NO_QUEUED_NAMES)).toEqual({ kind: 'banned' });
     expect(service.jukeboxStatus().guestCount).toBe(0);
-    expect(service.join(key, null, '192.168.1.50', null, newDeviceId()).kind).toBe('joined');
+    expect(service.join(key, null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES).kind).toBe('joined');
     service.liftBan(ban?.id ?? '');
-    expect(service.join(key, null, '192.168.1.50', null, deviceId).kind).toBe('joined');
+    expect(service.join(key, null, '192.168.1.50', null, deviceId, NO_QUEUED_NAMES).kind).toBe('joined');
   });
 
   it('stores the device id on the guest ban only', () => {
     const { service, key } = jukeboxAt();
     const deviceId = newDeviceId();
-    const joined = service.join(key, null, '203.0.113.5', null, deviceId);
+    const joined = service.join(key, null, '203.0.113.5', null, deviceId, NO_QUEUED_NAMES);
     if (joined.kind !== 'joined') throw new Error(`join failed: ${joined.kind}`);
 
     service.banGuest(joined.session.id, 1, HOST);
@@ -1185,7 +1269,7 @@ describe('AuthService guest management and bans', () => {
     const jukeboxAgain = new AuthService(jukeboxConfig(), { now: time.now });
     jukeboxAgain.claimStore();
     expect(jukeboxAgain.hasJukeboxCode()).toBe(false);
-    expect(jukeboxAgain.join(key, null, '192.168.1.50', null, newDeviceId())).toEqual({ kind: 'invalid' });
+    expect(jukeboxAgain.join(key, null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES)).toEqual({ kind: 'invalid' });
   });
 
   it('drops the jukebox code, its guests and the guest bans on a start in mode none, and keeps the admin sessions', () => {
@@ -1207,7 +1291,7 @@ describe('AuthService guest management and bans', () => {
     const jukeboxAgain = new AuthService(jukeboxConfig(), { now: time.now });
     jukeboxAgain.claimStore();
     expect(jukeboxAgain.hasJukeboxCode()).toBe(false);
-    expect(jukeboxAgain.join(key, null, '192.168.1.50', null, newDeviceId())).toEqual({ kind: 'invalid' });
+    expect(jukeboxAgain.join(key, null, '192.168.1.50', null, newDeviceId(), NO_QUEUED_NAMES)).toEqual({ kind: 'invalid' });
     expect(jukeboxAgain.findSession(requestWithCookie(cookieFor(jukeboxAgain, admin.token)))?.id).toBe(admin.session.id);
   });
 
@@ -1257,7 +1341,7 @@ describe('AuthService guest management and bans', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('jukebox starts closed'));
     expect(reader.hasJukeboxCode()).toBe(false);
     expect(reader.findSession(requestWithCookie(cookieFor(reader, admin.token)))).toMatchObject({ id: admin.session.id });
-    expect(reader.isLiveGuest(guest)).toBe(false);
+    expect(reader.isLiveJukeboxSession(guest)).toBe(false);
     expect(reader.isNetworkBanned('203.0.113.5')).toBe(true);
     expect(readAuthFile(PORT)).toMatchObject({ jukeboxCode: null, sessions: [expect.objectContaining({ id: admin.session.id })] });
     expect(readAuthFile(PORT).bans.map((ban) => ban.kind)).toEqual(['network']);

@@ -16,10 +16,10 @@ import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { SseBroadcaster } from './broadcaster.js';
-import { MAX_GUESTS_PER_CODE, type AuthService } from './auth/auth-service.js';
+import { endGuestStream, MAX_GUESTS_PER_CODE, type AuthService } from './auth/auth-service.js';
 import { authorize, resolvePrincipal, type Principal } from './auth/principal.js';
 import { JOIN_ROUTE_PATH } from './auth/session-cookie.js';
-import type { GuestSession } from './auth/auth-store.js';
+import type { SessionRecord } from './auth/auth-store.js';
 import type { Permission } from './auth/roles.js';
 import {
   isCrossOriginPost,
@@ -306,7 +306,7 @@ function admitStream({ deps, principal, req, res, streams }: RouteContext, route
     res.end();
     return false;
   }
-  if (sessionId !== null) deps.auth.trackStream(sessionId, res, address);
+  if (sessionId !== null) deps.auth.trackStream(sessionId, res, address, route === '/api/guest/events');
   return true;
 }
 
@@ -324,21 +324,33 @@ function sessionIdOf(principal: Principal): string | null {
   return principal.kind === 'admin' || principal.kind === 'guest' ? principal.session.id : null;
 }
 
-/** `jukebox.view` admits only an admin or a guest session, so this check never refuses a request the dispatcher passed. */
+/**
+ * `jukebox.view` admits only an admin or a guest session, so the first check never refuses a request the
+ * dispatcher passed. An admin session with no live code ends its stream as a closed jukebox, so the
+ * host's guest page stops reconnecting and shows the closed card.
+ */
 function serveGuestEvents(ctx: RouteContext): Promise<void> | void {
   const sessionId = sessionIdOf(ctx.principal);
   if (sessionId === null) {
     writeError(ctx.res, 403, 'Forbidden');
     return;
   }
+  if (ctx.deps.auth.guestJukeboxFor(sessionId) === null) {
+    openSseStream(ctx.res, REFUSED_STREAM_RETRY_MS);
+    endGuestStream(ctx.res, 'closed');
+    return;
+  }
   if (!admitStream(ctx, '/api/guest/events')) return;
   return handleGuestEvents(ctx.res, ctx.deps.broadcaster, sessionId, () => ctx.deps.auth.guestJukeboxFor(sessionId));
 }
 
-/** `jukebox.queue` admits only a guest session, so this check never refuses a request the dispatcher passed. */
-function guestRoute(handle: (ctx: RouteContext, session: GuestSession) => Promise<void>): (ctx: RouteContext) => Promise<void> | void {
+/**
+ * `jukebox.queue` admits only a guest session, or an admin session that queues as the host, so this check
+ * never refuses a request the dispatcher passed.
+ */
+function guestRoute(handle: (ctx: RouteContext, session: SessionRecord) => Promise<void>): (ctx: RouteContext) => Promise<void> | void {
   return (ctx) => {
-    if (ctx.principal.kind !== 'guest') {
+    if (ctx.principal.kind !== 'guest' && ctx.principal.kind !== 'admin') {
       writeError(ctx.res, 403, 'Forbidden');
       return;
     }
@@ -360,6 +372,11 @@ function serveAdminPage({ res }: RouteContext): Promise<void> {
 // Old bookmarks name the file, which now has its own path.
 function redirectToAdminPage({ res }: RouteContext): void {
   writeRedirect(res, ADMIN_PAGE_PATH);
+}
+
+/** Mode `jukebox` labels an admin session's adds as the host's, so guests see where they came from. */
+function labelsHostAdds(auth: Pick<AuthService, 'mode'>, principal: Principal): boolean {
+  return auth.mode === 'jukebox' && principal.kind === 'admin';
 }
 
 // Page routing only picks a page, since every `/api/` route checks its own access.
@@ -397,7 +414,7 @@ const ROUTES: readonly Route[] = [
   { method: 'GET',  path: ADMIN_PAGE_PATH,              access: 'public',          handle: serveAdminPage },
   { method: 'GET',  path: GUEST_PAGE_PATH,              access: 'public',          handle: serveGuestPage },
   { method: 'GET',  path: '/guest.html',                access: 'public',          handle: serveGuestPage },
-  { method: 'POST', path: JOIN_ROUTE_PATH,              access: 'public',          handle: ({ req, res, deps }) => handleJoin(req, res, deps.auth) },
+  { method: 'POST', path: JOIN_ROUTE_PATH,              access: 'public',          handle: ({ req, res, deps }) => handleJoin(req, res, deps.auth, deps.guests) },
 
   { method: 'GET',  path: '/api/events',                access: 'player.view',     handle: serveEvents },
   { method: 'GET',  path: '/api/player-state',          access: 'player.view',     handle: ({ req, res, deps }) => handlePlayerState(req, res, deps.config) },
@@ -405,7 +422,7 @@ const ROUTES: readonly Route[] = [
   { method: 'GET',  path: '/api/visualizer/modes',      access: 'player.media',    handle: ({ res }) => handleVisualizerModes(res) },
 
   { method: 'GET',  path: '/api/guest/events',          access: 'jukebox.view',    handle: serveGuestEvents },
-  { method: 'GET',  path: '/api/guest/search',          access: 'jukebox.queue',   handle: guestRoute(({ res, deps, url }, session) => handleGuestSearch(res, deps.client, deps.guests, session, url.searchParams.get('q'))) },
+  { method: 'GET',  path: '/api/guest/search',          access: 'jukebox.queue',   handle: guestRoute(({ res, deps, url }, session) => handleGuestSearch(res, deps.client, deps.guests, deps.auth, session, url.searchParams.get('q'))) },
   { method: 'POST', path: '/api/guest/queue',           access: 'jukebox.queue',   handle: guestRoute(({ req, res, deps }, session) => handleGuestAdd(req, res, deps.client, deps.guests, deps.auth, session)) },
   { method: 'POST', path: '/api/guest/queue/remove',    access: 'jukebox.queue',   handle: guestRoute(({ req, res, deps }, session) => handleGuestRemove(req, res, deps.guests, deps.auth, session)) },
   { method: 'POST', path: '/api/guest/nickname',        access: 'jukebox.queue',   handle: guestRoute(({ req, res, deps }, session) => handleGuestNickname(req, res, deps.auth, deps.guests, session)) },
@@ -431,7 +448,7 @@ const ROUTES: readonly Route[] = [
   { method: 'POST', path: '/api/controls/clear',        access: 'player.control',  handle: ({ res }) => handleClear(res) },
   { method: 'POST', path: '/api/controls/queue/remove', access: 'player.control',  handle: ({ req, res, deps }) => handleQueueRemove(req, res, deps.guests) },
   { method: 'POST', path: '/api/controls/shuffle',      access: 'player.control',  handle: ({ res }) => handleShuffle(res) },
-  { method: 'POST', path: '/api/library/play',          access: 'player.control',  handle: ({ req, res, deps }) => handleLibraryPlay(req, res, deps.client) },
+  { method: 'POST', path: '/api/library/play',          access: 'player.control',  handle: ({ req, res, deps, principal }) => handleLibraryPlay(req, res, deps.client, labelsHostAdds(deps.auth, principal) ? deps.guests : null) },
 
   { method: 'GET',  path: '/api/audio-devices',         access: 'player.output',   handle: ({ res }) => handleAudioDevices(res) },
   { method: 'POST', path: '/api/controls/audio-device', access: 'player.output',   handle: ({ req, res }) => handleAudioDevice(req, res) },

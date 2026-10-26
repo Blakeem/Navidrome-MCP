@@ -28,13 +28,16 @@ Reorder or shuffle the queue during playback without interrupting the current so
 
 A Raspberry Pi or an always-on machine with speech to text (such as Whisper) and text to speech works as a hands-free music player.
 
-### 🎛️ MPV Remote (Web UI)
+### 🎛️ Jukebox Remote (Web UI)
 
 > Requires `mpv`.
 
-A web player at `http://localhost:8808` controls local playback from any browser. It shows the current song with cover art, transport and seek controls, volume, and a live queue. Click a queue entry to jump to it, or press its remove button to take it out of the queue. The output button beside the volume slider picks the audio output. Enable **Expose on LAN** to use the player from a phone or tablet. [MPV Remote setup](#mpv-remote-setup) covers setup, lifetime, and security.
+A web player at `http://localhost:8808/admin` controls local playback from any browser. It shows the current song with cover art, transport and seek controls, volume, and a live queue. Click a queue entry to jump to it, or press its remove button to take it out of the queue. The output button beside the volume slider picks the audio output. Enable **Expose on LAN** to use the player from a phone or tablet. [Jukebox Remote Setup](#jukebox-remote-setup) covers setup, lifetime, and security.
 
-[![MPV Remote web interface](images/remote-small.png)](images/remote-large.png)
+<p>
+  <a href="images/remote-large.png"><img src="images/remote-small.png" alt="Jukebox Remote in a desktop browser" width="50%"></a>
+  <a href="images/remote-phone-large.png"><img src="images/remote-phone-small.png" alt="Jukebox Remote on a phone" width="47%"></a>
+</p>
 
 The **Play Music** window searches artists, albums, and songs. An artist expands to its albums, and an album to its songs. The window also starts any playlist, your starred songs, or your starred albums. Each pick adds to the queue or replaces it, with an option to shuffle songs or albums. So the page works as a remote without the assistant.
 
@@ -45,6 +48,12 @@ The **Play Music** window searches artists, albums, and songs. An artist expands
 > Requires `mpv` and the **Admin password and jukebox** access mode.
 
 Guests scan a QR code and add songs to the end of the queue from their phones. Each guest can have 3 songs waiting at a time, and you can change that limit. The jukebox code works for the time you pick, up to 90 days. Then every guest is signed out. The **Guests** dialog lists the guests and can remove or ban one. [Guest Jukebox Setup](#guest-jukebox-setup) covers setup and HTTPS.
+
+<p>
+  <a href="images/jukebox-code-large.png"><img src="images/jukebox-code-large.png" alt="Jukebox dialog with the QR code" width="30%"></a>
+  <a href="images/guest-phone-large.png"><img src="images/guest-phone-small.png" alt="Guest page on a phone" width="22%"></a>
+  <a href="images/guests-large.png"><img src="images/guests-large.png" alt="Guests dialog" width="45%"></a>
+</p>
 
 ### 🌈 Visualizer
 
@@ -310,7 +319,7 @@ These settings are optional.
 - **mpv path:** the mpv binary location if it's not on `PATH`. Blank auto-detects.
 - **Audio output:** the speaker or headphones mpv plays through. **System default** uses the output the operating system selects.
 - **Transcode format:** defaults to `raw`, which streams the original file for best quality and reliable seeking. Set a codec such as `mp3` or `opus` for slow or metered links. The bitrate applies only when a codec is set.
-- **Web Player:** the MPV Remote settings, listed in [Configuration](#configuration).
+- **Web Player:** the Jukebox Remote settings, listed in [Configuration](#configuration).
 - **Transport:** how MCP clients reach the server, described in [HTTP Transport](#http-transport).
 
 Settings load only at startup. To apply a change, quit and reopen the MCP client, or re-run `navidrome-web`. When upgrading from the old env setup, the form pre-fills from your shell environment and a `.env` file. The form sees the `env` block in your MCP client's JSON only when the MCP server opens the settings page itself. Otherwise re-enter those values, or export them in the shell before running `navidrome-config`.
@@ -366,7 +375,7 @@ choco install mpv
 
 A pre-built binary from [mpv.io](https://mpv.io/installation/) also works. Verify with `mpv --version`. Then restart your MCP client so the server finds mpv.
 
-### MPV Remote setup
+### Jukebox Remote Setup
 
 #### Player Lifetime
 
@@ -437,7 +446,7 @@ Every setting below except `webui.theme` is in the **Web Player** section of the
 
 1. Enable **Expose on LAN** in the settings page and Save.
 2. Restart the player as [Configuration](#configuration) describes.
-3. Open **Network info** in the player's gear modal to see its LAN URLs, such as `http://192.168.1.42:8808`. A player run from a terminal also prints them. Open one in your phone's browser and bookmark it.
+3. Open **Network info** in the player's gear modal to see its LAN URLs, such as `http://192.168.1.42:8808/admin`. A player run from a terminal also prints them. Open one in your phone's browser and bookmark it.
 
 #### Access Control
 
@@ -445,7 +454,7 @@ Every setting below except `webui.theme` is in the **Web Player** section of the
 
 - **Open** (`none`) is the default. It has no login, so anyone who reaches the port from the host, the LAN, or a VPN gets the features below.
 - **Admin password** (`password`) asks for the admin password on every browser, this computer included.
-- **Admin password and jukebox** (`jukebox`) also lets guests in with a code. They can only add songs, as [Guest Jukebox Setup](#guest-jukebox-setup) describes. A browser with no admin session that opens the root address gets the guest page.
+- **Admin password and jukebox** (`jukebox`) also lets guests in with a code. They can only add songs, as [Guest Jukebox Setup](#guest-jukebox-setup) describes. A browser with no admin session that opens the root address gets the guest page, so the host logs in at `/admin`.
 
 Player settings and **Shut down player** work only on the host in every mode. On another device the gear modal shows **Network info** and, after a login, **Log out**.
 
@@ -474,9 +483,11 @@ Allow the admin login from anywhere only with HTTPS, since over HTTP the passwor
 
 1. In the settings page, set **Access** to **Admin password and jukebox**, set an **Admin password**, and enable **Expose on LAN**. Save.
 2. Restart the player as [Configuration](#configuration) describes.
-3. Open the player on its host and log in. Then click the **Jukebox** icon in the header.
+3. Open `http://localhost:8808/admin` on the host and log in. Then click the **Jukebox** icon in the header.
 4. Pick how long the code lasts under **Open for**, then click **Open the jukebox**. The QR code appears.
 5. Share it with **Full screen**, **Download QR**, or **Copy link**. With a public URL set, **Local network** and **Internet** pick the link the code holds.
+
+To host from a phone, also set **Admin login allowed from** to **The local network** in step 1. Then log in on the phone at the address **Network info** shows. This way the host can walk around the venue, show the QR code full screen, and control playback.
 
 The **Jukebox** icon shows the open code again. **New code** stops the current code and can also sign the guests out. **Close the jukebox** signs every guest out and stops the code.
 
@@ -488,9 +499,15 @@ These limits apply to each guest.
 - A song that is already waiting can't be added again.
 - No songs can be added while a radio station plays.
 
-The player asks before the host removes a guest's song or clears a queue that holds one.
+The player asks before the host removes a song added from the guest page or clears a queue that holds one.
 
-When the host replaces the queue, the guests' unplayed songs move to the end of the new queue. This needs mpv 0.36 or later. Clearing the queue or playing a radio station removes them.
+When the host replaces the queue, the unplayed songs added from the guest page move to the end of the new queue. This needs mpv 0.36 or later. Clearing the queue or playing a radio station removes them.
+
+#### Host Songs
+
+Songs the host adds from the player page show **Added by Host** in the queue. Songs the AI adds have no label.
+
+The host can also open `http://localhost:8808/guest` while the jukebox is open and add songs the way a guest does, with no QR code. The guest limits apply. These songs show **Added by Host**, or the host's nickname once one is set. No guest can take the name Host or the host's nickname.
 
 #### Managing Guests
 
@@ -624,7 +641,7 @@ pnpm check:all    # lint + typecheck (src and tests) + dead-code
 pnpm build        # production bundle
 ```
 
-The published package may lag behind the `dev` branch. `pnpm build` also copies the web UI's static files into `dist/`, which the MCP server and the player run from. [MPV Remote setup](#mpv-remote-setup) covers running the player and the desktop shortcut from a development build.
+The published package may lag behind the `dev` branch. `pnpm build` also copies the web UI's static files into `dist/`, which the MCP server and the player run from. [Jukebox Remote Setup](#jukebox-remote-setup) covers running the player and the desktop shortcut from a development build.
 
 Test the tools with [MCP Inspector](https://github.com/modelcontextprotocol/inspector).
 
@@ -643,6 +660,7 @@ Each visualizer style is one file in `src/webui/public/visualizers/`. To add a s
 
 - **Code:** [AGPL-3.0-or-later](LICENSE)
 - **Documentation:** CC-BY-SA-4.0
+- **Screenshots:** [CC BY-NC-SA 3.0 US](https://creativecommons.org/licenses/by-nc-sa/3.0/us/). They show the albums [The Slip](https://wiki.creativecommons.org/wiki/Nine_Inch_Nails_The_Slip) and [Ghosts I–IV](https://archive.org/details/nineinchnails_ghosts_I_IV) by Nine Inch Nails, which use the same license. The Slip art direction is by Rob Sheridan and Trent Reznor. The player shows the album art scaled down.
 
 ## Support
 
