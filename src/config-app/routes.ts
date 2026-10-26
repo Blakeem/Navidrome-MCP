@@ -10,7 +10,13 @@ import { validateMappedSettings } from '../config.js';
 import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
 import { mergeOntoStored, readRawSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
 import { getSettingsStorePath } from '../config/store-path.js';
-import { parseWebuiTheme, WEBUI_BIND_HOSTS } from '../constants/defaults.js';
+import {
+  ADMIN_PASSWORD_MAX_LENGTH,
+  ADMIN_PASSWORD_MIN_LENGTH,
+  isAdminPasswordLengthValid,
+  parseWebuiTheme,
+  WEBUI_BIND_HOSTS,
+} from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
 import { audioDeviceDriver, filterToOneDriver, probeAudioDevices } from '../services/playback/audio-devices.js';
 import { resolveMpvBinary } from '../services/playback/mpv-process.js';
@@ -18,6 +24,7 @@ import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { logger, redact } from '../utils/logger.js';
 import { describeFetchError } from '../utils/network-safety.js';
+import { hashPassword, isPasswordHash } from '../utils/secrets.js';
 
 /**
  * Stands in for the Navidrome password, MCP auth token and Last.fm API key in the browser, so they
@@ -57,7 +64,7 @@ export async function handleSettingsRoute(
 
 function handleSeed(res: ServerResponse): void {
   try {
-    writeJson(res, 200, maskSecrets(buildFormSeed()));
+    writeJson(res, 200, seedForBrowser(buildFormSeed()));
   } catch (err) {
     logger.warn('settings seed failed:', err);
     writeError(res, 500, 'Failed to read settings');
@@ -87,17 +94,43 @@ async function handleAudioDevices(res: ServerResponse): Promise<void> {
 // The player's /api/player/settings also writes this file with atomic writeSettings, so
 // concurrent saves are last-writer-wins on the entire file.
 async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const parsed = await parseSettingsBody(req, res);
-  if (parsed === null) return;
+  const body = await parseSettingsBody(req, res);
+  if (body === null) return;
+  const { settings: parsed, newAdminPassword } = body;
+
+  if (newAdminPassword !== null && !isAdminPasswordLengthValid(newAdminPassword)) {
+    writeError(res, 400, ErrorFormatter.configValidation([
+      `webui.auth.adminPassword: The admin password must be ${String(ADMIN_PASSWORD_MIN_LENGTH)} to ${String(ADMIN_PASSWORD_MAX_LENGTH)} characters.`,
+    ]));
+    return;
+  }
 
   const stored = readRawSettings();
-  const settings = withoutLegacyTheme(mergeOntoStored(stored ?? {}, parsed) as SettingsFile);
+  const merged = withoutLegacyTheme(mergeOntoStored(stored ?? {}, parsed) as SettingsFile);
 
   // Never persist a file the runtime would reject, such as one with a blank URL.
-  const validation = validateForm(settings);
+  const validation = validateForm(merged);
   if (!validation.ok) {
     writeError(res, 400, ErrorFormatter.configValidation(validation.messages));
     return;
+  }
+  const { mode, adminPasswordHash: storedHash } = validation.config.webui.auth;
+  if (mode !== 'none' && newAdminPassword === null && !isUsableAdminHash(storedHash)) {
+    writeError(res, 400, ErrorFormatter.configValidation([
+      'webui.auth.adminPassword: Access with the admin password needs an admin password. Enter one, or set Access to Open.',
+    ]));
+    return;
+  }
+
+  let settings = merged;
+  if (newAdminPassword !== null) {
+    try {
+      settings = withAdminPasswordHash(merged, await hashPassword(newAdminPassword));
+    } catch (err) {
+      logger.error('admin password hash failed:', err);
+      writeError(res, 500, `Failed to hash the admin password: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
   }
 
   let backupPath: string | null = null;
@@ -157,10 +190,10 @@ function validateForm(settings: SettingsFile): ReturnType<typeof validateMappedS
 }
 
 async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const parsed = await parseSettingsBody(req, res);
-  if (parsed === null) return;
+  const body = await parseSettingsBody(req, res);
+  if (body === null) return;
 
-  const validation = validateForm(parsed);
+  const validation = validateForm(body.settings);
   if (!validation.ok) {
     writeJson(res, 200, { ok: false, error: ErrorFormatter.configValidation(validation.messages) });
     return;
@@ -177,7 +210,17 @@ async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
-async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Promise<SettingsFile | null> {
+interface SettingsBody {
+  settings: SettingsFile;
+  /** Null when the write-only field was blank, which keeps the stored hash. */
+  newAdminPassword: string | null;
+}
+
+/**
+ * The schema strips the write-only `webui.auth.adminPassword`, so it is read from the raw body. A
+ * posted hash is dropped, so only a password this server hashed reaches the store.
+ */
+async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Promise<SettingsBody | null> {
   let body: unknown;
   try {
     body = await readJsonBody(req);
@@ -187,11 +230,45 @@ async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Pro
   }
 
   const result = SettingsFileSchema.safeParse(body ?? {});
-  if (!result.success) {
+  const newAdminPassword = readNewAdminPassword(body);
+  if (!result.success || newAdminPassword === undefined) {
     writeError(res, 400, 'Malformed settings payload');
     return null;
   }
-  return unmaskSecrets(result.data);
+  return { settings: unmaskSecrets(withoutPostedHash(result.data)), newAdminPassword };
+}
+
+/** Undefined marks a field that is present but not a string. */
+function readNewAdminPassword(body: unknown): string | null | undefined {
+  let value: unknown = body;
+  for (const key of ['webui', 'auth', 'adminPassword']) {
+    value = typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+  }
+  if (value === undefined || value === null || value === '') return null;
+  return typeof value === 'string' ? value : undefined;
+}
+
+// An undefined key keeps the stored value through mergeOntoStored.
+function withoutPostedHash(settings: SettingsFile): SettingsFile {
+  const auth = settings.webui?.auth;
+  if (auth === undefined || auth === null) return settings;
+  return { ...settings, webui: { ...settings.webui, auth: { ...auth, adminPasswordHash: undefined } } };
+}
+
+function withAdminPasswordHash(settings: SettingsFile, adminPasswordHash: string): SettingsFile {
+  return { ...settings, webui: { ...settings.webui, auth: { ...settings.webui?.auth, adminPasswordHash } } };
+}
+
+/** The web player ignores a stored value that is not an Argon2id hash, so the page counts it as unset too. */
+function isUsableAdminHash(hash: string | null): boolean {
+  return hash !== null && isPasswordHash(hash);
+}
+
+/** The browser learns only whether a hash is set, never the hash. */
+function seedForBrowser(seed: SettingsFile): SettingsFile & { webui: { auth: { adminPasswordSet: boolean } } } {
+  const { adminPasswordHash, ...auth } = seed.webui?.auth ?? {};
+  const adminPasswordSet = isUsableAdminHash(adminPasswordHash?.trim() ?? null);
+  return { ...maskSecrets(seed), webui: { ...seed.webui, auth: { ...auth, adminPasswordSet } } };
 }
 
 function maskSecrets(settings: SettingsFile): SettingsFile {

@@ -1,20 +1,28 @@
 // The play state changes only when a snapshot confirms it, so no button disagrees with mpv.
 
-import { postJson } from './api.js';
+import { FAILED_TEXT, postJson } from './api.js';
 import { byId, setHidden } from './dom.js';
+import { isOutputMissing, revealOutputBanner } from './output-banner.js';
 import { isPaused, positionSeconds, setPosition } from './playback-clock.js';
 import { playingIndex } from './snapshot.js';
 
 const controlStatus = byId('control-status');
 const CONTROL_STATUS_CLEAR_MS = 4000;
+// The refusal messages are written for the MCP agent and name tools the page cannot call.
+const REFUSED_TEXT = 'That is not possible right now.';
 
 let controlStatusTimer = null;
 
-// Every control reports a failed request in one live line, so a failed click is never silent.
+// A refusal is an answer with HTTP 200 and `success: false`, such as a pause with nothing playing.
+function isRefusal(data) {
+  return data?.success === false;
+}
+
+// Every control reports a failed or refused request on the page, so a failed click is never silent.
 export async function postControl(path, body = {}) {
   const { ok, data } = await postJson(path, body);
   showControlResult(ok, data);
-  return ok;
+  return ok && !isRefusal(data);
 }
 
 export function togglePlayPause() {
@@ -53,17 +61,26 @@ export function renderPlayButtons({ iconPlay, iconPause, playBtn, prevBtn, nextB
   nextBtn.disabled = !hasTrack;
 }
 
-function showControlResult(ok, data) {
+function failureText(data) {
+  return typeof data?.error === 'string' && data.error !== '' ? data.error : FAILED_TEXT;
+}
+
+export function showControlResult(ok, data) {
   if (controlStatusTimer !== null) {
     clearTimeout(controlStatusTimer);
     controlStatusTimer = null;
   }
-  if (ok) {
+  // A resume refusal and a play that stayed paused both carry `code: 'output-missing'`, so either shows the banner.
+  if (ok && isOutputMissing(data)) {
+    controlStatus.textContent = '';
+    revealOutputBanner();
+    return;
+  }
+  if (ok && !isRefusal(data)) {
     controlStatus.textContent = '';
     return;
   }
-  const message = typeof data?.error === 'string' && data.error !== '' ? data.error : 'That action failed. Try again.';
-  controlStatus.textContent = message;
+  controlStatus.textContent = ok ? REFUSED_TEXT : failureText(data);
   controlStatusTimer = setTimeout(() => {
     controlStatusTimer = null;
     controlStatus.textContent = '';

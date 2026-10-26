@@ -1,5 +1,6 @@
 import { postJson } from './api.js';
 import { FAVORITE_SOURCES } from './favorite-sources.js';
+import { isOutputMissing, revealOutputBanner } from './output-banner.js';
 import { playMode, shuffleOptions } from './play-toolbar.js';
 
 // Each play fetches for a varying time before it enqueues, so one POST at a time keeps click order.
@@ -31,7 +32,8 @@ export async function playLibraryItem(button, kind, id, name, status) {
   }
   if (mode === 'replace') {
     button.closest('dialog')?.close();
-    return;
+  } else {
+    status.textContent = `Added “${name}” to the queue.`;
   }
-  status.textContent = `Added “${name}” to the queue.`;
+  if (isOutputMissing(data)) revealOutputBanner();
 }

@@ -1,7 +1,7 @@
 // One `held` flag covers both the wake lock and the video fallback, so a repeated acquire or a
 // stray release does nothing.
 
-/** The CSP `media-src` directive in src/webui/routes/static-files.ts must permit this scheme. */
+/** The `media-src` directive of `CONTENT_SECURITY_POLICY` in src/webui/http-helpers.ts must permit this scheme. */
 const WAKE_VIDEO_SCHEME = 'data:';
 
 /** `navigator.wakeLock` needs a secure context, so a plain-http page plays this video instead.

@@ -76,7 +76,7 @@ but audio still has to reach a real sound device:
 - **Docker Desktop (Windows/macOS):** not possible. The engine runs in a Linux VM
   with no audio device. `--device /dev/snd` fails with *no such file or
   directory*, even `--privileged`.
-- **Radio station names:** the `node:22-bookworm-slim` base installs mpv 0.35.1,
+- **Radio station names:** the `node:24-bookworm-slim` base installs mpv 0.35.1,
   which lacks the `user-data` property. A radio station that shares its stream URL
   with another saved station is then named after the first matching station. The
   correct name needs mpv 0.36 or later.

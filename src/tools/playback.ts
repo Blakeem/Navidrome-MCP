@@ -38,7 +38,12 @@ import {
   type QueueEntry,
   type QueueTrackMetadata,
 } from '../services/playback/playback-engine.js';
-import { missingAudioOutputMessage, missingOutputFields, type MissingOutputFields } from './missing-audio-output.js';
+import {
+  missingAudioOutputMessage,
+  missingOutputFields,
+  OUTPUT_MISSING_CODE,
+  type MissingOutputFields,
+} from './missing-audio-output.js';
 import { fisherYatesShuffle, orderQueueSongs } from './queue-order.js';
 import { fetchRadioStations } from './radio.js';
 import {
@@ -67,6 +72,8 @@ interface ResumeResult {
   // Omitted when `success` is false. Then `message` says why.
   paused?: false;
   message?: string;
+  // Set when the refusal is a missing audio output, so a client branches on it and not on `message`.
+  code?: typeof OUTPUT_MISSING_CODE;
 }
 
 interface SetVolumeResult {
@@ -276,7 +283,9 @@ export async function resume(_args: unknown): Promise<ResumeResult> {
       };
     }
     const { outputMissing } = await playbackEngine.resume();
-    if (outputMissing !== null) return { success: false, message: missingAudioOutputMessage(outputMissing) };
+    if (outputMissing !== null) {
+      return { success: false, message: missingAudioOutputMessage(outputMissing), code: OUTPUT_MISSING_CODE };
+    }
     return { success: true, paused: false };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('resume', error));
@@ -984,59 +993,68 @@ export async function nowPlaying(_args: unknown, client?: NavidromeClient): Prom
 export async function getPlayQueue(client: NavidromeClient, _args: unknown): Promise<GetPlayQueueResult> {
   try {
     logger.debug('playback: get_play_queue');
-    await playbackEngine.ensureAttached();
-    if (!playbackEngine.isRunning()) {
-      return { items: [], length: 0 };
-    }
-
-    const entries = await playbackEngine.getQueue();
-
-    // An MCP restart loses the engine cache while mpv keeps playing, so Navidrome fills the gaps.
-    // `artist` is the trigger because mpv supplies only the current track's title.
-    const missing = entries
-      .filter((e) => e.songId !== null && e.artist === undefined)
-      .map((e) => e.songId as string);
-    if (missing.length > 0) {
-      const fetched = await fetchSongMetadata(client, missing);
-      playbackEngine.ingestQueueMetadata(fetched);
-      const byId = new Map(fetched.map((m) => [m.songId, m]));
-      for (const entry of entries) {
-        if (entry.songId === null) continue;
-        const md = byId.get(entry.songId);
-        if (md === undefined) continue;
-        if (entry.title === undefined && md.title !== undefined && md.title !== '') {
-          entry.title = md.title;
-        }
-        if (entry.artist === undefined && md.artist !== undefined && md.artist !== '') {
-          entry.artist = md.artist;
-        }
-        if (entry.album === undefined && md.album !== undefined && md.album !== '') {
-          entry.album = md.album;
-        }
-        if (entry.duration === undefined && md.duration !== undefined && md.duration > 0) {
-          entry.duration = md.duration;
-        }
-      }
-    }
-
-    const items: PlayQueueItem[] = entries.map(stripInternalFields);
-    const result: GetPlayQueueResult = {
-      items,
-      length: items.length,
-    };
-    const current = items.find((e) => e.isCurrent);
-    if (current !== undefined) {
-      result.currentIndex = current.index;
-    }
-    return result;
+    return toPlayQueueResult(await getPlayQueueEntries(client));
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_play_queue', error));
   }
 }
 
 /**
+ * Keeps every `QueueEntry` field, such as mpv's entry id, which the web remote's guest view needs.
+ * The model reads the queue only through `toPlayQueueResult`.
+ */
+export async function getPlayQueueEntries(client: NavidromeClient): Promise<QueueEntry[]> {
+  await playbackEngine.ensureAttached();
+  if (!playbackEngine.isRunning()) return [];
+
+  const entries = await playbackEngine.getQueue();
+
+  // An MCP restart loses the engine cache while mpv keeps playing, so Navidrome fills the gaps.
+  // `artist` is the trigger because mpv supplies only the current track's title.
+  const missing = entries
+    .filter((e) => e.songId !== null && e.artist === undefined)
+    .map((e) => e.songId as string);
+  if (missing.length > 0) {
+    const fetched = await fetchSongMetadata(client, missing);
+    playbackEngine.ingestQueueMetadata(fetched);
+    const byId = new Map(fetched.map((m) => [m.songId, m]));
+    for (const entry of entries) {
+      if (entry.songId === null) continue;
+      const md = byId.get(entry.songId);
+      if (md === undefined) continue;
+      if (entry.title === undefined && md.title !== undefined && md.title !== '') {
+        entry.title = md.title;
+      }
+      if (entry.artist === undefined && md.artist !== undefined && md.artist !== '') {
+        entry.artist = md.artist;
+      }
+      if (entry.album === undefined && md.album !== undefined && md.album !== '') {
+        entry.album = md.album;
+      }
+      if (entry.duration === undefined && md.duration !== undefined && md.duration > 0) {
+        entry.duration = md.duration;
+      }
+    }
+  }
+  return entries;
+}
+
+export function toPlayQueueResult(entries: QueueEntry[]): GetPlayQueueResult {
+  const items: PlayQueueItem[] = entries.map(stripInternalFields);
+  const result: GetPlayQueueResult = {
+    items,
+    length: items.length,
+  };
+  const current = items.find((e) => e.isCurrent);
+  if (current !== undefined) {
+    result.currentIndex = current.index;
+  }
+  return result;
+}
+
+/**
  * The agent reads one page, since play tools build queues of thousands of tracks. The web remote
- * reads the entire queue through getPlayQueue.
+ * reads the entire queue.
  */
 export async function getPlayQueuePage(client: NavidromeClient, args: unknown): Promise<PlayQueuePageResult> {
   let parsed: z.infer<typeof PlayQueuePaginationSchema>;

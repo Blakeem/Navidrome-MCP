@@ -17,9 +17,9 @@ pnpm test:run       # unit tests
 pnpm build          # production bundle
 ```
 
-CI runs lint, the src typecheck, dead-code, `test:ci` and the build. It does
-not run `typecheck:tests`, so a type error under `tests/` only shows up locally
-in `pnpm check:all`.
+CI runs lint, both typechecks (src and tests), dead-code, `test:ci` and the
+build on Node 24 and 26. Node 24.19 is the floor, since admin passwords use
+`crypto.argon2`.
 
 Dead-code (`ts-unused-exports`) blocks PRs. When you delete or refactor
 a function, remove its exports too. Tests under `tests/` are part of the
@@ -100,7 +100,9 @@ or has no `navidrome.url`**, runtime falls back to **environment variables** (`N
 `NAVIDROME_PASSWORD` + the optional `MCP_*`/feature vars, via
 `buildEnvRuntimeSettings()` — `process.env` only, never `.env` files) — the
 headless/container path. A store that has a URL but fails validation enters
-setup mode instead, and env is not consulted. A usable store always wins over
+setup mode instead, and env is not consulted. A store that names a
+`webui.auth.mode` other than `none` also enters setup mode when it is unusable,
+so a broken store never swaps a protected web remote for the open env config. A usable store always wins over
 env. `.env` files are import-only: they pre-fill the settings form on first run,
 nothing else.
 Store path:

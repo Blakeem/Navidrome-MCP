@@ -5,12 +5,14 @@
  */
 
 import {
+  DEFAULT_GUEST_QUEUE_LIMIT,
   DEFAULT_LRCLIB_BASE,
   DEFAULT_MCP_HTTP_PORT,
   DEFAULT_TOKEN_EXPIRY_SECONDS,
   DEFAULT_TRANSCODE_BITRATE,
   DEFAULT_TRANSCODE_FORMAT,
   DEFAULT_WEBUI_PORT,
+  parseJukeboxShareLink,
   parseWebuiTheme,
   WEBUI_BIND_HOSTS,
 } from '../constants/defaults.js';
@@ -125,10 +127,25 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
       port: webui.port ?? DEFAULT_WEBUI_PORT,
       expose,
       allowedHosts: cleanList(webui.allowedHosts) ?? [],
+      publicUrl: nonEmpty(webui.publicUrl) ?? null,
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: webui.persistAfterMcpExit ?? false,
       theme: parseWebuiTheme(webui.theme),
       visualizer: webui.visualizer ?? true,
+      tls: {
+        certPath: nonEmpty(webui.tls?.certPath) ?? null,
+        keyPath: nonEmpty(webui.tls?.keyPath) ?? null,
+      },
+      auth: {
+        mode: webui.auth?.mode ?? 'none',
+        adminPasswordHash: nonEmpty(webui.auth?.adminPasswordHash) ?? null,
+        adminAccess: webui.auth?.adminAccess ?? 'localhost',
+      },
+    },
+
+    jukebox: {
+      guestQueueLimit: settings.jukebox?.guestQueueLimit ?? DEFAULT_GUEST_QUEUE_LIMIT,
+      shareLink: parseJukeboxShareLink(settings.jukebox?.shareLink),
     },
   };
 }

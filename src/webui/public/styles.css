@@ -177,7 +177,8 @@ main {
   background: var(--warn);
   animation: pulse 1.4s ease-in-out infinite;
 }
-.conn[data-state="disconnected"] .conn-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--bad); }
+.conn[data-state="disconnected"] .conn-dot,
+.conn[data-state="evicted"] .conn-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--bad); }
 .conn-label { font-variant-numeric: tabular-nums; }
 .conn[data-state="connected"] .conn-label { color: var(--good); }
 .conn[data-state="connecting"] .conn-label { color: var(--warn); }
@@ -204,7 +205,6 @@ main {
 .ghost-btn:not(:disabled):hover { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
 .ghost-btn:active { transform: translateY(1px); }
 .ghost-btn.small { padding: 4px; min-width: 0; }
-.ghost-btn.danger:hover { color: var(--on-fill); background: var(--bad); border-color: var(--bad); }
 .ghost-btn[hidden] { display: none; }
 .ghost-btn:disabled { opacity: 0.4; cursor: default; }
 
@@ -560,6 +560,27 @@ main {
   clip-path: inset(50%);
 }
 
+.output-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+  box-shadow: var(--shadow);
+}
+.output-banner[hidden] { display: none; }
+.output-banner-text {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--bad);
+}
+.output-banner-btn { flex: none; }
+
+.lyrics-transport .output-banner { box-shadow: none; padding: 6px 0; background: transparent; }
+
 .volume-section {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -639,13 +660,17 @@ main {
 
 .queue-list li { border-top: 1px solid var(--border); }
 
+/* The remove button sits beside the row, since a button cannot hold another button. */
+.queue-list li.qitem { display: flex; align-items: center; }
+
 .queue-list li:first-child { border-top: 0; }
 
 .queue-list .qrow {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 8px 14px;
   border: 0;
   background: transparent;
@@ -721,6 +746,9 @@ main {
 }
 .queue-list .qicon svg { display: block; width: 100%; height: 100%; }
 .queue-list li.current .qicon { visibility: visible; }
+
+.queue-list .qremove { flex: none; margin-right: 10px; padding: 4px; }
+.queue-list .qremove-icon { width: 18px; height: 18px; }
 
 .queue-list .empty {
   padding: 18px 14px;
@@ -878,6 +906,7 @@ main {
 }
 .btn-secondary:not(:disabled):hover { border-color: var(--accent); }
 .btn-secondary:disabled { opacity: 0.4; cursor: default; }
+.btn-secondary.danger:not(:disabled):hover { color: var(--on-fill); background: var(--bad); border-color: var(--bad); }
 
 /* Settings modal checkbox rows */
 .modal-content label.check {
@@ -899,9 +928,41 @@ main {
   padding: 0;
   border: 0;
 }
+.settings-group[hidden] { display: none; }
 .settings-group + .settings-group { margin-top: 10px; }
 .settings-heading { padding: 0; }
 .theme-toggle { justify-self: start; }
+
+/* A mode with a login shows only the login card until an admin session exists. */
+body.login-required main,
+body.login-required .topbar-actions { display: none; }
+.login-view {
+  display: flex;
+  justify-content: center;
+  padding: 32px 16px;
+}
+.login-view[hidden],
+.login-card [hidden] { display: none; }
+.login-card {
+  width: min(440px, 100%);
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+.login-card h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.login-status {
+  margin: 0;
+  color: var(--bad);
+  font-size: 0.88rem;
+}
+.login-status:empty { display: none; }
 
 body.player-stopped main,
 body.player-stopped .topbar-actions .ghost-btn { opacity: 0.45; }
@@ -1016,6 +1077,30 @@ body.player-stopped::after {
 }
 .lib-search .primary-btn { flex: none; }
 
+/* The eye button sits inside the field, so the field leaves room for it. */
+.reveal {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.reveal input { padding-right: 44px; }
+.reveal-btn {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.reveal-btn:hover { color: var(--text); }
+.reveal-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
+
 /* Sits above the panes, so every tab plays with one queue mode and one pair of shuffle settings. */
 .play-toolbar {
   display: flex;
@@ -1050,7 +1135,8 @@ body.player-stopped::after {
 .mode-toggle-btn:first-of-type { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
 .mode-toggle-btn:not(:first-of-type) { margin-left: -1px; }
 .mode-toggle-btn:last-of-type { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
-.theme-toggle .mode-toggle-btn {
+.theme-toggle .mode-toggle-btn,
+.text-toggle .mode-toggle-btn {
   width: auto;
   min-width: 76px;
   padding: 0 14px;
@@ -1503,3 +1589,157 @@ body.player-stopped::after {
   .lyrics-view:not(.is-window) .lyrics-transport { background: transparent; border-top: 0; }
   .lyrics-view:not(.is-window) .lyrics-follow-pill { left: auto; right: 32px; bottom: 32px; transform: none; }
 }
+
+/* Jukebox dialog */
+.jukebox-select {
+  justify-self: start;
+  min-height: 40px;
+  padding: 6px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.jukebox-warn { color: var(--warn); }
+.jukebox-state,
+.jukebox-lifetime-field,
+.jukebox-confirm { display: grid; gap: 10px; }
+.jukebox-warn[hidden],
+.jukebox-state[hidden],
+.jukebox-confirm[hidden],
+.mode-toggle[hidden] { display: none; }
+.jukebox-buttons,
+.modal-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.jukebox-confirm {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.text-toggle { justify-self: start; }
+/* A QR code reads only dark on light, so its white surround stays in either theme. */
+.jukebox-qr {
+  width: min(240px, 100%);
+  height: auto;
+  background: #ffffff;
+  border-radius: var(--radius-sm);
+}
+.jukebox-qr-large { width: min(320px, 100%); justify-self: center; }
+.jukebox-url { overflow-wrap: anywhere; font-size: 0.8rem; color: var(--text-muted); }
+
+/* Full screen QR: a plain light surround in either theme, so a phone camera reads it from across a room. */
+.jukebox-fullscreen {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  padding: 24px;
+  background: #ffffff;
+  color: #111111;
+  cursor: pointer;
+}
+.jukebox-fullscreen[open] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+}
+.jukebox-fullscreen .jukebox-qr {
+  width: min(90vw, calc(100dvh - 120px));
+  border-radius: 0;
+}
+.jukebox-fullscreen p { margin: 0; font-size: 1.25rem; text-align: center; }
+
+/* Guests dialog: the guests and banned sections */
+.jukebox-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.guest-ban { display: grid; gap: 8px; }
+.guest-ban[hidden],
+#guest-list:empty,
+#ban-list:empty { display: none; }
+.guest-head { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.guest-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.guest-dot.is-online { background: var(--accent); }
+.guest-songs { margin: 4px 0 0; padding-left: 18px; font-size: 0.85rem; overflow-wrap: anywhere; }
+
+/* Guest page */
+.guest-page .title { margin: 0; }
+.guest-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--accent) var(--progress, 0%), var(--surface-2) var(--progress, 0%));
+}
+.guest-jukebox { margin: 0; padding: 0 4px; font-size: 0.88rem; color: var(--text-muted); }
+.guest-jukebox:empty { display: none; }
+.guest-name [hidden] { display: none; }
+.guest-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.guest-who .guest-jukebox { flex: 1 1 14rem; }
+.guest-name-form { padding: 4px 4px 0; }
+.guest-name-form .btn-secondary { flex: none; }
+.guest-name .guest-add-status { padding: 4px; }
+.guest-preview {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: 0.9rem;
+}
+.guest-preview[hidden] { display: none; }
+.guest-preview a { color: var(--accent); }
+.guest-qrow { cursor: default; }
+.guest-queue-more { margin: 8px 14px 0; }
+.guest-lyrics-toggle { margin-left: auto; }
+.guest-lyrics-status { margin: 0; padding: 4px 14px; font-size: 0.9rem; color: var(--text-muted); }
+.guest-lyrics-status:empty { display: none; }
+.guest-lyrics-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0 14px;
+  max-height: 40svh;
+  overflow-y: auto;
+  position: relative;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.guest-lyrics-lines.is-synced li { color: var(--text-muted); transition: color 160ms; }
+.guest-lyrics-lines.is-synced li.active { color: var(--text); font-weight: 600; }
+#guest-nickname-fields[hidden] { display: none; }
+/* The shared `main { display: flex; }` rule outranks the user-agent [hidden] rule. */
+.guest-page main[hidden] { display: none; }
+.guest-add[hidden] { display: none; }
+.guest-slots { margin-left: auto; font-size: 0.85rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.guest-search { padding: 0 14px 6px; }
+.guest-add-status { margin: 0; padding: 4px 14px; font-size: 0.9rem; color: var(--text-muted); }
+.guest-add-status:empty { display: none; }
+.guest-results { max-height: 40svh; }
+.guest-add-btn { flex: none; }
+.queue-list li.mine .qtitle { color: var(--accent); }
+.queue-list .qguest {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.queue-list .qguest:empty { display: none; }

@@ -8,10 +8,11 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleSettingsRoute } from './routes.js';
-import { isJsonContentType, writeError } from '../webui/http-helpers.js';
+import { isCrossOriginPost, isJsonContentType, setSecurityHeaders, writeError } from '../webui/http-helpers.js';
 import { hasProxyForwardingHeader, isLoopbackHostHeader, isLoopbackPeer } from '../webui/loopback.js';
 import { handleStatic } from '../webui/routes/static-files.js';
 import { logger } from '../utils/logger.js';
+import { assertArgon2Available } from '../utils/secrets.js';
 
 const HOST = '127.0.0.1';
 
@@ -36,8 +37,13 @@ interface ConfigServerOptions {
  * port never collides with the web player.
  */
 export async function startConfigServer(options: ConfigServerOptions = {}): Promise<ConfigServer> {
+  // A missing Argon2 blocks only a new admin password, so the page still opens and the save reports it.
+  void assertArgon2Available().catch((err: unknown) => {
+    logger.warn('settings Argon2 probe failed, so a new admin password cannot be saved:', err);
+  });
   let idleTimer: NodeJS.Timeout | undefined;
   const server: Server = createServer((req, res) => {
+    setSecurityHeaders(res);
     void handleRequest(req, res);
   });
 
@@ -93,6 +99,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // A DNS-rebound attacker hostname still connects from loopback, so the Host header is checked.
   if (!isLoopbackHostHeader(req.headers.host)) {
     writeError(res, 403, 'Forbidden host');
+    return;
+  }
+
+  if (method === 'POST' && isCrossOriginPost(req)) {
+    writeError(res, 403, 'Cross-origin request refused');
     return;
   }
 

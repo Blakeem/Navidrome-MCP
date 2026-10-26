@@ -87,7 +87,7 @@ vi.mock('node:net', () => ({
   }),
 }));
 
-const { playbackEngine } = await import('../../../../src/services/playback/playback-engine.js');
+const { playbackEngine, REPLACE_GENERATION_PROPERTY, REPLACE_PENDING_PROPERTY } = await import('../../../../src/services/playback/playback-engine.js');
 const { MpvIpc } = await import('../../../../src/services/playback/mpv-ipc.js');
 const { spawnMpv } = await import('../../../../src/services/playback/mpv-process.js');
 const { logger } = await import('../../../../src/utils/logger.js');
@@ -107,6 +107,8 @@ const AUTO_ENTRY = { name: 'auto', description: 'Autoselect device' };
 const AUTO_DEVICE = { id: 'auto', name: 'System default' };
 const SPEAKER_LIST = [AUTO_ENTRY, { name: SPEAKER.id, description: SPEAKER.name }];
 const PLAYING = { pause: false, 'idle-active': false };
+const REPLACE_MARKED = `set ${REPLACE_PENDING_PROPERTY} true`;
+const REPLACE_DONE = [`set ${REPLACE_GENERATION_PROPERTY} 1`, `set ${REPLACE_PENDING_PROPERTY} false`];
 
 function useIpc(mpv: FakeMpv): FakeIpc {
   const ipc = makeFakeIpc(mpv);
@@ -542,7 +544,7 @@ describe('audio output check before playback starts', () => {
     const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'replace');
 
     const commands = mutatingCommands(ipc);
-    expect(result).toEqual({ demoted: false, outputMissing: missingHeadset });
+    expect(result).toEqual({ demoted: false, outputMissing: missingHeadset, entryIds: [] });
     expect(commands.indexOf('set pause true')).toBeGreaterThanOrEqual(0);
     expect(commands.indexOf('set pause true')).toBeLessThan(commands.indexOf('loadfile'));
     expect(commands).not.toContain('set pause false');
@@ -562,13 +564,15 @@ describe('audio output check before playback starts', () => {
 
     const result = await playbackEngine.enqueue(['song-1'], 'replace');
 
-    expect(result).toEqual({ demoted: false, outputMissing: null });
+    expect(result).toEqual({ demoted: false, outputMissing: null, entryIds: [] });
     expect(mutatingCommands(ipc)).toEqual([
       'set audio-device auto',
       `set audio-device ${SPEAKER.id}`,
+      REPLACE_MARKED,
       'playlist-clear',
       'loadfile',
       'set pause false',
+      ...REPLACE_DONE,
     ]);
   });
 
@@ -578,7 +582,7 @@ describe('audio output check before playback starts', () => {
     const result = await playbackEngine.enqueue(['song-1'], 'replace');
 
     expect(result.outputMissing).toBeNull();
-    expect(mutatingCommands(ipc).slice(0, 2)).toEqual(['ao-reload', 'playlist-clear']);
+    expect(mutatingCommands(ipc).slice(0, 3)).toEqual(['ao-reload', REPLACE_MARKED, 'playlist-clear']);
   });
 
   it('reports auto missing on the null output when mpv lists no device', async () => {
@@ -609,8 +613,8 @@ describe('audio output check before playback starts', () => {
 
     const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'replace');
 
-    expect(result).toEqual({ demoted: false, outputMissing: null });
-    expect(mutatingCommands(ipc)).toEqual(['playlist-clear', 'loadfile', 'loadfile', 'set pause false']);
+    expect(result).toEqual({ demoted: false, outputMissing: null, entryIds: [] });
+    expect(mutatingCommands(ipc)).toEqual([REPLACE_MARKED, 'playlist-clear', 'loadfile', 'loadfile', 'set pause false', ...REPLACE_DONE]);
   });
 
   it('counts a rejected current-ao read as no open output, not a loss', async () => {

@@ -71,7 +71,7 @@ function spawnWebChild(): WebServerStatus {
 export interface RespawnDeps {
   probe: (startup: WebEndpoint) => Promise<WebOwnerProbe>;
   spawn: () => WebServerStatus;
-  lease: (port: number) => Promise<void>;
+  lease: (port: number, secure: boolean) => Promise<void>;
 }
 
 const DEFAULT_RESPAWN_DEPS: RespawnDeps = {
@@ -101,7 +101,7 @@ export async function ensureWebForPlayback(
     const probe = await deps.probe(config.webui);
     if (probe.outcome === 'ours') {
       // Counted before the play's mpv commands run, so the spawner's exit cannot stop this play.
-      await deps.lease(probe.port);
+      await deps.lease(probe.port, probe.secure);
       return 'running';
     }
     if (probe.outcome === 'foreign') {

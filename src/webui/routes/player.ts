@@ -46,7 +46,7 @@ function playerSettingsBody(autoOpenBrowser: boolean): PlayerSettingsBody {
 }
 
 /**
- * `isLocal` is per request, so only a local browser shows the settings and power buttons.
+ * `isLocal` serves other clients of this route, since the page reads it from `GET /api/auth/session`.
  * `lrclibEnabled` shapes only the overlay's empty-state note, since a file tag can carry lyrics.
  */
 export function handlePlayerState(req: IncomingMessage, res: ServerResponse, config: Config): void {
@@ -57,11 +57,8 @@ export function handlePlayerState(req: IncomingMessage, res: ServerResponse, con
   });
 }
 
-export function handleGetPlayerSettings(req: IncomingMessage, res: ServerResponse, config: Config): void {
-  if (!isLocalRequest(req)) {
-    writeError(res, 404, 'Not found');
-    return;
-  }
+/** The dispatcher admits only a principal holding `player.settings`, which only a local request holds. */
+export function handleGetPlayerSettings(res: ServerResponse, config: Config): void {
   const storedAutoOpen = readSettings()?.webui?.autoOpenBrowser;
   writeJson(res, 200, playerSettingsBody(storedAutoOpen ?? config.webui.autoOpenBrowser));
 }
@@ -76,11 +73,6 @@ export async function handleSetPlayerSettings(
   config: Config,
   broadcaster: Pick<SseBroadcaster, 'broadcastNow'>,
 ): Promise<void> {
-  if (!isLocalRequest(req)) {
-    writeError(res, 404, 'Not found');
-    return;
-  }
-
   const input = await readValidBody(req, res, PlayerSettingsPatchSchema);
   if (input === null) return;
   let storedWebui: SettingsFile['webui'] = undefined;
@@ -153,15 +145,8 @@ export function handleMcpLease(req: IncomingMessage, res: ServerResponse, leases
   res.once('close', () => leases.close());
 }
 
-export function handleShutdown(
-  req: IncomingMessage,
-  res: ServerResponse,
-  shutdown: () => void,
-): void {
-  if (!isLocalRequest(req)) {
-    writeError(res, 404, 'Not found');
-    return;
-  }
+/** The dispatcher admits only a principal holding `player.power`, which only a local request holds. */
+export function handleShutdown(res: ServerResponse, shutdown: () => void): void {
   writeJson(res, 200, { ok: true });
   // The delay lets the 200 reach the browser before the server closes.
   setTimeout(shutdown, 50).unref();

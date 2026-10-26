@@ -71,3 +71,42 @@ export function parseWebuiTheme(value: unknown): WebuiTheme | null {
  * and ::1 bind IPv6 loopback under Node's DNS order, and a specific interface skips loopback.
  */
 export const WEBUI_BIND_HOSTS: readonly string[] = ['127.0.0.1', '0.0.0.0', '::'];
+
+/**
+ * `none` keeps the open remote. `password` puts every route behind an admin session. `jukebox` adds
+ * guests, who join with a jukebox code and can only add songs.
+ */
+export const WEBUI_AUTH_MODES = ['none', 'password', 'jukebox'] as const;
+export type WebuiAuthMode = (typeof WEBUI_AUTH_MODES)[number];
+
+/** The request sources whose admin session the web player honors, from narrowest to widest. */
+export const WEBUI_ADMIN_ACCESS_LEVELS = ['localhost', 'lan', 'anywhere'] as const;
+export type WebuiAdminAccess = (typeof WEBUI_ADMIN_ACCESS_LEVELS)[number];
+
+/** The bounds a new admin password must meet, shared by the settings page and the env fallback. */
+export const ADMIN_PASSWORD_MIN_LENGTH = 12;
+export const ADMIN_PASSWORD_MAX_LENGTH = 128;
+
+export function isAdminPasswordLengthValid(password: string): boolean {
+  return password.length >= ADMIN_PASSWORD_MIN_LENGTH && password.length <= ADMIN_PASSWORD_MAX_LENGTH;
+}
+
+/** 90 days, the longest jukebox code lifetime the admin can pick. It also sets the guest cookie lifetime. */
+export const JUKEBOX_CODE_MAX_LIFETIME_HOURS = 2160;
+
+/** How many unplayed songs one guest may hold in the queue at a time. The host sets it in the Guests dialog. */
+export const DEFAULT_GUEST_QUEUE_LIMIT = 3;
+export const GUEST_QUEUE_LIMIT_MIN = 1;
+export const GUEST_QUEUE_LIMIT_MAX = 20;
+
+/** Which join link the Jukebox dialog's QR shows. */
+export const JUKEBOX_SHARE_LINKS = ['lan', 'internet'] as const;
+export type JukeboxShareLink = (typeof JUKEBOX_SHARE_LINKS)[number];
+
+/** An internet link reaches a guest on the home Wi-Fi only through router NAT loopback. */
+export const DEFAULT_JUKEBOX_SHARE_LINK: JukeboxShareLink = 'lan';
+
+// A hand-edited or unknown value reads as the default, so it never voids the settings store.
+export function parseJukeboxShareLink(value: unknown): JukeboxShareLink {
+  return JUKEBOX_SHARE_LINKS.find((link) => link === value) ?? DEFAULT_JUKEBOX_SHARE_LINK;
+}

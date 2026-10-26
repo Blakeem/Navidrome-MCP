@@ -1,5 +1,6 @@
 import { getJson, postJson } from './api.js';
 import { byId } from './dom.js';
+import { canChangePlayerSettings } from './local-controls.js';
 import { applyTheme } from './theme.js';
 
 const openBtn = byId('open-settings');
@@ -33,6 +34,10 @@ export function bindSettings() {
 
 async function openSettings() {
   status.textContent = '';
+  if (!canChangePlayerSettings()) {
+    dialog.showModal();
+    return;
+  }
   const settings = await getJson('/api/player/settings');
   // Controls left unloaded would save stale values over the stored settings.
   setControlsDisabled(settings === null);

@@ -5,7 +5,14 @@
  */
 
 import { z } from 'zod';
-import { DEFAULT_VALUES, WEBUI_THEMES } from '../constants/defaults.js';
+import {
+  DEFAULT_VALUES,
+  GUEST_QUEUE_LIMIT_MAX,
+  GUEST_QUEUE_LIMIT_MIN,
+  JUKEBOX_CODE_MAX_LIFETIME_HOURS,
+  JUKEBOX_SHARE_LINKS,
+  WEBUI_THEMES,
+} from '../constants/defaults.js';
 import {
   MAX_VALIDATION_TIMEOUT_MS,
   MIN_VALIDATION_TIMEOUT_MS,
@@ -367,7 +374,92 @@ export const PlayerSettingsPatchSchema = z.strictObject({
   visualizer: z.boolean().optional(),
 });
 
+// Any string is a login attempt, so a too-short or too-long one fails as "Wrong password" too.
+export const AdminLoginSchema = z.strictObject({
+  password: z.string({ error: 'password must be a string' }),
+});
+
+const JUKEBOX_CODE_LIFETIME_ERROR = `lifetimeHours must be a whole number from 1 to ${String(JUKEBOX_CODE_MAX_LIFETIME_HOURS)}`;
+
+export const JukeboxCodeCreateSchema = z.strictObject({
+  lifetimeHours: z.number({ error: JUKEBOX_CODE_LIFETIME_ERROR })
+    .int({ error: JUKEBOX_CODE_LIFETIME_ERROR })
+    .min(1, { error: JUKEBOX_CODE_LIFETIME_ERROR })
+    .max(JUKEBOX_CODE_MAX_LIFETIME_HOURS, { error: JUKEBOX_CODE_LIFETIME_ERROR }),
+  signOutGuests: z.boolean({ error: 'signOutGuests must be true or false' }).default(false),
+});
+
+// Indic vowel signs and decomposed accents are combining marks (\p{M}), so a name in letters needs them too.
+const GUEST_NICKNAME_PATTERN = /^[\p{L}\p{M}\p{Nd} .,'!?_-]{1,24}$/u;
+
+const GuestNicknameField = z.string().trim().normalize('NFC').regex(GUEST_NICKNAME_PATTERN, {
+  error: "nickname must be 1 to 24 letters, digits, spaces or . , ' ! ? - _",
+});
+
+// Any key string is a join attempt, so a malformed key fails with the same message as a wrong one.
+export const GuestJoinSchema = z.strictObject({
+  key: z.string({ error: 'key must be a string' }),
+  nickname: GuestNicknameField.optional(),
+});
+
+export const GuestNicknameSchema = z.strictObject({ nickname: GuestNicknameField });
+
 export const LibrarySearchQuerySchema = z.string().trim().min(1).max(SEARCH_QUERY_MAX_LENGTH);
+
+const GUEST_SEARCH_QUERY_MAX_LENGTH = 100;
+const GUEST_SEARCH_QUERY_ERROR = `Enter 1 to ${String(GUEST_SEARCH_QUERY_MAX_LENGTH)} characters to search.`;
+
+export const GuestSearchQuerySchema = z.string({ error: GUEST_SEARCH_QUERY_ERROR }).trim()
+  .min(1, { error: GUEST_SEARCH_QUERY_ERROR })
+  .max(GUEST_SEARCH_QUERY_MAX_LENGTH, { error: GUEST_SEARCH_QUERY_ERROR });
+
+export const GuestQueueAddSchema = z.strictObject({
+  songId: SongIdSchema.shape.songId,
+});
+
+const ENTRY_ID_ERROR = 'entryId must be a whole number of 0 or more';
+
+// The host and guest remove routes name an entry by its mpv id, which survives a move.
+export const QueueEntryRemoveSchema = z.strictObject({
+  entryId: z.number({ error: ENTRY_ID_ERROR }).int({ error: ENTRY_ID_ERROR }).min(0, { error: ENTRY_ID_ERROR }),
+});
+
+const GUEST_SESSION_ID_ERROR = 'sessionId must be a guest session id';
+const GuestSessionIdSchema = z.string({ error: GUEST_SESSION_ID_ERROR }).min(1, { error: GUEST_SESSION_ID_ERROR });
+
+export const JukeboxGuestRemoveSchema = z.strictObject({
+  sessionId: GuestSessionIdSchema,
+});
+
+// The durations the Guests dialog offers. A network ban always expires, since one address can hold innocent guests.
+const NETWORK_BAN_HOURS = [0, 1, 24, 168, 720] as const;
+
+export const JukeboxGuestBanSchema = z.strictObject({
+  sessionId: GuestSessionIdSchema,
+  networkBanHours: z.literal(NETWORK_BAN_HOURS, { error: `networkBanHours must be one of ${NETWORK_BAN_HOURS.join(', ')}` }),
+});
+
+const BAN_ID_ERROR = 'banId must be a ban id';
+
+export const JukeboxBanRemoveSchema = z.strictObject({
+  banId: z.string({ error: BAN_ID_ERROR }).min(1, { error: BAN_ID_ERROR }),
+});
+
+const GUEST_QUEUE_LIMIT_ERROR =
+  `guestQueueLimit must be a whole number from ${String(GUEST_QUEUE_LIMIT_MIN)} to ${String(GUEST_QUEUE_LIMIT_MAX)}`;
+
+const JUKEBOX_SHARE_LINK_ERROR = `shareLink must be one of ${JUKEBOX_SHARE_LINKS.join(', ')}`;
+
+export const JukeboxSettingsPatchSchema = z.strictObject({
+  guestQueueLimit: z.number({ error: GUEST_QUEUE_LIMIT_ERROR })
+    .int({ error: GUEST_QUEUE_LIMIT_ERROR })
+    .min(GUEST_QUEUE_LIMIT_MIN, { error: GUEST_QUEUE_LIMIT_ERROR })
+    .max(GUEST_QUEUE_LIMIT_MAX, { error: GUEST_QUEUE_LIMIT_ERROR })
+    .optional(),
+  shareLink: z.enum(JUKEBOX_SHARE_LINKS, { error: JUKEBOX_SHARE_LINK_ERROR }).optional(),
+}).refine((patch) => patch.guestQueueLimit !== undefined || patch.shareLink !== undefined, {
+  error: 'Send guestQueueLimit, shareLink or both',
+});
 
 // Node fetch probes only http and https, so other radio schemes fail here with guidance
 // instead of an opaque fetch error.

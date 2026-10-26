@@ -6,8 +6,10 @@
 
 import type { ServerResponse } from 'node:http';
 import type { Config } from '../../config.js';
-import { isLanReachable, listLanInterfaces } from '../network.js';
+import { isLanReachable, listLanInterfaces, loopbackUrl } from '../network.js';
 import { writeJson } from '../http-helpers.js';
+import { adminPageUrl } from '../page-paths.js';
+import { isTlsEnabled } from '../tls.js';
 
 /**
  * The bind and expose settings let the panel explain why only localhost is listed. The localhost
@@ -15,9 +17,10 @@ import { writeJson } from '../http-helpers.js';
  */
 export function handleNetworkInfo(res: ServerResponse, config: Config): void {
   const port = config.webui.port;
-  const localhost = `http://127.0.0.1:${port}`;
+  const secure = isTlsEnabled(config.webui.tls);
+  const localhost = adminPageUrl(loopbackUrl(port, secure));
   const lanReachable = isLanReachable(config.webui.host);
-  const lan = lanReachable ? listLanInterfaces(port) : [];
+  const lan = lanReachable ? listLanInterfaces(port, secure).map((iface) => ({ ...iface, url: adminPageUrl(iface.url) })) : [];
 
   writeJson(res, 200, {
     host: config.webui.host,

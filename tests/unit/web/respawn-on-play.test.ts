@@ -15,7 +15,7 @@ import { makeTestConfig } from '../../helpers/test-config.js';
 const playbackEnabled = makeTestConfig({ features: { playback: true } });
 
 function ownerProbe(outcome: ProbeOutcome): WebOwnerProbe {
-  return { outcome, playbackAttached: true, scrobbleClaims: true, port: playbackEnabled.webui.port };
+  return { outcome, port: playbackEnabled.webui.port, secure: false };
 }
 
 function makeDeps(probeOutcome: ProbeOutcome): RespawnDeps & {
@@ -50,7 +50,7 @@ describe('ensureWebForPlayback (respawn-on-play)', () => {
 
     expect(deps.probe).toHaveBeenCalledTimes(1);
     expect(deps.spawn).not.toHaveBeenCalled();
-    expect(deps.lease).toHaveBeenCalledWith(playbackEnabled.webui.port);
+    expect(deps.lease).toHaveBeenCalledWith(playbackEnabled.webui.port, false);
     expect(status).toBe('running');
   });
 

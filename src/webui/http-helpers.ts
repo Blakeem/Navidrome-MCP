@@ -5,10 +5,70 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { TLSSocket } from 'node:tls';
 import type { z } from 'zod';
 
 // A bounded body makes a misbehaving client fail fast instead of making the server buffer it all.
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
+export const SSE_END_FLUSH_GRACE_MS = 2_000;
+
+/**
+ * Every directive is named, so none silently inherits `default-src`. `data:` serves the inline SVG
+ * favicon in `img-src` and the wake-lock fallback video in `media-src`.
+ */
+const CONTENT_SECURITY_POLICY: string = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  'media-src data:',
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+].join('; ');
+
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+};
+
+/** Set before routing, since `writeHead` merges these into every response a handler writes. */
+export function setSecurityHeaders(res: ServerResponse): void {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
+}
+
+// `none` is a request the user started, such as typing the URL.
+const ALLOWED_FETCH_SITES: ReadonlySet<string> = new Set(['same-origin', 'none']);
+
+// The web remote may serve HTTPS, so the listener's own scheme comes from the socket.
+function isSameOrigin(origin: string, req: IncomingMessage): boolean {
+  const scheme = req.socket instanceof TLSSocket ? 'https' : 'http';
+  try {
+    return new URL(origin).origin === new URL(`${scheme}://${req.headers.host ?? ''}`).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A browser labels a cross-site POST with `Origin` or `Sec-Fetch-Site`. A client that sends neither
+ * is not a browser, so no page can make it act with the user's access. An opaque origin sends
+ * `Origin: null`, which fails the URL parse.
+ */
+export function isCrossOriginPost(req: IncomingMessage): boolean {
+  const origin = req.headers.origin;
+  const fetchSite = req.headers['sec-fetch-site'];
+  if (origin !== undefined && !isSameOrigin(origin, req)) return true;
+  if (fetchSite === undefined) return false;
+  return typeof fetchSite !== 'string' || !ALLOWED_FETCH_SITES.has(fetchSite.trim().toLowerCase());
+}
 
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -24,6 +84,19 @@ export function writeError(res: ServerResponse, status: number, message: string)
   writeJson(res, status, { error: message });
 }
 
+/** The target can depend on the session, so no browser or proxy may reuse the answer. */
+export function writeRedirect(res: ServerResponse, location: string): void {
+  res.writeHead(302, { Location: location, 'Cache-Control': 'no-store', 'Content-Length': '0' });
+  res.end();
+}
+
+/** `refused` names what was refused, such as "login attempts" or "searches", in the message the page shows. */
+export function writeTooManyRequests(res: ServerResponse, waitMs: number, refused: string): void {
+  const retryAfterSeconds = Math.ceil(waitMs / 1000);
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  writeError(res, 429, `Too many ${refused}. Try again in ${String(retryAfterSeconds)} seconds.`);
+}
+
 /** The retry directive goes first, so the browser learns it even if the stream drops at once. */
 export function openSseStream(res: ServerResponse, retryMs: number): void {
   res.writeHead(200, {
@@ -34,6 +107,19 @@ export function openSseStream(res: ServerResponse, retryMs: number): void {
     'X-Accel-Buffering': 'no',
   });
   res.write(`retry: ${retryMs}\n\n`);
+}
+
+/**
+ * Ends the stream with a last event instead of destroying it, so the frames queued before the event
+ * still flush. A peer that never reads them is destroyed after `SSE_END_FLUSH_GRACE_MS`.
+ */
+export function endSseStream(res: ServerResponse, event: string, data: unknown): void {
+  // A second end on an ended stream would emit an unhandled write-after-end error.
+  if (res.destroyed || res.writableEnded) return;
+  res.end(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const reaper = setTimeout(() => { res.destroy(); }, SSE_END_FLUSH_GRACE_MS);
+  reaper.unref();
+  res.once('close', () => { clearTimeout(reaper); });
 }
 
 export function isJsonContentType(contentType: string | undefined): boolean {

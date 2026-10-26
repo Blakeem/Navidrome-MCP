@@ -1,5 +1,6 @@
-import { getJsonResult, postJson } from './api.js';
+import { FAILED_TEXT, getJsonResult, postJson } from './api.js';
 import { byId } from './dom.js';
+import { bindOutputBanner, renderOutputBanner } from './output-banner.js';
 
 const openBtn = byId('btn-audio-device');
 const dialog = byId('audio-device-dialog');
@@ -7,13 +8,15 @@ const list = byId('audio-device-list');
 const statusLine = byId('audio-device-status');
 
 const OUTPUT_LABEL = 'Audio output';
-const FAILED_TEXT = 'That action failed. Try again.';
+
+function openAudioDevice() {
+  dialog.showModal();
+  void loadDevices();
+}
 
 export function bindAudioDevice() {
-  openBtn.addEventListener('click', () => {
-    dialog.showModal();
-    void loadDevices();
-  });
+  openBtn.addEventListener('click', openAudioDevice);
+  bindOutputBanner(openAudioDevice);
 }
 
 export function renderAudioDevice(status) {
@@ -22,6 +25,7 @@ export function renderAudioDevice(status) {
   openBtn.classList.toggle('is-lost', lost);
   openBtn.dataset.tip = label;
   openBtn.setAttribute('aria-label', label);
+  renderOutputBanner(lost);
 }
 
 async function loadDevices() {

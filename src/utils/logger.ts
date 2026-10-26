@@ -35,7 +35,7 @@ const RE_SUBSONIC_PARAMS = /([?&])[upst]=[^&\s]*/gi;
 // A string leaf carries no key for redactString to match, so the walker redacts every key ending in
 // one of these names.
 const RE_SENSITIVE_KEY =
-  /(password|passwd|pwd|token|secret|api[_-]?key|authorization|credentials?)$/i;
+  /(password|passwd|pwd|token|secret|api[_-]?key|authorization|credentials?|hash|digest|cookie)$/i;
 
 function redactString(s: string): string {
   const truncated = s.length > MAX_REDACT_STRING_BYTES;

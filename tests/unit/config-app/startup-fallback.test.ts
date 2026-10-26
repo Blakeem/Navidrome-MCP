@@ -53,6 +53,8 @@ const SETTINGS_URL = 'http://127.0.0.1:5000/';
 const FAILURE = 'Authentication failed: 401 Unauthorized';
 const PROCESS_EVENTS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'unhandledRejection'];
 const STDIN_EVENTS = ['end', 'close'];
+// Each scenario imports src/index.ts afresh, and the first cold import can pass the 10 s default under full-suite load.
+const STARTUP_TEST_TIMEOUT_MS = 30_000;
 const processEvents = process as unknown as NodeJS.EventEmitter;
 let listenersBefore = new Map<string, unknown[]>();
 let stdinListenersBefore = new Map<string, unknown[]>();
@@ -60,7 +62,7 @@ let stdinListenersBefore = new Map<string, unknown[]>();
 /** src/index.ts runs main() on import, so each scenario imports a fresh copy. */
 async function startServer(transportType: 'stdio' | 'http'): Promise<void> {
   const config = makeTestConfig({ transport: { type: transportType, host: '127.0.0.1', port: 3000, expose: false } });
-  mocks.resolveConfigState.mockResolvedValue({ configured: true, config });
+  mocks.resolveConfigState.mockResolvedValue({ configured: true, config, source: 'store' });
   vi.resetModules();
   await import('../../../src/index.js');
 }
@@ -90,7 +92,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('startup failure fallback', () => {
+describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () => {
   it('opens setup mode with the failure reason on stdio', async () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 

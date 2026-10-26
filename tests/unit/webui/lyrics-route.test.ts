@@ -37,6 +37,8 @@ import { getPlayQueue } from '../../../src/tools/playback.js';
 import { fetchWithTimeout } from '../../../src/utils/fetch-with-timeout.js';
 import { handleLyrics } from '../../../src/webui/routes/lyrics.js';
 import { handlePlayerState } from '../../../src/webui/routes/player.js';
+import { AuthService } from '../../../src/webui/auth/auth-service.js';
+import { GuestQueue } from '../../../src/webui/jukebox/guest-queue.js';
 import { createServer } from '../../../src/webui/server.js';
 
 interface CapturedRes {
@@ -166,6 +168,8 @@ async function withServer(config: Config, run: (port: number) => Promise<void>):
     visualizer: { addClient: vi.fn() },
     shutdown: () => undefined,
     leases: { open: () => undefined, close: () => undefined },
+    auth: new AuthService(config),
+    guests: new GuestQueue(),
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -312,6 +316,54 @@ describe('handleLyrics caching', () => {
     expect((second.json() as LyricsDTO).hasSynced).toBe(false);
     expect(resolveLyricsByMetadata).toHaveBeenCalledTimes(1);
   });
+
+  it('runs one lookup for concurrent requests of an uncached song', async () => {
+    queueOf(entry('songConcurrent1'));
+    let finish: (dto: LyricsDTO) => void = () => undefined;
+    vi.mocked(resolveLyricsByMetadata).mockReturnValue(
+      new Promise<LyricsDTO>((resolve) => {
+        finish = resolve;
+      }),
+    );
+
+    const first = fakeRes();
+    const second = fakeRes();
+    const requests = Promise.all([
+      handleLyrics(first.res, LYRICS_ON, testClient(), 'songConcurrent1'),
+      handleLyrics(second.res, LYRICS_ON, testClient(), 'songConcurrent1'),
+    ]);
+    await vi.waitFor(() => {
+      expect(resolveLyricsByMetadata).toHaveBeenCalled();
+    });
+    finish(syncedDto());
+    await requests;
+
+    expect(first.status()).toBe(200);
+    expect(second.status()).toBe(200);
+    expect(second.json()).toEqual(first.json());
+    expect(resolveLyricsByMetadata).toHaveBeenCalledTimes(1);
+    expect(getPlayQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares a failed lookup with concurrent requests and retries on the next request', async () => {
+    queueOf(entry('songConcurrentFail1'));
+    vi.mocked(resolveLyricsByMetadata).mockRejectedValueOnce(new Error('LRCLIB is down'));
+
+    const first = fakeRes();
+    const second = fakeRes();
+    await Promise.all([
+      handleLyrics(first.res, LYRICS_ON, testClient(), 'songConcurrentFail1'),
+      handleLyrics(second.res, LYRICS_ON, testClient(), 'songConcurrentFail1'),
+    ]);
+    vi.mocked(resolveLyricsByMetadata).mockResolvedValueOnce(syncedDto());
+    const retry = fakeRes();
+    await handleLyrics(retry.res, LYRICS_ON, testClient(), 'songConcurrentFail1');
+
+    expect(first.status()).toBe(502);
+    expect(second.status()).toBe(502);
+    expect(retry.status()).toBe(200);
+    expect(resolveLyricsByMetadata).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('handleLyrics LRCLIB feature gate', () => {
@@ -358,7 +410,7 @@ describe('handlePlayerState lyrics flag', () => {
 
   it('reports the live theme to every peer', () => {
     const cap = fakeRes();
-    handlePlayerState(fakeReq('203.0.113.5'), cap.res, LYRICS_OFF);
+    handlePlayerState(fakeReq('192.168.1.50'), cap.res, LYRICS_OFF);
 
     expect(cap.json()).toMatchObject({ isLocal: false, theme: null });
   });

@@ -75,8 +75,14 @@ const AUDIO_OUTPUT_PROPERTIES: ReadonlySet<string> = new Set(['audio-device', 'a
 // Names the saved station a radio stream was played from, since saved stations can share a URL.
 // Observed so every process sharing mpv sees a change. Optional, since mpv before 0.36 lacks it.
 const RADIO_STATION_TAG_PROPERTY = 'user-data/navidrome-mcp/radio-station-id';
+// A song replace sets the pending mark before it clears the queue and raises the generation once
+// it completes, so the web player process tells songs a replace removed from songs a clear removed.
+export const REPLACE_PENDING_PROPERTY = 'user-data/navidrome-mcp/replace-pending';
+export const REPLACE_GENERATION_PROPERTY = 'user-data/navidrome-mcp/replace-generation';
 const OPTIONAL_OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [13, RADIO_STATION_TAG_PROPERTY],
+  [17, REPLACE_PENDING_PROPERTY],
+  [18, REPLACE_GENERATION_PROPERTY],
 ];
 
 // On a transcoded stream mpv can briefly reject a valid seek while its cache settles, and a retry
@@ -140,6 +146,45 @@ export interface QueueTrackMetadata {
   album?: string;
   /** Seconds, matching mpv's `duration`. */
   duration?: number;
+}
+
+/** A caller that must never replace the queue, such as a guest add, gets this instead of a demotion. */
+export class RadioQueueRefusedError extends Error {
+  constructor() {
+    super('The queue holds a radio stream, so the append was refused instead of replacing the queue.');
+    this.name = 'RadioQueueRefusedError';
+  }
+}
+
+/** A guarded removal found its entry playing, and only the host may skip a playing song. */
+export class QueueEntryStartedError extends Error {
+  constructor(entryId: number) {
+    super(`Queue entry ${String(entryId)} is playing, so the removal was refused instead of skipping it.`);
+    this.name = 'QueueEntryStartedError';
+  }
+}
+
+/** An mpv without user-data, or a replace from a release that never marks one, reads as no replace. */
+export interface ReplaceMarks {
+  generation: number;
+  pending: boolean;
+}
+
+/** Any entry without a song id counts as radio. */
+export function holdsRadioStream(entries: readonly QueueEntry[]): boolean {
+  return entries.some((entry) => entry.songId === null);
+}
+
+interface LoadedEntry {
+  url: string;
+  entryId: number | null;
+}
+
+// mpv answers `loadfile` with `{ playlist_entry_id }`.
+function entryIdFromLoadReply(reply: unknown): number | null {
+  if (typeof reply !== 'object' || reply === null) return null;
+  const entryId = (reply as Record<string, unknown>)['playlist_entry_id'];
+  return typeof entryId === 'number' ? entryId : null;
 }
 
 export type StateChangeEvent =
@@ -320,11 +365,13 @@ class PlaybackEngine {
     return clamped;
   }
 
+  /** `entryIds` lists the mpv ids of the loaded entries in load order, leaving out any id mpv never reported. */
   async enqueue(
     songIds: readonly string[],
     mode: 'replace' | 'append',
     metadata?: ReadonlyArray<QueueTrackMetadata>,
-  ): Promise<{ demoted: boolean; outputMissing: MissingAudioOutput | null }> {
+    options: { refuseRadioQueue?: boolean } = {},
+  ): Promise<{ demoted: boolean; outputMissing: MissingAudioOutput | null; entryIds: number[] }> {
     if (songIds.length === 0) {
       throw new Error('enqueue requires at least one song ID');
     }
@@ -338,7 +385,9 @@ class PlaybackEngine {
       let demoted = false;
       // An append never unpauses, so only a replace checks the output.
       let outputMissing: MissingAudioOutput | null = null;
+      const loaded: LoadedEntry[] = [];
       if (effectiveMode === 'append' && await this.hasRadioStream()) {
+        if (options.refuseRadioQueue === true) throw new RadioQueueRefusedError();
         logger.warn('enqueue: append demoted to replace because queue contains a radio stream');
         effectiveMode = 'replace';
         demoted = true;
@@ -357,12 +406,13 @@ class PlaybackEngine {
         this.ingestMetadata(metadata);
         // Paused before the load, so the first track never plays on the null output.
         if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
+        await this.writeUserData(ipc, REPLACE_PENDING_PROPERTY, true);
         // Clear up front so the prior queue is gone even if the first loadfile fails.
         await ipc.command('playlist-clear');
         try {
-          await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
+          await this.loadEntry(ipc, first, 'replace', loaded);
           for (const id of rest) {
-            await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+            await this.loadEntry(ipc, id, 'append', loaded);
           }
           if (outputMissing === null) await ipc.command('set_property', 'pause', false);
         } catch (err) {
@@ -377,6 +427,8 @@ class PlaybackEngine {
           } catch {
             // The IPC layer tears down a dead connection.
           }
+          // Cleared with no generation rise, so the web player drops the guest songs as on a clear.
+          await this.writeUserData(ipc, REPLACE_PENDING_PROPERTY, false);
           // A read before mpv's async change event must see the empty queue.
           this.propertyCache.set('playlist-count', 0);
           this.propertyCache.set('playlist-pos', null);
@@ -385,6 +437,9 @@ class PlaybackEngine {
           const reason = err instanceof Error ? err.message : String(err);
           throw new Error(`enqueue failed mid-sequence; queue was cleared and is now empty: ${reason}`);
         }
+        // The generation rises before the pending mark clears, so no reader sees neither mark.
+        await this.raiseReplaceGeneration(ipc);
+        await this.writeUserData(ipc, REPLACE_PENDING_PROPERTY, false);
       } else {
         this.ingestMetadata(metadata);
         // mpv selects nothing for tracks appended with no current entry. The first one is selected
@@ -392,7 +447,7 @@ class PlaybackEngine {
         const posBeforeAppend = await ipc.command('get_property', 'playlist-pos');
         const countBeforeAppend = await ipc.command('get_property', 'playlist-count');
         for (const id of songIds) {
-          await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+          await this.loadEntry(ipc, id, 'append', loaded);
         }
         const hadNoCurrentEntry = typeof posBeforeAppend === 'number' && posBeforeAppend < 0;
         if (hadNoCurrentEntry && typeof countBeforeAppend === 'number') {
@@ -401,10 +456,41 @@ class PlaybackEngine {
         }
       }
 
-      return { demoted, outputMissing };
+      const entryIds = await this.resolveEntryIds(ipc, loaded);
+      return { demoted, outputMissing, entryIds };
     });
     this.emitStateChange({ kind: 'queue' });
     return result;
+  }
+
+  private async loadEntry(ipc: MpvIpc, songId: string, mode: 'replace' | 'append', loaded: LoadedEntry[]): Promise<void> {
+    const url = this.buildStreamUrl(songId);
+    const reply = await ipc.command('loadfile', url, mode);
+    loaded.push({ url, entryId: entryIdFromLoadReply(reply) });
+  }
+
+  /**
+   * An older mpv answers a loadfile without the entry id. Each stream URL carries a fresh
+   * auth salt, so its filename names one entry in the playlist. The songs already loaded, so a
+   * failed read leaves those ids out instead of failing the enqueue.
+   */
+  private async resolveEntryIds(ipc: MpvIpc, loaded: readonly LoadedEntry[]): Promise<number[]> {
+    const reported = loaded.map((entry) => entry.entryId);
+    if (reported.every((id): id is number => id !== null)) return reported;
+    let playlist: unknown = null;
+    try {
+      playlist = await ipc.command('get_property', 'playlist');
+    } catch (err) {
+      logger.debug(`enqueue: playlist read for entry ids failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const idByFilename = new Map<string, number>();
+    for (const item of Array.isArray(playlist) ? (playlist as unknown[]) : []) {
+      const record = typeof item === 'object' && item !== null ? item as Record<string, unknown> : {};
+      if (typeof record['filename'] === 'string' && typeof record['id'] === 'number') idByFilename.set(record['filename'], record['id']);
+    }
+    return loaded
+      .map((entry) => entry.entryId ?? idByFilename.get(entry.url))
+      .filter((id): id is number => id !== undefined);
   }
 
   /** A foreign filename yields a null songId, not an error, since any client can load anything. */
@@ -500,7 +586,8 @@ class PlaybackEngine {
       this.queueGeneration++;
       const outputMissing = await this.checkAudioOutput(ipc);
       // Tagged before the load, so a poll never pairs the new stream with the prior station's tag.
-      await this.writeRadioStationTag(ipc, stationId);
+      // Without the tag, the name falls back to the first saved station on the stream URL.
+      await this.writeUserData(ipc, RADIO_STATION_TAG_PROPERTY, stationId);
       // Paused before the load, so the stream never plays on the null output.
       if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
       await ipc.command('loadfile', streamUrl, 'replace');
@@ -516,23 +603,73 @@ class PlaybackEngine {
     return typeof tag === 'string' && tag !== '' ? tag : null;
   }
 
-  // Best effort. Without the tag, the name falls back to the first saved station on the stream URL.
-  private async writeRadioStationTag(ipc: MpvIpc, stationId: string): Promise<void> {
+  // Best effort, since mpv before 0.36 has no user-data property.
+  private async writeUserData(ipc: MpvIpc, name: string, value: string | number | boolean): Promise<void> {
     try {
-      await ipc.command('set_property', RADIO_STATION_TAG_PROPERTY, stationId);
+      await ipc.command('set_property', name, value);
     } catch (error) {
-      logger.debug(`radio station tag not written: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`mpv ${name} not written: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
+  // mpv answers an unset user-data key, and an mpv before 0.36 any user-data key, with a command
+  // error. A dropped connection still rejects, so a reader never takes it for an unset key.
+  private async readUserData(ipc: MpvIpc, name: string): Promise<unknown> {
+    try {
+      return await ipc.command('get_property', name);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('mpv command error')) return null;
+      throw error;
+    }
+  }
+
+  // Best effort, so a failed raise never fails a replace that already loaded. Read live, since the
+  // observed value can lag another process's raise.
+  private async raiseReplaceGeneration(ipc: MpvIpc): Promise<void> {
+    let generation = 0;
+    try {
+      generation = await this.readGeneration(ipc);
+    } catch (error) {
+      logger.debug(`mpv ${REPLACE_GENERATION_PROPERTY} not read: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    await this.writeUserData(ipc, REPLACE_GENERATION_PROPERTY, generation + 1);
+  }
+
+  private async readGeneration(ipc: MpvIpc): Promise<number> {
+    const generation = await this.readUserData(ipc, REPLACE_GENERATION_PROPERTY);
+    return typeof generation === 'number' ? generation : 0;
+  }
+
   /**
-   * Any entry without a song id counts as radio. Reads the live playlist, since the observed
-   * `playlist-count` can lag a load that just finished.
+   * Live reads, since the observed values can lag a mark another process just wrote. The pending
+   * mark is read first, since a replace raises the generation before it clears the pending mark.
    */
+  async readReplaceMarks(): Promise<ReplaceMarks> {
+    if (!this.isRunning()) return { generation: 0, pending: false };
+    const ipc = this.requireIpc();
+    const pending = await this.readUserData(ipc, REPLACE_PENDING_PROPERTY);
+    const generation = await this.readGeneration(ipc);
+    return { generation, pending: pending === true };
+  }
+
+  /** A live read of the generation alone. Zero when unset or when mpv is not attached. */
+  async readReplaceGeneration(): Promise<number> {
+    if (!this.isRunning()) return 0;
+    return this.readGeneration(this.requireIpc());
+  }
+
+  /** Reads the live playlist, since the observed `playlist-count` can lag a load that just finished. */
   async hasRadioStream(): Promise<boolean> {
     if (!this.isRunning()) return false;
-    const playlist = await this.getQueue();
-    return playlist.some(entry => entry.songId === null);
+    return holdsRadioStream(await this.getQueue());
+  }
+
+  /** A live read, since the observed `pause` can lag a set_property sent just before. Null when unknown. */
+  async readPaused(): Promise<boolean | null> {
+    if (!this.isRunning()) return null;
+    const paused = await this.requireIpc().command('get_property', 'pause');
+    return typeof paused === 'boolean' ? paused : null;
   }
 
   getQueueGeneration(): number {
@@ -597,6 +734,36 @@ class PlaybackEngine {
       await this.requireIpc().command('playlist-remove', index);
     });
     this.emitStateChange({ kind: 'queue' });
+  }
+
+  /**
+   * The entry is checked and resolved inside the lock, since a track change or a move before it would
+   * start or shift the entry. Returns false when the entry is gone or now names another song.
+   * `refuseStarted` throws QueueEntryStartedError while the entry is current and not paused.
+   * It never spawns, since a new mpv instance cannot hold the entry.
+   */
+  async removeQueueEntryById(entryId: number, options: { songId?: string; refuseStarted?: boolean } = {}): Promise<boolean> {
+    await this.ensureAttached();
+    if (!this.isRunning()) return false;
+    const removed = await this.withMutationLock(async () => {
+      const ipc = this.requireIpc();
+      const playlist = await ipc.command('get_property', 'playlist');
+      const items: unknown[] = Array.isArray(playlist) ? playlist : [];
+      const index = items.findIndex((item) => typeof item === 'object' && item !== null && (item as Record<string, unknown>)['id'] === entryId);
+      if (index < 0) return false;
+      const record = items[index] as Record<string, unknown>;
+      const filename = typeof record['filename'] === 'string' ? record['filename'] : '';
+      // A new mpv instance numbers its entries from 1 again, so the id can name another song.
+      if (options.songId !== undefined && this.parseSongIdCached(filename, items.length) !== options.songId) return false;
+      if (options.refuseStarted === true && record['current'] === true) {
+        // An unknown pause state refuses, since removing a playing entry skips it.
+        if (await ipc.command('get_property', 'pause') !== true) throw new QueueEntryStartedError(entryId);
+      }
+      await ipc.command('playlist-remove', index);
+      return true;
+    });
+    if (removed) this.emitStateChange({ kind: 'queue' });
+    return removed;
   }
 
   /** `force` stops playback on the last entry, where the default `weak` does nothing. */

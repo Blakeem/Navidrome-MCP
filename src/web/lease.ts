@@ -4,15 +4,16 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { request, type ClientRequest } from 'node:http';
+import type { ClientRequest } from 'node:http';
 
 import { logger } from '../utils/logger.js';
 import { MCP_LEASE_PATH } from '../webui/routes/player.js';
+import { loopbackRequest } from './loopback-client.js';
 
 /** Bounds how long a play waits for the player to count the lease before its mpv commands run. */
 const LEASE_REGISTER_TIMEOUT_MS = 500;
 
-let held: { port: number; req: ClientRequest } | null = null;
+let held: { port: number; secure: boolean; req: ClientRequest } | null = null;
 
 function release(req: ClientRequest): void {
   if (held?.req === req) held = null;
@@ -20,10 +21,10 @@ function release(req: ClientRequest): void {
 
 /**
  * A kept-open POST makes the player count this MCP, so it keeps playing after its spawner exits.
- * node:http, since undici's 300s body timeout would drop an idle lease made with fetch.
+ * node:http(s), since undici's 300s body timeout would drop an idle lease made with fetch.
  */
-export function holdOwnerLease(port: number): Promise<void> {
-  if (held?.port === port) return Promise.resolve();
+export function holdOwnerLease(port: number, secure: boolean): Promise<void> {
+  if (held?.port === port && held.secure === secure) return Promise.resolve();
   held?.req.destroy();
   held = null;
 
@@ -36,7 +37,8 @@ export function holdOwnerLease(port: number): Promise<void> {
     };
 
     // webui binds only loopback or a wildcard, and both accept a loopback connection.
-    const req = request(
+    const req = loopbackRequest(
+      secure,
       {
         host: '127.0.0.1',
         port,
@@ -57,7 +59,7 @@ export function holdOwnerLease(port: number): Promise<void> {
         settle();
       },
     );
-    held = { port, req };
+    held = { port, secure, req };
     req.on('socket', (socket) => socket.unref());
     req.on('error', (err) => {
       logger.debug(`web player lease failed: ${err.message}`);

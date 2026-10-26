@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildFormSeed } from '../../../src/config/env-settings.js';
+import { buildEnvRuntimeSettings, buildFormSeed, readEnvAdminPassword } from '../../../src/config/env-settings.js';
 import { logger } from '../../../src/utils/logger.js';
 
 const ENV_KEYS = [
@@ -16,7 +16,7 @@ const ENV_KEYS = [
   'RADIO_BROWSER_USER_AGENT', 'RADIO_BROWSER_BASE',
   'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE',
   'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT', 'MCP_HTTP_EXPOSE',
-  'MCP_HTTP_AUTH_TOKEN', 'WEBUI_ENABLED', 'NAVIDROME_DEFAULT_LIBRARIES', 'PLAYBACK_AUDIO_DEVICE',
+  'MCP_HTTP_AUTH_TOKEN', 'WEBUI_ENABLED', 'WEBUI_PUBLIC_URL', 'WEBUI_TLS_CERT', 'WEBUI_TLS_KEY', 'WEBUI_AUTH_MODE', 'WEBUI_ADMIN_ACCESS', 'WEBUI_ADMIN_PASSWORD', 'NAVIDROME_DEFAULT_LIBRARIES', 'PLAYBACK_AUDIO_DEVICE', 'JUKEBOX_GUEST_QUEUE_LIMIT',
 ];
 
 describe('buildFormSeed', () => {
@@ -56,6 +56,59 @@ describe('buildFormSeed', () => {
     expect(seed.navidrome?.url).toBe('http://env-only:4533');
     expect(seed.navidrome?.username).toBe('envuser');
     expect(seed.navidrome?.password).toBe('envpass');
+  });
+
+  it('imports the web remote TLS pair from WEBUI_TLS_CERT and WEBUI_TLS_KEY', () => {
+    process.env['WEBUI_TLS_CERT'] = '/etc/ssl/full.pem';
+    process.env['WEBUI_TLS_KEY'] = '/etc/ssl/key.pem';
+    expect(buildFormSeed().webui?.tls).toEqual({ certPath: '/etc/ssl/full.pem', keyPath: '/etc/ssl/key.pem' });
+  });
+
+  it('imports the public URL from WEBUI_PUBLIC_URL, and null when unset', () => {
+    expect(buildEnvRuntimeSettings().webui?.publicUrl).toBeNull();
+    process.env['WEBUI_PUBLIC_URL'] = 'https://jukebox.example.org:8808';
+    expect(buildEnvRuntimeSettings().webui?.publicUrl).toBe('https://jukebox.example.org:8808');
+  });
+
+  it('imports the guest song limit from JUKEBOX_GUEST_QUEUE_LIMIT, and 3 when unset or not an integer', () => {
+    expect(buildEnvRuntimeSettings().jukebox?.guestQueueLimit).toBe(3);
+    process.env['JUKEBOX_GUEST_QUEUE_LIMIT'] = '5';
+    expect(buildEnvRuntimeSettings().jukebox?.guestQueueLimit).toBe(5);
+    process.env['JUKEBOX_GUEST_QUEUE_LIMIT'] = 'many';
+    expect(buildEnvRuntimeSettings().jukebox?.guestQueueLimit).toBe(3);
+  });
+
+  it('defaults the access mode to none and the admin access level to localhost', () => {
+    expect(buildEnvRuntimeSettings().webui?.auth).toEqual({ mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' });
+  });
+
+  it('imports WEBUI_AUTH_MODE and WEBUI_ADMIN_ACCESS, and never a hash', () => {
+    process.env['WEBUI_AUTH_MODE'] = 'jukebox';
+    process.env['WEBUI_ADMIN_ACCESS'] = 'lan';
+    process.env['WEBUI_ADMIN_PASSWORD'] = 'correct horse battery';
+    expect(buildEnvRuntimeSettings().webui?.auth).toEqual({ mode: 'jukebox', adminPasswordHash: null, adminAccess: 'lan' });
+    expect(JSON.stringify(buildFormSeed())).not.toContain('correct horse battery');
+  });
+
+  it('falls back to password and localhost for unknown values and warns', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    process.env['WEBUI_AUTH_MODE'] = 'protected';
+    process.env['WEBUI_ADMIN_ACCESS'] = 'everyone';
+    try {
+      expect(buildEnvRuntimeSettings().webui?.auth).toMatchObject({ mode: 'password', adminAccess: 'localhost' });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('WEBUI_AUTH_MODE="protected" is not supported (use one of none, password, jukebox), so password is used.'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('WEBUI_ADMIN_ACCESS="everyone" is not supported'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reads WEBUI_ADMIN_PASSWORD verbatim and treats an empty value as unset', () => {
+    expect(readEnvAdminPassword()).toBeNull();
+    process.env['WEBUI_ADMIN_PASSWORD'] = ' padded password ';
+    expect(readEnvAdminPassword()).toBe(' padded password ');
+    process.env['WEBUI_ADMIN_PASSWORD'] = '';
+    expect(readEnvAdminPassword()).toBeNull();
   });
 
   it('imports PLAYBACK_AUDIO_DEVICE as a device id with no name', () => {

@@ -32,13 +32,19 @@ A Raspberry Pi or an always-on machine with speech to text (such as Whisper) and
 
 > Requires `mpv`.
 
-A web player at `http://localhost:8808` controls local playback from any browser. It shows the current song with cover art, transport and seek controls, volume, and a live queue. Click a queue entry to jump to it. The output button beside the volume slider picks the audio output. Enable **Expose on LAN** to use the player from a phone or tablet. [MPV Remote setup](#mpv-remote-setup) covers setup, lifetime, and security.
+A web player at `http://localhost:8808` controls local playback from any browser. It shows the current song with cover art, transport and seek controls, volume, and a live queue. Click a queue entry to jump to it, or press its remove button to take it out of the queue. The output button beside the volume slider picks the audio output. Enable **Expose on LAN** to use the player from a phone or tablet. [MPV Remote setup](#mpv-remote-setup) covers setup, lifetime, and security.
 
 [![MPV Remote web interface](images/remote-small.png)](images/remote-large.png)
 
 The **Play Music** window searches artists, albums, and songs. An artist expands to its albums, and an album to its songs. The window also starts any playlist, your starred songs, or your starred albums. Each pick adds to the queue or replaces it, with an option to shuffle songs or albums. So the page works as a remote without the assistant.
 
 [![Play Music window](images/play-music-small.png)](images/play-music-large.png)
+
+### 🎉 Guest Jukebox
+
+> Requires `mpv` and the **Admin password and jukebox** access mode.
+
+Guests scan a QR code and add songs to the end of the queue from their phones. Each guest can have 3 songs waiting at a time, and you can change that limit. The jukebox code works for the time you pick, up to 90 days. Then every guest is signed out. The **Guests** dialog lists the guests and can remove or ban one. [Guest Jukebox Setup](#guest-jukebox-setup) covers setup and HTTPS.
 
 ### 🌈 Visualizer
 
@@ -233,7 +239,7 @@ A category with **requires** in its heading only appears once that setting is fi
 
 ### Prerequisites
 
-- **Node.js 20.18.1+** ([download](https://nodejs.org/))
+- **Node.js 24.19+** ([download](https://nodejs.org/))
 - **A running Navidrome server**
 - **An MCP-compatible client** (Claude Desktop, Claude Code, Cursor, or another MCP client with local stdio support)
 - **Optional: [mpv](https://mpv.io/)** for local audio playback
@@ -304,14 +310,14 @@ These settings are optional.
 - **mpv path:** the mpv binary location if it's not on `PATH`. Blank auto-detects.
 - **Audio output:** the speaker or headphones mpv plays through. **System default** uses the output the operating system selects.
 - **Transcode format:** defaults to `raw`, which streams the original file for best quality and reliable seeking. Set a codec such as `mp3` or `opus` for slow or metered links. The bitrate applies only when a codec is set.
-- **Web UI:** the MPV Remote settings, listed in [Configuration](#configuration).
+- **Web Player:** the MPV Remote settings, listed in [Configuration](#configuration).
 - **Transport:** how MCP clients reach the server, described in [HTTP Transport](#http-transport).
 
 Settings load only at startup. To apply a change, quit and reopen the MCP client, or re-run `navidrome-web`. When upgrading from the old env setup, the form pre-fills from your shell environment and a `.env` file. The form sees the `env` block in your MCP client's JSON only when the MCP server opens the settings page itself. Otherwise re-enter those values, or export them in the shell before running `navidrome-config`.
 
 #### Headless Machines and Containers
 
-The settings page binds loopback only, so a host with no browser, such as a VPS or a Docker container, uses environment variables instead. When no usable `settings.json` exists, the server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD`. These variables set the optional settings.
+The settings page binds loopback only, so a host with no browser, such as a VPS or a Docker container, uses environment variables instead. When no usable `settings.json` exists, the server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD`. A `settings.json` that sets an access mode with the admin password is the exception. When it is unusable, the server starts in setup mode, so a broken file never opens a player that needs a password. These variables set the optional settings.
 
 - `LASTFM_API_KEY` enables Last.fm discovery.
 - `RADIO_BROWSER_USER_AGENT` (such as `Navidrome-MCP`) enables radio discovery.
@@ -319,6 +325,7 @@ The settings page binds loopback only, so a host with no browser, such as a VPS 
 - `NAVIDROME_DEFAULT_LIBRARIES` sets the default library IDs, comma separated.
 - `MPV_PATH` sets the mpv binary location.
 - `PLAYBACK_AUDIO_DEVICE` sets the audio output by its id from `list_audio_devices`.
+- `JUKEBOX_GUEST_QUEUE_LIMIT` sets how many songs each jukebox guest can have waiting.
 - `DEBUG=true` turns on verbose logs.
 
 [HTTP Transport](#http-transport) lists the transport variables.
@@ -363,12 +370,12 @@ A pre-built binary from [mpv.io](https://mpv.io/installation/) also works. Verif
 
 #### Player Lifetime
 
-The server starts the player as a separate `navidrome-web` process. The port binds immediately, so the page is reachable before anything plays. Hosts without mpv don't start it. The gear icon in the player opens its settings.
+The server starts the player as a separate `navidrome-web` process. The port binds immediately, so the page is reachable before anything plays. Hosts without mpv don't start it. The gear icon in the player opens its settings, **Network info**, **Log out**, and **Shut down player**. The player page is at `/admin`.
 
 Whether playback keeps going after you close your AI client depends on how the player started.
 
 - **Default (off):** the MCP-launched player and mpv stop when the last MCP server using them closes or restarts.
-- **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the gear modal): the player keeps running. Stop it with the power button.
+- **Keep playing after the MCP server closes** (`webui.persistAfterMcpExit`, in the settings page or the gear modal): the player keeps running. Stop it with **Shut down player** in the gear modal.
 - **Launched yourself** (`navidrome-web`, below): always runs independently. The MCP server attaches to it and never shuts it down.
 
 mpv stops when the player stops.
@@ -383,7 +390,7 @@ navidrome-web                # after: npm install -g navidrome-mcp
 node dist/web/main.js
 ```
 
-It reads `settings.json` and opens your browser. In a terminal it runs in the foreground. It stops when you close the terminal, press Ctrl+C, or click the power button. The desktop shortcut below runs it in the background. The first process to bind the port runs the player, and any later one attaches to it. Logs go to `navidrome-web.log` in your config directory.
+It reads `settings.json` and opens your browser. In a terminal it runs in the foreground. It stops when you close the terminal, press Ctrl+C, or click **Shut down player** in the gear modal. The desktop shortcut below runs it in the background. The first process to bind the port runs the player, and any later one attaches to it. Logs go to `navidrome-web.log` in your config directory.
 
 #### Desktop Shortcut
 
@@ -405,37 +412,126 @@ If you move or rebuild the project, run the generator again so the paths stay cu
 
 #### Configuration
 
-Every setting below except `webui.theme` is in the **Web UI** section of the settings page. The gear modal applies `persistAfterMcpExit`, `theme`, and `visualizer` live. Other changes apply after you stop the player with the power button and restart the MCP client or `navidrome-web`.
+Every setting below except `webui.theme` is in the **Web Player** section of the settings page. The gear modal applies `persistAfterMcpExit`, `theme`, and `visualizer` live, and the **Guests** dialog applies `jukebox.guestQueueLimit` live. Other changes apply after you stop the player with **Shut down player** and restart the MCP client or `navidrome-web`.
 
 | Setting (`settings.json`) | Default | Effect |
 |---|---|---|
-| `webui.enabled` | `true` | Set `false` to turn off the web player. The settings page labels it **Enable the companion control panel**. |
+| `webui.enabled` | `true` | Set `false` to turn off the web player. The settings page labels it **Run the web player**. |
 | `webui.port` | `8808` | The port the player listens on. Pick another if 8808 is taken on your host. |
 | `webui.host` | `127.0.0.1` | Bind address, one of `127.0.0.1`, `0.0.0.0`, or `::`. Any other value falls back to `127.0.0.1`. A value set here overrides `webui.expose`. |
 | `webui.expose` | `false` | Bind on `0.0.0.0` so other devices on your LAN can reach the player. |
 | `webui.allowedHosts` | `[]` | Extra host names the player accepts on a LAN bind, such as `music.home.lan`. A LAN bind always accepts an IP address, `localhost`, and this computer's name. Any other host name gets `403`, which blocks DNS rebinding. |
+| `webui.publicUrl` | `null` | The address internet guests use, with no path, such as `https://jukebox.duckdns.org:8808`. The **Jukebox** dialog adds a join code for it, and the player accepts its host name. |
 | `webui.autoOpenBrowser` | `false` | Open the player in your browser when the MCP server starts. Running `navidrome-web` directly always opens a browser. |
 | `webui.persistAfterMcpExit` | `false` | Keep an MCP-launched player running after the last MCP server using it closes. |
 | `webui.visualizer` | `true` | Set `false` to remove the visualizer and the audio analysis it adds to mpv. The analysis uses about 2.5% of one CPU core while music plays. |
+| `webui.tls.certPath` | `null` | The PEM certificate file, such as `fullchain.pem` from Let's Encrypt. Set it with `webui.tls.keyPath` to serve HTTPS. HTTPS is recommended when guests connect from the internet. |
+| `webui.tls.keyPath` | `null` | The PEM private key file for the certificate, such as `privkey.pem`. Set both paths or neither. The player loads a renewed pair within a minute. A missing or invalid file stops the player from starting. |
+| `webui.auth.mode` | `none` | `none` serves the host and the LAN with no login. `password` asks every browser for the admin password. `jukebox` also lets guests in with a code. [Access Control](#access-control) describes the three modes. |
+| `webui.auth.adminPasswordHash` | `null` | The admin password hash. Type the password in the settings page, which stores only the hash. Passwords are 12 to 128 characters. |
+| `webui.auth.adminAccess` | `localhost` | Where an admin can log in, one of `localhost` (this computer), `lan`, or `anywhere`. |
+| `jukebox.guestQueueLimit` | `3` | How many songs each jukebox guest can have waiting, from 1 to 20. |
 | `webui.theme` | unset | Forces `light` or `dark` on every device viewing the player. When unset, each device follows its own setting. The gear modal sets it, and its **System** option clears it. |
 
 #### Phone and Tablet Remote
 
 1. Enable **Expose on LAN** in the settings page and Save.
 2. Restart the player as [Configuration](#configuration) describes.
-3. Open the player's **Network info** dialog to see its LAN URLs, such as `http://192.168.1.42:8808`. A player run from a terminal also prints them. Open one in your phone's browser and bookmark it.
+3. Open **Network info** in the player's gear modal to see its LAN URLs, such as `http://192.168.1.42:8808`. A player run from a terminal also prints them. Open one in your phone's browser and bookmark it.
 
-#### Security note
+#### Access Control
 
-The web UI has **no authentication**. Anyone who can reach the port can use two groups of features.
+**Access** in the settings page picks one of three modes.
 
-- **Control:** playback transport, volume, the audio output, queue jumps, shuffling, clearing the queue, and starting any library source.
+- **Open** (`none`) is the default. It has no login, so anyone who reaches the port from the host, the LAN, or a VPN gets the features below.
+- **Admin password** (`password`) asks for the admin password on every browser, this computer included.
+- **Admin password and jukebox** (`jukebox`) also lets guests in with a code. They can only add songs, as [Guest Jukebox Setup](#guest-jukebox-setup) describes. A browser with no admin session that opens the root address gets the guest page.
+
+Player settings and **Shut down player** work only on the host in every mode. On another device the gear modal shows **Network info** and, after a login, **Log out**.
+
+These are the features.
+
+- **Control:** playback transport, volume, the audio output, queue jumps, shuffling, removing queue entries, clearing the queue, and starting any library source.
 - **Read:** library search and browsing, recently played history, playlist names, starred counts, cover art, live now-playing and queue state, lyrics of queued songs, the names of the host's audio outputs, and the host's LAN addresses.
 
 Who can reach the port depends on the bind address.
 
-- With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine, which is safe.
-- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. That's fine on a trusted home network. **Do not expose it to the public internet.** There is no rate limiting. Player settings and the power button stay loopback only, so a phone on your LAN can't change settings other than the audio output or shut the player down. The main settings page is never exposed. Once exposed, `GET /healthz` returns `404` off the host to avoid leaking a version fingerprint. Check the player's health from its host.
+- With `webui.host=127.0.0.1` (the default) it's only reachable from the host machine.
+- With **Expose on LAN** (`webui.expose=true`) it's reachable from anything on the LAN. The Open mode is fine on a trusted home network. The settings page is never exposed. Once exposed, `GET /healthz` returns `404` off the host to avoid leaking a version fingerprint.
+
+An internet address gets `403` unless the admin login is allowed from anywhere, or the jukebox is open. Neither applies to the Open mode. The player treats an address as local when it is the host itself or on one of the host's own subnets. Private, link-local, and carrier-grade NAT addresses (`100.64.0.0/10`, which Tailscale uses) count as local too. Port forwarding in Docker, WSL, or a router can make an internet client look local. A reverse proxy or tunnel on the host, such as Tailscale Funnel or cloudflared, does the same. So use a mode with the admin password for any player the internet can reach.
+
+These rules cover the admin login.
+
+- **Password:** set it in the settings page as **Admin password**, or with `WEBUI_ADMIN_PASSWORD` on a headless host.
+- **Where:** **Admin login allowed from** picks this computer only (the default), the local network, or anywhere. A browser outside that range sees no login page.
+- **Sessions:** a login lasts 7 days without use, and 30 days at most. Changing the password signs out every admin session.
+- **Wrong passwords:** each failure doubles the wait before the next attempt, from 1 second up to 1 hour. Each network also gets 10 attempts per 15 minutes. A login from this computer skips the doubling wait, so a guest can't lock you out.
+
+Allow the admin login from anywhere only with HTTPS, since over HTTP the password crosses the internet in plain text.
+
+### Guest Jukebox Setup
+
+1. In the settings page, set **Access** to **Admin password and jukebox**, set an **Admin password**, and enable **Expose on LAN**. Save.
+2. Restart the player as [Configuration](#configuration) describes.
+3. Open the player on its host and log in. Then click the **Jukebox** icon in the header.
+4. Pick how long the code lasts under **Open for**, then click **Open the jukebox**. The QR code appears.
+5. Share it with **Full screen**, **Download QR**, or **Copy link**. With a public URL set, **Local network** and **Internet** pick the link the code holds.
+
+The **Jukebox** icon shows the open code again. **New code** stops the current code and can also sign the guests out. **Close the jukebox** signs every guest out and stops the code.
+
+A guest scans the code, and the guest page opens and signs them in. A welcome message says how long access lasts and how many songs they can add, and it takes an optional nickname. A guest can change the nickname later with the Change name button. The guest page shows the current song, the queue, lyrics, and the visualizer. Guests search the library and add songs to the end of the queue. They can remove their own songs before those start. Guests can't skip, pause, or change the volume. When a guest's session ends, the guest page says why.
+
+These limits apply to each guest.
+
+- One song added every 5 seconds and 30 searches per minute.
+- A song that is already waiting can't be added again.
+- No songs can be added while a radio station plays.
+
+The player asks before the host removes a guest's song or clears a queue that holds one.
+
+When the host replaces the queue, the guests' unplayed songs move to the end of the new queue. This needs mpv 0.36 or later. Clearing the queue or playing a radio station removes them.
+
+#### Managing Guests
+
+The **Guests** icon in the header opens a list of the signed in guests and their waiting songs.
+
+- **Remove** signs the guest out and keeps their songs.
+- **Ban** signs the guest out, removes their waiting songs and blocks their browser until the jukebox closes. A private window or another device gets around the block, so pick one of these options to block more.
+  - **Also block their network address** blocks their IP address for 1 hour to 30 days.
+  - **Also make a new jukebox code** stops the old code. The other guests stay signed in.
+- **Song limit** sets how many songs each guest can have waiting.
+
+The player saves bans and sessions in `webui-auth-<port>.json` in your config directory, so they last across restarts. The **Banned** list lifts a ban.
+
+#### Internet Guests
+
+1. Forward the player's port on your router to the host.
+2. Set **Public URL** in the settings page to the address guests reach, such as `http://203.0.113.7:8808`. A DuckDNS name stays valid when your home IP address changes.
+3. Restart the player and open the jukebox. Pick **Internet** to show the code for the public URL.
+
+Internet addresses reach the player only while the jukebox is open. Each internet address can join 10 times per hour, and each code admits at most 100 guests.
+
+#### HTTPS
+
+Use HTTPS once guests connect from the internet. Over HTTP, anyone on the network path can read the jukebox code and a guest's session, which grants guest access only. Use a trusted certificate, since a self-signed one makes every guest's browser show a warning.
+
+The player uses HTTPS when **HTTPS certificate file** and **HTTPS key file** are set, and it loads a renewed certificate within a minute. These steps get a free Let's Encrypt certificate for a DuckDNS name with [acme.sh](https://github.com/acmesh-official/acme.sh). Since acme.sh proves the name through DNS, port 80 can stay closed.
+
+1. Create a subdomain at [duckdns.org](https://www.duckdns.org), such as `jukebox.duckdns.org`, and point it at your home IP address.
+2. Install acme.sh. On Windows, run it in WSL.
+3. Issue the certificate with your DuckDNS token.
+   ```bash
+   export DuckDNS_Token="your-token"
+   acme.sh --issue --server letsencrypt --dns dns_duckdns -d jukebox.duckdns.org
+   ```
+4. Copy the files to a folder the player can read. acme.sh copies them again on each renewal.
+   ```bash
+   acme.sh --install-cert -d jukebox.duckdns.org \
+     --fullchain-file /path/to/certs/fullchain.pem \
+     --key-file /path/to/certs/privkey.pem
+   ```
+5. Set the two HTTPS files in the settings page, and set **Public URL** to `https://jukebox.duckdns.org:8808`. Restart the player.
 
 ### HTTP Transport
 
@@ -472,7 +568,7 @@ When a token is set, every `/mcp` request must carry `Authorization: Bearer <tok
 
 **Host filtering.** On the default bind, loopback with no auth token, the server rejects requests whose `Host` header isn't a loopback name. This blocks DNS rebinding, so a malicious web page can't drive the server through your browser. Setting an `authToken` or binding a non-loopback address turns the automatic filter off, since a remote deployment is reached by names the server can't know in advance. A lured browser can't attach your token, so the bearer token already blocks rebinding. To pin the accepted names, set `transport.allowedHosts`, which applies whenever it is present. Each entry is the exact `Host` header value, with the port when it is not 80 or 443 (such as `mcp.example.com:3000`). Set `transport.allowedOrigins` only for browser clients. It gates the `Origin` header.
 
-The transport also reads `MCP_TRANSPORT` (`stdio` or `http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, `MCP_HTTP_ALLOWED_HOSTS`, and `MCP_HTTP_ALLOWED_ORIGINS` from the environment. The last two take comma-separated lists. The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_ALLOWED_HOSTS`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`, `WEBUI_VISUALIZER`). `WEBUI_ALLOWED_HOSTS` takes a comma-separated list. These follow the rule in [Headless Machines and Containers](#headless-machines-and-containers). They also pre-fill the settings form on first run.
+The transport also reads `MCP_TRANSPORT` (`stdio` or `http`), `MCP_HTTP_HOST`, `MCP_HTTP_PORT`, `MCP_HTTP_EXPOSE` (`true` to bind all interfaces), `MCP_HTTP_AUTH_TOKEN`, `MCP_HTTP_ALLOWED_HOSTS`, and `MCP_HTTP_ALLOWED_ORIGINS` from the environment. The last two take comma-separated lists. The web UI has a matching `WEBUI_*` family (`WEBUI_ENABLED`, `WEBUI_PORT`, `WEBUI_HOST`, `WEBUI_EXPOSE`, `WEBUI_ALLOWED_HOSTS`, `WEBUI_AUTO_OPEN_BROWSER`, `WEBUI_PERSIST_AFTER_MCP_EXIT`, `WEBUI_VISUALIZER`, `WEBUI_TLS_CERT`, `WEBUI_TLS_KEY`, `WEBUI_PUBLIC_URL`, `WEBUI_AUTH_MODE`, `WEBUI_ADMIN_ACCESS`, `WEBUI_ADMIN_PASSWORD`). `WEBUI_ALLOWED_HOSTS` takes a comma-separated list. `WEBUI_ADMIN_PASSWORD` takes the password itself, which the player hashes at startup. `WEBUI_AUTH_MODE` takes `none`, `password`, or `jukebox`. Any other value turns on `password`, so a typo never leaves the player open. These follow the rule in [Headless Machines and Containers](#headless-machines-and-containers). They also pre-fill the settings form on first run.
 
 > **Single account, shared state.** One process serves every HTTP session with one Navidrome account. So a `set_active_libraries` call changes the library filter for every connected session.
 
@@ -556,3 +652,5 @@ Each visualizer style is one file in `src/webui/public/visualizers/`. To add a s
 ---
 
 **Built with ❤️ for the Navidrome community**
+
+Navidrome MCP is an independent third-party project. It is not affiliated with or endorsed by the Navidrome project.

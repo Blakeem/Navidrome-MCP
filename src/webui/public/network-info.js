@@ -47,9 +47,9 @@ function buildAddressRow(entry) {
 
 function networkHint(info, interfaceCount) {
   if (!info.lanReachable && info.expose) {
-    return 'The Web UI bind host is a loopback address, which overrides Expose on LAN. Clear Bind host in the Web UI (mpv remote) section of navidrome-config, then restart the server.';
+    return 'The web player bind host is a loopback address, which overrides Expose on LAN. Clear Bind host in the Web Player section of navidrome-config, then restart the server.';
   }
-  if (!info.lanReachable) return 'Tip: run navidrome-config, check Expose on LAN in the Web UI (mpv remote) section, then restart the server.';
+  if (!info.lanReachable) return 'Tip: run navidrome-config, check Expose on LAN in the Web Player section, then restart the server.';
   if (interfaceCount === 0) return 'No LAN interfaces detected (only localhost is reachable).';
   return '';
 }

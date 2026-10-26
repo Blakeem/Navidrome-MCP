@@ -4,9 +4,12 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { get as httpGet, type Server } from 'node:http';
+import type { Server } from 'node:http';
 import type { Config } from '../config.js';
+import { loopbackUrl } from '../webui/network.js';
 import { HEALTH_APP_ID } from '../webui/routes/health.js';
+import { isTlsEnabled } from '../webui/tls.js';
+import { loopbackRequest } from './loopback-client.js';
 
 /**
  * The configured TCP port is the lock. The process that binds it owns the web server, and every
@@ -22,25 +25,18 @@ export type AcquireResult =
  */
 export type ProbeOutcome = 'ours' | 'refused' | 'foreign';
 
-export type WebEndpoint = Pick<Config['webui'], 'port' | 'host'>;
+export type WebEndpoint = Pick<Config['webui'], 'port' | 'host' | 'tls'>;
 
-/** `port` is the endpoint whose answer decided the outcome. */
+/** `port` and `secure` are the endpoint whose answer decided the outcome. */
 export interface WebOwnerProbe {
   outcome: ProbeOutcome;
-  playbackAttached: boolean;
-  scrobbleClaims: boolean;
   port: number;
+  secure: boolean;
 }
 
 export interface AcquireDeps {
-  probe: (port: number, bindHost: string) => Promise<ProbeOutcome>;
+  probe: (port: number, bindHost: string, secure: boolean) => Promise<ProbeOutcome>;
   bind: (server: Server, port: number, host: string) => Promise<'ok' | 'eaddrinuse'>;
-}
-
-interface HealthzProbe {
-  outcome: ProbeOutcome;
-  playbackAttached: boolean;
-  scrobbleClaims: boolean;
 }
 
 const PROBE_TIMEOUT_MS = 500;
@@ -52,17 +48,18 @@ function probeHost(bindHost: string): string {
   return WILDCARD_HOSTS.has(bindHost) ? '127.0.0.1' : bindHost;
 }
 
-function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProbe> {
-  return new Promise<HealthzProbe>((resolve) => {
+export function probeHealthz(port: number, bindHost: string, secure: boolean): Promise<ProbeOutcome> {
+  return new Promise<ProbeOutcome>((resolve) => {
     let settled = false;
-    const done = (outcome: ProbeOutcome, playbackAttached = false, scrobbleClaims = false): void => {
+    const done = (outcome: ProbeOutcome): void => {
       if (settled) return;
       settled = true;
-      resolve({ outcome, playbackAttached, scrobbleClaims });
+      resolve(outcome);
     };
 
-    const req = httpGet(
-      { host: probeHost(bindHost), port, path: '/healthz', timeout: PROBE_TIMEOUT_MS },
+    const req = loopbackRequest(
+      secure,
+      { host: probeHost(bindHost), port, path: '/healthz', method: 'GET', timeout: PROBE_TIMEOUT_MS },
       (res) => {
         if (res.statusCode !== 200) {
           res.resume();
@@ -81,14 +78,8 @@ function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProb
         });
         res.on('end', () => {
           try {
-            const json = JSON.parse(body) as { app?: unknown; playbackAttached?: unknown; scrobbleClaims?: unknown };
-            if (json.app !== HEALTH_APP_ID) {
-              done('foreign');
-              return;
-            }
-            // An owner older than the playbackAttached field always scrobbled, so a missing field
-            // counts as attached.
-            done('ours', json.playbackAttached !== false, json.scrobbleClaims === true);
+            const json = JSON.parse(body) as { app?: unknown };
+            done(json.app === HEALTH_APP_ID ? 'ours' : 'foreign');
           } catch {
             done('foreign');
           }
@@ -102,11 +93,8 @@ function probeHealthzDetail(port: number, bindHost: string): Promise<HealthzProb
     req.on('error', (err: NodeJS.ErrnoException) => {
       done(err.code === 'ECONNREFUSED' ? 'refused' : 'foreign');
     });
+    req.end();
   });
-}
-
-export async function probeHealthz(port: number, bindHost: string): Promise<ProbeOutcome> {
-  return (await probeHealthzDetail(port, bindHost)).outcome;
 }
 
 /**
@@ -117,20 +105,24 @@ export async function probeWebOwner(
   startup: WebEndpoint,
   readSaved: () => WebEndpoint | null,
 ): Promise<WebOwnerProbe> {
-  const first = await probeHealthzDetail(startup.port, startup.host);
-  const firstResult: WebOwnerProbe = { ...first, port: startup.port };
-  if (first.outcome === 'ours') return firstResult;
+  const startupSecure = isTlsEnabled(startup.tls);
+  const first = await probeHealthz(startup.port, startup.host, startupSecure);
+  const firstResult: WebOwnerProbe = { outcome: first, port: startup.port, secure: startupSecure };
+  if (first === 'ours') return firstResult;
 
   const saved = readSaved();
   if (saved === null) return firstResult;
-  if (saved.port === startup.port && probeHost(saved.host) === probeHost(startup.host)) return firstResult;
+  const savedSecure = isTlsEnabled(saved.tls);
+  const sameEndpoint =
+    saved.port === startup.port && probeHost(saved.host) === probeHost(startup.host) && savedSecure === startupSecure;
+  if (sameEndpoint) return firstResult;
 
-  const second = await probeHealthzDetail(saved.port, saved.host);
-  const secondResult: WebOwnerProbe = { ...second, port: saved.port };
-  if (second.outcome === 'ours') return secondResult;
+  const second = await probeHealthz(saved.port, saved.host, savedSecure);
+  const secondResult: WebOwnerProbe = { outcome: second, port: saved.port, secure: savedSecure };
+  if (second === 'ours') return secondResult;
   // A foreign startup answer keeps the caller's warn-and-skip. A foreign saved endpoint would fail
   // a spawned player's bind.
-  return first.outcome === 'foreign' ? firstResult : secondResult;
+  return first === 'foreign' ? firstResult : secondResult;
 }
 
 /** The MCP teardown path keys off this, since the owner quits mpv whether or not it is attached. */
@@ -139,14 +131,6 @@ export async function webOwnerPresent(
   readSaved: () => WebEndpoint | null,
 ): Promise<boolean> {
   return (await probeWebOwner(startup, readSaved)).outcome === 'ours';
-}
-
-/**
- * An owner older than the scrobble claim channel submits every play without claiming, so the MCP
- * tracker defers to it while it is attached to mpv. Compatibility to remove after one release.
- */
-export function legacyOwnerScrobbles(probe: WebOwnerProbe): boolean {
-  return probe.outcome === 'ours' && !probe.scrobbleClaims && probe.playbackAttached;
 }
 
 /** EADDRINUSE resolves instead of rejecting, so a cold-start race loser can re-probe and attach. */
@@ -172,11 +156,6 @@ function realBind(server: Server, port: number, host: string): Promise<'ok' | 'e
 
 const DEFAULT_DEPS: AcquireDeps = { probe: probeHealthz, bind: realBind };
 
-/** A wildcard bind still serves loopback, so the player URL never needs the LAN IP. */
-export function loopbackUrl(port: number): string {
-  return `http://127.0.0.1:${port}`;
-}
-
 function conflictError(port: number): Error {
   return new Error(
     `Web UI port ${port} is in use by another application. ` +
@@ -191,9 +170,10 @@ export async function acquireOrAttach(
   deps: AcquireDeps = DEFAULT_DEPS,
 ): Promise<AcquireResult> {
   const { port, host } = config.webui;
-  const url = loopbackUrl(port);
+  const secure = isTlsEnabled(config.webui.tls);
+  const url = loopbackUrl(port, secure);
 
-  const first = await deps.probe(port, host);
+  const first = await deps.probe(port, host, secure);
   if (first === 'ours') return { mode: 'attached', url };
   if (first === 'foreign') throw conflictError(port);
 
@@ -203,7 +183,7 @@ export async function acquireOrAttach(
 
   // EADDRINUSE after a refused probe means another process bound first. It is either a
   // navidrome-web that won a cold-start race or a foreign process.
-  const second = await deps.probe(port, host);
+  const second = await deps.probe(port, host, secure);
   if (second === 'ours') return { mode: 'attached', url };
   throw conflictError(port);
 }

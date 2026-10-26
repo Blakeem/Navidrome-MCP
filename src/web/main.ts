@@ -16,20 +16,36 @@ import { logPath } from './file-logging.js';
 import type { Server } from 'node:http';
 
 import { createRuntime } from '../bootstrap.js';
-import { resolveConfigState } from '../config.js';
+import { resolveConfigState, type Config } from '../config.js';
+import { readEnvAdminPassword } from '../config/env-settings.js';
 import { startConfigServer } from '../config-app/server.js';
 import { WEB_OWNER_ATTACH_INTERVAL_MS } from '../constants/timeouts.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
 import { logger } from '../utils/logger.js';
 import { openBrowser } from '../utils/open-browser.js';
+import { assertArgon2Available } from '../utils/secrets.js';
+import { AuthService } from '../webui/auth/auth-service.js';
 import { SseBroadcaster } from '../webui/broadcaster.js';
-import { isLanReachable, listLanInterfaces } from '../webui/network.js';
+import { GuestQueue } from '../webui/jukebox/guest-queue.js';
+import { isLanReachable, listLanInterfaces, loopbackUrl } from '../webui/network.js';
+import { adminPageUrl } from '../webui/page-paths.js';
 import type { McpLeaseCounter } from '../webui/routes/player.js';
 import { createServer } from '../webui/server.js';
+import { isAddressRewritingHost } from '../webui/source-address.js';
 import { VisualizerHub } from '../webui/visualizer-hub.js';
-import { acquireOrAttach, loopbackUrl } from './acquire.js';
-import { getPersist, getVisualizer, setPersist, setTheme, setVisualizer, shouldStopForMcpExit } from './player-runtime.js';
+import { isTlsEnabled } from '../webui/tls.js';
+import { acquireOrAttach } from './acquire.js';
+import {
+  getPersist,
+  getVisualizer,
+  setGuestQueueLimit,
+  setJukeboxShareLink,
+  setPersist,
+  setTheme,
+  setVisualizer,
+  shouldStopForMcpExit,
+} from './player-runtime.js';
 
 // Node exits on an unhandled rejection by default, and an MCP-spawned child's stderr is ignored, so
 // the reason goes to the log file instead.
@@ -47,18 +63,19 @@ const launchedByMcp = process.send !== undefined;
  * Only this process knows the bind succeeded, so the MCP parent never opens the browser. A direct
  * run always opens, since the user launched it to use it. Tests set NAVIDROME_WEB_AUTO_OPEN=0.
  */
-function maybeOpenBrowser(port: number, autoOpenBrowser: boolean): void {
+function maybeOpenBrowser(url: string, autoOpenBrowser: boolean): void {
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] === '0') return;
   const shouldOpen = launchedByMcp ? autoOpenBrowser : true;
-  if (shouldOpen) openBrowser(loopbackUrl(port));
+  if (shouldOpen) openBrowser(url);
 }
 
 /** Also printed to stdout, since a direct terminal run sees nothing the file logger writes. */
-function logBanner(port: number, host: string): void {
-  const lines = [`navidrome-web listening on ${loopbackUrl(port)}`];
-  if (isLanReachable(host)) {
-    for (const iface of listLanInterfaces(port)) {
-      lines.push(`  LAN: ${iface.url} (${iface.iface})`);
+function logBanner(webui: Config['webui']): void {
+  const secure = isTlsEnabled(webui.tls);
+  const lines = [`navidrome-web listening on ${adminPageUrl(loopbackUrl(webui.port, secure))}`];
+  if (isLanReachable(webui.host)) {
+    for (const iface of listLanInterfaces(webui.port, secure)) {
+      lines.push(`  LAN: ${adminPageUrl(iface.url)} (${iface.iface})`);
     }
   }
   for (const line of lines) logger.info(line);
@@ -69,6 +86,7 @@ function logBanner(port: number, host: string): void {
 let serverRef: Server | null = null;
 let broadcasterRef: SseBroadcaster | null = null;
 let visualizerHubRef: VisualizerHub | null = null;
+let authRef: AuthService | null = null;
 let shuttingDown = false;
 // Every MCP whose probe finds this player running holds one lease, the spawner included.
 let openMcpLeases = 0;
@@ -79,6 +97,7 @@ function shutdownPlayer(reason: string): void {
   logger.info(`navidrome-web shutting down (${reason})`);
   broadcasterRef?.stop();
   visualizerHubRef?.stop();
+  authRef?.flush();
   serverRef?.close();
   const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_HARD_EXIT_MS);
   hardExit.unref();
@@ -195,11 +214,15 @@ async function main(): Promise<void> {
     return;
   }
   logger.setDebug(state.config.debug);
+  // Only a mode with a login hashes or verifies a password, so mode none runs on a Node.js without Argon2.
+  if (state.config.webui.auth.mode !== 'none') await assertArgon2Available();
 
   const { config, client } = await createRuntime(state.config);
   setPersist(config.webui.persistAfterMcpExit);
   setTheme(config.webui.theme);
   setVisualizer(config.webui.visualizer);
+  setGuestQueueLimit(config.jukebox.guestQueueLimit);
+  setJukeboxShareLink(config.jukebox.shareLink);
   // The owner alone keeps mpv's filter in sync, since the snapshot and the settings dialog read its
   // live flag.
   playbackEngine.setVisualizerSource(getVisualizer, { keepInSync: true });
@@ -210,25 +233,33 @@ async function main(): Promise<void> {
     return;
   }
 
-  const broadcaster = new SseBroadcaster(client);
+  const auth = await AuthService.load(config, state.source, state.source === 'env' ? readEnvAdminPassword() : null);
+  const guests = new GuestQueue();
+  const broadcaster = new SseBroadcaster(client, guests);
   const visualizer = new VisualizerHub();
   const makeServer = (): Server =>
-    createServer({ config, client, broadcaster, visualizer, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases });
+    createServer({ config, client, broadcaster, visualizer, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases, auth, guests });
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
     // A user who launched a second copy still expects the player, so point them at the running one.
     // An MCP-spawned copy lost a start race, and the owner already handled auto-open.
-    const runningMessage = `navidrome-web already running at ${result.url}`;
+    const adminUrl = adminPageUrl(result.url);
+    const runningMessage = `navidrome-web already running at ${adminUrl}`;
     logger.info(`${runningMessage}. Standing down.`);
     process.stdout.write(`\n  ${runningMessage}\n\n`);
-    if (!launchedByMcp) maybeOpenBrowser(config.webui.port, config.webui.autoOpenBrowser);
+    if (!launchedByMcp) maybeOpenBrowser(adminUrl, config.webui.autoOpenBrowser);
     return;
   }
 
   serverRef = result.server;
   broadcasterRef = broadcaster;
   visualizerHubRef = visualizer;
+  authRef = auth;
+  auth.claimStore();
+  broadcaster.addHeartbeatTask(() => auth.sweep());
+  broadcaster.addHeartbeatTask(() => guests.prune());
+  guests.watch(() => broadcaster.broadcastNow());
   broadcaster.start();
 
   // The owner claims plays through mpv like every attached MCP, and the first claim submits.
@@ -245,8 +276,14 @@ async function main(): Promise<void> {
     keepPlaybackAttached();
   }
 
-  logBanner(config.webui.port, config.webui.host);
-  maybeOpenBrowser(config.webui.port, config.webui.autoOpenBrowser);
+  if (config.webui.auth.mode !== 'none' && config.webui.auth.adminAccess === 'anywhere' && !isTlsEnabled(config.webui.tls)) {
+    logger.warn('navidrome-web admits admin logins from anywhere over plain HTTP, so the admin password crosses the network in clear text. Turn on HTTPS on the settings page.');
+  }
+  if (isAddressRewritingHost()) {
+    logger.warn('navidrome-web runs in a container or WSL, where port forwarding may rewrite source addresses. LAN checks may then treat internet clients as local.');
+  }
+  logBanner(config.webui);
+  maybeOpenBrowser(adminPageUrl(result.url), config.webui.autoOpenBrowser);
   installShutdownTriggers();
 
   logger.info('navidrome-web started successfully (port owner)');

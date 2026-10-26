@@ -118,6 +118,17 @@ describe('redact()', () => {
       });
     });
 
+    it('redacts the auth store keys that end in hash, digest or cookie', () => {
+      const input = { adminPasswordHash: 'a', envAdminHash: 'b', secretDigest: 'c', cookie: 'd', title: 'e' };
+      expect(redact(input)).toEqual({
+        adminPasswordHash: '<REDACTED>',
+        envAdminHash: '<REDACTED>',
+        secretDigest: '<REDACTED>',
+        cookie: '<REDACTED>',
+        title: 'e',
+      });
+    });
+
     it('passes through non-sensitive object keys unchanged', () => {
       const input = { title: 'my password song' };
       const result = redact(input) as { title: string };

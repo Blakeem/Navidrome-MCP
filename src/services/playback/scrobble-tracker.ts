@@ -50,7 +50,7 @@ export interface ScrobbleClient {
 export class ScrobbleTracker {
   private readonly client: ScrobbleClient;
   private readonly engine: ScrobbleEngine;
-  private readonly shouldSubmit: () => Promise<boolean>;
+  private readonly onTrackStart: () => Promise<void>;
   private readonly claimantId = randomUUID();
   private unsubscribe: (() => void) | null = null;
 
@@ -59,9 +59,6 @@ export class ScrobbleTracker {
   private currentDuration: number | null = null;
   private startedAtMs: number | null = null;
   private submitted = false;
-  // 'notMine' defers to an older web owner that submits without claiming. 'undecided' holds
-  // maybeSubmit while the check is in flight, and resolveOwnership re-drives it.
-  private submitVerdict: 'undecided' | 'mine' | 'notMine' = 'undecided';
   // The first claimant seen for the current play, this process included.
   private firstClaimant: string | null = null;
   private claimSent = false;
@@ -82,21 +79,21 @@ export class ScrobbleTracker {
   // Bumped per attach and detach, so an in-flight adoption never lands on a later instance.
   private attachEpoch = 0;
 
-  // Bumped on every real transition, so a read or verdict resolving after a newer one is dropped.
+  // Bumped on every real transition, so a read resolving after a newer one is dropped.
   private generation = 0;
 
   /**
-   * @param shouldSubmit Whether this process may claim a play, asked once per track. The MCP
-   *   injects a web-port probe, so it defers to an older navidrome-web that never claims.
+   * @param onTrackStart Runs once per tracked play without gating it. The MCP injects a web-port
+   *   probe that keeps the owner lease alive.
    */
   constructor(
     client: ScrobbleClient,
     engine: ScrobbleEngine,
-    shouldSubmit: () => Promise<boolean> = () => Promise.resolve(true),
+    onTrackStart: () => Promise<void> = () => Promise.resolve(),
   ) {
     this.client = client;
     this.engine = engine;
-    this.shouldSubmit = shouldSubmit;
+    this.onTrackStart = onTrackStart;
   }
 
   attach(): void {
@@ -161,7 +158,7 @@ export class ScrobbleTracker {
     this.lastPlaylistPos = 'unknown';
     this.lastPath = undefined;
     this.attachEpoch++;
-    // Orphans playlist reads and ownership checks begun against the previous instance.
+    // Orphans playlist reads begun against the previous instance.
     this.generation++;
   }
 
@@ -209,7 +206,6 @@ export class ScrobbleTracker {
     this.currentEntryId = entry.entryId ?? null;
     this.inheritedPath = snapshotPath;
     this.submitted = true;
-    this.submitVerdict = 'notMine';
   }
 
   /**
@@ -302,13 +298,8 @@ export class ScrobbleTracker {
     return entry.songId === this.currentSongId;
   }
 
-  /**
-   * The transition that got here bumped `generation`, which orphans an in-flight verdict, so an
-   * undecided verdict is resolved again.
-   */
   private confirmSamePlay(): void {
     this.transitionPending = false;
-    if (this.submitVerdict === 'undecided') void this.resolveOwnership(this.generation);
     this.maybeSubmit(this.lastTimePos);
   }
 
@@ -319,9 +310,7 @@ export class ScrobbleTracker {
     this.submitted = false;
     this.lastTimePos = null;
     this.currentDuration = null;
-    // Every caller bumps `generation` first, so it is this track's token for the verdict.
-    this.submitVerdict = 'undecided';
-    void this.resolveOwnership(this.generation);
+    void this.runTrackStartHook();
     if (typeof duration === 'number' && duration > 0) {
       this.currentDuration = duration;
     } else {
@@ -331,23 +320,16 @@ export class ScrobbleTracker {
         this.currentDuration = cachedDuration;
       }
     }
-    // Now-playing skips the verdict, since it is last-writer-wins and a duplicate is harmless.
+    // Now-playing needs no claim, since it is last-writer-wins and a duplicate is harmless.
     this.sendNowPlaying(songId);
   }
 
-  /** Re-runs maybeSubmit when the verdict lands, since the threshold may pass during the check. */
-  private async resolveOwnership(gen: number): Promise<void> {
-    let mine = true;
+  private async runTrackStartHook(): Promise<void> {
     try {
-      mine = await this.shouldSubmit();
+      await this.onTrackStart();
     } catch (err) {
-      // A lost scrobble is worse than a double, and a failed probe likely means no web owner is up.
-      logger.warn(`scrobble: ownership check failed, defaulting to submit: ${String(err)}`);
-      mine = true;
+      logger.warn(`scrobble: track-start hook failed: ${String(err)}`);
     }
-    if (gen !== this.generation) return;
-    this.submitVerdict = mine ? 'mine' : 'notMine';
-    if (mine) this.maybeSubmit(this.lastTimePos);
   }
 
   private onDuration(data: unknown): void {
@@ -370,12 +352,6 @@ export class ScrobbleTracker {
     if (this.currentDuration === null || this.currentDuration < MIN_DURATION_SECONDS) return;
     if (typeof timePos !== 'number') return;
     if (timePos < this.currentDuration / 2 && timePos < MAX_THRESHOLD_SECONDS) return;
-
-    if (this.submitVerdict === 'notMine') {
-      this.submitted = true;
-      return;
-    }
-    if (this.submitVerdict === 'undecided') return;
 
     // Another process claimed this play first.
     if (this.firstClaimant !== null) {
@@ -437,7 +413,6 @@ export class ScrobbleTracker {
     this.startedAtMs = null;
     this.submitted = false;
     this.lastTimePos = null;
-    this.submitVerdict = 'undecided';
     this.firstClaimant = null;
     this.claimSent = false;
     this.clearClaimTimer();

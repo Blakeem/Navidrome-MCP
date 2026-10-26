@@ -777,13 +777,13 @@ describe('ScrobbleTracker', () => {
   });
 });
 
-describe('ScrobbleTracker ownership election', () => {
+describe('ScrobbleTracker track-start hook', () => {
   let engine: FakeEngine;
   let client: ReturnType<typeof createFakeClient>;
   let tracker: ScrobbleTracker;
 
-  function startTracker(shouldSubmit: () => Promise<boolean>): void {
-    tracker = new ScrobbleTracker(client, engine, shouldSubmit);
+  function startTracker(onTrackStart: () => Promise<void>): void {
+    tracker = new ScrobbleTracker(client, engine, onTrackStart);
     tracker.attach();
     engine.fire({ kind: 'property', name: 'playlist-pos', data: -1 });
   }
@@ -803,35 +803,9 @@ describe('ScrobbleTracker ownership election', () => {
       .map((c) => (c[1] as Record<string, string>).id);
   }
 
-  it('suppresses submission when a web owner is present at track start', async () => {
-    startTracker(() => Promise.resolve(false)); // a web owner owns the port
-    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
-    await flush();
-    client.subsonicRequest.mockClear();
-
-    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
-    await flush();
-    expect(submittedIds()).toEqual([]);
-  });
-
-  it('submits when no web owner is present at track start', async () => {
-    startTracker(() => Promise.resolve(true));
-    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
-    await flush();
-
-    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
-    await flush();
-    expect(submittedIds()).toEqual(['song-A']);
-  });
-
-  it('web appears mid-session: in-flight track still submitted, next track suppressed', async () => {
-    const shouldSubmit = vi
-      .fn<() => Promise<boolean>>()
-      .mockResolvedValueOnce(true)
-      .mockResolvedValue(false);
-    startTracker(shouldSubmit);
+  it('runs once per tracked play and never gates the submission', async () => {
+    const onTrackStart = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    startTracker(onTrackStart);
     engine.setPlaylist([
       { index: 0, songId: 'song-A', duration: 200 },
       { index: 1, songId: 'song-B', duration: 200 },
@@ -841,124 +815,18 @@ describe('ScrobbleTracker ownership election', () => {
     await flush();
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
     await flush();
-
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
-    await flush();
-    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
-    await flush();
-
+    expect(onTrackStart).toHaveBeenCalledTimes(1);
     expect(submittedIds()).toEqual(['song-A']);
-  });
 
-  it('defers a threshold crossed before the probe resolves, then catches up', async () => {
-    let resolveVerdict!: (v: boolean) => void;
-    const verdict = new Promise<boolean>((r) => {
-      resolveVerdict = r;
-    });
-    startTracker(() => verdict);
-    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
-    await flush();
-    client.subsonicRequest.mockClear();
-
-    // An undecided verdict defers without latching `submitted`, so a later verdict can submit.
-    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
-    await flush();
-    expect(submittedIds()).toEqual([]);
-
-    resolveVerdict(true);
-    await flush();
-    expect(submittedIds()).toEqual(['song-A']);
-  });
-
-  it('a deferred verdict of notMine never submits', async () => {
-    let resolveVerdict!: (v: boolean) => void;
-    const verdict = new Promise<boolean>((r) => {
-      resolveVerdict = r;
-    });
-    startTracker(() => verdict);
-    engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
-    await flush();
-
-    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
-    await flush();
-    resolveVerdict(false);
-    await flush();
-    expect(submittedIds()).toEqual([]);
-  });
-
-  it('a verdict that resolves after a skip does not latch onto the new track', async () => {
-    let resolveA!: (v: boolean) => void;
-    const pA = new Promise<boolean>((r) => {
-      resolveA = r;
-    });
-    let call = 0;
-    startTracker(() => {
-      call += 1;
-      return call === 1 ? pA : Promise.resolve(true);
-    });
-    engine.setPlaylist([
-      { index: 0, songId: 'song-A', duration: 200 },
-      { index: 1, songId: 'song-B', duration: 200 },
-    ]);
-
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
-    await flush();
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
     await flush();
-
-    // Without the generation guard, A's stale 'notMine' would drop B's scrobble.
-    resolveA(false);
-    await flush();
-
-    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
-    await flush();
-    expect(submittedIds()).toEqual(['song-B']);
+    expect(onTrackStart).toHaveBeenCalledTimes(2);
   });
 
-  it('a stale mine verdict does not override the new track notMine', async () => {
-    let resolveA!: (v: boolean) => void;
-    const pA = new Promise<boolean>((r) => {
-      resolveA = r;
-    });
-    let call = 0;
-    startTracker(() => {
-      call += 1;
-      return call === 1 ? pA : Promise.resolve(false);
-    });
-    engine.setPlaylist([
-      { index: 0, songId: 'song-A', duration: 200 },
-      { index: 1, songId: 'song-B', duration: 200 },
-    ]);
-
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
-    await flush();
-    engine.fire({ kind: 'property', name: 'playlist-pos', data: 1 });
-    await flush();
-
-    // Without the generation guard, A's stale 'mine' would double-count B against the web owner.
-    resolveA(true);
-    await flush();
-
-    engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
-    await flush();
-    expect(submittedIds()).toEqual([]);
-  });
-
-  it('a queue event that orphans an undecided verdict starts a new ownership check', async () => {
-    let call = 0;
-    startTracker(() => {
-      call += 1;
-      return call === 1 ? new Promise<boolean>(() => undefined) : Promise.resolve(true);
-    });
+  it('submits at the threshold while the hook is still pending', async () => {
+    startTracker(() => new Promise<void>(() => undefined));
     engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
-
-    // The flush lets hydrateAndStart track A, so the queue event orphans the probe, not the read.
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });
-    await flush();
-    engine.setCached('playlist-pos', 0);
-    engine.fire({ kind: 'queue' });
     await flush();
 
     engine.fire({ kind: 'property', name: 'time-pos', data: 101 });
@@ -966,7 +834,7 @@ describe('ScrobbleTracker ownership election', () => {
     expect(submittedIds()).toEqual(['song-A']);
   });
 
-  it('(g) a rejected ownership probe defaults to submitting', async () => {
+  it('a rejected hook still submits the play', async () => {
     startTracker(() => Promise.reject(new Error('probe')));
     engine.setPlaylist([{ index: 0, songId: 'song-A', duration: 200 }]);
     engine.fire({ kind: 'property', name: 'playlist-pos', data: 0 });

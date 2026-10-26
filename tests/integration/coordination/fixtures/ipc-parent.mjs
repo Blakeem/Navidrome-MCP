@@ -16,9 +16,10 @@ delete process.env.NAVIDROME_DEV;
 const store = JSON.parse(readFileSync(storePath, 'utf8'));
 const port = store.webui?.port;
 const host = store.webui?.host ?? '127.0.0.1';
+const tls = { certPath: store.webui?.tls?.certPath ?? null, keyPath: store.webui?.tls?.keyPath ?? null };
 
 const { ensureWebForPlayback } = await import(pathToFileURL(join(dirname(distWebMain), 'spawn.js')).href);
-const status = await ensureWebForPlayback({ features: { playback: true }, webui: { enabled: true, port, host } });
+const status = await ensureWebForPlayback({ features: { playback: true }, webui: { enabled: true, port, host, tls } });
 if (status !== 'spawned') process.exit(1);
 // Lets a test exit the parent before the child installs its 'disconnect' listener.
 if (mode === 'exit-after-spawn') process.exit(0);

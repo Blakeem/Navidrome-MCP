@@ -22,7 +22,7 @@ import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES, SETUP_CAPABILITIES } from './capabilities.js';
 import { ensureWebForPlayback } from './web/spawn.js';
 import { holdOwnerLease } from './web/lease.js';
-import { legacyOwnerScrobbles, probeWebOwner, webOwnerPresent } from './web/acquire.js';
+import { probeWebOwner, webOwnerPresent } from './web/acquire.js';
 import { startConfigServer } from './config-app/server.js';
 import { buildSetupNotice, registerDegradedTools, type StartupFailure } from './config-app/degraded-tools.js';
 import { openBrowser } from './utils/open-browser.js';
@@ -143,8 +143,7 @@ async function main(): Promise<void> {
     const tracker = new ScrobbleTracker(client, playbackEngine, async () => {
       const owner = await probeWebOwner(config.webui, readSavedWebuiEndpoint);
       // A player respawned by another MCP has no lease from this one until a probe finds it.
-      if (owner.outcome === 'ours') void holdOwnerLease(owner.port);
-      return !legacyOwnerScrobbles(owner);
+      if (owner.outcome === 'ours') void holdOwnerLease(owner.port, owner.secure);
     });
     tracker.attach();
     // Adopting an mpv left by a prior session lets the scrobbler see real state at once.

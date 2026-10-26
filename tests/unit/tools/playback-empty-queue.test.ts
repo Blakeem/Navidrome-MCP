@@ -186,6 +186,7 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
     expect(result).toEqual({
       success: false,
       message: "The selected audio device 'Speakers (Katana)' is not connected. Turn it on, then call resume, or call set_audio_device to pick another output.",
+      code: 'output-missing',
     });
   });
 
@@ -220,6 +221,7 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
       success: true,
       paused: true,
       message: 'No audio output device is available. Connect one, then call resume.',
+      code: 'output-missing',
     });
   });
 

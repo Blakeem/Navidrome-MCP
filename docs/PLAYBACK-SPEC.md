@@ -184,6 +184,8 @@ The `play_` verb prefix consistently means "affect what's audibly coming out of 
 | `play_albums` | `{ albumIds: string[], mode?: 'replace' \| 'append', shuffleAlbums?: boolean, shuffleSongs?: boolean }` (defaults `'replace'`, `false`, `false`) | Play one or many albums. With neither flag, albums play in input order with natural track order. `shuffleAlbums` randomizes the album order, and each album keeps its track order. `shuffleSongs` alone shuffles every track across all albums. Both together shuffle the album order and the tracks within each album. Empty albums silently skipped; all-empty throws. |
 | `play_playlist` | `{ playlistId: string, mode?: 'replace' \| 'append', shuffle?: boolean }` | Load a saved playlist's tracks into the play queue. |
 
+A song `replace` from any process sets mpv's `user-data/navidrome-mcp/replace-pending` to `true` before it clears the queue. Once the new songs load, it raises the counter `user-data/navidrome-mcp/replace-generation` by one, then sets the pending mark to `false`. A failed replace sets the pending mark to `false` with no raise. A radio load, a clear, and a removal touch neither mark. The web player process observes both marks. It appends the unplayed guest songs that a completed song replace removed at the end of the new queue, in their add order and under the same guests. A guest song that already waits after the current song of the new queue drops instead. An mpv older than 0.36 has no `user-data`, and a song replace there drops the guest songs.
+
 #### Search-driven playback
 
 | Tool | Args | Effect |
@@ -270,7 +272,7 @@ Fail fast. Every error surfaces a structured message via `ErrorFormatter`:
 | mpv exits unexpectedly | Tool call returns error; engine clears IPC state; next call re-attaches or spawns |
 | IPC socket disconnects | Engine clears state; next call attempts re-attach |
 | Navidrome stream URL 4xx/5xx | mpv emits `end-file` with reason `error`, the engine logs it at debug, and mpv moves to the next entry. No tool result or `now_playing` field reports it. |
-| Selected audio output not connected | The play tools, `play_radio_station` and `play_queue_index` keep `success: true`, since the queue loaded, and add `paused: true` and `message`. `resume` returns `{ success: false, message }`. The message names the device, or says that no audio output device is available when the selection is `auto`. |
+| Selected audio output not connected | The play tools, `play_radio_station` and `play_queue_index` keep `success: true`, since the queue loaded, and add `paused: true`, `message` and `code: 'output-missing'`. `resume` returns `{ success: false, message, code: 'output-missing' }`. The message names the device, or says that no audio output device is available when the selection is `auto`. |
 | Out-of-range index for `move_in_play_queue` / `remove_from_play_queue` / `play_queue_index` | `move_in_play_queue` rejects a `to` past the last index, and `play_queue_index` rejects an index past the end, each with a bound message, since mpv accepts both without an error. An out-of-range `from` or `remove_from_play_queue` index fails with a message that names the index and points to `get_play_queue`. |
 
 No retry loops, no auto-recovery beyond re-attach.

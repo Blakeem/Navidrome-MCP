@@ -39,6 +39,8 @@ const smoother = createSmoother(BAND_COUNT);
 let enabled = false;
 let hasTrack = false;
 let stream = null;
+// Set when the server closed this stream for a newer one, so refresh() stays closed until the tab shows again.
+let evicted = false;
 let frameRequest = null;
 let lastStepMs = null;
 let lastDrawMs = null;
@@ -56,7 +58,10 @@ let height = 0;
 
 export function bindVisualizer() {
   button.addEventListener('click', cycleMode);
-  document.addEventListener('visibilitychange', refresh);
+  document.addEventListener('visibilitychange', () => {
+    evicted = false;
+    refresh();
+  });
   new ResizeObserver(resizeCanvas).observe(button);
   updateLabel();
   loadModes();
@@ -76,7 +81,7 @@ export function renderVisualizer(player, np) {
 
 function refresh() {
   const visible = document.visibilityState === 'visible';
-  const wantStream = enabled && visible && hasTrack;
+  const wantStream = enabled && visible && hasTrack && !evicted;
   if (wantStream && stream === null) openStream();
   if (!wantStream && stream !== null) closeStream();
   if (enabled && visible) requestFrame();
@@ -84,6 +89,10 @@ function refresh() {
 
 function openStream() {
   stream = new EventSource('/api/visualizer');
+  stream.addEventListener('evicted', () => {
+    evicted = true;
+    closeStream();
+  });
   stream.addEventListener('levels', (event) => {
     let data = null;
     try {

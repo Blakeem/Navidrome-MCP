@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConfigServer } from '../../../src/config-app/server.js';
 import { readSettings } from '../../../src/config/store.js';
+import { WEBUI_AUTH_MODES } from '../../../src/constants/defaults.js';
+import { verifyPassword } from '../../../src/utils/secrets.js';
 import { probeAudioDevices } from '../../../src/services/playback/audio-devices.js';
 import { resolveMpvBinary } from '../../../src/services/playback/mpv-process.js';
 
@@ -21,6 +23,19 @@ vi.mock('../../../src/services/playback/audio-devices.js', async (importOriginal
 vi.mock('../../../src/services/playback/mpv-process.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/services/playback/mpv-process.js')>();
   return { ...actual, resolveMpvBinary: vi.fn(() => null) };
+});
+
+// A test sets this to stand in for a Node.js whose OpenSSL lacks Argon2.
+const argon2Failure = vi.hoisted(() => ({ current: null as Error | null }));
+vi.mock('../../../src/utils/secrets.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/utils/secrets.js')>();
+  const failOr = <T>(run: () => Promise<T>): Promise<T> =>
+    argon2Failure.current === null ? run() : Promise.reject(argon2Failure.current);
+  return {
+    ...actual,
+    assertArgon2Available: vi.fn(() => failOr(actual.assertArgon2Available)),
+    hashPassword: vi.fn((password: string) => failOr(() => actual.hashPassword(password))),
+  };
 });
 
 const MASK = '********';
@@ -305,6 +320,71 @@ describe('settings server seed/save', () => {
     expect(readSettings()).toBeNull();
   });
 
+  it('rejects a web TLS pair with only one path set and writes nothing', async () => {
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      webui: { tls: { certPath: '/etc/ssl/full.pem', keyPath: null } },
+    });
+    expect(res.status).toBe(400);
+    expect((await getJson(res)).error).toMatch(/webui.tls: Set both certPath and keyPath/);
+    expect(readSettings()).toBeNull();
+  });
+
+  it('saves a web TLS pair with both paths set', async () => {
+    const base = await start();
+    const tls = { certPath: '/etc/ssl/full.pem', keyPath: '/etc/ssl/key.pem' };
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: 'p' }, webui: { tls } });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.webui?.tls).toEqual(tls);
+  });
+
+  it('rejects a public URL with a path and writes nothing', async () => {
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      webui: { publicUrl: 'https://jukebox.example.org/guest' },
+    });
+    expect(res.status).toBe(400);
+    expect((await getJson(res)).error).toMatch(/webui\.publicUrl: Must be an http/);
+    expect(readSettings()).toBeNull();
+  });
+
+  it('saves a public URL with no path', async () => {
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      webui: { publicUrl: 'https://jukebox.example.org:8808', tls: { certPath: '/etc/ssl/full.pem', keyPath: '/etc/ssl/key.pem' } },
+    });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.webui?.publicUrl).toBe('https://jukebox.example.org:8808');
+  });
+
+  it('saves a guest song limit, and rejects one outside 1 to 20 without writing', async () => {
+    const base = await start();
+    const navidrome = { url: 'http://h:4533', username: 'u', password: 'p' };
+
+    const rejected = await post(base, { navidrome, jukebox: { guestQueueLimit: 25 } });
+    expect(rejected.status).toBe(400);
+    expect((await getJson(rejected)).error).toMatch(/jukebox\.guestQueueLimit: Must be a whole number from 1 to 20/);
+    expect(readSettings()).toBeNull();
+
+    const saved = await post(base, { navidrome, jukebox: { guestQueueLimit: 5 } });
+    expect(saved.status).toBe(200);
+    expect(readSettings()?.jukebox?.guestQueueLimit).toBe(5);
+  });
+
+  it('rejects an https:// public URL on an HTTP player and writes nothing', async () => {
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      webui: { publicUrl: 'https://jukebox.example.org:8808' },
+    });
+    expect(res.status).toBe(400);
+    expect((await getJson(res)).error).toMatch(/webui\.publicUrl: Must start with https:\/\//);
+    expect(readSettings()).toBeNull();
+  });
+
   it('drops a legacy stored theme on save', async () => {
     writeFileSync(file, JSON.stringify({
       navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
@@ -401,6 +481,19 @@ describe('settings server seed/save', () => {
     expect(readSettings()).toEqual(stored);
   });
 
+  it('rejects a POST from a foreign Origin with 403 and leaves the store unchanged', async () => {
+    const stored = { navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } };
+    writeFileSync(file, JSON.stringify(stored));
+    const base = await start();
+    const res = await fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'http://attacker.example' },
+      body: JSON.stringify({ navidrome: { url: 'http://attacker.example', username: 'u', password: MASK } }),
+    });
+    expect(res.status).toBe(403);
+    expect(readSettings()).toEqual(stored);
+  });
+
   it('rejects a non-loopback Host header with 403', async () => {
     const base = await start();
     const status = await new Promise<number | undefined>((resolve, reject) => {
@@ -465,5 +558,145 @@ describe('settings server seed/save', () => {
     expect((await fetch(`${base}/styles.css`)).status).toBe(200);
     expect((await fetch(`${base}/app.js`)).status).toBe(200);
     expect((await fetch(`${base}/does-not-exist.js`)).status).toBe(404);
+  });
+
+  it('offers every access mode the store accepts in the Access select', async () => {
+    const base = await start();
+    const html = await (await fetch(`${base}/`)).text();
+
+    const select = /<select id="webuiAuthMode">([\s\S]*?)<\/select>/.exec(html)?.[1] ?? '';
+    const values = [...select.matchAll(/<option value="([^"]+)">/g)].map((match) => match[1]);
+    expect(values).toEqual([...WEBUI_AUTH_MODES]);
+  });
+});
+
+describe('settings server admin password', () => {
+  const NAV = { url: 'http://h:4533', username: 'u', password: 'secret' };
+  const STORED_HASH = '$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+  let dir: string;
+  let file: string;
+  let savedPath: string | undefined;
+  let server: { url: string; close: () => Promise<void> } | null = null;
+
+  beforeEach(() => {
+    savedPath = process.env['NAVIDROME_CONFIG_PATH'];
+    dir = mkdtempSync(join(tmpdir(), 'nd-srv-auth-'));
+    file = join(dir, 'settings.json');
+    process.env['NAVIDROME_CONFIG_PATH'] = file;
+  });
+
+  afterEach(async () => {
+    argon2Failure.current = null;
+    if (server) { await server.close(); server = null; }
+    if (savedPath === undefined) delete process.env['NAVIDROME_CONFIG_PATH'];
+    else process.env['NAVIDROME_CONFIG_PATH'] = savedPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function start(): Promise<string> {
+    server = await startConfigServer();
+    return server.url.replace(/\/$/, '');
+  }
+
+  const save = (base: string, auth: Record<string, unknown>): Promise<Response> =>
+    fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navidrome: { ...NAV, password: MASK }, webui: { auth } }),
+    });
+  const storedAuth = (): Record<string, unknown> | undefined =>
+    (JSON.parse(readFileSync(file, 'utf8')) as { webui?: { auth?: Record<string, unknown> } }).webui?.auth;
+
+  it.each([
+    ['an Argon2id hash', STORED_HASH, true],
+    ['a value that is not an Argon2id hash', '$argon2id$stored', false],
+  ])('reports only whether a hash is set in the seed, for %s', async (_label, adminPasswordHash, adminPasswordSet) => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, webui: { auth: { mode: 'jukebox', adminPasswordHash } } }));
+    const base = await start();
+
+    const seed = await (await fetch(`${base}/api/settings/seed`)).json() as { webui: { auth: Record<string, unknown> } };
+
+    expect(seed.webui.auth).toEqual({ mode: 'jukebox', adminPasswordSet });
+  });
+
+  it('hashes a new password with Argon2id and stores only the hash', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'password', adminAccess: 'lan', adminPassword: 'correct horse battery' });
+
+    expect(res.status).toBe(200);
+    const auth = storedAuth();
+    expect(auth).toMatchObject({ mode: 'password', adminAccess: 'lan' });
+    expect(auth).not.toHaveProperty('adminPassword');
+    expect(await verifyPassword('correct horse battery', String(auth?.['adminPasswordHash']))).toBe(true);
+    expect(readFileSync(file, 'utf8')).not.toContain('correct horse battery');
+  });
+
+  it('keeps the stored hash for a blank password and ignores a posted hash', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, webui: { auth: { mode: 'jukebox', adminPasswordHash: STORED_HASH } } }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'jukebox', adminPassword: '', adminPasswordHash: '$argon2id$forged' });
+
+    expect(res.status).toBe(200);
+    expect(storedAuth()?.['adminPasswordHash']).toBe(STORED_HASH);
+  });
+
+  it('refuses mode password when the stored value is not an Argon2id hash and no new password is given', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, webui: { auth: { mode: 'none', adminPasswordHash: 'hand-edited' } } }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'password', adminPassword: '' });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('Access with the admin password needs an admin password');
+  });
+
+  it('opens without Argon2 and reports the cause when a new password needs hashing', async () => {
+    argon2Failure.current = new Error('Argon2 password hashing is unavailable (ERR_CRYPTO_ARGON2_NOT_SUPPORTED).');
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const mode = await save(base, { mode: 'none' });
+    const res = await save(base, { mode: 'password', adminPassword: 'correct horse battery' });
+
+    expect(mode.status).toBe(200);
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).toContain('ERR_CRYPTO_ARGON2_NOT_SUPPORTED');
+    expect(storedAuth()).toMatchObject({ mode: 'none' });
+  });
+
+  it.each([
+    ['11 characters', 'x'.repeat(11)],
+    ['129 characters', 'x'.repeat(129)],
+  ])('refuses a new password of %s', async (_label, adminPassword) => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'password', adminPassword });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('12 to 128 characters');
+    expect(storedAuth()).toBeUndefined();
+  });
+
+  it.each(['password', 'jukebox'])('refuses mode %s with no stored hash and no new password', async (mode) => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const res = await save(base, { mode, adminPassword: '' });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('Access with the admin password needs an admin password');
+  });
+
+  it('refuses a password field that is not a string', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'none', adminPassword: 12345678901234 });
+
+    expect(res.status).toBe(400);
   });
 });

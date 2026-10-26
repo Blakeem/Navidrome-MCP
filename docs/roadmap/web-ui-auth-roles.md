@@ -33,9 +33,9 @@ BOUNDARY CASE: an MCP tool that mints a guest invite → OUT (Party Mode), but t
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| One place in the web remote HTTP server can gate every request | Verified | `src/webui/server.ts:97-199` is one flat if-chain. Every request passes the host gate (`:120`) and the JSON gate (`:127`) before any route runs [DIRECT: code] |
+| One place in the web remote HTTP server can gate every request | Verified | `ROUTES` in `src/webui/server.ts` is one flat route table, and each route names its permission. Every request passes the host gate and the JSON gate in `handleRequest` before any route runs [DIRECT: code] |
 | Browser streams and images can carry a credential | Verified for cookies. Refuted for header tokens | `public/connection.js:19` and `public/visualizer.js:86` call `new EventSource(path)`. `public/cover.js:12` sets `img.src`. The `EventSource` constructor takes only `withCredentials`, and a same-origin stream sends cookies by default [DIRECT: WHATWG HTML, 2026-10-16] |
-| Tokens and passwords can be hashed with no new dependency | Verified | `randomBytes`, `createHash`, `timingSafeEqual` and `scrypt` are in `node:crypto` for the entire supported range (`package.json:70-72`, `engines.node >=20.18.1`) [DIRECT: Node docs] |
+| Tokens and passwords can be hashed with no new dependency | Verified | `randomBytes`, `createHash`, `timingSafeEqual` and `scrypt` are in `node:crypto` for the entire supported range (`package.json:70-72`, `engines.node >=24.19.0`) [DIRECT: Node docs] |
 | Grants survive a web player restart | Verified | The web player process stops with its last MCP by default (`src/web/main.ts:116-124`), so in-memory sessions would log phones out often. A file beside `settings.json` is writable: `navidrome-web.log` already lives there (`src/web/file-logging.ts:10`), and the Docker `/config` volume belongs to `node` (`Dockerfile:29-30`) [DIRECT: code] |
 | A loopback caller can be told apart from a LAN caller | Verified, with one flaw | `isLocalRequest` requires a loopback peer and a loopback `Host` (`src/webui/loopback.ts:32-34`). nginx sets `Host $proxy_host` by default, so a same-host nginx passes both checks for every proxied request [DIRECT: nginx docs] [DERIVED] |
 | Navidrome can back a login provider | Verified | `POST /auth/login` on the live Navidrome 0.62.0 returns `id`, `isAdmin`, `name`, `username`, `token`, `subsonicSalt` and `subsonicToken`. The token is an HS256 JWT with a measured 48-hour lifetime [DIRECT: live probe, 2026-10-17]. That matches the `SessionTimeout` default in v0.64.2 source (`consts/consts.go:36`) [DIRECT] |
@@ -56,7 +56,7 @@ Starting-list claims:
        │                                    │                     or webui.host is 0.0.0.0 or ::)
        ▼                                    ▼
 ┌─ web player process (src/web/main.ts) ────────────────────────────────────────────────────────┐
-│  web remote HTTP server (src/webui/server.ts, plain node:http, flat if-chain dispatcher)      │
+│  web remote HTTP server (src/webui/server.ts, plain node:http, flat route-table dispatcher)   │
 │    the URL parse stage, labeled stage 1                                    server.ts:107-117  │
 │    the host gate, labeled stage 2 (every bind)                             server.ts:119-129  │
 │    the JSON gate, labeled stage 3 (every POST needs application/json)      server.ts:127      │
@@ -103,7 +103,7 @@ Gate observations:
 
 - The host gate runs on every bind. A loopback bind accepts only a loopback `Host` (`server.ts:121`). A LAN bind accepts an IP literal, `localhost`, the machine's host name, `<host name>.local` or a `webui.allowedHosts` entry (`server.ts:125`, `loopback.ts:48`). A page on `evil.example` that rebinds its name to the host's LAN IP sends `Host: evil.example` and gets 403 [DIRECT: code].
 - The JSON gate is today's CSRF defense. A cross-site form cannot send `application/json`, and a cross-origin `fetch` with that type needs a CORS preflight [DIRECT: Fetch spec, 2026-10-06]. The server answers `OPTIONS` with 404 (`server.ts:198`) and sends no CORS headers, so the preflight fails [DIRECT: code].
-- No route reads `Origin` [DIRECT: code].
+- The POST origin gate (`isCrossOriginPost` in `http-helpers.ts`) reads `Origin` and `Sec-Fetch-Site` [DIRECT: code].
 - No rate limit exists. No cap bounds SSE clients (`broadcaster.ts:85-93`, `visualizer-hub.ts:42-56`).
 - `README.md:425-433` documents the open routes and warns against internet exposure.
 
@@ -392,7 +392,7 @@ Flip check: the smallest change that flips the winner is maintainability weight 
 
 Score notes:
 
-- `crypto.argon2` arrived in Node 24.7.0 as a release candidate and became stable in 24.19.0 LTS (2026-08-03). Node 22 has none [DIRECT: Node docs and changelogs]. The repo allows Node `>=20.18.1` and the Docker image uses `node:22`. Node 20 reached end of life on 2026-04-30. Node 22 ends on 2027-04-30 [DIRECT: nodejs/Release schedule].
+- `crypto.argon2` arrived in Node 24.7.0 as a release candidate and became stable in 24.19.0 LTS (2026-08-03). Node 22 has none [DIRECT: Node docs and changelogs]. The repo now requires Node `>=24.19.0`, and both Docker stages use `node:24-bookworm-slim`. Node 20 reached end of life on 2026-04-30. Node 22 ends on 2027-04-30 [DIRECT: nodejs/Release schedule].
 - OWASP lists scrypt at N=2^17, r=8, p=1 (128 MiB) and equal-strength variants such as N=2^15, p=3 [DIRECT: OWASP Password Storage Cheat Sheet]. N=2^17 fails with the default `maxmem` and passes above 128 MiB, at about 300 ms on Node 24.15 [DIRECT: local run by the research agent]. The N=2^15, p=3 variant uses about 32 MiB, which suits a Raspberry Pi [DERIVED].
 - The `argon2` npm package is a native addon with prebuilt binaries for a fixed platform list. Other platforms compile with node-gyp [DIRECT: npm registry, 0.45.1].
 - `bcryptjs` reads only the first 72 bytes of a password [DIRECT: bcryptjs README, 3.0.3].
@@ -458,7 +458,7 @@ Steps in dependency order. Each names the parts it adds or changes.
 | Insecure-context browser APIs on a LAN origin | the browser client | Wake lock already falls back to a video (`public/wake-hold.js:7`). The devices panel avoids Clipboard and Web Share on LAN origins and shows a QR plus selectable text. The host browser on 127.0.0.1 is a secure context, so copy works there |
 | A request carries a Bearer header and a cookie | the principal resolver | The Bearer header wins. The origin gate skips the `Origin` check only for requests with no cookie |
 | A reverse proxy rewrites `Host`, so `Origin` never equals it | the origin gate | The gate also accepts an `Origin` that matches `X-Forwarded-Host` or `Forwarded: host=`, as code-server does. A cross-site page cannot add those headers without a preflight, which the server never approves |
-| One device or many guests open SSE streams in bulk | the stream registry | Each grant holds a small fixed number of streams, and the oldest closes first. Anonymous streams share one global cap |
+| One device or many guests open SSE streams in bulk | the stream registry | Each session holds at most 3 streams per stream route, and the oldest closes first. A stream without a session counts against a cap of 6 per source address across the stream routes, and the oldest closes first. The server holds at most 200 streams, and a stream over that cap receives an empty stream with a retry interval, since a non-200 answer would leave `EventSource` closed for good |
 | A listener calls an owner route | the permission check | 403 with a code. `GET /healthz` keeps its 404 off-host, so the version fingerprint stays hidden |
 | The owner loses every owner device | the principal resolver, the invite command | Loopback trust or `navidrome-web invite --role owner` from a host shell restores access. With `trustLoopback` off on a headless host, moving `webui-auth.json` to the Recycle Bin resets every grant |
 | Two devices redeem the last use of an invite at once | the grant store | The web player process serializes writes, so the first redeem wins and the second gets 410 |
@@ -495,7 +495,7 @@ Steps in dependency order. Each names the parts it adds or changes.
 ### Proxy deployment release
 
 - Capability: the web remote runs safely behind Caddy, nginx or Tailscale Serve, with optional single sign-on through a forward-auth proxy.
-- Parts: `webui.auth.trustedProxies` (CIDRs whose `X-Forwarded-For` the limiter trusts, as Navidrome's `realIPMiddleware` does), `webui.auth.proxyUserHeader` (such as `Remote-User` or `Tailscale-User-Login`) with a list of owner users, `Secure` cookies on https, `Cache-Control: private` for the cover proxy (today `public`, `routes/cover.ts:106`), `webui.auth.publicUrl` for invite links, README recipes for Caddy and Tailscale Serve.
+- Parts: `webui.auth.trustedProxies` (CIDRs whose `X-Forwarded-For` the limiter trusts, as Navidrome's `realIPMiddleware` does), `webui.auth.proxyUserHeader` (such as `Remote-User` or `Tailscale-User-Login`) with a list of owner users, `Secure` cookies on https, `Cache-Control: private` for the cover proxy (already `private`, `routes/cover.ts:107`), `webui.auth.publicUrl` for invite links, README recipes for Caddy and Tailscale Serve.
 - Acceptance check: a spoofed user header from an untrusted peer is ignored. A trusted header maps to the configured role. Behind https, the cookie carries `Secure`.
 - Effort: 3 to 5 working days [INFERRED].
 

@@ -6,14 +6,32 @@
 
 /**
  * Live player flags, kept out of main.ts so the lifecycle rule is unit-testable without a server or
- * mpv. main.ts seeds each flag from config, and the settings modal toggles it at runtime.
+ * mpv. main.ts seeds each flag from config, and the admin dialogs change it at runtime.
  */
 
-import type { WebuiTheme } from '../constants/defaults.js';
+import { DEFAULT_GUEST_QUEUE_LIMIT, DEFAULT_JUKEBOX_SHARE_LINK, type JukeboxShareLink, type WebuiTheme } from '../constants/defaults.js';
 
 let persist = false;
 let theme: WebuiTheme | null = null;
 let visualizer = true;
+let guestQueueLimit = DEFAULT_GUEST_QUEUE_LIMIT;
+let jukeboxShareLink: JukeboxShareLink = DEFAULT_JUKEBOX_SHARE_LINK;
+
+export function setGuestQueueLimit(value: number): void {
+  guestQueueLimit = value;
+}
+
+export function getGuestQueueLimit(): number {
+  return guestQueueLimit;
+}
+
+export function setJukeboxShareLink(value: JukeboxShareLink): void {
+  jukeboxShareLink = value;
+}
+
+export function getJukeboxShareLink(): JukeboxShareLink {
+  return jukeboxShareLink;
+}
 
 export function setPersist(value: boolean): void {
   persist = value;

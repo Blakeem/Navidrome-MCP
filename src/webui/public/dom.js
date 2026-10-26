@@ -13,6 +13,19 @@ export function setHidden(el, hide) {
   else el.removeAttribute('hidden');
 }
 
+// The button holds an eye icon for each state, and the icon shown is the action the next click takes.
+export function bindPasswordReveal(input, button) {
+  const iconShow = button.querySelector('.icon-show');
+  const iconHide = button.querySelector('.icon-hide');
+  button.addEventListener('click', () => {
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    button.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+    setHidden(iconShow, reveal);
+    setHidden(iconHide, !reveal);
+  });
+}
+
 export function setProgressVar(el, percent) {
   const clamped = Math.max(0, Math.min(100, percent));
   el.style.setProperty('--progress', `${clamped}%`);

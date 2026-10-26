@@ -39,6 +39,58 @@ function isAnswered(dto: LyricsDTO): boolean {
   return dto.hasSynced || dto.unsynced !== undefined || dto.isInstrumental;
 }
 
+type LookupOutcome =
+  | { ok: true; dto: LyricsDTO }
+  | { ok: false; status: number; message: string };
+
+// Every guest page asks for the same song on the same track change, so concurrent misses share one lookup.
+const pendingLookups = new Map<string, Promise<LookupOutcome>>();
+
+async function lookupLyrics(config: Config, client: NavidromeClient, songId: string): Promise<LookupOutcome> {
+  let entry: QueueItem | undefined;
+  try {
+    const queue = await getPlayQueue(client, {});
+    entry = queue.items.find((item) => item.songId === songId);
+  } catch (err) {
+    logger.debug(`webui: lyrics queue lookup failed for id=${songId}: ${errorText(err)}`);
+    return { ok: false, status: 502, message: 'Play-queue lookup failed' };
+  }
+  if (entry === undefined) {
+    return { ok: false, status: 404, message: 'Song is not in the current play queue' };
+  }
+
+  const lookup = buildLyricsLookup({
+    title: entry.title,
+    artist: entry.artist,
+    album: entry.album,
+    duration: entry.duration,
+  });
+  // Local file lyrics need neither a title nor an artist, so only the LRCLIB query is gated.
+  const allowLrclib = config.features.lyrics && lookup.searchable;
+
+  let dto: LyricsDTO;
+  try {
+    dto = await resolveLyricsByMetadata(config, lookup.metadata, { local: { client, songId }, allowLrclib });
+  } catch (err) {
+    logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorText(err)}`);
+    return { ok: false, status: 502, message: 'Lyrics lookup failed' };
+  }
+
+  const store = isAnswered(dto) ? hitCache : missCache;
+  store.set(songId, dto);
+  return { ok: true, dto };
+}
+
+function sharedLookup(config: Config, client: NavidromeClient, songId: string): Promise<LookupOutcome> {
+  const pending = pendingLookups.get(songId);
+  if (pending !== undefined) return pending;
+  const started = lookupLyrics(config, client, songId).finally(() => {
+    pendingLookups.delete(songId);
+  });
+  pendingLookups.set(songId, started);
+  return started;
+}
+
 /**
  * Track metadata comes from the live queue, so the browser cannot steer an LRCLIB query. A song
  * with no lyrics answers 200 with an empty DTO, so the overlay can tell no lyrics from a failure.
@@ -62,39 +114,10 @@ export async function handleLyrics(
     return;
   }
 
-  let entry: QueueItem | undefined;
-  try {
-    const queue = await getPlayQueue(client, {});
-    entry = queue.items.find((item) => item.songId === songId);
-  } catch (err) {
-    logger.debug(`webui: lyrics queue lookup failed for id=${songId}: ${errorText(err)}`);
-    writeError(res, 502, 'Play-queue lookup failed');
+  const outcome = await sharedLookup(config, client, songId);
+  if (!outcome.ok) {
+    writeError(res, outcome.status, outcome.message);
     return;
   }
-  if (entry === undefined) {
-    writeError(res, 404, 'Song is not in the current play queue');
-    return;
-  }
-
-  const lookup = buildLyricsLookup({
-    title: entry.title,
-    artist: entry.artist,
-    album: entry.album,
-    duration: entry.duration,
-  });
-  // Local file lyrics need neither a title nor an artist, so only the LRCLIB query is gated.
-  const allowLrclib = config.features.lyrics && lookup.searchable;
-
-  let dto: LyricsDTO;
-  try {
-    dto = await resolveLyricsByMetadata(config, lookup.metadata, { local: { client, songId }, allowLrclib });
-  } catch (err) {
-    logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorText(err)}`);
-    writeError(res, 502, 'Lyrics lookup failed');
-    return;
-  }
-
-  const store = isAnswered(dto) ? hitCache : missCache;
-  store.set(songId, dto);
-  writeJson(res, 200, dto);
+  writeJson(res, 200, outcome.dto);
 }

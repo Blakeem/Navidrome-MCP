@@ -40,16 +40,16 @@ BOUNDARY CASE: lyrics-based explicit screening → IN as a later experiment. Rul
 
 | Requirement | Result | Evidence |
 |---|---|---|
-| The web remote HTTP server can serve a guest page to LAN phones | Verified | The static file route serves any file under `src/webui/public` [DIRECT: `src/webui/routes/static-files.ts:53-64`]. `webui.expose` binds `0.0.0.0` [DIRECT: `src/config/map-config.ts:61-63`] |
+| The web remote HTTP server can serve a guest page to LAN phones | Verified | The static file route serves any file under `src/webui/public` [DIRECT: `src/webui/routes/static-files.ts:62-89`]. `webui.expose` binds `0.0.0.0` [DIRECT: `src/config/map-config.ts:61-63`] |
 | The host knows a LAN URL to put in the QR | Verified, with a caveat | The network-info route lists every non-internal IPv4 interface as `http://<address>:<port>` [DIRECT: `src/webui/network.ts:22-38`, `src/webui/routes/network-info.ts:16-29`]. A Windows host also lists virtual adapters, such as WSL and VPN adapters [INFERRED] |
-| Guests are isolated from host controls | Refuted today | No route checks identity. Control routes and the library play route answer any peer [DIRECT: `src/webui/server.ts:146-168`]. Only the player settings, shutdown, lease and health routes require a loopback peer [DIRECT: `src/webui/routes/player.ts:54,72,140,156`, `src/webui/routes/health.ts:25`] |
+| Guests are isolated from host controls | Refuted today | No guest role exists. In access mode none, control routes and the library play route answer any LAN or VPN peer [DIRECT: the `player.control` rows of `ROUTES` in `src/webui/server.ts`]. In that mode only the player settings and shutdown routes require a loopback peer [DIRECT: `src/webui/auth/roles.ts:27`], and the lease and health routes check for one themselves [DIRECT: `src/webui/routes/player.ts:137`, `src/webui/routes/health.ts:20`]. Protected mode admits only an admin session to every gated route |
 | Something can put a song right after the current track | Verified | mpv `loadfile <url> insert-next` exists since mpv 0.38.0 [DIRECT: mpv `DOCS/interface-changes.rst`, `DOCS/man/input.rst`]. The installed mpv is 0.41.0 [DIRECT: `mpv --version`]. The playback engine sends only `replace` and `append` today [DIRECT: `src/services/playback/playback-engine.ts:256-336`] |
 | A part can watch track changes and react | Verified | The web player process already subscribes to `playbackEngine.onStateChange` [DIRECT: `src/webui/broadcaster.ts:43`]. mpv `start-file` and `end-file` carry `playlist_entry_id`, and `end-file` carries `reason` [DIRECT: mpv `DOCS/man/input.rst` event list]. The engine does not emit those two events yet [DIRECT: `playback-engine.ts:104-113`] |
 | One long-lived process can hold party state across MCP sessions | Verified, with a caveat | The web player process owns the port and counts MCP leases [DIRECT: `src/web/main.ts:73-134`]. It stops when the last MCP exits unless `persistAfterMcpExit` is on [DIRECT: `src/web/player-runtime.ts:43-49`] |
 | MCP tools can reach that state | Verified | The MCP server process already calls the web player process over loopback HTTP for the lease [DIRECT: `src/web/lease.ts:25-69`] |
 | Navidrome exposes an explicit flag | Verified, low coverage | Native API field `explicitStatus` is `"e"`, `"c"` or `""`. OpenSubsonic returns `"explicit"`, `"clean"` or `""` [DIRECT: live server 0.62.0, OpenSubsonic Child docs updated 2026-05-10]. Navidrome maps tag `ITUNESADVISORY` or `rtng` values 1 and 4 to explicit and 2 to clean [DIRECT: navidrome `model/metadata/map_mediafile.go:168-177`, `resources/mappings.yaml:201-202`]. The field arrived in v0.55.0 on 2025-03-09 [DIRECT: tag diff of `model/mediafile.go`]. The live filter `GET /api/song?explicit_status=e` returns 6 of 16,731 songs, and `=c` returns 0 [DIRECT: live read-only check]. The project's song DTO drops the field [DIRECT: no `explicitStatus` in `src/`] |
 | The server can make the LLM act when a guest submits | Refuted in general, partial in Claude Code | See the MCP client support table below |
-| A QR can render with the current page security policy | Verified | The policy is `script-src 'self'`, so a CDN script is blocked [DIRECT: `static-files.ts:30-39`]. A server-rendered SVG needs no script |
+| A QR can render with the current page security policy | Verified | The policy is `script-src 'self'`, so a CDN script is blocked [DIRECT: `src/webui/http-helpers.ts:17-28`]. A server-rendered SVG needs no script |
 
 ### MCP client support for server-initiated LLM work
 
@@ -116,7 +116,7 @@ Facts about the parts in this diagram:
 
 1. The mpv playlist is the queue's only source of truth. No copy exists in SQLite or in Navidrome's saved queue [DIRECT: `docs/PLAYBACK-SPEC.md:15-16`].
 2. The web player process and the MCP server process each run their own playback engine. Each engine has its own mutation lock, and both drive one mpv [DIRECT: `PLAYBACK-SPEC.md:113-118`, `playback-engine.ts:265`]. No lock spans the two processes.
-3. The web remote HTTP server dispatches through one flat if-chain [DIRECT: `server.ts:97-199`]. A new route is one line there.
+3. The web remote HTTP server dispatches through one flat route table [DIRECT: `ROUTES` in `src/webui/server.ts`]. A new route is one line there, and it names its permission.
 4. The library routes already search songs with `searchAll` and the active-library filter [DIRECT: `routes/library.ts:70-97`].
 5. The snapshot broadcaster sends the entire mpv playlist and the playback status to every SSE client [DIRECT: `broadcaster.ts:198-219`]. The status carries only `engineRunning`, `volume` and `idle` [DIRECT: `broadcaster.ts:231-233`]. Guests must not receive this snapshot.
 6. The saved-queue tools touch only Navidrome's `/queue` [DIRECT: `src/tools/queue-management.ts:44-111`]. Party Mode does not touch them.
@@ -396,7 +396,7 @@ Criteria: maintainability (30), match (25), knows the LAN URL (15), keeps the Wi
 
 Flip check: no single weight change flips the winner, since the vendored browser module never scores higher. ROBUST.
 
-Encoder: Web UI Auth + Roles picks `uqr` 0.1.3 (MIT, no dependencies, 2026-04-03) for invite QRs. Party Mode reuses it, so the repo holds one encoder. The alternative `qr` 0.7.2 (MIT OR Apache-2.0, 2026-09-28) releases more often but requires Node 20.19.0 or later, while `package.json:71` declares `>=20.18.1` [DIRECT: npm registry]. `uqr` defaults to error correction L and a 1-module border, so the party QR route sets M and 4 [DIRECT: `uqr` README, INFERRED: ISO 4-module quiet zone, not read].
+Encoder: Web UI Auth + Roles picks `uqr` 0.1.3 (MIT, no dependencies, 2026-04-03) for invite QRs. Party Mode reuses it, so the repo holds one encoder. The alternative `qr` 0.7.2 (MIT OR Apache-2.0, 2026-09-28) releases more often and requires Node 20.19.0 or later, which the `>=24.19.0` floor in `package.json:71` meets [DIRECT: npm registry]. `uqr` defaults to error correction L and a 1-module border, so the party QR route sets M and 4 [DIRECT: `uqr` README, INFERRED: ISO 4-module quiet zone, not read].
 
 ## Recommendation
 

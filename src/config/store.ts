@@ -17,6 +17,7 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
+import { WEBUI_ADMIN_ACCESS_LEVELS, WEBUI_AUTH_MODES } from '../constants/defaults.js';
 import { getSettingsStorePath } from './store-path.js';
 import { logger } from '../utils/logger.js';
 
@@ -64,11 +65,28 @@ export const SettingsFileSchema = z.object({
     host: z.string().nullish(),
     expose: z.boolean().optional(),
     allowedHosts: z.array(z.string()).nullish(),
+    publicUrl: z.string().nullish(),
     autoOpenBrowser: z.boolean().optional(),
     persistAfterMcpExit: z.boolean().optional(),
     // Not an enum, so an unknown theme reads as unset instead of failing the entire store.
     theme: z.string().nullish(),
     visualizer: z.boolean().optional(),
+    tls: z.object({
+      certPath: z.string().nullish(),
+      keyPath: z.string().nullish(),
+    }).nullish(),
+    // Enums, unlike theme, so a mistyped mode voids the store, and readSettingsForStartup still
+    // reports the mode so startup skips the env fallback, which would open the remote.
+    auth: z.object({
+      mode: z.enum(WEBUI_AUTH_MODES).optional(),
+      adminPasswordHash: z.string().nullish(),
+      adminAccess: z.enum(WEBUI_ADMIN_ACCESS_LEVELS).optional(),
+    }).nullish(),
+  }).optional(),
+  jukebox: z.object({
+    guestQueueLimit: z.number().optional(),
+    // Any shape, so a hand-edited or unknown link reads as the default instead of failing the entire store.
+    shareLink: z.unknown().optional(),
   }).optional(),
   advanced: z.object({
     debug: z.boolean().optional(),
@@ -79,13 +97,19 @@ export const SettingsFileSchema = z.object({
 export type SettingsFile = z.infer<typeof SettingsFileSchema>;
 
 interface StoreContents {
-  settings: SettingsFile;
-  raw: Record<string, unknown>;
+  /** Null when the file is absent, unreadable, not JSON, or fails the schema. */
+  settings: SettingsFile | null;
+  /** Kept when the schema rejects the file. Null when the file is absent, unreadable or not JSON. */
+  parsed: unknown;
 }
+
+const NO_STORE: StoreContents = { settings: null, parsed: null };
+
+const StoredAuthModeSchema = z.object({ webui: z.object({ auth: z.object({ mode: z.unknown() }) }) });
 
 /** Every failure returns null instead of throwing, so a bad file never crashes startup. */
 export function readSettings(): SettingsFile | null {
-  return readStore()?.settings ?? null;
+  return readStore().settings;
 }
 
 /**
@@ -93,10 +117,23 @@ export function readSettings(): SettingsFile | null {
  * object instead. It is null whenever readSettings returns null.
  */
 export function readRawSettings(): Record<string, unknown> | null {
-  return readStore()?.raw ?? null;
+  const { settings, parsed } = readStore();
+  // SettingsFileSchema accepts only a plain object, so a parsed store is one.
+  return settings === null ? null : parsed as Record<string, unknown>;
 }
 
-function readStore(): StoreContents | null {
+/**
+ * The env fallback opens the web remote by default, so startup also learns whether the file names
+ * an auth mode other than none, even when the schema rejects the file.
+ */
+export function readSettingsForStartup(): { settings: SettingsFile | null; requestsWebuiAuth: boolean } {
+  const { settings, parsed } = readStore();
+  const stored = StoredAuthModeSchema.safeParse(parsed);
+  const mode = stored.success ? stored.data.webui.auth.mode : undefined;
+  return { settings, requestsWebuiAuth: mode !== undefined && mode !== null && mode !== 'none' };
+}
+
+function readStore(): StoreContents {
   const path = getSettingsStorePath();
   let raw: string;
   try {
@@ -106,7 +143,7 @@ function readStore(): StoreContents | null {
     if (code !== 'ENOENT') {
       logger.warn(`settings.json at ${path} is unreadable (${code ?? String(err)}), treating as unconfigured`);
     }
-    return null;
+    return NO_STORE;
   }
   // Windows editors may prepend a UTF-8 BOM, which JSON.parse rejects.
   const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
@@ -116,7 +153,7 @@ function readStore(): StoreContents | null {
     parsed = JSON.parse(text);
   } catch {
     logger.warn(`settings.json is not valid JSON (${path}); treating as unconfigured`);
-    return null;
+    return NO_STORE;
   }
 
   const result = SettingsFileSchema.safeParse(parsed);
@@ -125,20 +162,21 @@ function readStore(): StoreContents | null {
       .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('; ');
     logger.warn(`settings.json failed validation (${path}); treating as unconfigured [${issues}]`);
-    return null;
+    return { settings: null, parsed };
   }
-  // SettingsFileSchema accepts only a plain object, so a parsed store is one.
-  return { settings: result.data, raw: parsed as Record<string, unknown> };
+  return { settings: result.data, parsed };
+}
+
+export function writeSettings(settings: SettingsFile): void {
+  writePrivateFileAtomic(getSettingsStorePath(), `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 /**
  * A secrets file must never exist with default perms or partial content, so a 0600 temp file is
  * synced and renamed into place. Windows ignores the mode and relies on per-user %APPDATA%.
  */
-export function writeSettings(settings: SettingsFile): void {
-  const path = getSettingsStorePath();
-  const dir = dirname(path);
-  mkdirSync(dir, { recursive: true });
+export function writePrivateFileAtomic(path: string, content: string): void {
+  mkdirSync(dirname(path), { recursive: true });
 
   const tmpPath = `${path}.${process.pid}.${Math.floor(performance.now() * 1000).toString(36)}.tmp`;
   const fd = openSync(tmpPath, 'wx', 0o600);
@@ -148,7 +186,7 @@ export function writeSettings(settings: SettingsFile): void {
     try {
       // openSync applies its mode through the umask, so fchmod sets 0600 regardless of umask.
       fchmodSync(fd, 0o600);
-      writeSync(fd, `${JSON.stringify(settings, null, 2)}\n`);
+      writeSync(fd, content);
       fsyncSync(fd);
     } finally {
       closeSync(fd);

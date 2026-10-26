@@ -3,8 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { request as httpRequest, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
+import { connect, type AddressInfo, type Socket } from 'node:net';
 import { hostname } from 'node:os';
 import type { Config } from '../../../src/config.js';
 import type { SettingsFile } from '../../../src/config/store.js';
@@ -28,6 +28,13 @@ vi.mock('../../../src/web/player-runtime.js', async (importOriginal) => {
     getVisualizer: vi.fn(() => true),
     setVisualizer: vi.fn(),
   };
+});
+
+// A test sets `interfaces` to stand in for this machine's network interfaces, so a host with no LAN still checks LAN URLs.
+const osStub = vi.hoisted(() => ({ interfaces: null as NodeJS.Dict<import('node:os').NetworkInterfaceInfo[]> | null }));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, networkInterfaces: () => osStub.interfaces ?? actual.networkInterfaces() };
 });
 
 // The cover proxy would otherwise send a real HTTP request.
@@ -79,7 +86,9 @@ import {
   setVolume,
   shuffleQueueFromTop,
 } from '../../../src/tools/playback.js';
-import { createServer } from '../../../src/webui/server.js';
+import { AuthService, MAX_GUESTS_PER_CODE } from '../../../src/webui/auth/auth-service.js';
+import { GuestQueue } from '../../../src/webui/jukebox/guest-queue.js';
+import { connectionLimitsFor, createConnectionLimiter, createServer } from '../../../src/webui/server.js';
 
 interface CapturedRes {
   res: ServerResponse;
@@ -113,6 +122,7 @@ function fakeReq(remoteAddress: string, bodyChunks: Buffer[] = [], host = '127.0
   };
   emitter.socket = { remoteAddress } as never;
   emitter.headers = { host };
+  emitter.rawHeaders = ['Host', host];
   queueMicrotask(() => {
     for (const c of bodyChunks) emitter.emit('data', c);
     emitter.emit('end');
@@ -120,7 +130,7 @@ function fakeReq(remoteAddress: string, bodyChunks: Buffer[] = [], host = '127.0
   return emitter;
 }
 
-function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: boolean; allowedHosts?: string[] }): Config {
+function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: boolean; allowedHosts?: string[]; publicUrl?: string }): Config {
   return makeTestConfig({
     webui: {
       enabled: true,
@@ -128,10 +138,13 @@ function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: bo
       port: 8808,
       expose: webui.expose,
       allowedHosts: webui.allowedHosts ?? [],
+      publicUrl: webui.publicUrl ?? null,
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: false,
       theme: null,
       visualizer: true,
+      tls: { certPath: null, keyPath: null },
+      auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' },
     },
   });
 }
@@ -143,11 +156,13 @@ function fakeBroadcaster(): { broadcastNow: ReturnType<typeof vi.fn> } {
 }
 
 const LOOPBACK = '127.0.0.1';
-const LAN_PEER = '203.0.113.5';
+const LAN_PEER = '192.168.1.50';
+const INTERNET_PEER = '203.0.113.5';
 
 afterEach(() => {
   vi.clearAllMocks();
   vi.useRealTimers();
+  osStub.interfaces = null;
 });
 
 describe('handleHealth loopback gate (resolved bind host matrix)', () => {
@@ -196,18 +211,11 @@ describe('handleHealth loopback gate (resolved bind host matrix)', () => {
     expect(cap.status()).toBe(200);
   });
 
-  it.each([true, false])('reports playbackAttached=%s from the playback engine', (attached) => {
-    const isRunning = vi.spyOn(playbackEngine, 'isRunning').mockReturnValue(attached);
+  it('serves only the app signature and the version', () => {
     const cap = fakeRes();
     handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: false, host: '127.0.0.1' }));
-    isRunning.mockRestore();
-    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID, playbackAttached: attached });
-  });
-
-  it('reports that this owner claims scrobbles', () => {
-    const cap = fakeRes();
-    handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: false, host: '127.0.0.1' }));
-    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID, scrobbleClaims: true });
+    expect(Object.keys(cap.json() as object).sort()).toEqual(['app', 'version']);
+    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID });
   });
 });
 
@@ -230,6 +238,81 @@ describe('LAN reachability follows the resolved bind host', () => {
     expect(cap.json()).toMatchObject({ lanReachable: false, interfaces: [] });
   });
 
+  it('links every listed address to the admin page', () => {
+    const cap = fakeRes();
+    osStub.interfaces = {
+      lo: [{ address: '127.0.0.1', netmask: '255.0.0.0', family: 'IPv4', mac: '00:00:00:00:00:00', internal: true, cidr: '127.0.0.1/8' }],
+      eth0: [{ address: '192.168.1.42', netmask: '255.255.255.0', family: 'IPv4', mac: '00:00:00:00:00:01', internal: false, cidr: '192.168.1.42/24' }],
+    };
+    handleNetworkInfo(cap.res, configWith({ expose: true, host: '0.0.0.0' }));
+    expect(cap.json()).toMatchObject({
+      localhostUrl: 'http://127.0.0.1:8808/admin',
+      interfaces: [{ iface: 'eth0', address: '192.168.1.42', url: 'http://192.168.1.42:8808/admin' }],
+    });
+  });
+
+  it.each([
+    'vEthernet (WSL)',
+    'vEthernet (WSL (Hyper-V firewall))',
+    'vEthernet (Default Switch)',
+    'WSL',
+    'VirtualBox Host-Only Network',
+    'VMware Network Adapter VMnet8',
+    'docker0',
+    'vEthernet (DockerNAT)',
+    'veth3f2a1b',
+    'br-3f2a1b4c5d6e',
+    'podman0',
+    'cni-podman0',
+    'vboxnet0',
+    'vmnet8',
+    'incusbr0',
+    'virbr0',
+    'virbr0-nic',
+    'vEthernet (nat)',
+    'VirtualBox Host-Only Network #2',
+    'docker_gwbridge',
+    'lxcbr0',
+    'lxdbr0',
+  ])(
+    'leaves out the virtual adapter %j',
+    (iface) => {
+      const cap = fakeRes();
+      const lan = { netmask: '255.255.255.0', family: 'IPv4', mac: '00:00:00:00:00:01', internal: false } as const;
+      osStub.interfaces = {
+        [iface]: [{ ...lan, address: '172.28.0.1', cidr: '172.28.0.1/20' }],
+        'Wi-Fi': [{ ...lan, address: '192.168.1.42', cidr: '192.168.1.42/24' }],
+      };
+      handleNetworkInfo(cap.res, configWith({ expose: true, host: '0.0.0.0' }));
+      expect((cap.json() as { interfaces: unknown }).interfaces).toEqual([{ iface: 'Wi-Fi', address: '192.168.1.42', url: 'http://192.168.1.42:8808/admin' }]);
+    },
+  );
+
+  it.each(['vEthernet (External Switch)', 'vEthernet (WSL Bridge)', 'vEthernet (Docker LAN)'])(
+    'keeps the host vNIC %j of a Hyper-V external switch, which carries the LAN address',
+    (iface) => {
+      const cap = fakeRes();
+      osStub.interfaces = {
+        [iface]: [{ address: '192.168.1.42', netmask: '255.255.255.0', family: 'IPv4', mac: '00:00:00:00:00:01', internal: false, cidr: '192.168.1.42/24' }],
+      };
+      handleNetworkInfo(cap.res, configWith({ expose: true, host: '0.0.0.0' }));
+      expect((cap.json() as { interfaces: unknown }).interfaces).toEqual([
+        { iface, address: '192.168.1.42', url: 'http://192.168.1.42:8808/admin' },
+      ]);
+    },
+  );
+
+  it('keeps the macOS bridge100, since Internet Sharing serves its hotspot clients on that address', () => {
+    const cap = fakeRes();
+    osStub.interfaces = {
+      bridge100: [{ address: '192.168.2.1', netmask: '255.255.255.0', family: 'IPv4', mac: '00:00:00:00:00:01', internal: false, cidr: '192.168.2.1/24' }],
+    };
+    handleNetworkInfo(cap.res, configWith({ expose: true, host: '0.0.0.0' }));
+    expect((cap.json() as { interfaces: unknown }).interfaces).toEqual([
+      { iface: 'bridge100', address: '192.168.2.1', url: 'http://192.168.2.1:8808/admin' },
+    ]);
+  });
+
   it('reports lanReachable for an IPv6 wildcard bind with expose=false', () => {
     const cap = fakeRes();
     handleNetworkInfo(cap.res, configWith({ expose: false, host: '::' }));
@@ -237,44 +320,44 @@ describe('LAN reachability follows the resolved bind host', () => {
   });
 });
 
-describe('player routes reject non-loopback peers', () => {
-  it('handleGetPlayerSettings returns 404 to a LAN peer without reading the store', () => {
-    const cap = fakeRes();
-    handleGetPlayerSettings(fakeReq(LAN_PEER), cap.res, LOOPBACK_CONFIG);
-    expect(cap.status()).toBe(404);
+describe('player routes reject non-loopback peers in access mode none', () => {
+  it('GET /api/player/settings returns 404 to a LAN peer without reading the store', async () => {
+    const reply = await dispatchFrom(LAN_PEER, '/api/player/settings', LOOPBACK_CONFIG, '127.0.0.1:8808');
+    expect(reply.status).toBe(404);
     expect(readSettings).not.toHaveBeenCalled();
   });
 
-  it('handleSetPlayerSettings returns 404 to a LAN peer and never writes', async () => {
-    const cap = fakeRes();
-    await handleSetPlayerSettings(
-      fakeReq(LAN_PEER, [Buffer.from(JSON.stringify({ autoOpenBrowser: true }))]),
-      cap.res,
-      LOOPBACK_CONFIG,
-      fakeBroadcaster(),
-    );
-    expect(cap.status()).toBe(404);
+  it('POST /api/player/settings returns 404 to a LAN peer and never writes', async () => {
+    const reply = await dispatchFrom(LAN_PEER, '/api/player/settings', LOOPBACK_CONFIG, '127.0.0.1:8808', {
+      method: 'POST',
+      body: { autoOpenBrowser: true },
+    });
+    expect(reply.status).toBe(404);
     expect(setPersist).not.toHaveBeenCalled();
     expect(writeSettings).not.toHaveBeenCalled();
   });
 
-  it('handleShutdown returns 404 to a LAN peer and never invokes the shutdown callback', () => {
-    const cap = fakeRes();
+  it('POST /api/shutdown returns 404 to a LAN peer and never invokes the shutdown callback', async () => {
     const shutdown = vi.fn();
-    handleShutdown(fakeReq(LAN_PEER), cap.res, shutdown);
-    expect(cap.status()).toBe(404);
+    const reply = await dispatchFrom(LAN_PEER, '/api/shutdown', LOOPBACK_CONFIG, '127.0.0.1:8808', { method: 'POST', body: {}, shutdown });
+    expect(reply.status).toBe(404);
     expect(shutdown).not.toHaveBeenCalled();
   });
 
-  it('handleShutdown accepts a loopback peer (200) and defers the callback', () => {
+  it('handleShutdown answers 200 and defers the callback', () => {
     vi.useFakeTimers();
     const cap = fakeRes();
     const shutdown = vi.fn();
-    handleShutdown(fakeReq(LOOPBACK), cap.res, shutdown);
+    handleShutdown(cap.res, shutdown);
     expect(cap.status()).toBe(200);
     expect(shutdown).not.toHaveBeenCalled();
     vi.advanceTimersByTime(50);
     expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it('POST /api/shutdown accepts a loopback peer', async () => {
+    const reply = await dispatchFrom(LOOPBACK, '/api/shutdown', LOOPBACK_CONFIG, '127.0.0.1:8808', { method: 'POST', body: {} });
+    expect(reply.status).toBe(200);
   });
 
   it('handleMcpLease returns 404 to a LAN peer and opens no lease', () => {
@@ -288,12 +371,14 @@ describe('player routes reject non-loopback peers', () => {
 
 describe('local-only routes reject a loopback peer with a foreign Host (DNS rebinding)', () => {
   const REBOUND_HOST = 'evil.example:8808';
+  // A LAN bind lets the foreign Host past the host gate only when allowedHosts lists it, so the
+  // loopback rule is the check under test.
+  const REBOUND_BIND = configWith({ expose: true, host: '0.0.0.0', allowedHosts: ['evil.example'] });
 
-  it('handleShutdown returns 404 and never invokes the shutdown callback', () => {
-    const cap = fakeRes();
+  it('POST /api/shutdown returns 404 and never invokes the shutdown callback', async () => {
     const shutdown = vi.fn();
-    handleShutdown(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, shutdown);
-    expect(cap.status()).toBe(404);
+    const reply = await dispatchFrom(LOOPBACK, '/api/shutdown', REBOUND_BIND, REBOUND_HOST, { method: 'POST', body: {}, shutdown });
+    expect(reply.status).toBe(404);
     expect(shutdown).not.toHaveBeenCalled();
   });
 
@@ -305,22 +390,18 @@ describe('local-only routes reject a loopback peer with a foreign Host (DNS rebi
     expect(leases.open).not.toHaveBeenCalled();
   });
 
-  it('handleGetPlayerSettings returns 404 without reading the store', () => {
-    const cap = fakeRes();
-    handleGetPlayerSettings(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, LOOPBACK_CONFIG);
-    expect(cap.status()).toBe(404);
+  it('GET /api/player/settings returns 404 without reading the store', async () => {
+    const reply = await dispatchFrom(LOOPBACK, '/api/player/settings', REBOUND_BIND, REBOUND_HOST);
+    expect(reply.status).toBe(404);
     expect(readSettings).not.toHaveBeenCalled();
   });
 
-  it('handleSetPlayerSettings returns 404 and never writes', async () => {
-    const cap = fakeRes();
-    await handleSetPlayerSettings(
-      fakeReq(LOOPBACK, [Buffer.from(JSON.stringify({ theme: 'dark' }))], REBOUND_HOST),
-      cap.res,
-      LOOPBACK_CONFIG,
-      fakeBroadcaster(),
-    );
-    expect(cap.status()).toBe(404);
+  it('POST /api/player/settings returns 404 and never writes', async () => {
+    const reply = await dispatchFrom(LOOPBACK, '/api/player/settings', REBOUND_BIND, REBOUND_HOST, {
+      method: 'POST',
+      body: { theme: 'dark' },
+    });
+    expect(reply.status).toBe(404);
     expect(setTheme).not.toHaveBeenCalled();
     expect(writeSettings).not.toHaveBeenCalled();
   });
@@ -336,16 +417,24 @@ describe('local-only routes reject a loopback peer with a foreign Host (DNS rebi
     handlePlayerState(fakeReq(LOOPBACK, [], REBOUND_HOST), cap.res, configWith({ expose: false, host: '0.0.0.0' }));
     expect(cap.json()).toMatchObject({ isLocal: false });
   });
+
+  it('GET /api/auth/session reports isLocal false', async () => {
+    const reply = await dispatchFrom(LOOPBACK, '/api/auth/session', REBOUND_BIND, REBOUND_HOST);
+    expect(reply.status).toBe(200);
+    expect(JSON.parse(reply.body)).toMatchObject({ isLocal: false });
+  });
 });
 
 describe('local-only routes reject a request relayed by a same-host proxy', () => {
-  it('handleShutdown returns 404 to a loopback peer that carries X-Forwarded-For', () => {
-    const cap = fakeRes();
+  it('POST /api/shutdown returns 404 to a loopback peer that carries X-Forwarded-For', async () => {
     const shutdown = vi.fn();
-    const req = fakeReq(LOOPBACK);
-    req.headers['x-forwarded-for'] = '203.0.113.5';
-    handleShutdown(req, cap.res, shutdown);
-    expect(cap.status()).toBe(404);
+    const reply = await dispatchFrom(LOOPBACK, '/api/shutdown', LOOPBACK_CONFIG, '127.0.0.1:8808', {
+      method: 'POST',
+      body: {},
+      shutdown,
+      headers: { 'x-forwarded-for': '203.0.113.5' },
+    });
+    expect(reply.status).toBe(404);
     expect(shutdown).not.toHaveBeenCalled();
   });
 });
@@ -631,11 +720,7 @@ describe('handleGetPlayerSettings reports autoOpenBrowser', () => {
     vi.mocked(readSettings).mockReturnValue(null);
     const cap = fakeRes();
 
-    handleGetPlayerSettings(
-      fakeReq(LOOPBACK),
-      cap.res,
-      configWith({ expose: false, host: '127.0.0.1', autoOpenBrowser: true }),
-    );
+    handleGetPlayerSettings(cap.res, configWith({ expose: false, host: '127.0.0.1', autoOpenBrowser: true }));
 
     expect(cap.status()).toBe(200);
     expect(cap.json()).toEqual({
@@ -736,14 +821,18 @@ interface ServerRequestOptions {
   /** The configured web port. The socket always listens on an ephemeral port. */
   configuredPort?: number;
   allowedHosts?: string[];
+  publicUrl?: string;
   /** Builds the Host header from the ephemeral port. Defaults to `127.0.0.1:<port>`. */
   hostHeader?: (port: number) => string;
-  headers?: Record<string, string>;
+  /** The function form builds headers, such as `Origin`, from the ephemeral port. */
+  headers?: Record<string, string> | ((port: number) => Record<string, string>);
   body?: string;
+  addVisualizerClient?: (res: ServerResponse) => void;
 }
 
 interface ServerReply {
   status: number;
+  headers: IncomingHttpHeaders;
   body: string;
   /** False when the server aborted the response before its final chunk. */
   complete: boolean;
@@ -751,21 +840,31 @@ interface ServerReply {
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
-async function requestServer(method: string, path: string, options: ServerRequestOptions = {}): Promise<ServerReply> {
-  const config = configWith({ expose: false, host: options.bindHost ?? '127.0.0.1', allowedHosts: options.allowedHosts });
-  if (options.configuredPort !== undefined) config.webui.port = options.configuredPort;
-  const server = createServer({
+function testServer(
+  config: Config = LOOPBACK_CONFIG,
+  addVisualizerClient: (res: ServerResponse) => void = vi.fn(),
+): ReturnType<typeof createServer> {
+  return createServer({
     config,
     client: {} as never,
     broadcaster: {} as never,
-    visualizer: { addClient: vi.fn() },
+    visualizer: { addClient: addVisualizerClient },
     shutdown: () => undefined,
     leases: { open: () => undefined, close: () => undefined },
+    auth: new AuthService(config),
+    guests: new GuestQueue(),
   });
+}
+
+async function requestServer(method: string, path: string, options: ServerRequestOptions = {}): Promise<ServerReply> {
+  const config = configWith({ expose: false, host: options.bindHost ?? '127.0.0.1', allowedHosts: options.allowedHosts, publicUrl: options.publicUrl });
+  if (options.configuredPort !== undefined) config.webui.port = options.configuredPort;
+  const server = testServer(config, options.addVisualizerClient);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
     const { port } = server.address() as AddressInfo;
-    const headers = { Host: options.hostHeader?.(port) ?? `127.0.0.1:${port}`, ...options.headers };
+    const extraHeaders = typeof options.headers === 'function' ? options.headers(port) : options.headers;
+    const headers = { Host: options.hostHeader?.(port) ?? `127.0.0.1:${port}`, ...extraHeaders };
     return await new Promise((resolve, reject) => {
       const req = httpRequest({ host: '127.0.0.1', port, path, method, headers }, (res) => {
         let body = '';
@@ -775,7 +874,7 @@ async function requestServer(method: string, path: string, options: ServerReques
         });
         res.on('error', () => undefined);
         res.on('close', () => {
-          resolve({ status: res.statusCode ?? 0, body, complete: res.complete });
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body, complete: res.complete });
         });
       });
       req.on('error', reject);
@@ -902,7 +1001,7 @@ describe('Host allowlist', () => {
   // /healthz is local-only on a LAN bind, so a route every peer may read shows the Host gate
   // passed.
   it('accepts a LAN IP Host on a non-loopback bind, but the local-only flag stays off', async () => {
-    const reply = await requestServer('GET', '/api/player-state', {
+    const reply = await requestServer('GET', '/api/auth/session', {
       bindHost: '0.0.0.0',
       hostHeader: (port) => `192.168.1.20:${port}`,
     });
@@ -929,10 +1028,12 @@ describe('Host allowlist', () => {
     ['localhost', 'localhost:8808'],
     ["this machine's name", `${hostname()}:8808`],
     ['a name listed in allowedHosts', 'music.home.lan:8808'],
+    ['the host of webui.publicUrl', 'jukebox.example.org:8808'],
   ])('accepts %s as Host on a non-loopback bind', async (_label, host) => {
     const reply = await requestServer('GET', '/api/player-state', {
       bindHost: '0.0.0.0',
       allowedHosts: ['music.home.lan'],
+      publicUrl: 'http://Jukebox.Example.org:8808',
       hostHeader: () => host,
     });
 
@@ -975,13 +1076,16 @@ describe('MCP lease route over a live dispatcher', () => {
   it('counts a lease while its connection is open and releases it on close', async () => {
     vi.useRealTimers();
     const leases = { open: vi.fn(), close: vi.fn() };
+    const config = configWith({ expose: false, host: '127.0.0.1' });
     const server = createServer({
-      config: configWith({ expose: false, host: '127.0.0.1' }),
+      config,
       client: {} as never,
       broadcaster: {} as never,
       visualizer: { addClient: vi.fn() },
       shutdown: () => undefined,
       leases,
+      auth: new AuthService(config),
+      guests: new GuestQueue(),
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     try {
@@ -1007,5 +1111,526 @@ describe('MCP lease route over a live dispatcher', () => {
         server.close(() => resolve());
       });
     }
+  });
+});
+
+describe('server socket limits', () => {
+  it('sets the timeouts and the header, request and connection caps', () => {
+    const server = testServer();
+
+    expect(server.headersTimeout).toBe(10_000);
+    expect(server.requestTimeout).toBe(30_000);
+    expect(server.keepAliveTimeout).toBe(5_000);
+    expect(server.maxHeadersCount).toBe(64);
+    expect(server.maxRequestsPerSocket).toBe(1000);
+    // A socket inactivity timeout would cut an idle SSE stream.
+    expect(server.timeout).toBe(0);
+  });
+
+  it('accepts a request with 12 KiB of cookies, such as a jar other local apps filled', async () => {
+    const reply = await requestServer('GET', '/healthz', { headers: { Cookie: `pad=${'a'.repeat(12 * 1024)}` } });
+
+    expect(reply.status).toBe(200);
+  });
+
+  it('refuses a request at the header-count cap with 431, so junk lines cannot push out X-Forwarded-For', async () => {
+    const junk = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`A-${i}`, '1']));
+    const headers = { ...JSON_HEADERS, ...junk, 'X-Forwarded-For': '203.0.113.5' };
+
+    const reply = await requestServer('POST', '/api/shutdown', { headers, body: '{}' });
+
+    expect(reply.status).toBe(431);
+  });
+
+  it('serves a proxied shutdown request under the header-count cap as non-local', async () => {
+    const headers = { ...JSON_HEADERS, 'X-Forwarded-For': '203.0.113.5' };
+
+    const reply = await requestServer('POST', '/api/shutdown', { headers, body: '{}' });
+
+    expect(reply.status).toBe(404);
+  });
+
+  it('refuses a request whose headers exceed 16 KiB with 431', async () => {
+    const reply = await requestServer('GET', '/healthz', { headers: { 'X-Pad': 'a'.repeat(17 * 1024) } });
+
+    expect(reply.status).toBe(431);
+  });
+
+  it('answers a loopback health probe while more than 256 idle loopback sockets are open', async () => {
+    const server = testServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const idleSockets: Socket[] = [];
+    try {
+      // Connecting one at a time keeps the burst under the Windows listen backlog.
+      while (idleSockets.length < 257) {
+        idleSockets.push(await new Promise<Socket>((resolve, reject) => {
+          const socket = connect(port, '127.0.0.1', () => {
+            resolve(socket);
+          });
+          socket.on('error', reject);
+        }));
+      }
+
+      const status = await new Promise<number>((resolve, reject) => {
+        httpRequest({ host: '127.0.0.1', port, path: '/healthz', headers: { Host: `127.0.0.1:${port}` } }, (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        }).on('error', reject).end();
+      });
+
+      expect(status).toBe(200);
+    } finally {
+      for (const socket of idleSockets) socket.destroy();
+      await new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
+  });
+});
+
+class FakeSocket extends EventEmitter {
+  destroyed = false;
+
+  constructor(readonly remoteAddress: string | undefined) {
+    super();
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.emit('close');
+  }
+}
+
+function openSockets(limit: (socket: Socket) => void, addresses: Array<string | undefined>): FakeSocket[] {
+  return addresses.map((address) => {
+    const socket = new FakeSocket(address);
+    limit(socket as unknown as Socket);
+    return socket;
+  });
+}
+
+describe('createConnectionLimiter', () => {
+  it('reads the limits for each new socket, so a jukebox code that starts widens the internet budget', () => {
+    let limits = { lan: 1, perPeer: 1, public: 1, perPublicNetwork: 1 };
+    const limit = createConnectionLimiter(() => limits);
+
+    const narrow = openSockets(limit, ['203.0.113.5', '198.51.100.7']);
+    limits = { ...limits, public: 4, perPublicNetwork: 4 };
+    const wide = openSockets(limit, ['198.51.100.7', '203.0.113.5']);
+
+    expect(narrow.map((socket) => socket.destroyed)).toEqual([false, true]);
+    expect(wide.map((socket) => socket.destroyed)).toEqual([false, false]);
+  });
+
+  it('never counts or refuses a loopback socket', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 1, perPeer: 1, public: 1, perPublicNetwork: 1 }));
+
+    const sockets = openSockets(limit, ['192.168.1.20', '127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false, false, false]);
+  });
+
+  it('refuses a LAN socket past the LAN cap', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 2, perPeer: 2, public: 1, perPublicNetwork: 1 }));
+
+    const sockets = openSockets(limit, ['192.168.1.20', '192.168.1.21', '192.168.1.22']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false, true]);
+  });
+
+  it('refuses a socket past the per-peer cap while another peer still connects', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 10, perPeer: 2, public: 1, perPublicNetwork: 1 }));
+
+    const sockets = openSockets(limit, ['192.168.1.20', '192.168.1.20', '192.168.1.20', '192.168.1.21']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false, true, false]);
+  });
+
+  it('counts each IPv6 LAN peer separately, since a LAN shares one /64', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 10, perPeer: 1, public: 1, perPublicNetwork: 1 }));
+
+    const sockets = openSockets(limit, ['fd00:1:2:3::a', 'fd00:1:2:3::b', 'fe80::1', 'fe80::2', 'fd00:1:2:3::a']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false, false, false, true]);
+  });
+
+  it('keeps internet sockets out of the LAN budget', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 1, perPeer: 1, public: 2, perPublicNetwork: 2 }));
+
+    const sockets = openSockets(limit, ['203.0.113.5', '198.51.100.7', '2001:db8::1', '192.168.1.20']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false, true, false]);
+  });
+
+  it('refuses an internet socket past the per-network cap while another network still connects', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 1, perPeer: 1, public: 10, perPublicNetwork: 2 }));
+
+    const sockets = openSockets(limit, ['203.0.113.5', '203.0.113.5', '203.0.113.5', '198.51.100.7']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false, true, false]);
+  });
+
+  it('counts every internet address in one IPv6 /64 as one network', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 1, perPeer: 1, public: 10, perPublicNetwork: 2 }));
+
+    const sockets = openSockets(limit, ['2001:db8:1:2::a', '2001:db8:1:2::b', '2001:db8:1:2::c', '2001:db8:1:3::a']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false, true, false]);
+  });
+
+  it('frees a per-network slot when its socket closes', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 1, perPeer: 1, public: 10, perPublicNetwork: 1 }));
+    const [first] = openSockets(limit, ['203.0.113.5']);
+    first?.emit('close');
+
+    const sockets = openSockets(limit, ['203.0.113.5', '203.0.113.5']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, true]);
+  });
+
+  it('counts a socket with no remote address against the internet budget', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 1, perPeer: 1, public: 1, perPublicNetwork: 1 }));
+
+    const sockets = openSockets(limit, [undefined, undefined, '192.168.1.20']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, true, false]);
+  });
+
+  it('frees the slot when a counted socket closes', () => {
+    const limit = createConnectionLimiter(() => ({ lan: 1, perPeer: 1, public: 1, perPublicNetwork: 1 }));
+    const [lanSocket, publicSocket] = openSockets(limit, ['192.168.1.20', '203.0.113.5']);
+    lanSocket?.emit('close');
+    publicSocket?.emit('close');
+
+    const sockets = openSockets(limit, ['192.168.1.21', '198.51.100.7']);
+
+    expect(sockets.map((socket) => socket.destroyed)).toEqual([false, false]);
+  });
+
+  it.each([
+    ['none', 'anywhere', true],
+    ['password', 'lan', true],
+    ['password', 'anywhere', false],
+    ['jukebox', 'lan', true],
+    ['jukebox', 'anywhere', false],
+  ] as const)('in mode %s at level %s, a ninth internet socket is refused: %s', (mode, adminAccess, refused) => {
+    const config = configWith({ expose: true, host: '0.0.0.0' });
+    config.webui.auth = { mode, adminPasswordHash: null, adminAccess };
+    const limit = testServer(config).listeners('connection').at(-1) as (socket: Socket) => void;
+
+    const sockets = openSockets(limit, Array.from({ length: 9 }, (_, index) => `203.0.113.${String(index + 1)}`));
+
+    expect(sockets.at(-1)?.destroyed).toBe(refused);
+  });
+
+  it('in mode password at level anywhere, one internet network cannot take every internet slot', () => {
+    const config = configWith({ expose: true, host: '0.0.0.0' });
+    config.webui.auth = { mode: 'password', adminPasswordHash: null, adminAccess: 'anywhere' };
+    const limit = testServer(config).listeners('connection').at(-1) as (socket: Socket) => void;
+
+    const flood = openSockets(limit, Array.from({ length: 17 }, () => '203.0.113.5'));
+    const [admin] = openSockets(limit, ['198.51.100.7']);
+
+    expect(flood.filter((socket) => socket.destroyed)).toHaveLength(1);
+    expect(admin?.destroyed).toBe(false);
+  });
+});
+
+describe('connectionLimitsFor', () => {
+  const GUEST_PAGE_SOCKETS = 3;
+  const jukeboxAuth = { mode: 'jukebox', adminAccess: 'lan', hasJukeboxCode: () => true } as const;
+  const addresses = (prefix: string, count: number): string[] =>
+    Array.from({ length: count }, (_, index) => `${prefix}.${String(Math.floor(index / 200))}.${String((index % 200) + 1)}`);
+
+  it('while a jukebox code is active, the internet budget holds a guest page for every admitted guest', () => {
+    const limit = createConnectionLimiter(() => connectionLimitsFor(jukeboxAuth));
+
+    const sockets = openSockets(limit, addresses('8.8', MAX_GUESTS_PER_CODE * GUEST_PAGE_SOCKETS));
+
+    expect(sockets.filter((socket) => socket.destroyed)).toHaveLength(0);
+  });
+
+  it('while a jukebox code is active, the LAN budget holds every admitted guest beside the base LAN budget', () => {
+    const base = connectionLimitsFor({ ...jukeboxAuth, hasJukeboxCode: () => false });
+    const limit = createConnectionLimiter(() => connectionLimitsFor(jukeboxAuth));
+
+    const sockets = openSockets(limit, addresses('10.0', base.lan + MAX_GUESTS_PER_CODE * GUEST_PAGE_SOCKETS));
+
+    expect(sockets.filter((socket) => socket.destroyed)).toHaveLength(0);
+  });
+
+  it('while a jukebox code is active, one carrier-NAT address holds twenty guest pages', () => {
+    const limit = createConnectionLimiter(() => connectionLimitsFor(jukeboxAuth));
+
+    const sockets = openSockets(limit, Array.from({ length: 20 * GUEST_PAGE_SOCKETS }, () => '203.0.113.5'));
+
+    expect(sockets.filter((socket) => socket.destroyed)).toHaveLength(0);
+  });
+
+  it('while a jukebox code is active, one LAN address behind NAT loopback holds twenty guest pages beside its base cap', () => {
+    const base = connectionLimitsFor({ ...jukeboxAuth, hasJukeboxCode: () => false });
+    const limit = createConnectionLimiter(() => connectionLimitsFor(jukeboxAuth));
+
+    const sockets = openSockets(limit, Array.from({ length: base.perPeer + 20 * GUEST_PAGE_SOCKETS }, () => '192.168.1.1'));
+
+    expect(sockets.filter((socket) => socket.destroyed)).toHaveLength(0);
+  });
+
+  it.each(['none', 'password'] as const)('in mode %s, a jukebox code never widens the internet budget', (mode) => {
+    const limits = connectionLimitsFor({ ...jukeboxAuth, mode });
+
+    expect(limits).toEqual(connectionLimitsFor({ ...jukeboxAuth, hasJukeboxCode: () => false }));
+  });
+
+  it('in mode password at level anywhere, a jukebox code leaves the remote admin budget', () => {
+    const passwordAuth = { mode: 'password', adminAccess: 'anywhere' } as const;
+
+    expect(connectionLimitsFor({ ...passwordAuth, hasJukeboxCode: () => true }))
+      .toEqual(connectionLimitsFor({ ...passwordAuth, hasJukeboxCode: () => false }));
+    expect(connectionLimitsFor({ ...passwordAuth, hasJukeboxCode: () => true }))
+      .not.toEqual(connectionLimitsFor({ ...jukeboxAuth, adminAccess: 'anywhere' }));
+  });
+});
+
+const SECURITY_HEADER_NAMES = [
+  'content-security-policy',
+  'x-content-type-options',
+  'referrer-policy',
+  'x-frame-options',
+  'cross-origin-opener-policy',
+  'cross-origin-resource-policy',
+  'permissions-policy',
+];
+
+function expectSecurityHeaders(headers: IncomingHttpHeaders | Record<string, string>): void {
+  for (const name of SECURITY_HEADER_NAMES) expect(headers[name], name).toBeDefined();
+  expect(headers['x-frame-options']).toBe('DENY');
+}
+
+describe('security headers on every response', () => {
+  it('sends them with a JSON response', async () => {
+    const reply = await requestServer('GET', '/healthz');
+
+    expect(reply.status).toBe(200);
+    expectSecurityHeaders(reply.headers);
+  });
+
+  it('sends them with a static file, its content headers intact', async () => {
+    const reply = await requestServer('GET', '/admin');
+
+    expect(reply.status).toBe(200);
+    expect(reply.headers['content-type']).toContain('text/html');
+    expect(reply.headers['cache-control']).toBe('no-cache, must-revalidate');
+    expectSecurityHeaders(reply.headers);
+  });
+
+  it('sends them with an error response', async () => {
+    const reply = await requestServer('GET', '/healthz', { hostHeader: () => 'evil.example' });
+
+    expect(reply.status).toBe(403);
+    expectSecurityHeaders(reply.headers);
+  });
+
+  it('sends them with a 404', async () => {
+    const reply = await requestServer('GET', '/api/does-not-exist');
+
+    expect(reply.status).toBe(404);
+    expectSecurityHeaders(reply.headers);
+  });
+
+  it('sends them with an SSE stream, its stream headers intact', async () => {
+    const reply = await requestServer('GET', '/api/visualizer', {
+      addVisualizerClient: (res) => {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+        res.end();
+      },
+    });
+
+    expect(reply.headers['content-type']).toContain('text/event-stream');
+    expectSecurityHeaders(reply.headers);
+  });
+});
+
+type HeadersForPort = (port: number) => Record<string, string>;
+
+describe('POST Origin gate', () => {
+  const shuffle = (headers: HeadersForPort): Promise<ServerReply> =>
+    requestServer('POST', '/api/controls/shuffle', { headers: (port) => ({ ...JSON_HEADERS, ...headers(port) }), body: '{}' });
+
+  it.each<[string, HeadersForPort]>([
+    ['a foreign Origin', () => ({ Origin: 'http://evil.example' })],
+    ['an Origin on another port', () => ({ Origin: 'http://127.0.0.1:1' })],
+    ['an Origin with another scheme', (port) => ({ Origin: `https://127.0.0.1:${port}` })],
+    ['an Origin of null', () => ({ Origin: 'null' })],
+    ['Sec-Fetch-Site cross-site', () => ({ 'Sec-Fetch-Site': 'cross-site' })],
+    ['Sec-Fetch-Site same-site', () => ({ 'Sec-Fetch-Site': 'same-site' })],
+    ['its own Origin with Sec-Fetch-Site cross-site', (port) => ({ Origin: `http://127.0.0.1:${port}`, 'Sec-Fetch-Site': 'cross-site' })],
+  ])('refuses a POST with %s with 403 and runs no handler', async (_label, headers) => {
+    const reply = await shuffle(headers);
+
+    expect(reply.status).toBe(403);
+    expect(JSON.parse(reply.body)).toEqual({ error: 'Cross-origin request refused' });
+    expect(shuffleQueueFromTop).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, HeadersForPort]>([
+    ['its own Origin', (port) => ({ Origin: `http://127.0.0.1:${port}` })],
+    ['its own Origin with an upper-case scheme', (port) => ({ Origin: `HTTP://127.0.0.1:${port}` })],
+    ['its own Origin with Sec-Fetch-Site same-origin', (port) => ({ Origin: `http://127.0.0.1:${port}`, 'Sec-Fetch-Site': 'same-origin' })],
+    ['Sec-Fetch-Site none', () => ({ 'Sec-Fetch-Site': 'none' })],
+    ['neither header, as a non-browser client sends', () => ({})],
+  ])('accepts a POST with %s', async (_label, headers) => {
+    vi.mocked(shuffleQueueFromTop).mockResolvedValue({ success: true });
+
+    const reply = await shuffle(headers);
+
+    expect(reply.status).toBe(200);
+  });
+
+  it('leaves a GET with a foreign Origin to the route', async () => {
+    const reply = await requestServer('GET', '/healthz', { headers: { Origin: 'http://evil.example' } });
+
+    expect(reply.status).toBe(200);
+  });
+});
+
+interface FakeReply {
+  status: number | undefined;
+  headers: Record<string, string>;
+  body: string;
+}
+
+interface DispatchOptions {
+  method?: 'GET' | 'POST';
+  body?: unknown;
+  headers?: Record<string, string>;
+  shutdown?: () => void;
+}
+
+/** A real socket here is always loopback, so a fake request carries the chosen peer address. */
+async function dispatchFrom(
+  remoteAddress: string,
+  path: string,
+  config: Config,
+  host: string,
+  options: DispatchOptions = {},
+): Promise<FakeReply> {
+  const reply: FakeReply = { status: undefined, headers: {}, body: '' };
+  const bodyChunks = options.body === undefined ? [] : [Buffer.from(JSON.stringify(options.body))];
+  const req = fakeReq(remoteAddress, bodyChunks, host);
+  req.url = path;
+  req.method = options.method ?? 'GET';
+  if (options.body !== undefined) req.headers['content-type'] = 'application/json';
+  Object.assign(req.headers, options.headers);
+  const res = {
+    headersSent: false,
+    writableEnded: false,
+    setHeader(name: string, value: string): ServerResponse {
+      reply.headers[name.toLowerCase()] = value;
+      return res;
+    },
+    writeHead(code: number, headers: Record<string, string> = {}): ServerResponse {
+      reply.status = code;
+      for (const [name, value] of Object.entries(headers)) reply.headers[name.toLowerCase()] = value;
+      return res;
+    },
+    end(chunk?: string): void {
+      if (typeof chunk === 'string') reply.body += chunk;
+    },
+  } as unknown as ServerResponse;
+  createServer({
+    config,
+    client: {} as never,
+    broadcaster: { broadcastNow: vi.fn() } as never,
+    visualizer: { addClient: vi.fn() },
+    shutdown: options.shutdown ?? ((): void => undefined),
+    leases: { open: () => undefined, close: () => undefined },
+    auth: new AuthService(config),
+    guests: new GuestQueue(),
+  }).emit('request', req, res);
+  await vi.waitFor(() => expect(reply.status).toBeDefined());
+  return reply;
+}
+
+describe('public sources without access control', () => {
+  const LAN_BIND = configWith({ expose: true, host: '0.0.0.0' });
+
+  it.each([INTERNET_PEER, '::ffff:203.0.113.5', '2001:db8::1'])(
+    'refuses the internet peer %s with 403 and the refusal message',
+    async (peer) => {
+      const reply = await dispatchFrom(peer, '/api/player-state', LAN_BIND, '192.168.1.20:8808');
+
+      expect(reply.status).toBe(403);
+      expect((JSON.parse(reply.body) as { error: string }).error).toContain('refuses internet addresses');
+      expectSecurityHeaders(reply.headers);
+    },
+  );
+
+  it.each([LAN_PEER, '10.0.0.8', 'fe80::1', LOOPBACK])('serves the local peer %s as before', async (peer) => {
+    const reply = await dispatchFrom(peer, '/api/player-state', LAN_BIND, '192.168.1.20:8808');
+
+    expect(reply.status).toBe(200);
+  });
+});
+
+describe('GET /api/cover caching', () => {
+  it('marks a cover private, so a shared cache never stores it', async () => {
+    vi.mocked(fetchWithTimeout).mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([0xff, 0xd8, 0xff]));
+          controller.close();
+        },
+      }),
+      headers: { get: (name: string): string | null => (name.toLowerCase() === 'content-type' ? 'image/jpeg' : null) },
+    } as unknown as Response);
+
+    const reply = await requestServer('GET', '/api/cover/album123');
+
+    expect(reply.status).toBe(200);
+    expect(reply.headers['cache-control']).toBe('private, max-age=86400');
+  });
+});
+
+describe('join path responses', () => {
+  it('redirects / with no-store, so a browser never reuses a landing page another session chose', async () => {
+    const reply = await requestServer('GET', '/');
+
+    expect(reply.status).toBe(302);
+    expect(reply.headers['location']).toBe('/admin');
+    expect(reply.headers['cache-control']).toBe('no-store');
+    expectSecurityHeaders(reply.headers);
+  });
+
+  it.each(['/guest', '/guest.html'])('serves the guest page at %s with no-store and noindex', async (path) => {
+    const reply = await requestServer('GET', path);
+
+    expect(reply.status).toBe(200);
+    expect(reply.headers['content-type']).toContain('text/html');
+    expect(reply.headers['cache-control']).toBe('no-store');
+    expect(reply.headers['x-robots-tag']).toBe('noindex');
+    expect(reply.body).toContain('/guest.js');
+  });
+
+  it('serves a robots.txt that disallows everything', async () => {
+    const reply = await requestServer('GET', '/robots.txt');
+
+    expect(reply.status).toBe(200);
+    expect(reply.headers['content-type']).toContain('text/plain');
+    expect(reply.body).toMatch(/User-agent: \*\s+Disallow: \/\s*$/);
+  });
+
+  it('marks the join answer noindex and no-store even in mode none, where it answers 404', async () => {
+    const reply = await requestServer('POST', '/api/auth/join', { headers: JSON_HEADERS, body: JSON.stringify({ key: 'k' }) });
+
+    expect(reply.status).toBe(404);
+    expect(reply.headers['cache-control']).toBe('no-store');
+    expect(reply.headers['x-robots-tag']).toBe('noindex');
   });
 });

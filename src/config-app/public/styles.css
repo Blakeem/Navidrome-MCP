@@ -75,6 +75,8 @@ label .suggest { display: block; color: var(--muted); font-size: 0.78rem; margin
   color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline;
 }
 label .warn { display: block; color: var(--warn); font-weight: 400; font-size: 0.78rem; margin-top: 2px; }
+label .warn[hidden] { display: none; }
+label[hidden] { display: none; }
 
 input[type="text"], input[type="url"], input[type="password"], input[type="number"], select {
   width: 100%;
@@ -124,3 +126,18 @@ label.check span { font-weight: 400; }
 .status.info { color: var(--muted); }
 .status.ok { color: var(--ok); border-color: var(--ok); background: rgba(26, 127, 55, 0.08); }
 .status.err { color: var(--err); border-color: var(--err); background: rgba(193, 56, 43, 0.08); }
+
+h3.subhead { font-size: 0.85rem; margin: 18px 0 10px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); }
+
+.reveal { position: relative; display: block; }
+.reveal input { padding-right: 44px; }
+.reveal-btn {
+  position: absolute; top: 6px; right: 0; bottom: 0; width: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; padding: 0; cursor: pointer; color: var(--muted);
+}
+.reveal-btn:hover { color: var(--fg); }
+.reveal-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
+svg[hidden] { display: none; }
+
+.foot { margin-top: 24px; color: var(--muted); font-size: 0.8rem; text-align: center; }

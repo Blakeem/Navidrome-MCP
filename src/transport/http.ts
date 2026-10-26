@@ -5,13 +5,14 @@
  */
 
 import { createServer, type Server as HttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { writeError, readJsonBody } from '../webui/http-helpers.js';
 import { isLanReachable } from '../webui/network.js';
 import { logger } from '../utils/logger.js';
+import { constantTimeEqual, sha256Hex } from '../utils/secrets.js';
 
 const MCP_PATH = '/mcp';
 
@@ -290,24 +291,18 @@ export function resolveAllowedHosts(
   return [];
 }
 
-/**
- * Equal-length digests keep `timingSafeEqual` from throwing on a length mismatch and hide the token
- * length.
- */
 function isAuthorized(req: IncomingMessage, token: string): boolean {
   const header = headerValue(req, 'authorization');
   if (header === undefined) return false;
   const match = /^Bearer[ ]+(.+)$/i.exec(header.trim());
   const presented = match?.[1];
   if (presented === undefined) return false;
-  const a = createHash('sha256').update(presented).digest();
-  const b = createHash('sha256').update(token).digest();
-  return timingSafeEqual(a, b);
+  return constantTimeEqual(presented, token);
 }
 
 /** With no other auth, the session id is the access token, so logs carry only this fingerprint. */
 function sessionFingerprint(sessionId: string): string {
-  return createHash('sha256').update(sessionId).digest('hex').slice(0, 8);
+  return sha256Hex(sessionId).slice(0, 8);
 }
 
 function headerValue(req: IncomingMessage, name: string): string | undefined {

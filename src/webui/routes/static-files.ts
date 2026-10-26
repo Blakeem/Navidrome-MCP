@@ -23,21 +23,6 @@ if (!existsSync(PUBLIC_DIR)) {
   logger.error(`webui: static asset folder ${PUBLIC_DIR} is missing, so every page answers 404. pnpm build copies it there.`);
 }
 
-/**
- * Every directive is named, so none silently inherits `default-src`. `data:` serves the inline SVG
- * favicon in `img-src` and the wake-lock fallback video in `media-src`.
- */
-const CONTENT_SECURITY_POLICY: string = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "img-src 'self' data:",
-  'media-src data:',
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-  "object-src 'none'",
-].join('; ');
-
 // Covers the asset types the public folders ship.
 const MIME_TYPES: Readonly<Record<string, string>> = {
   '.html': 'text/html; charset=utf-8',
@@ -47,6 +32,7 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
   '.ico': 'image/x-icon',
   '.png': 'image/png',
   '.json': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 /** Dot segments are rejected, so a dotfile left in a public folder by accident never leaks. */
@@ -70,11 +56,16 @@ function mimeFor(path: string): string {
   return MIME_TYPES[ext] ?? 'application/octet-stream';
 }
 
-/** `publicDir` is a parameter so the settings page reuses this handler and its CSP. */
+/**
+ * `publicDir` is a parameter so the settings page reuses this handler. Each server sets the
+ * security headers, the Content-Security-Policy included, before it routes here. `headers` add to
+ * or replace the defaults below.
+ */
 export async function handleStatic(
   res: ServerResponse,
   pathname: string,
   publicDir: string = PUBLIC_DIR,
+  headers: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   const filePath = resolveStaticPath(pathname, publicDir);
   if (filePath === null) {
@@ -88,7 +79,7 @@ export async function handleStatic(
       'Content-Length': body.byteLength.toString(),
       // A LAN client revalidates every load, so it never runs a stale app.js after an upgrade.
       'Cache-Control': 'no-cache, must-revalidate',
-      'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+      ...headers,
     });
     res.end(body);
   } catch (err) {

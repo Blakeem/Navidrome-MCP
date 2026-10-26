@@ -101,9 +101,10 @@ export async function handleCover(
   }
   const contentType = baseType;
   // Album art rarely changes, so a long browser cache spares a phone a re-fetch on every snapshot.
+  // `private` keeps a shared cache, such as a proxy in front of the remote, from storing it.
   const headers: Record<string, string> = {
     'Content-Type': contentType,
-    'Cache-Control': 'public, max-age=86400',
+    'Cache-Control': 'private, max-age=86400',
   };
   const contentLength = upstream.headers.get('content-length');
   if (contentLength !== null) headers['Content-Length'] = contentLength;

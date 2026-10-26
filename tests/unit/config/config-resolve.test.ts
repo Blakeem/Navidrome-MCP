@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, readSavedAudioDevice, resolveConfigState, saveAudioDevice } from '../../../src/config.js';
+import { loadConfig, readSavedAudioDevice, resolveConfigState, saveAudioDevice, saveJukeboxSettings } from '../../../src/config.js';
 
 // The node binary stands in for a valid mpv path, since it exists and is executable on every host.
 const EXEC = process.execPath;
@@ -19,7 +19,7 @@ const FALLBACK_ENV_KEYS = [
   'MCP_HTTP_AUTH_TOKEN', 'MCP_HTTP_ALLOWED_HOSTS', 'MCP_HTTP_ALLOWED_ORIGINS',
   // A set feature-gating var would enable radio or lyrics and break the opt-in assertions.
   'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LASTFM_API_KEY',
-  'PLAYBACK_AUDIO_DEVICE',
+  'PLAYBACK_AUDIO_DEVICE', 'JUKEBOX_GUEST_QUEUE_LIMIT',
 ];
 
 const DEVICE = { id: 'wasapi/{2d948da5-7f24-4c77-8553-5c67cb36d700}', name: 'Speakers (Sound BlasterX Katana)' };
@@ -152,6 +152,96 @@ describe('config resolution', () => {
       expect((await loadConfig()).webui.host).toBe('127.0.0.1');
     });
 
+    it('defaults the web remote to access mode none with the localhost admin level', async () => {
+      write(BASE);
+      expect((await loadConfig()).webui.auth).toEqual({ mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' });
+    });
+
+    it('maps the stored access settings and trims the hash', async () => {
+      write({ ...BASE, webui: { auth: { mode: 'jukebox', adminPasswordHash: ' $argon2id$hash ', adminAccess: 'anywhere' } } });
+      expect((await loadConfig()).webui.auth).toEqual({ mode: 'jukebox', adminPasswordHash: '$argon2id$hash', adminAccess: 'anywhere' });
+    });
+
+    it('voids the store for an unknown access mode, so a typo never opens the remote', async () => {
+      write({ ...BASE, webui: { auth: { mode: 'protectd' } } });
+      await expect(loadConfig()).rejects.toThrow();
+    });
+
+    it('serves plain HTTP when no TLS paths are stored', async () => {
+      write(BASE);
+      expect((await loadConfig()).webui.tls).toEqual({ certPath: null, keyPath: null });
+    });
+
+    it('maps both stored TLS paths, trimmed', async () => {
+      write({ ...BASE, webui: { tls: { certPath: ' /etc/ssl/full.pem ', keyPath: '/etc/ssl/key.pem' } } });
+      expect((await loadConfig()).webui.tls).toEqual({ certPath: '/etc/ssl/full.pem', keyPath: '/etc/ssl/key.pem' });
+    });
+
+    it.each([
+      ['only a certificate', { certPath: '/c.pem', keyPath: null }],
+      ['only a key', { certPath: '  ', keyPath: '/k.pem' }],
+    ])('rejects a store with %s', async (_label, tls) => {
+      write({ ...BASE, webui: { tls } });
+      await expect(loadConfig()).rejects.toThrow(/webui.tls: Set both certPath and keyPath/);
+    });
+
+    it('maps a stored public URL, trimmed, and null when absent', async () => {
+      write({ ...BASE, webui: { publicUrl: ' http://jukebox.example.org:8808 ' } });
+      expect((await loadConfig()).webui.publicUrl).toBe('http://jukebox.example.org:8808');
+      write(BASE);
+      expect((await loadConfig()).webui.publicUrl).toBeNull();
+    });
+
+    it('maps a stored guest song limit, and 3 when absent', async () => {
+      write({ ...BASE, jukebox: { guestQueueLimit: 7 } });
+      expect((await loadConfig()).jukebox.guestQueueLimit).toBe(7);
+      write(BASE);
+      expect((await loadConfig()).jukebox.guestQueueLimit).toBe(3);
+    });
+
+    it.each([
+      ['internet', 'internet'],
+      ['lan', 'lan'],
+      ['an unknown link', 'wifi'],
+      ['an absent link', undefined],
+      ['a null link', null],
+      ['a boolean link', true],
+      ['a numeric link', 1],
+    ])('maps the stored share link %s', async (_label, shareLink) => {
+      write({ ...BASE, jukebox: { shareLink } });
+      expect((await loadConfig()).jukebox.shareLink).toBe(shareLink === 'internet' ? 'internet' : 'lan');
+    });
+
+    it.each([0, 21, 2.5])('rejects a stored guest song limit of %s', async (guestQueueLimit) => {
+      write({ ...BASE, jukebox: { guestQueueLimit } });
+      await expect(loadConfig()).rejects.toThrow(/jukebox\.guestQueueLimit: Must be a whole number from 1 to 20/);
+    });
+
+    it('accepts an https:// public URL when the player serves HTTPS', async () => {
+      write({ ...BASE, webui: { publicUrl: 'https://jukebox.example.org:8808', tls: { certPath: '/c.pem', keyPath: '/k.pem' } } });
+      expect((await loadConfig()).webui.publicUrl).toBe('https://jukebox.example.org:8808');
+    });
+
+    it.each([
+      ['https:// on an HTTP player', 'https://jukebox.example.org:8808', { certPath: null, keyPath: null }],
+      ['http:// on an HTTPS player', 'http://jukebox.example.org:8808', { certPath: '/c.pem', keyPath: '/k.pem' }],
+    ])('rejects a stored public URL with %s', async (_label, publicUrl, tls) => {
+      write({ ...BASE, webui: { publicUrl, tls } });
+      await expect(loadConfig()).rejects.toThrow(/webui\.publicUrl: Must start with https:\/\/ when the HTTPS certificate/);
+    });
+
+    it.each([
+      ['a path', 'https://jukebox.example.org/music'],
+      ['a query', 'https://jukebox.example.org/?a=1'],
+      ['credentials', 'https://user:pw@jukebox.example.org'],
+      ['another scheme', 'ftp://jukebox.example.org'],
+      ['no scheme', 'jukebox.example.org:8808'],
+      ['no URL at all', 'jukebox'],
+    ])('rejects a stored public URL with %s', async (_label, publicUrl) => {
+      write({ ...BASE, webui: { publicUrl } });
+      await expect(loadConfig()).rejects.toThrow(/webui\.publicUrl: Must be an http/);
+    });
+
     it('maps a stored web remote theme', async () => {
       write({ ...BASE, webui: { theme: 'dark' } });
       expect((await loadConfig()).webui.theme).toBe('dark');
@@ -243,7 +333,7 @@ describe('config resolution', () => {
   describe('resolveConfigState', () => {
     it('is configured for a valid store', async () => {
       write(BASE);
-      expect(await resolveConfigState()).toEqual({ configured: true, config: expect.any(Object) });
+      expect(await resolveConfigState()).toEqual({ configured: true, config: expect.any(Object), source: 'store' });
     });
 
     it('is unconfigured when the store is absent', async () => {
@@ -300,6 +390,39 @@ describe('config resolution', () => {
         expect(state.config.transport.expose).toBe(true);
         expect(state.config.transport.authToken).toBe('tok-abc');
       }
+    });
+
+    it('marks an env-built config, so env-only values such as WEBUI_ADMIN_PASSWORD apply', async () => {
+      setEnvCreds();
+      process.env['WEBUI_AUTH_MODE'] = 'password';
+      try {
+        const state = await resolveConfigState();
+        expect(state).toMatchObject({ configured: true, source: 'env' });
+        if (state.configured) expect(state.config.webui.auth.mode).toBe('password');
+      } finally {
+        delete process.env['WEBUI_AUTH_MODE'];
+      }
+    });
+
+    it.each([
+      ['a mistyped mode', { ...BASE, webui: { auth: { mode: 'Password' } } }],
+      ['the retired mode protected', { ...BASE, webui: { auth: { mode: 'protected' } } }],
+      ['mode password and an invalid level', { ...BASE, webui: { auth: { mode: 'password', adminAccess: 'LAN' } } }],
+      ['mode jukebox and another invalid field', { ...BASE, webui: { port: 'abc', auth: { mode: 'jukebox' } } }],
+      ['mode jukebox and no Navidrome URL', { webui: { auth: { mode: 'jukebox' } } }],
+    ])('enters setup mode instead of the open env fallback for a store with %s', async (_label, store) => {
+      write(store);
+      setEnvCreds();
+      expect(await resolveConfigState()).toEqual({ configured: false });
+    });
+
+    it.each([
+      ['mode none', { ...BASE, webui: { port: 'abc', auth: { mode: 'none' } } }],
+      ['no auth block', { ...BASE, webui: { port: 'abc' } }],
+    ])('keeps the env fallback for an invalid store with %s', async (_label, store) => {
+      write(store);
+      setEnvCreds();
+      expect(await resolveConfigState()).toMatchObject({ configured: true, source: 'env' });
     });
 
     it('lets an existing store win over env vars', async () => {
@@ -410,6 +533,27 @@ describe('config resolution', () => {
       writeFileSync(file, stored);
       expect(saveAudioDevice(DEVICE)).toBe(false);
       expect(readFileSync(file, 'utf8')).toBe(stored);
+    });
+  });
+
+  describe('saveJukeboxSettings', () => {
+    it('writes the limit, keeps the other stored keys, and the next load reads it', async () => {
+      write({ ...BASE, jukebox: { kept: true } });
+      expect(saveJukeboxSettings({ guestQueueLimit: 9 })).toBe(true);
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ ...BASE, jukebox: { kept: true, guestQueueLimit: 9 } });
+      expect((await loadConfig()).jukebox.guestQueueLimit).toBe(9);
+    });
+
+    it('writes the share link and keeps the stored limit', async () => {
+      write({ ...BASE, jukebox: { guestQueueLimit: 5 } });
+      expect(saveJukeboxSettings({ shareLink: 'internet' })).toBe(true);
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ ...BASE, jukebox: { guestQueueLimit: 5, shareLink: 'internet' } });
+      expect((await loadConfig()).jukebox).toEqual({ guestQueueLimit: 5, shareLink: 'internet' });
+    });
+
+    it('returns false and writes nothing when no store file exists', () => {
+      expect(saveJukeboxSettings({ guestQueueLimit: 9 })).toBe(false);
+      expect(existsSync(file)).toBe(false);
     });
   });
 });

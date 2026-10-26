@@ -187,6 +187,7 @@ describe('play_radio_station audio output reporting', () => {
       station: { name: 'WBEZ', streamUrl: 'http://wbez.test/' },
       paused: true,
       message: 'No audio output device is available. Connect one, then call resume.',
+      code: 'output-missing',
     });
   });
 

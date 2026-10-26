@@ -48,7 +48,7 @@ import {
   playQueueIndex,
 } from '../playback.js';
 
-const QUEUE_MODE_DESCRIPTION = "'replace' clears the queue and starts playback. 'append' adds to the end without clearing or unpausing. When the queue holds a radio stream, 'append' acts as 'replace': the station is removed, playback starts, and the result carries `demoted: true`. When the selected audio output is not connected, 'replace' and an 'append' acting as 'replace' keep playback paused, and the result carries `paused: true` and `message`. When no track is current (the queue is empty, finished, or mpv just started), 'append' loads the first new track paused, so use 'replace' or call resume to start playback. Defaults to 'replace'.";
+const QUEUE_MODE_DESCRIPTION = "'replace' clears the queue and starts playback. 'append' adds to the end without clearing or unpausing. When the queue holds a radio stream, 'append' acts as 'replace': the station is removed, playback starts, and the result carries `demoted: true`. When the selected audio output is not connected, 'replace' and an 'append' acting as 'replace' keep playback paused, and the result carries `paused: true` and `message`. When no track is current (the queue is empty, finished, or mpv just started), 'append' loads the first new track paused, so use 'replace' or call resume to start playback. When web-player guests have unplayed songs queued, a 'replace' adds those songs back after the new songs on mpv 0.36 or newer. A guest song that already waits in the new queue drops. Defaults to 'replace'.";
 
 const ALBUM_SHUFFLE_PROPERTIES = {
   shuffleAlbums: {

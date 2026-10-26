@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0f17" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f6fb" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="robots" content="noindex" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Jukebox</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='22'%3E%F0%9F%8E%B5%3C/text%3E%3C/svg%3E" />
+</head>
+<body class="guest-page">
+  <header class="topbar">
+    <h1 class="title">Jukebox</h1>
+    <div class="topbar-actions">
+      <button type="button" class="ghost-btn" id="guest-add-jump" aria-label="Add songs" hidden>
+        <svg viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.500-75.500T120-580q0-109 75.500-184.500T380-840q109 0 184.500 75.500T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.500-52.500T560-580q0-75-52.500-127.500T380-760q-75 0-127.500 52.500T200-580q0 75 52.500 127.500T380-400Z"/>
+        </svg>
+      </button>
+      <span class="conn" data-state="connecting" aria-live="polite">
+        <span class="conn-dot"></span>
+        <span class="conn-label">Connecting&hellip;</span>
+      </span>
+    </div>
+  </header>
+
+  <section class="login-view" id="guest-join" aria-labelledby="guest-join-title" hidden>
+    <div class="login-card">
+      <h2 id="guest-join-title">Join the jukebox</h2>
+      <p class="modal-help" id="guest-join-help" aria-live="polite" hidden></p>
+      <p class="modal-help" id="guest-join-hint" hidden></p>
+      <p class="login-status" id="guest-join-status" role="alert"></p>
+      <p class="modal-help" id="guest-admin-login" hidden><a href="/admin">Admin login</a></p>
+    </div>
+  </section>
+
+  <main id="guest-main" hidden>
+    <p class="guest-preview" id="guest-preview" hidden>Guest view. Songs cannot be added from an admin session. <a href="/admin">Open the player</a></p>
+
+    <section class="now-playing-card" aria-label="Now playing">
+      <div class="cover" id="cover">
+        <svg class="cover-placeholder" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3Z"/>
+        </svg>
+      </div>
+      <div class="track-info">
+        <div class="badge" id="state-badge" data-state="idle">Idle</div>
+        <h2 class="track-title" id="track-title">No track loaded</h2>
+        <p class="track-artist" id="track-artist"></p>
+        <p class="track-album" id="track-album"></p>
+        <p class="queue-pos" id="queue-pos"></p>
+      </div>
+      <button type="button" class="visualizer" id="visualizer" hidden>
+        <canvas id="visualizer-canvas" aria-hidden="true"></canvas>
+      </button>
+    </section>
+
+    <section class="progress-section" aria-label="Progress">
+      <div class="guest-progress" id="guest-progress" aria-hidden="true"></div>
+      <div class="progress-times">
+        <span id="guest-position">0:00</span>
+        <span id="guest-duration">0:00</span>
+      </div>
+    </section>
+
+    <div class="guest-name">
+      <div class="guest-who">
+        <p class="guest-jukebox" id="guest-jukebox" aria-live="polite"></p>
+        <button type="button" class="btn-secondary" id="guest-name-change" hidden>Change name</button>
+      </div>
+      <form class="lib-search guest-name-form" id="guest-name-form" hidden>
+        <input type="text" id="guest-name-input" aria-label="Nickname" maxlength="24" autocomplete="nickname" required />
+        <button type="submit" class="primary-btn" id="guest-name-save">Save</button>
+        <button type="button" class="btn-secondary" id="guest-name-cancel">Cancel</button>
+      </form>
+      <p class="guest-add-status" id="guest-name-status" aria-live="polite"></p>
+    </div>
+
+    <section class="queue" aria-label="Play queue">
+      <header class="queue-header">
+        <h3>Queue <span class="queue-count" id="guest-queue-count">0</span></h3>
+      </header>
+      <ol class="queue-list" id="guest-queue-list"></ol>
+      <button type="button" class="btn-secondary guest-queue-more" id="guest-queue-more" aria-controls="guest-queue-list" aria-expanded="false" hidden></button>
+    </section>
+
+    <section class="queue guest-lyrics" aria-label="Lyrics">
+      <header class="queue-header">
+        <h3>Lyrics</h3>
+        <button type="button" class="btn-secondary guest-lyrics-toggle" id="guest-lyrics-toggle" aria-expanded="false" aria-controls="guest-lyrics-body">Show lyrics</button>
+      </header>
+      <div id="guest-lyrics-body" hidden>
+        <p class="guest-lyrics-status" id="guest-lyrics-status" aria-live="polite"></p>
+        <ol class="guest-lyrics-lines" id="guest-lyrics-lines"></ol>
+      </div>
+    </section>
+
+    <section class="queue guest-add" id="guest-add" aria-labelledby="guest-add-title" hidden>
+      <header class="queue-header">
+        <h3 id="guest-add-title">Add songs</h3>
+        <span class="guest-slots" id="guest-slots"></span>
+      </header>
+      <form class="lib-search guest-search" id="guest-search-form" role="search">
+        <input type="search" id="guest-search-input" aria-label="Search songs" maxlength="100" autocomplete="off" required />
+        <button type="submit" class="primary-btn">Search</button>
+      </form>
+      <p class="guest-add-status" id="guest-add-status" aria-live="polite"></p>
+      <ol class="queue-list guest-results" id="guest-results"></ol>
+    </section>
+  </main>
+
+  <dialog id="guest-welcome" class="modal" aria-labelledby="guest-welcome-title">
+    <form method="dialog" class="modal-content">
+      <header class="modal-header">
+        <h2 id="guest-welcome-title">Welcome to the jukebox</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
+      <p class="modal-help" id="guest-welcome-text"></p>
+      <p class="modal-help" id="guest-welcome-expiry"></p>
+      <div id="guest-nickname-fields" hidden>
+        <label class="modal-help" for="guest-nickname">Nickname (optional) <span class="modal-hint">1 to 24 letters, digits, spaces or . , ' ! ? - _</span></label>
+        <div class="lib-search">
+          <input type="text" id="guest-nickname" maxlength="24" autocomplete="nickname" />
+          <button type="button" class="primary-btn" id="guest-nickname-save">Save</button>
+        </div>
+        <p class="modal-hint" id="guest-nickname-status" aria-live="polite"></p>
+      </div>
+      <button type="button" class="btn-secondary" id="guest-welcome-done">Got it</button>
+    </form>
+  </dialog>
+
+  <!-- A module script runs after parsing, so each module looks up its elements at import. -->
+  <script src="/guest.js" type="module"></script>
+</body>
+</html>

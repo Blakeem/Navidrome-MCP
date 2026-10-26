@@ -7,21 +7,15 @@
 import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import { hostname as osHostname } from 'node:os';
+import { classifySource } from './source-address.js';
 
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 // A same-host reverse proxy or tunnel connects from loopback, and these headers are its only trace.
 const PROXY_FORWARDING_HEADERS = ['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-real-ip'];
 
-// Matches all of 127/8 and its ::ffff: mapped form, since a dual-stack bind reports a local
-// browser that way.
 export function isLoopbackPeer(req: IncomingMessage): boolean {
-  const addr = req.socket.remoteAddress ?? '';
-  return (
-    addr === '::1' ||
-    addr.startsWith('127.') ||
-    addr.startsWith('::ffff:127.')
-  );
+  return classifySource(req.socket.remoteAddress) === 'loopback';
 }
 
 // The port is ignored, since a client omits a default port such as 80 and DNS rebinding controls

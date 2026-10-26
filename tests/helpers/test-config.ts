@@ -4,7 +4,7 @@
  */
 
 import type { Config } from '../../src/config.js';
-import { DEFAULT_MCP_HTTP_PORT } from '../../src/constants/defaults.js';
+import { DEFAULT_GUEST_QUEUE_LIMIT, DEFAULT_JUKEBOX_SHARE_LINK, DEFAULT_MCP_HTTP_PORT } from '../../src/constants/defaults.js';
 
 type FeatureOverrides = Partial<Config['features']>;
 type ConfigOverrides = Partial<Omit<Config, 'features'>> & { features?: FeatureOverrides };
@@ -33,11 +33,15 @@ const BASE: Config = {
     port: 8808,
     expose: false,
     allowedHosts: [],
+    publicUrl: null,
     autoOpenBrowser: false,
     persistAfterMcpExit: false,
     theme: null,
     visualizer: true,
+    tls: { certPath: null, keyPath: null },
+    auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' },
   },
+  jukebox: { guestQueueLimit: DEFAULT_GUEST_QUEUE_LIMIT, shareLink: DEFAULT_JUKEBOX_SHARE_LINK },
 };
 
 export function makeTestConfig(overrides: ConfigOverrides = {}): Config {

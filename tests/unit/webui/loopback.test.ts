@@ -7,11 +7,21 @@
 import { describe, expect, it } from 'vitest';
 import type { IncomingMessage } from 'node:http';
 import { hostname } from 'node:os';
-import { isLocalRequest, isRebindSafeHostHeader } from '../../../src/webui/loopback.js';
+import { isLocalRequest, isLoopbackPeer, isRebindSafeHostHeader } from '../../../src/webui/loopback.js';
 
-function fakeReq(remoteAddress: string, headers: Record<string, string>): IncomingMessage {
+function fakeReq(remoteAddress: string | undefined, headers: Record<string, string> = {}): IncomingMessage {
   return { socket: { remoteAddress }, headers } as unknown as IncomingMessage;
 }
+
+describe('isLoopbackPeer', () => {
+  it.each(['127.0.0.1', '127.5.6.7', '::1', '::ffff:127.0.0.1'])('accepts %s', (address) => {
+    expect(isLoopbackPeer(fakeReq(address))).toBe(true);
+  });
+
+  it.each(['192.168.1.50', '::ffff:192.168.1.50', '203.0.113.5', 'fe80::1', undefined])('rejects %s', (address) => {
+    expect(isLoopbackPeer(fakeReq(address))).toBe(false);
+  });
+});
 
 describe('isRebindSafeHostHeader', () => {
   it.each([

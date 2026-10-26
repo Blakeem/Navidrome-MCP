@@ -11,6 +11,7 @@ import {
   mergeOntoStored,
   readRawSettings,
   readSettings,
+  readSettingsForStartup,
   SettingsFileSchema,
   writeSettings,
   type SettingsFile,
@@ -57,24 +58,27 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
   return result.config;
 }
 
+/** Tells the web player whether env-only values, such as WEBUI_ADMIN_PASSWORD, apply. */
+export type ConfigSource = 'store' | 'env';
+
 /**
  * Lets the entry point branch into setup mode without turning `Config` into a union,
  * so every `Config` field stays non-optional.
  */
 type ConfigState =
-  | { configured: true; config: Config }
+  | { configured: true; config: Config; source: ConfigSource }
   | { configured: false };
 
 export async function resolveConfigState(): Promise<ConfigState> {
-  const settings = readSettings();
+  const { settings, requestsWebuiAuth } = readSettingsForStartup();
   const url = settings?.navidrome?.url;
   if (settings === null || url === undefined || url.trim() === '') {
-    return await resolveEnvFallbackState();
+    return await resolveEnvFallbackState(requestsWebuiAuth);
   }
 
   try {
     // Reuse the snapshot the URL guard read, since a second read could see a concurrent save.
-    return { configured: true, config: await loadConfig(settings) };
+    return { configured: true, config: await loadConfig(settings), source: 'store' };
   } catch (err) {
     // An invalid store opens the settings GUI instead of crashing. The logged reason
     // keeps a malformed hand-edited store from looking like a fresh first run.
@@ -84,13 +88,22 @@ export async function resolveConfigState(): Promise<ConfigState> {
 }
 
 /**
- * Applies only when settings.json is absent, unreadable, malformed, or has no Navidrome URL.
- * A rejected env config logs its reason, so set env vars never fail without a trace.
+ * Applies only when settings.json is absent, unreadable, malformed, or has no Navidrome URL, and
+ * names no web remote auth mode other than none. A rejected env config logs its reason, so set env
+ * vars never fail without a trace.
  */
-async function resolveEnvFallbackState(): Promise<ConfigState> {
+async function resolveEnvFallbackState(storeRequestsWebuiAuth: boolean): Promise<ConfigState> {
   const envSettings = buildEnvRuntimeSettings();
   const envUrl = envSettings.navidrome?.url;
   if (envUrl === undefined || envUrl.trim() === '') {
+    return { configured: false };
+  }
+  // The env config defaults the web remote to open, so it must not replace a store that asked for auth.
+  if (storeRequestsWebuiAuth) {
+    logger.warn(
+      `settings.json at ${getSettingsStorePath()} sets webui.auth.mode but is not usable, so the ` +
+      'environment fallback is skipped and setup mode starts. Fix the store, or remove it to run from the environment variables.'
+    );
     return { configured: false };
   }
 
@@ -100,7 +113,7 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
       `No usable settings.json at ${getSettingsStorePath()}. Running from environment variables ` +
       '(NAVIDROME_URL et al.). A usable settings.json takes precedence.'
     );
-    return { configured: true, config };
+    return { configured: true, config, source: 'env' };
   } catch (err) {
     logger.warn(
       'NAVIDROME_URL is set but the environment-derived config is invalid; entering setup mode:',
@@ -122,9 +135,9 @@ export function readSavedWebuiSettings(): Config['webui'] | null {
 }
 
 /** A spawned or re-run web player binds the saved endpoint, not this process's startup one. */
-export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
+export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host' | 'tls'> | null {
   const webui = readSavedWebuiSettings();
-  return webui === null ? null : { port: webui.port, host: webui.host };
+  return webui === null ? null : { port: webui.port, host: webui.host, tls: webui.tls };
 }
 
 /**
@@ -138,20 +151,29 @@ export function readSavedAudioDevice(): Config['playbackAudioDevice'] | undefine
   return result.ok ? result.config.playbackAudioDevice : undefined;
 }
 
+export function saveAudioDevice(device: Config['playbackAudioDevice']): boolean {
+  return saveStorePatch({ playback: { audioDevice: device } }, 'audio device');
+}
+
+/** An undefined field keeps its stored value. */
+export function saveJukeboxSettings(patch: { [K in keyof Config['jukebox']]?: Config['jukebox'][K] | undefined }): boolean {
+  return saveStorePatch({ jukebox: patch }, 'jukebox settings');
+}
+
 /**
  * Without a store holding a Navidrome URL the process runs from env. A usable store wins over env, so
  * writing a near-empty file then would replace that config.
  */
-export function saveAudioDevice(device: Config['playbackAudioDevice']): boolean {
+function saveStorePatch(patch: Record<string, unknown>, label: string): boolean {
   const stored = readRawSettings();
   if (stored === null) return false;
   const storedUrl = SettingsFileSchema.safeParse(stored).data?.navidrome?.url;
   if (storedUrl === undefined || storedUrl.trim() === '') return false;
 
-  const merged = mergeOntoStored(stored, { playback: { audioDevice: device } });
+  const merged = mergeOntoStored(stored, patch);
   // A file that does not parse back would leave the store unusable.
   if (!SettingsFileSchema.safeParse(merged).success) {
-    logger.warn('audio device: merged settings failed validation, so the choice was not saved');
+    logger.warn(`${label}: merged settings failed validation, so the choice was not saved`);
     return false;
   }
 
@@ -159,7 +181,7 @@ export function saveAudioDevice(device: Config['playbackAudioDevice']): boolean 
     writeSettings(merged as SettingsFile);
     return true;
   } catch (err) {
-    logger.warn('audio device: failed to write settings.json:', err);
+    logger.warn(`${label}: failed to write settings.json:`, err);
     return false;
   }
 }

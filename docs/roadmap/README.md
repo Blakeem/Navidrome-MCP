@@ -19,9 +19,7 @@ code-fix pass ──► release 1 ───────────────�
 
 Done. Each fix has a unit test that failed on the old code. These items stay open:
 
-- No cap on SSE clients (`src/webui/broadcaster.ts:85`, `src/webui/visualizer-hub.ts:42`). Web UI Auth + Roles caps streams per user.
-- Cover art uses `Cache-Control: public` (`src/webui/routes/cover.ts:106`). Web UI Auth + Roles changes it to `private`.
-- `engines.node` admits Node 20. Web UI Auth + Roles raises it together with the CI matrix.
+- `engines.node` is `>=24.19.0`, raised by Web UI Auth + Roles for `crypto.argon2`. CI runs Node 24 and 26.
 - The empty `author` field, the "Navidrome" name prefix and the licensing paperwork wait on the owner.
 
 ## Audio-Device Selector
@@ -55,6 +53,8 @@ Release 1. Roadmap: [audio-device-selector.md](audio-device-selector.md).
 
 Release 1. Roadmap: [web-ui-auth-roles.md](web-ui-auth-roles.md). The decisions below replace the roadmap's invite-only design and its trusted loopback browser.
 
+**Status:** built. Mode `password` has one admin password. Mode `jukebox` adds jukebox code guests. Device access and user accounts are not built.
+
 **Decisions**
 - One setting picks the access mode. `none` is the default and keeps today's open LAN behavior, so existing users see no change.
 - The other modes are device access and username-and-password access. Both are to be supported.
@@ -86,6 +86,8 @@ Release 1. Roadmap: [web-ui-auth-roles.md](web-ui-auth-roles.md). The decisions 
 
 Release 1, built on the guest role. Roadmap: [party-mode.md](party-mode.md). The decisions below replace the roadmap's request-approval queue, request feeder and votes for release 1.
 
+**Status:** built.
+
 **Decisions**
 - A guest scans a QR code, opens the guest page in a browser, searches the library and adds songs to the queue.
 - Guests see the queue, the lyrics and the visualizations. They cannot pause, skip, change the volume or reorder.
@@ -97,6 +99,7 @@ Release 1, built on the guest role. Roadmap: [party-mode.md](party-mode.md). The
 - The QR code holds a limited access key that expires. The guest page works over the internet as well as the LAN.
 - Security of the guest path is the top priority.
 - Votes, LLM moderation and request approval move to a later release.
+- A completed song replace by the host or the LLM adds the unplayed guest songs back at the end of the new queue, in add order. A radio load, a clear and a failed replace drop them. On an mpv older than 0.36, a song replace drops them too.
 
 **Integration points**
 - The guest role and its permissions in the auth role table.
@@ -104,12 +107,11 @@ Release 1, built on the guest role. Roadmap: [party-mode.md](party-mode.md). The
 - An owner map in the web player process, from mpv playlist entry ID to guest. It lives in memory, so it resets when the web player restarts.
 - `src/services/playback/playback-engine.ts`: append for a guest, remove by entry ID, report entry IDs on start and end.
 - `src/webui/public/`: the guest page, the user icon, the user panel, and the trash icon in the queue list.
-- Settings: `party.guestQueueLimit` (default 3) and the join key expiry.
+- Settings: `jukebox.guestQueueLimit` (default 3) and the join key expiry.
 
 **Flags** (questions to answer before planning)
 - **Back of the queue.** If the host queued a 200-song playlist, a guest song waits behind all of it. The options are the back of the entire queue (as decided), or the back of the guest songs, ahead of the host's music. Question: which?
 - **Limit meaning.** Assumed: 3 unplayed songs at a time, and a slot frees when one plays or is removed. The alternative is 3 for the entire party. Question: which?
-- **Host replace.** When the host or the LLM replaces the queue, the guest songs go with it. Question: keep that, or re-add the unplayed guest songs after a replace?
 - **Visualizations.** The visualizer style is picked per browser and stored in that browser (`src/webui/public/visualizer.js:284`), so a guest's pick changes only their own screen. The visualizer on/off switch is a player setting (`src/webui/public/settings.js:31`), and guests must not reach it.
 - **Explicit filter.** Navidrome flags only 6 of the 16,731 songs in this library as explicit, so an explicit filter would block almost nothing.
 

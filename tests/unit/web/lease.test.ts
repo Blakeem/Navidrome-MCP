@@ -5,11 +5,13 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { holdOwnerLease } from '../../../src/web/lease.js';
 import { MCP_LEASE_PATH } from '../../../src/webui/routes/player.js';
+import { readPair, TLS_PAIR_PUBLIC } from '../../helpers/tls-fixtures.js';
 
 interface SeenRequest {
   method: string | undefined;
@@ -39,6 +41,18 @@ async function serve(answer: (req: IncomingMessage, res: ServerResponse) => void
   return { port: (server.address() as AddressInfo).port, seen };
 }
 
+async function serveSecure(): Promise<{ port: number; seen: SeenRequest[] }> {
+  const seen: SeenRequest[] = [];
+  const server = createHttpsServer(readPair(TLS_PAIR_PUBLIC), (req, res) => {
+    seen.push({ method: req.method, url: req.url, contentType: req.headers['content-type'], res });
+    req.resume();
+    holdOpen(req, res);
+  });
+  servers.push(server);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { port: (server.address() as AddressInfo).port, seen };
+}
+
 function holdOpen(_req: IncomingMessage, res: ServerResponse): void {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.flushHeaders();
@@ -48,7 +62,17 @@ describe('holdOwnerLease', () => {
   it('posts JSON to the lease route and keeps the connection open', async () => {
     const { port, seen } = await serve(holdOpen);
 
-    await holdOwnerLease(port);
+    await holdOwnerLease(port, false);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ method: 'POST', url: MCP_LEASE_PATH, contentType: 'application/json' });
+    expect(seen[0]?.res.writableEnded).toBe(false);
+  });
+
+  it('holds the lease over HTTPS on a player with a certificate for another name', async () => {
+    const { port, seen } = await serveSecure();
+
+    await holdOwnerLease(port, true);
 
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ method: 'POST', url: MCP_LEASE_PATH, contentType: 'application/json' });
@@ -58,20 +82,32 @@ describe('holdOwnerLease', () => {
   it('sends no second request while a lease on the same port is open', async () => {
     const { port, seen } = await serve(holdOpen);
 
-    await holdOwnerLease(port);
-    await holdOwnerLease(port);
+    await holdOwnerLease(port, false);
+    await holdOwnerLease(port, false);
 
     expect(seen).toHaveLength(1);
   });
 
+  it('replaces the held lease when the scheme changes on the same port', async () => {
+    const { port, seen } = await serve(holdOpen);
+    await holdOwnerLease(port, false);
+    const firstLeaseClosed = new Promise<void>((resolve) => seen[0]?.res.on('close', () => resolve()));
+
+    await holdOwnerLease(port, true);
+    await firstLeaseClosed;
+    await holdOwnerLease(port, false);
+
+    expect(seen).toHaveLength(2);
+  });
+
   it('reopens the lease after the player drops it', async () => {
     const { port, seen } = await serve(holdOpen);
-    await holdOwnerLease(port);
+    await holdOwnerLease(port, false);
 
     seen[0]?.res.destroy();
 
     await vi.waitFor(async () => {
-      await holdOwnerLease(port);
+      await holdOwnerLease(port, false);
       expect(seen).toHaveLength(2);
     });
   });
@@ -82,8 +118,8 @@ describe('holdOwnerLease', () => {
       res.end();
     });
 
-    await holdOwnerLease(port);
-    await holdOwnerLease(port);
+    await holdOwnerLease(port, false);
+    await holdOwnerLease(port, false);
 
     expect(seen).toHaveLength(2);
   });
@@ -93,6 +129,6 @@ describe('holdOwnerLease', () => {
     const server = servers.pop();
     await new Promise<void>((resolve) => server?.close(() => resolve()));
 
-    await expect(holdOwnerLease(port)).resolves.toBeUndefined();
+    await expect(holdOwnerLease(port, false)).resolves.toBeUndefined();
   });
 });

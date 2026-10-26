@@ -127,7 +127,13 @@ vi.mock('node:net', () => ({
   }),
 }));
 
-const { playbackEngine } = await import('../../../../src/services/playback/playback-engine.js');
+const {
+  playbackEngine,
+  QueueEntryStartedError,
+  RadioQueueRefusedError,
+  REPLACE_GENERATION_PROPERTY,
+  REPLACE_PENDING_PROPERTY,
+} = await import('../../../../src/services/playback/playback-engine.js');
 const { MpvIpc } = await import('../../../../src/services/playback/mpv-ipc.js');
 const { spawnMpv } = await import('../../../../src/services/playback/mpv-process.js');
 const { unlink } = await import('node:fs/promises');
@@ -367,7 +373,7 @@ describe("enqueue('replace') failure recovery", () => {
     ).rejects.toThrow(/queue was cleared and is now empty/);
 
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
-    expect(commands.slice(commands.lastIndexOf('loadfile') + 1)).toEqual(['playlist-clear', 'stop']);
+    expect(commands.slice(commands.lastIndexOf('loadfile') + 1)).toEqual(['playlist-clear', 'stop', 'set_property']);
     expect(playbackEngine.getCachedProperty('playlist-count')).toBe(0);
     expect(playbackEngine.getCachedProperty('playlist-pos')).toBeNull();
     expect(events).toContainEqual({ kind: 'queue' });
@@ -422,11 +428,22 @@ describe("enqueue('append') radio demotion", () => {
 
     const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
 
-    expect(result).toEqual({ demoted: true, outputMissing: null });
+    expect(result).toEqual({ demoted: true, outputMissing: null, entryIds: [] });
 
     // Only a replace sends playlist-clear, so its presence shows the demotion took effect.
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
     expect(commands).toContain('playlist-clear');
+  });
+
+  it('refuses, and loads nothing, when the caller must never replace the queue', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist: [{ filename: 'rtsp://radio.example/stream', current: true, playing: true }] });
+
+    await expect(playbackEngine.enqueue(['song-1'], 'append', undefined, { refuseRadioQueue: true }))
+      .rejects.toBeInstanceOf(RadioQueueRefusedError);
+
+    expect(mutatingCommands(ipc)).toEqual([]);
   });
 
   it("does NOT demote append when the queue holds only real songs", async () => {
@@ -447,7 +464,7 @@ describe("enqueue('append') radio demotion", () => {
 
     const result = await playbackEngine.enqueue(['song-1'], 'append');
 
-    expect(result).toEqual({ demoted: false, outputMissing: null });
+    expect(result).toEqual({ demoted: false, outputMissing: null, entryIds: [] });
     const commands = ipc.command.mock.calls.map((c) => c[0] as string);
     expect(commands).not.toContain('playlist-clear');
   });
@@ -462,7 +479,7 @@ describe("enqueue('append') radio demotion", () => {
 
     const result = await playbackEngine.enqueue(['song-1'], 'append');
 
-    expect(result).toEqual({ demoted: true, outputMissing: null });
+    expect(result).toEqual({ demoted: true, outputMissing: null, entryIds: [] });
   });
 });
 
@@ -589,6 +606,170 @@ describe("enqueue('append') selects a first track when none is current", () => {
     await playbackEngine.enqueue(['song-4'], 'append');
 
     expect(mutatingCommands(ipc)).toEqual(['loadfile']);
+  });
+});
+
+describe('enqueue entry ids', () => {
+  it("returns the entry ids from each loadfile reply's playlist_entry_id, in load order", async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+    let nextId = 41;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'loadfile') return { playlist_entry_id: nextId++ };
+      if (args[0] === 'get_property' && args[1] === 'playlist-pos') return 0;
+      return null;
+    });
+
+    const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
+
+    expect(result.entryIds).toEqual([41, 42]);
+    // The one playlist read is the radio check before the loads, so no fallback read followed.
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'get_property' && c[1] === 'playlist')).toHaveLength(1);
+  });
+
+  it('reads the playlist and matches each loaded filename when mpv answers without the id', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    const loadedUrls: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'loadfile') {
+        loadedUrls.push(args[1] as string);
+        return null;
+      }
+      if (args[0] === 'get_property' && args[1] === 'playlist-pos') return 0;
+      if (args[0] === 'get_property' && args[1] === 'playlist') {
+        // The radio check before the loads sees an empty queue.
+        if (loadedUrls.length < 2) return [];
+        // Another client appended between the loads, so a position-based guess would pick its entry.
+        return [
+          { filename: 'http://other.example/stream', id: 3 },
+          { filename: loadedUrls[0], id: 4 },
+          { filename: 'http://other.example/late', id: 5 },
+          { filename: loadedUrls[1], id: 6 },
+        ];
+      }
+      return null;
+    });
+
+    const result = await playbackEngine.enqueue(['song-1', 'song-2'], 'append');
+
+    expect(result).toMatchObject({ demoted: false, entryIds: [4, 6] });
+  });
+
+  it('leaves the ids out, and still succeeds, when that playlist read fails', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    let loads = 0;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'loadfile') loads++;
+      if (args[0] === 'get_property' && args[1] === 'playlist' && loads > 0) throw new Error('connection reset');
+      return null;
+    });
+
+    expect(await playbackEngine.enqueue(['song-1'], 'replace')).toMatchObject({ entryIds: [] });
+  });
+
+  it('returns the ids of a replace too', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    let nextId = 1;
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => (args[0] === 'loadfile' ? { playlist_entry_id: nextId++ } : null));
+
+    expect((await playbackEngine.enqueue(['a', 'b'], 'replace')).entryIds).toEqual([1, 2]);
+  });
+});
+
+describe('removeQueueEntryById', () => {
+  it('removes the entry at the index its id holds now', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist: [{ id: 10 }, { id: 12 }, { id: 11 }] });
+    const events: StateChangeEvent[] = [];
+    playbackEngine.onStateChange((e) => events.push(e));
+
+    expect(await playbackEngine.removeQueueEntryById(11)).toBe(true);
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-remove')).toEqual([['playlist-remove', 2]]);
+    expect(events).toContainEqual({ kind: 'queue' });
+  });
+
+  it('returns false and removes nothing when the entry is gone', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist: [{ id: 10 }] });
+
+    expect(await playbackEngine.removeQueueEntryById(11)).toBe(false);
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-remove')).toHaveLength(0);
+  });
+
+  it('returns false without spawning mpv when none can be attached', async () => {
+    const attachFake = makeFakeIpc();
+    attachFake.connect.mockRejectedValue(new Error('ENOENT'));
+    vi.mocked(MpvIpc).mockImplementationOnce(() => attachFake as never);
+
+    expect(await playbackEngine.removeQueueEntryById(11)).toBe(false);
+
+    expect(spawnMpv).not.toHaveBeenCalled();
+  });
+
+  const guarded = { songId: 'song-1', refuseStarted: true };
+  const songEntry = (id: number, songId: string, current = false): Record<string, unknown> => ({
+    id,
+    filename: `http://navidrome.test/rest/stream?id=${songId}`,
+    current,
+  });
+
+  it('returns false when the id now names another song, as after an mpv restart', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist: [songEntry(11, 'song-other')], pause: false });
+
+    expect(await playbackEngine.removeQueueEntryById(11, guarded)).toBe(false);
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-remove')).toHaveLength(0);
+  });
+
+  it.each([
+    ['playing', false],
+    ['in an unknown pause state', null],
+  ])('refuses a guarded entry that is current and %s, since removing it would skip it', async (_label, pause) => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist: [songEntry(10, 'host'), songEntry(11, 'song-1', true)], pause });
+
+    await expect(playbackEngine.removeQueueEntryById(11, guarded)).rejects.toBeInstanceOf(QueueEntryStartedError);
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-remove')).toHaveLength(0);
+  });
+
+  it('removes a guarded entry that is current while mpv is paused', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { playlist: [songEntry(10, 'host'), songEntry(11, 'song-1', true)], pause: true });
+
+    expect(await playbackEngine.removeQueueEntryById(11, guarded)).toBe(true);
+
+    expect(ipc.command.mock.calls.filter((c) => c[0] === 'playlist-remove')).toEqual([['playlist-remove', 1]]);
+  });
+});
+
+describe('readPaused', () => {
+  it.each([
+    [true, true],
+    [false, false],
+    [null, null],
+  ])('reads pause %s live and reports %s', async (live, expected) => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { pause: live });
+
+    expect(await playbackEngine.readPaused()).toBe(expected);
   });
 });
 
@@ -1142,6 +1323,136 @@ describe('radio station tag', () => {
     expect(ipc.observeProperty).toHaveBeenCalledWith(13, TAG);
     expect(playbackEngine.getStatus().engineRunning).toBe(true);
     expect(playbackEngine.getRadioStationTag()).toBeNull();
+  });
+});
+
+describe('replace marks', () => {
+  const setCommand = (name: string, value: unknown): string => `set ${name} ${String(value)}`;
+
+  it('marks a song replace pending before the clear, then raises the generation and clears the mark after the loads', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { [REPLACE_GENERATION_PROPERTY]: 4 });
+
+    await playbackEngine.enqueue(['s1', 's2'], 'replace');
+
+    const commands = mutatingCommands(ipc);
+    const marked = commands.indexOf(setCommand(REPLACE_PENDING_PROPERTY, true));
+    const raised = commands.indexOf(setCommand(REPLACE_GENERATION_PROPERTY, 5));
+    expect(marked).toBeGreaterThanOrEqual(0);
+    expect(marked).toBeLessThan(commands.indexOf('playlist-clear'));
+    expect(raised).toBeGreaterThan(commands.lastIndexOf('loadfile'));
+    expect(commands.indexOf(setCommand(REPLACE_PENDING_PROPERTY, false))).toBeGreaterThan(raised);
+  });
+
+  it('raises an unset generation to 1', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, {});
+
+    await playbackEngine.enqueue(['s1'], 'replace');
+
+    expect(mutatingCommands(ipc)).toContain(setCommand(REPLACE_GENERATION_PROPERTY, 1));
+  });
+
+  it('clears the pending mark with no rise when the replace fails', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'loadfile') throw new Error('mpv command error: file not found');
+      return null;
+    });
+
+    await expect(playbackEngine.enqueue(['s1'], 'replace')).rejects.toThrow(/queue was cleared/);
+
+    const commands = mutatingCommands(ipc);
+    expect(commands.indexOf(setCommand(REPLACE_PENDING_PROPERTY, false))).toBeGreaterThan(commands.indexOf('stop'));
+    expect(commands.some((command) => command.startsWith(`set ${REPLACE_GENERATION_PROPERTY}`))).toBe(false);
+  });
+
+  it('leaves both marks alone on a radio load and on an append', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { 'playlist-pos': 0, 'playlist-count': 1 });
+
+    await playbackEngine.enqueueRadio('http://r/x', 'station-1');
+    await playbackEngine.enqueue(['s1'], 'append');
+
+    expect(mutatingCommands(ipc).some((command) => command.includes('navidrome-mcp/replace-'))).toBe(false);
+  });
+
+  it('still replaces the queue when the mpv build has no user-data property', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (typeof args[1] === 'string' && args[1].startsWith('user-data/')) throw new Error('mpv command error: property not found');
+      return null;
+    });
+
+    await expect(playbackEngine.enqueue(['s1'], 'replace')).resolves.toMatchObject({ demoted: false });
+    expect(mutatingCommands(ipc)).toContain('loadfile');
+  });
+
+  it('reads the pending mark before the generation, and an unreadable mark as no replace', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { [REPLACE_PENDING_PROPERTY]: true, [REPLACE_GENERATION_PROPERTY]: 3 });
+
+    expect(await playbackEngine.readReplaceMarks()).toEqual({ generation: 3, pending: true });
+    const reads = ipc.command.mock.calls.map((call) => call[1]);
+    expect(reads).toEqual([REPLACE_PENDING_PROPERTY, REPLACE_GENERATION_PROPERTY]);
+
+    ipc.command.mockRejectedValue(new Error('mpv command error: property unavailable'));
+    expect(await playbackEngine.readReplaceMarks()).toEqual({ generation: 0, pending: false });
+  });
+
+  it('reads the generation alone, and an unset or unreadable generation as zero', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    answerProperties(ipc, { [REPLACE_PENDING_PROPERTY]: true, [REPLACE_GENERATION_PROPERTY]: 4 });
+
+    expect(await playbackEngine.readReplaceGeneration()).toBe(4);
+    expect(ipc.command.mock.calls.map((call) => call[1])).toEqual([REPLACE_GENERATION_PROPERTY]);
+
+    ipc.command.mockRejectedValue(new Error('mpv command error: property unavailable'));
+    expect(await playbackEngine.readReplaceGeneration()).toBe(0);
+    ipc.command.mockRejectedValue(new Error('mpv IPC socket closed'));
+    await expect(playbackEngine.readReplaceGeneration()).rejects.toThrow('mpv IPC socket closed');
+  });
+
+  it('rejects when the connection fails, so a reader never takes it for an unset mark', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockRejectedValue(new Error('mpv IPC socket closed'));
+
+    await expect(playbackEngine.readReplaceMarks()).rejects.toThrow('mpv IPC socket closed');
+  });
+
+  it('still resolves a loaded replace when the generation read fails on the connection', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+    await playbackEngine.ensureRunning();
+    ipc.command.mockClear();
+    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async IPC command interface
+    ipc.command.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === 'get_property' && args[1] === REPLACE_GENERATION_PROPERTY) throw new Error('mpv IPC request timed out');
+      return null;
+    });
+
+    await expect(playbackEngine.enqueue(['s1'], 'replace')).resolves.toMatchObject({ demoted: false });
+    expect(mutatingCommands(ipc).some((command) => command.startsWith(`set ${REPLACE_GENERATION_PROPERTY}`))).toBe(false);
+  });
+
+  it('observes both marks, so every attached engine sees a replace', async () => {
+    const ipc = fakeIpcRef.value as FakeIpc;
+
+    await playbackEngine.ensureRunning();
+
+    expect(ipc.observeProperty).toHaveBeenCalledWith(17, REPLACE_PENDING_PROPERTY);
+    expect(ipc.observeProperty).toHaveBeenCalledWith(18, REPLACE_GENERATION_PROPERTY);
   });
 });
 

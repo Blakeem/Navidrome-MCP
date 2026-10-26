@@ -6,7 +6,7 @@
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0f17" />
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f6fb" />
   <meta name="color-scheme" content="dark light" />
-  <title>Navidrome Remote</title>
+  <title>Jukebox Remote</title>
   <link rel="stylesheet" href="/styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ctext y='20' font-size='22'%3E%F0%9F%8E%B5%3C/text%3E%3C/svg%3E" />
 </head>
@@ -16,8 +16,8 @@
        href="https://github.com/Blakeem/Navidrome-MCP"
        target="_blank"
        rel="noopener noreferrer"
-       aria-label="Navidrome Remote, open the project on GitHub (opens in a new tab)">
-      <h1 class="title">Navidrome Remote</h1>
+       aria-label="Jukebox Remote, open the project on GitHub (opens in a new tab)">
+      <h1 class="title">Jukebox Remote</h1>
     </a>
     <div class="topbar-actions">
       <span class="conn" data-state="connecting" aria-live="polite">
@@ -34,9 +34,14 @@
           <path fill="currentColor" d="M480-120q-66 0-113-47t-47-113q0-66 47-113t113-47q23 0 42.5 5.5T560-418v-422h240v160H640v400q0 66-47 113t-113 47ZM280-520v-120H160v-80h120v-120h80v120h120v80H360v120h-80Z"/>
         </svg>
       </button>
-      <button type="button" class="ghost-btn" id="open-network-info" aria-label="Show network info" data-tip="Network info">
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-          <path fill="currentColor" d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm-1 17.93A8 8 0 0 1 4.07 13H7a14 14 0 0 0 1.46 6.93ZM11 11H4.07A8 8 0 0 1 11 4.07Zm0-6.93V11H8.5C8.61 8.34 9.5 5.85 11 4.07ZM13 4.07c1.5 1.78 2.39 4.27 2.5 6.93H13Zm0 8.93h2.5c-.11 2.66-1 5.15-2.5 6.93Zm0 8.93V13h2.93A14 14 0 0 1 13 19.93ZM19.93 13H17a14 14 0 0 0-1.46-6.93A8 8 0 0 1 19.93 13Zm0-2H17V4.07A8 8 0 0 1 19.93 11Z"/>
+      <button type="button" class="ghost-btn" id="open-jukebox" aria-label="Jukebox" data-tip="Jukebox" hidden>
+        <svg viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M520-120v-80h80v80h-80Zm-80-80v-200h80v200h-80Zm320-120v-160h80v160h-80Zm-80-160v-80h80v80h-80Zm-480 80v-80h80v80h-80Zm-80-80v-80h80v80h-80Zm360-280v-80h80v80h-80ZM180-660h120v-120H180v120Zm-60 60v-240h240v240H120Zm60 420h120v-120H180v120Zm-60 60v-240h240v240H120Zm540-540h120v-120H660v120Zm-60 60v-240h240v240H600Zm80 480v-120h-80v-80h160v120h80v80H680ZM520-400v-80h160v80H520Zm-160 0v-80h-80v-80h240v80h-80v80h-80Zm40-200v-160h80v80h80v80H400Zm-190-90v-60h60v60h-60Zm0 480v-60h60v60h-60Zm480-480v-60h60v60h-60Z"/>
+        </svg>
+      </button>
+      <button type="button" class="ghost-btn" id="open-guests" aria-label="Guests" data-tip="Guests" hidden>
+        <svg viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M0-240v-63q0-43 44-70t116-27q13 0 25 .5t23 2.5q-14 21-21 44t-7 48v65H0Zm240 0v-65q0-32 17.5-58.5T307-410q32-20 76.5-30t96.5-10q53 0 97.5 10t76.5 30q32 20 49 46.5t17 58.5v65H240Zm540 0v-65q0-26-6.5-49T754-397q11-2 22.5-2.5t23.5-.5q72 0 116 26.5t44 70.5v63H780Zm-455-80h311q-10-20-55.5-35T480-370q-55 0-100.5 15T325-320ZM160-440q-33 0-56.5-23.5T80-520q0-34 23.5-57t56.5-23q34 0 57 23t23 57q0 33-23 56.5T160-440Zm640 0q-33 0-56.5-23.5T720-520q0-34 23.5-57t56.5-23q34 0 57 23t23 57q0 33-23 56.5T800-440Zm-320-40q-50 0-85-35t-35-85q0-51 35-85.5t85-34.5q51 0 85.5 34.5T600-600q0 50-34.5 85T480-480Zm0-80q17 0 28.5-11.5T520-600q0-17-11.5-28.5T480-640q-17 0-28.5 11.5T440-600q0 17 11.5 28.5T480-560Zm1 240Zm-1-280Z"/>
         </svg>
       </button>
       <button type="button" class="ghost-btn" id="open-settings" aria-label="Settings" data-tip="Settings" hidden>
@@ -44,13 +49,27 @@
           <path fill="currentColor" d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.24-1.12.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.42.32.61.22l2.39-.96c.5.38 1.04.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.24 1.12-.56 1.62-.94l2.39.96c.19.1.47.02.61-.22l1.92-3.32a.5.5 0 0 0-.12-.64ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/>
         </svg>
       </button>
-      <button type="button" class="ghost-btn danger" id="power-btn" aria-label="Stop and shut down the player" data-tip="Shut down player" hidden>
-        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-          <path fill="currentColor" d="M13 3h-2v10h2V3zm4.83 2.17-1.42 1.42A6.99 6.99 0 0 1 19 12a7 7 0 1 1-11.41-5.41L6.17 5.17A9 9 0 1 0 21 12a8.98 8.98 0 0 0-3.17-6.83z"/>
-        </svg>
-      </button>
     </div>
   </header>
+
+  <section class="login-view" id="login-view" aria-labelledby="login-title" hidden>
+    <form class="login-card" id="login-form">
+      <h2 id="login-title">Log in</h2>
+      <p class="modal-help" id="login-help">Enter the admin password to use the player.</p>
+      <div class="lib-search" id="login-fields">
+        <span class="reveal">
+          <input type="password" id="login-password" aria-label="Admin password" autocomplete="current-password" required />
+          <button type="button" class="reveal-btn" id="login-password-toggle" aria-label="Show password">
+            <svg class="icon-show" viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M480-320q75 0 127.5-52.5T660-500q0-75-52.5-127.5T480-680q-75 0-127.5 52.5T300-500q0 75 52.5 127.5T480-320Zm0-72q-45 0-76.5-31.5T372-500q0-45 31.5-76.5T480-608q45 0 76.5 31.5T588-500q0 45-31.5 76.5T480-392Zm0 192q-146 0-266-81.5T40-500q54-137 174-218.5T480-800q146 0 266 81.5T920-500q-54 137-174 218.5T480-200Zm0-300Zm0 220q113 0 207.5-59.5T832-500q-50-101-144.5-160.5T480-720q-113 0-207.5 59.5T128-500q50 101 144.5 160.5T480-280Z"/></svg>
+            <svg class="icon-hide" viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true" hidden><path fill="currentColor" d="m644-428-58-58q9-47-27-88t-93-32l-58-58q17-8 34.5-12t37.5-4q75 0 127.5 52.5T660-500q0 20-4 37.5T644-428Zm128 126-58-56q38-29 67.5-63.5T832-500q-50-101-143.5-160.5T480-720q-29 0-57 4t-55 12l-62-62q41-17 84-25.5t90-8.5q151 0 269 83.5T920-500q-23 59-60.5 109.5T772-302Zm20 246L624-222q-35 11-70.5 16.5T480-200q-151 0-269-83.5T40-500q21-53 53-98.5t73-81.5L56-792l56-56 736 736-56 56ZM222-624q-29 26-53 57t-41 67q50 101 143.5 160.5T480-280q20 0 39-2.5t39-5.5l-36-38q-11 3-21 4.5t-21 1.5q-75 0-127.5-52.5T300-500q0-11 1.5-21t4.5-21l-84-82Zm319 93Zm-151 75Z"/></svg>
+          </button>
+        </span>
+        <button type="submit" class="primary-btn" id="login-submit">Log in</button>
+      </div>
+      <p class="login-status" id="login-status" role="alert"></p>
+      <p class="modal-hint" id="login-address"></p>
+    </form>
+  </section>
 
   <main>
     <section class="now-playing-card" aria-label="Now playing">
@@ -113,6 +132,10 @@
     </section>
 
     <p class="control-status" id="control-status" aria-live="polite"></p>
+    <div class="output-banner" id="output-banner" role="status" hidden>
+      <p class="output-banner-text" id="output-banner-text"></p>
+      <button type="button" class="btn-secondary output-banner-btn" aria-describedby="output-banner-text">Pick output</button>
+    </div>
 
     <section class="volume-section" aria-label="Volume">
       <button type="button" class="volume-icon" id="btn-mute" aria-label="Mute" aria-pressed="false">
@@ -228,6 +251,10 @@
     </div>
 
     <footer class="lyrics-transport">
+      <div class="output-banner" id="lyrics-output-banner" role="status" hidden>
+        <p class="output-banner-text" id="lyrics-output-banner-text"></p>
+        <button type="button" class="btn-secondary output-banner-btn" aria-describedby="lyrics-output-banner-text">Pick output</button>
+      </div>
       <div class="lyrics-seek-line" id="lyrics-seek-line" aria-hidden="true"></div>
       <div class="lyrics-times">
         <span id="lyrics-position">0:00</span>
@@ -301,7 +328,7 @@
           </svg>
         </button>
       </header>
-      <fieldset class="settings-group">
+      <fieldset class="settings-group" id="settings-theme-group" hidden>
         <legend class="settings-heading">Theme</legend>
         <div class="mode-toggle theme-toggle">
           <input type="radio" class="visually-hidden" name="theme" id="theme-light" value="light" />
@@ -313,7 +340,7 @@
         </div>
         <p class="modal-hint">Light or Dark applies to every device viewing the player. System lets each device follow its own setting.</p>
       </fieldset>
-      <fieldset class="settings-group">
+      <fieldset class="settings-group" id="settings-player-group" hidden>
         <legend class="settings-heading">Player</legend>
         <label class="check">
           <input type="checkbox" id="set-persist" />
@@ -330,6 +357,15 @@
         </label>
       </fieldset>
       <p class="modal-hint" id="settings-status" aria-live="polite"></p>
+      <fieldset class="settings-group">
+        <legend class="settings-heading">This player</legend>
+        <div class="modal-buttons">
+          <button type="button" class="btn-secondary" id="open-network-info">Network info</button>
+          <button type="button" class="btn-secondary" id="logout-btn" hidden>Log out</button>
+          <button type="button" class="btn-secondary danger" id="power-btn" hidden>Shut down player</button>
+        </div>
+      </fieldset>
+      <p class="modal-hint" id="settings-remote-note" hidden>Player settings and Shut down are on the player's computer.</p>
     </form>
   </dialog>
 
@@ -411,6 +447,135 @@
       <ul class="network-list" id="network-info-list"></ul>
       <p class="modal-hint" id="network-info-hint"></p>
     </form>
+  </dialog>
+
+  <dialog id="guests-dialog" class="modal" aria-labelledby="guests-title">
+    <form method="dialog" class="modal-content">
+      <header class="modal-header">
+        <h2 id="guests-title">Guests</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
+      <fieldset class="settings-group">
+        <legend class="settings-heading">Signed in</legend>
+        <p class="modal-help" id="guest-list-status"></p>
+        <ul class="network-list" id="guest-list"></ul>
+        <div class="guest-ban" id="guest-ban" hidden>
+          <p class="modal-help" id="guest-ban-title"></p>
+          <label class="modal-help" for="guest-ban-hours">Also block their network address</label>
+          <select id="guest-ban-hours" class="jukebox-select">
+            <option value="0">No network ban</option>
+            <option value="1">For 1 hour</option>
+            <option value="24" selected>For 1 day</option>
+            <option value="168">For 7 days</option>
+            <option value="720">For 30 days</option>
+          </select>
+          <p class="modal-hint jukebox-warn" id="guest-ban-warn" hidden></p>
+          <label class="check">
+            <input type="checkbox" id="guest-ban-rotate" />
+            <span>Also make a new jukebox code <span class="modal-hint">The old code stops working, so the banned guest cannot join with it again. The other guests stay signed in, and the new code lasts for the time last chosen under Open for in the Jukebox dialog, or 1 day after a page reload.</span></span>
+          </label>
+          <div class="jukebox-buttons">
+            <button type="button" class="primary-btn" id="guest-ban-confirm">Ban</button>
+            <button type="button" class="btn-secondary" id="guest-ban-cancel">Cancel</button>
+          </div>
+        </div>
+        <p class="modal-hint" id="guest-message" aria-live="polite"></p>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend class="settings-heading">Banned</legend>
+        <p class="modal-help" id="ban-list-status"></p>
+        <ul class="network-list" id="ban-list"></ul>
+        <p class="modal-hint" id="ban-message" aria-live="polite"></p>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend class="settings-heading">Song limit</legend>
+        <label class="modal-help" for="jukebox-guest-limit">Songs each guest may have waiting</label>
+        <p class="modal-hint" id="jukebox-guest-limit-hint">1 to 20. A slot frees when one of their songs starts or they remove it.</p>
+        <div class="lib-search">
+          <input type="number" id="jukebox-guest-limit" min="1" max="20" step="1" required aria-describedby="jukebox-guest-limit-hint" />
+          <button type="button" class="primary-btn" id="jukebox-guest-limit-save">Save</button>
+        </div>
+        <p class="modal-hint" id="jukebox-guest-limit-message" aria-live="polite"></p>
+      </fieldset>
+    </form>
+  </dialog>
+
+  <dialog id="jukebox-dialog" class="modal" aria-labelledby="jukebox-title">
+    <form method="dialog" class="modal-content">
+      <header class="modal-header">
+        <h2 id="jukebox-title">Jukebox</h2>
+        <button type="submit" class="modal-close" aria-label="Close">
+          <svg viewBox="0 -960 960 960" aria-hidden="true">
+            <path fill="currentColor" d="m256-200-56-56 224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z"/>
+          </svg>
+        </button>
+      </header>
+      <div class="jukebox-state" id="jukebox-closed" hidden>
+        <p class="modal-help">The jukebox is closed.</p>
+        <div class="jukebox-lifetime-slot" id="jukebox-closed-lifetime">
+          <div class="jukebox-lifetime-field" id="jukebox-lifetime-field">
+            <label class="modal-help" for="jukebox-lifetime">Open for</label>
+            <select id="jukebox-lifetime" class="jukebox-select" autocomplete="off">
+              <option value="1">1 hour</option>
+              <option value="3">3 hours</option>
+              <option value="6">6 hours</option>
+              <option value="12">12 hours</option>
+              <option value="24" selected>1 day</option>
+              <option value="72">3 days</option>
+              <option value="168">7 days</option>
+              <option value="336">14 days</option>
+              <option value="720">30 days</option>
+              <option value="2160">90 days</option>
+            </select>
+            <p class="modal-hint jukebox-warn" id="jukebox-lifetime-warn" hidden>A code that lasts more than 7 days still works long after the party.</p>
+          </div>
+        </div>
+        <div class="jukebox-buttons">
+          <button type="button" class="primary-btn" id="jukebox-open">Open the jukebox</button>
+        </div>
+      </div>
+      <div class="jukebox-state" id="jukebox-open-state" hidden>
+        <div class="mode-toggle text-toggle" id="jukebox-share" role="radiogroup" aria-label="Link the QR code shows" hidden>
+          <input type="radio" class="visually-hidden" name="jukebox-share" id="jukebox-share-lan" value="lan" />
+          <label for="jukebox-share-lan" class="mode-toggle-btn">Local network</label>
+          <input type="radio" class="visually-hidden" name="jukebox-share" id="jukebox-share-internet" value="internet" />
+          <label for="jukebox-share-internet" class="mode-toggle-btn">Internet</label>
+        </div>
+        <img class="jukebox-qr jukebox-qr-large" id="jukebox-qr" alt="" hidden />
+        <code class="jukebox-url" id="jukebox-url"></code>
+        <select class="jukebox-select" id="jukebox-lan-select" aria-label="Local network address" hidden></select>
+        <p class="modal-help" id="jukebox-status"></p>
+        <div class="jukebox-buttons">
+          <button type="button" class="btn-secondary" id="jukebox-fullscreen-btn">Full screen</button>
+          <button type="button" class="btn-secondary" id="jukebox-copy" hidden>Copy link</button>
+          <button type="button" class="btn-secondary" id="jukebox-download">Download QR</button>
+          <button type="button" class="btn-secondary" id="jukebox-new">New code</button>
+          <button type="button" class="btn-secondary" id="jukebox-close">Close the jukebox</button>
+        </div>
+        <div class="jukebox-confirm" id="jukebox-new-confirm" hidden>
+          <div class="jukebox-lifetime-slot" id="jukebox-new-lifetime"></div>
+          <label class="check">
+            <input type="checkbox" id="jukebox-signout" />
+            <span>Sign out current guests</span>
+          </label>
+          <p class="modal-help">The current code stops working.</p>
+          <div class="jukebox-buttons">
+            <button type="button" class="primary-btn" id="jukebox-new-make">Make new code</button>
+            <button type="button" class="btn-secondary" id="jukebox-new-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+      <p class="modal-hint" id="jukebox-message" aria-live="polite"></p>
+    </form>
+  </dialog>
+
+  <dialog id="jukebox-fullscreen" class="jukebox-fullscreen" aria-label="Jukebox QR code">
+    <img class="jukebox-qr" id="jukebox-fullscreen-qr" alt="" />
+    <p>Scan to add songs to the queue.</p>
   </dialog>
 
   <!-- A module script runs after parsing, so each module looks up its elements at import. -->

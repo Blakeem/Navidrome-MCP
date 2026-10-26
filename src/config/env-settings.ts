@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readSettings, type SettingsFile } from './store.js';
 import {
+  DEFAULT_GUEST_QUEUE_LIMIT,
   DEFAULT_LRCLIB_BASE,
   DEFAULT_MCP_HTTP_PORT,
   DEFAULT_MUSICBRAINZ_USER_AGENT,
@@ -17,6 +18,10 @@ import {
   DEFAULT_TRANSCODE_FORMAT,
   DEFAULT_USER_AGENT,
   DEFAULT_WEBUI_PORT,
+  WEBUI_ADMIN_ACCESS_LEVELS,
+  WEBUI_AUTH_MODES,
+  type WebuiAdminAccess,
+  type WebuiAuthMode,
 } from '../constants/defaults.js';
 import { logger } from '../utils/logger.js';
 
@@ -53,6 +58,15 @@ export function buildEnvRuntimeSettings(): SettingsFile {
     const value = process.env[key];
     return value !== undefined && value.trim() !== '' ? value : undefined;
   }, false);
+}
+
+/**
+ * The plaintext stays out of the settings shape, so the form seed never carries it to the browser.
+ * The web player reads it only when it runs from env, since a usable store wins over env.
+ */
+export function readEnvAdminPassword(): string | null {
+  const value = process.env['WEBUI_ADMIN_PASSWORD'];
+  return value !== undefined && value !== '' ? value : null;
 }
 
 function importFromLegacyEnv(): SettingsFile {
@@ -127,9 +141,22 @@ function settingsFromEnvSource(
       host: get('WEBUI_HOST') ?? null,
       expose: toBool('WEBUI_EXPOSE', get('WEBUI_EXPOSE'), false),
       allowedHosts: toList(get('WEBUI_ALLOWED_HOSTS')),
+      publicUrl: get('WEBUI_PUBLIC_URL') ?? null,
       autoOpenBrowser: toBool('WEBUI_AUTO_OPEN_BROWSER', get('WEBUI_AUTO_OPEN_BROWSER'), false),
       persistAfterMcpExit: toBool('WEBUI_PERSIST_AFTER_MCP_EXIT', get('WEBUI_PERSIST_AFTER_MCP_EXIT'), false),
       visualizer: toBool('WEBUI_VISUALIZER', get('WEBUI_VISUALIZER'), true),
+      tls: {
+        certPath: get('WEBUI_TLS_CERT') ?? null,
+        keyPath: get('WEBUI_TLS_KEY') ?? null,
+      },
+      auth: {
+        mode: toAuthMode(get('WEBUI_AUTH_MODE')),
+        adminPasswordHash: null,
+        adminAccess: toAdminAccess(get('WEBUI_ADMIN_ACCESS')),
+      },
+    },
+    jukebox: {
+      guestQueueLimit: toInt('JUKEBOX_GUEST_QUEUE_LIMIT', get('JUKEBOX_GUEST_QUEUE_LIMIT'), DEFAULT_GUEST_QUEUE_LIMIT),
     },
     advanced: {
       debug: toBool('DEBUG', get('DEBUG'), false),
@@ -172,6 +199,23 @@ function toTransportType(value: string | undefined): 'stdio' | 'http' {
     logger.warn(`MCP_TRANSPORT="${value}" is not supported (use http or stdio), so stdio is used.`);
   }
   return 'stdio';
+}
+
+// An unknown mode falls back to password, the strictest mode with a login and no guest routes, so a typo never opens the remote.
+function toAuthMode(value: string | undefined): WebuiAuthMode {
+  if (value === undefined) return 'none';
+  const mode = WEBUI_AUTH_MODES.find((candidate) => candidate === value);
+  if (mode !== undefined) return mode;
+  logger.warn(`WEBUI_AUTH_MODE="${value}" is not supported (use one of ${WEBUI_AUTH_MODES.join(', ')}), so password is used.`);
+  return 'password';
+}
+
+function toAdminAccess(value: string | undefined): WebuiAdminAccess {
+  if (value === undefined) return 'localhost';
+  const level = WEBUI_ADMIN_ACCESS_LEVELS.find((candidate) => candidate === value);
+  if (level !== undefined) return level;
+  logger.warn(`WEBUI_ADMIN_ACCESS="${value}" is not supported (use ${WEBUI_ADMIN_ACCESS_LEVELS.join(', ')}), so localhost is used.`);
+  return 'localhost';
 }
 
 function toList(value: string | undefined): string[] | null {
