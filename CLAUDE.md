@@ -95,12 +95,14 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 ## Environment
 
 Configuration lives in a single canonical **`settings.json`** store — the
-GUI-managed source of truth. When the store is **absent, unreadable, malformed,
-or has no `navidrome.url`**, runtime falls back to **environment variables** (`NAVIDROME_URL`/`NAVIDROME_USERNAME`/
+GUI-managed source of truth. When the store is **absent, fails the settings
+schema, or has no `navidrome.url`**, runtime falls back to **environment variables** (`NAVIDROME_URL`/`NAVIDROME_USERNAME`/
 `NAVIDROME_PASSWORD` + the optional `MCP_*`/feature vars, via
 `buildEnvRuntimeSettings()` — `process.env` only, never `.env` files) — the
-headless/container path. A store that has a URL but fails validation enters
-setup mode instead, and env is not consulted. A store that names a
+headless/container path. A store that has a URL but fails config validation enters
+setup mode instead, and env is not consulted. A store that is present but
+unreadable or not valid JSON also enters setup mode, since it cannot prove it
+names no `webui.auth.mode`. A store that names a
 `webui.auth.mode` other than `none` also enters setup mode when it is unusable,
 so a broken store never swaps a protected web remote for the open env config. A usable store always wins over
 env. `.env` files are import-only: they pre-fill the settings form on first run,

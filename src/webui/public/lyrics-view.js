@@ -121,7 +121,7 @@ function openLyrics() {
 }
 
 // Nothing here touches window scroll, so the main view comes back where the reader left it.
-function closeLyrics() {
+export function closeLyrics() {
   if (!open) return;
   open = false;
   view.classList.remove('is-immersive');

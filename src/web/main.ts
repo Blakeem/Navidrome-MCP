@@ -16,7 +16,7 @@ import { logPath } from './file-logging.js';
 import type { Server } from 'node:http';
 
 import { createRuntime } from '../bootstrap.js';
-import { resolveConfigState, type Config } from '../config.js';
+import { resolveConfigState, type Config, type StartupFailure } from '../config.js';
 import { readEnvAdminPassword } from '../config/env-settings.js';
 import { startConfigServer } from '../config-app/server.js';
 import { WEB_OWNER_ATTACH_INTERVAL_MS } from '../constants/timeouts.js';
@@ -28,7 +28,6 @@ import { assertArgon2Available } from '../utils/secrets.js';
 import { AuthService } from '../webui/auth/auth-service.js';
 import { SseBroadcaster } from '../webui/broadcaster.js';
 import { GuestQueue } from '../webui/jukebox/guest-queue.js';
-import { isLanReachable, listLanInterfaces, loopbackUrl } from '../webui/network.js';
 import { adminPageUrl } from '../webui/page-paths.js';
 import type { McpLeaseCounter } from '../webui/routes/player.js';
 import { createServer } from '../webui/server.js';
@@ -36,6 +35,7 @@ import { isAddressRewritingHost } from '../webui/source-address.js';
 import { VisualizerHub } from '../webui/visualizer-hub.js';
 import { isTlsEnabled } from '../webui/tls.js';
 import { acquireOrAttach } from './acquire.js';
+import { buildBannerLines, buildSetupHeadline, TLS_LOCAL_ADDRESS_WARNING } from './banner.js';
 import {
   getPersist,
   getVisualizer,
@@ -71,13 +71,7 @@ function maybeOpenBrowser(url: string, autoOpenBrowser: boolean): void {
 
 /** Also printed to stdout, since a direct terminal run sees nothing the file logger writes. */
 function logBanner(webui: Config['webui']): void {
-  const secure = isTlsEnabled(webui.tls);
-  const lines = [`navidrome-web listening on ${adminPageUrl(loopbackUrl(webui.port, secure))}`];
-  if (isLanReachable(webui.host)) {
-    for (const iface of listLanInterfaces(webui.port, secure)) {
-      lines.push(`  LAN: ${adminPageUrl(iface.url)} (${iface.iface})`);
-    }
-  }
+  const lines = buildBannerLines(webui);
   for (const line of lines) logger.info(line);
   process.stdout.write(`\n  ${lines.join('\n  ')}\n\n`);
 }
@@ -176,7 +170,8 @@ const SETUP_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
  * A user who launched the player first, even from the terminal-less desktop shortcut, needs a
  * visible path to configure. The settings page has no power button, so the server exits when idle.
  */
-async function runSetupMode(): Promise<void> {
+async function runSetupMode(failure?: StartupFailure): Promise<void> {
+  const headline = buildSetupHeadline(failure);
   const settings = await startConfigServer({
     idleTimeoutMs: SETUP_IDLE_TIMEOUT_MS,
     onIdleTimeout: () => {
@@ -187,11 +182,11 @@ async function runSetupMode(): Promise<void> {
     },
   });
 
-  logger.warn(`navidrome-web is not configured. Opening the settings page: ${settings.url}`);
+  logger.warn(`${headline} Opening the settings page: ${settings.url}`);
   // The logger writes to a file, so stdout carries the URL for a terminal run and for a host where
   // no browser opens.
   process.stdout.write(
-    `\n  navidrome-web is not configured yet.\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, re-launch navidrome-web.\n\n`,
+    `\n  ${headline}\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, re-launch navidrome-web.\n\n`,
   );
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] !== '0') openBrowser(settings.url);
 
@@ -210,7 +205,7 @@ async function main(): Promise<void> {
 
   const state = await resolveConfigState();
   if (!state.configured) {
-    await runSetupMode();
+    await runSetupMode(state.failure);
     return;
   }
   logger.setDebug(state.config.debug);
@@ -246,8 +241,9 @@ async function main(): Promise<void> {
     // An MCP-spawned copy lost a start race, and the owner already handled auto-open.
     const adminUrl = adminPageUrl(result.url);
     const runningMessage = `navidrome-web already running at ${adminUrl}`;
+    const tlsNote = result.url.startsWith('https:') ? `\n  ${TLS_LOCAL_ADDRESS_WARNING}` : '';
     logger.info(`${runningMessage}. Standing down.`);
-    process.stdout.write(`\n  ${runningMessage}\n\n`);
+    process.stdout.write(`\n  ${runningMessage}${tlsNote}\n\n`);
     if (!launchedByMcp) maybeOpenBrowser(adminUrl, config.webui.autoOpenBrowser);
     return;
   }

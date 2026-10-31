@@ -9,7 +9,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ServerCapabilities } from '@modelcontextprotocol/sdk/types.js';
 import { createRuntime, type Runtime } from './bootstrap.js';
-import { readSavedWebuiEndpoint, resolveConfigState, type Config } from './config.js';
+import { readSavedWebuiEndpoint, resolveConfigState, type Config, type ConfigSource, type StartupFailure } from './config.js';
 import { startHttpTransport, type HttpTransport } from './transport/http.js';
 import type { NavidromeClient } from './client/navidrome-client.js';
 import { isNavidromeUnreachable } from './client/auth-manager.js';
@@ -24,7 +24,7 @@ import { ensureWebForPlayback } from './web/spawn.js';
 import { holdOwnerLease } from './web/lease.js';
 import { probeWebOwner, webOwnerPresent } from './web/acquire.js';
 import { startConfigServer } from './config-app/server.js';
-import { buildSetupNotice, registerDegradedTools, type StartupFailure } from './config-app/degraded-tools.js';
+import { buildSetupNotice, registerDegradedTools } from './config-app/degraded-tools.js';
 import { openBrowser } from './utils/open-browser.js';
 import { isLanReachable } from './webui/network.js';
 
@@ -100,19 +100,20 @@ async function runSetupMode(failure?: StartupFailure): Promise<void> {
  * A stdio exit reaches the user only as a generic client disconnect, so a stdio startup failure
  * enters setup mode and reports the reason there. An HTTP startup failure exits.
  */
-async function createRuntimeOrSetupMode(config: Config): Promise<Runtime | null> {
+async function createRuntimeOrSetupMode(config: Config, source: ConfigSource): Promise<Runtime | null> {
   try {
     return await createRuntime(config);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     if (config.transport.type === 'http') {
-      throw new Error(
-        `${reason} (fix settings.json with navidrome-config, or the NAVIDROME_* environment variables when no settings.json exists, then restart)`,
-        { cause: error },
-      );
+      // navidrome-config binds loopback only, so a container running from env vars cannot reach it.
+      const remedy = source === 'env'
+        ? 'fix the environment variable that holds the named setting'
+        : 'fix settings.json with navidrome-config';
+      throw new Error(`${reason} (${remedy}, then restart)`, { cause: error });
     }
     logger.error('Navidrome MCP could not start with the current configuration:', error);
-    await runSetupMode({ reason, unreachable: isNavidromeUnreachable(error) });
+    await runSetupMode({ reason, unreachable: isNavidromeUnreachable(error), source });
     return null;
   }
 }
@@ -124,11 +125,11 @@ async function main(): Promise<void> {
 
   const state = await resolveConfigState();
   if (!state.configured) {
-    await runSetupMode();
+    await runSetupMode(state.failure);
     return;
   }
 
-  const runtime = await createRuntimeOrSetupMode(state.config);
+  const runtime = await createRuntimeOrSetupMode(state.config, state.source);
   if (runtime === null) return;
   const { config, client } = runtime;
 

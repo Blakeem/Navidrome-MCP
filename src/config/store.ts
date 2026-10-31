@@ -101,9 +101,14 @@ interface StoreContents {
   settings: SettingsFile | null;
   /** Kept when the schema rejects the file. Null when the file is absent, unreadable or not JSON. */
   parsed: unknown;
+  /** Why a present file is not usable. Both problem fields are null for an absent file or a usable one. */
+  problem: string | null;
+  problemKind: StoreProblemKind | null;
 }
 
-const NO_STORE: StoreContents = { settings: null, parsed: null };
+type StoreProblemKind = 'unreadable' | 'not-json' | 'invalid';
+
+const NO_STORE: StoreContents = { settings: null, parsed: null, problem: null, problemKind: null };
 
 const StoredAuthModeSchema = z.object({ webui: z.object({ auth: z.object({ mode: z.unknown() }) }) });
 
@@ -122,15 +127,28 @@ export function readRawSettings(): Record<string, unknown> | null {
   return settings === null ? null : parsed as Record<string, unknown>;
 }
 
+/** Lets the settings page say why it shows default and environment values instead of the file's. */
+export function readStoreProblem(): { text: string; unreadable: boolean } | null {
+  const { problem, problemKind } = readStore();
+  return problem === null ? null : { text: problem, unreadable: problemKind === 'unreadable' };
+}
+
 /**
  * The env fallback opens the web remote by default, so startup also learns whether the file names
- * an auth mode other than none, even when the schema rejects the file.
+ * an auth mode other than none, even when the schema rejects the file. A file that cannot be read
+ * or parsed cannot prove it names no auth mode, so it counts as one that does.
  */
-export function readSettingsForStartup(): { settings: SettingsFile | null; requestsWebuiAuth: boolean } {
-  const { settings, parsed } = readStore();
+export function readSettingsForStartup(): {
+  settings: SettingsFile | null;
+  requestsWebuiAuth: boolean;
+  problem: string | null;
+} {
+  const { settings, parsed, problem, problemKind } = readStore();
   const stored = StoredAuthModeSchema.safeParse(parsed);
   const mode = stored.success ? stored.data.webui.auth.mode : undefined;
-  return { settings, requestsWebuiAuth: mode !== undefined && mode !== null && mode !== 'none' };
+  const namesAuthMode = mode !== undefined && mode !== null && mode !== 'none';
+  const unparsable = problemKind === 'unreadable' || problemKind === 'not-json';
+  return { settings, requestsWebuiAuth: unparsable || namesAuthMode, problem };
 }
 
 function readStore(): StoreContents {
@@ -140,10 +158,8 @@ function readStore(): StoreContents {
     raw = readFileSync(path, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'ENOENT') {
-      logger.warn(`settings.json at ${path} is unreadable (${code ?? String(err)}), treating as unconfigured`);
-    }
-    return NO_STORE;
+    if (code === 'ENOENT') return NO_STORE;
+    return unusableStore(`settings.json at ${path} is unreadable (${code ?? String(err)})`, null, 'unreadable');
   }
   // Windows editors may prepend a UTF-8 BOM, which JSON.parse rejects.
   const text = raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
@@ -152,8 +168,7 @@ function readStore(): StoreContents {
   try {
     parsed = JSON.parse(text);
   } catch {
-    logger.warn(`settings.json is not valid JSON (${path}); treating as unconfigured`);
-    return NO_STORE;
+    return unusableStore(`settings.json is not valid JSON (${path})`, null, 'not-json');
   }
 
   const result = SettingsFileSchema.safeParse(parsed);
@@ -161,10 +176,15 @@ function readStore(): StoreContents {
     const issues = result.error.issues
       .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('; ');
-    logger.warn(`settings.json failed validation (${path}); treating as unconfigured [${issues}]`);
-    return { settings: null, parsed };
+    return unusableStore(`settings.json failed validation (${path}) [${issues}]`, parsed, 'invalid');
   }
-  return { settings: result.data, parsed };
+  return { settings: result.data, parsed, problem: null, problemKind: null };
+}
+
+// Startup decides between env fallback and setup mode, so this line states only that the values are dropped.
+function unusableStore(problem: string, parsed: unknown, kind: StoreProblemKind): StoreContents {
+  logger.warn(`${problem}. Its values are ignored.`);
+  return { settings: null, parsed, problem, problemKind: kind };
 }
 
 export function writeSettings(settings: SettingsFile): void {

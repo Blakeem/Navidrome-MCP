@@ -57,17 +57,27 @@ function isSameOrigin(origin: string, req: IncomingMessage): boolean {
   }
 }
 
+export const CROSS_ORIGIN_REFUSAL = 'Request refused, since it came from another site.';
+// Only the Origin compare reads the Host header and the scheme, so only its refusal names the proxy remedy.
+export const ORIGIN_MISMATCH_REFUSAL =
+  `${CROSS_ORIGIN_REFUSAL} A reverse proxy in front of the player must keep the browser's Host header and scheme.`;
+
 /**
- * A browser labels a cross-site POST with `Origin` or `Sec-Fetch-Site`. A client that sends neither
- * is not a browser, so no page can make it act with the user's access. An opaque origin sends
- * `Origin: null`, which fails the URL parse.
+ * The browser computes `Sec-Fetch-Site` from the page's real origin, so a reverse proxy that rewrites
+ * Host or terminates TLS cannot break it, and it decides alone when present. The Origin compare covers
+ * browsers that omit it. A client that sends neither is not a browser, so no page can make it act with
+ * the user's access. An opaque origin sends `Origin: null`, which fails the URL parse.
+ * Returns null for a request that may proceed.
  */
-export function isCrossOriginPost(req: IncomingMessage): boolean {
+export function crossOriginRefusal(req: IncomingMessage): string | null {
   const origin = req.headers.origin;
   const fetchSite = req.headers['sec-fetch-site'];
-  if (origin !== undefined && !isSameOrigin(origin, req)) return true;
-  if (fetchSite === undefined) return false;
-  return typeof fetchSite !== 'string' || !ALLOWED_FETCH_SITES.has(fetchSite.trim().toLowerCase());
+  if (fetchSite !== undefined) {
+    const allowed = typeof fetchSite === 'string' && ALLOWED_FETCH_SITES.has(fetchSite.trim().toLowerCase());
+    return allowed ? null : CROSS_ORIGIN_REFUSAL;
+  }
+  if (origin === undefined || isSameOrigin(origin, req)) return null;
+  return ORIGIN_MISMATCH_REFUSAL;
 }
 
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {

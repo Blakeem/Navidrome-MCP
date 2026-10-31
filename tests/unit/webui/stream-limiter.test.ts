@@ -3,11 +3,13 @@ import type { ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SSE_END_FLUSH_GRACE_MS } from '../../../src/webui/http-helpers.js';
 import {
-  MAX_OPEN_STREAMS,
+  MAX_GUEST_STREAMS,
+  MAX_HOST_STREAMS,
   STREAM_EVICTED_EVENT,
   STREAMS_PER_ADDRESS,
   STREAMS_PER_SESSION_ROUTE,
   StreamLimiter,
+  type StreamPool,
   type StreamRoute,
 } from '../../../src/webui/stream-limiter.js';
 
@@ -40,8 +42,15 @@ function fake(): FakeStream {
   return new FakeStream();
 }
 
-function admit(limiter: StreamLimiter, stream: FakeStream, route: StreamRoute, sessionId: string | null, address = '192.168.1.50'): boolean {
-  return limiter.admit(stream as unknown as ServerResponse, route, sessionId, address);
+function admit(
+  limiter: StreamLimiter,
+  stream: FakeStream,
+  route: StreamRoute,
+  sessionId: string | null,
+  address = '192.168.1.50',
+  pool: StreamPool = 'host',
+): boolean {
+  return limiter.admit(stream as unknown as ServerResponse, route, pool, sessionId, address);
 }
 
 /** Opens `count` streams and returns them oldest first. */
@@ -200,9 +209,9 @@ describe('StreamLimiter eviction of a backlogged stream', () => {
   });
 });
 
-describe('StreamLimiter server-wide cap', () => {
+describe('StreamLimiter host pool cap', () => {
   function fillServer(limiter: StreamLimiter): FakeStream[] {
-    return Array.from({ length: MAX_OPEN_STREAMS }, (_, i) => {
+    return Array.from({ length: MAX_HOST_STREAMS }, (_, i) => {
       const stream = fake();
       admit(limiter, stream, '/api/events', `session-${String(i)}`);
       return stream;
@@ -230,11 +239,39 @@ describe('StreamLimiter server-wide cap', () => {
   it('admits a stream at the cap that replaces the oldest stream of its own scope', () => {
     const limiter = new StreamLimiter();
     const scoped = openMany(limiter, STREAMS_PER_SESSION_ROUTE, '/api/events', 'ana');
-    for (let i = 0; i < MAX_OPEN_STREAMS - STREAMS_PER_SESSION_ROUTE; i += 1) {
+    for (let i = 0; i < MAX_HOST_STREAMS - STREAMS_PER_SESSION_ROUTE; i += 1) {
       admit(limiter, fake(), '/api/events', `session-${String(i)}`);
     }
 
     expect(admit(limiter, fake(), '/api/events', 'ana')).toBe(true);
     expect(scoped.map((stream) => stream.destroyed)).toEqual([true, false, false]);
+  });
+});
+
+describe('StreamLimiter guest pool cap', () => {
+  function fillGuestPool(limiter: StreamLimiter): FakeStream[] {
+    return Array.from({ length: MAX_GUEST_STREAMS }, (_, i) => {
+      const stream = fake();
+      admit(limiter, stream, '/api/guest/events', `guest-${String(i)}`, '192.168.1.50', 'guest');
+      return stream;
+    });
+  }
+
+  it('refuses a further guest stream while a host stream is still admitted', () => {
+    const limiter = new StreamLimiter();
+    const guests = fillGuestPool(limiter);
+
+    expect(admit(limiter, fake(), '/api/guest/events', 'guest-new', '192.168.1.50', 'guest')).toBe(false);
+    expect(admit(limiter, fake(), '/api/events', 'admin', '192.168.1.50', 'host')).toBe(true);
+    expect(admit(limiter, fake(), '/api/events', null, '192.168.1.60', 'host')).toBe(true);
+    expect(guests.some((stream) => stream.destroyed)).toBe(false);
+  });
+
+  it('admits a guest stream while the host pool is full', () => {
+    const limiter = new StreamLimiter();
+    for (let i = 0; i < MAX_HOST_STREAMS; i += 1) admit(limiter, fake(), '/api/events', `admin-${String(i)}`);
+
+    expect(admit(limiter, fake(), '/api/events', 'admin-new')).toBe(false);
+    expect(admit(limiter, fake(), '/api/guest/events', 'guest', '192.168.1.50', 'guest')).toBe(true);
   });
 });

@@ -103,7 +103,7 @@ Gate observations:
 
 - The host gate runs on every bind. A loopback bind accepts only a loopback `Host` (`server.ts:121`). A LAN bind accepts an IP literal, `localhost`, the machine's host name, `<host name>.local` or a `webui.allowedHosts` entry (`server.ts:125`, `loopback.ts:48`). A page on `evil.example` that rebinds its name to the host's LAN IP sends `Host: evil.example` and gets 403 [DIRECT: code].
 - The JSON gate is today's CSRF defense. A cross-site form cannot send `application/json`, and a cross-origin `fetch` with that type needs a CORS preflight [DIRECT: Fetch spec, 2026-10-06]. The server answers `OPTIONS` with 404 (`server.ts:198`) and sends no CORS headers, so the preflight fails [DIRECT: code].
-- The POST origin gate (`isCrossOriginPost` in `http-helpers.ts`) reads `Origin` and `Sec-Fetch-Site` [DIRECT: code].
+- The POST origin gate (`crossOriginRefusal` in `http-helpers.ts`) reads `Origin` and `Sec-Fetch-Site` [DIRECT: code].
 - No rate limit exists. No cap bounds SSE clients (`broadcaster.ts:85-93`, `visualizer-hub.ts:42-56`).
 - `README.md:425-433` documents the open routes and warns against internet exposure.
 

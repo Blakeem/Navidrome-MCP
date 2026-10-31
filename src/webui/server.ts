@@ -22,7 +22,7 @@ import { JOIN_ROUTE_PATH } from './auth/session-cookie.js';
 import type { SessionRecord } from './auth/auth-store.js';
 import type { Permission } from './auth/roles.js';
 import {
-  isCrossOriginPost,
+  crossOriginRefusal,
   isJsonContentType,
   openSseStream,
   setSecurityHeaders,
@@ -85,7 +85,7 @@ import {
 import { handleStatic, PUBLIC_DIR } from './routes/static-files.js';
 import { handleVisualizerModes } from './routes/visualizer-modes.js';
 import { classifySource, networkKey, sourceAddress } from './source-address.js';
-import { REFUSED_STREAM_RETRY_MS, StreamLimiter, type StreamRoute } from './stream-limiter.js';
+import { REFUSED_STREAM_RETRY_MS, STREAMS_PER_GUEST_PAGE, StreamLimiter, type StreamRoute } from './stream-limiter.js';
 import { isTlsEnabled, loadTlsPair, TLS_MIN_VERSION, watchTlsPair } from './tls.js';
 import type { VisualizerHub } from './visualizer-hub.js';
 
@@ -136,8 +136,8 @@ interface ConnectionLimits {
 const CONNECTION_LIMITS: ConnectionLimits = { lan: 256, perPeer: 64, public: 8, perPublicNetwork: 8 };
 // A browser holds up to six sockets plus two streams, so a remote admin needs a larger budget.
 const INTERNET_PEER_CONNECTION_LIMITS: ConnectionLimits = { ...CONNECTION_LIMITS, public: 64, perPublicNetwork: 16 };
-// An open guest page holds the guest stream, the visualizer stream and one keep-alive fetch socket.
-const SOCKETS_PER_GUEST_PAGE = 3;
+// An open guest page holds its streams and one keep-alive fetch socket.
+const SOCKETS_PER_GUEST_PAGE = STREAMS_PER_GUEST_PAGE + 1;
 // Guests on mobile data can share one carrier-NAT address, so one internet network may hold this many pages.
 const GUEST_PAGES_PER_PUBLIC_NETWORK = 20;
 /**
@@ -156,6 +156,12 @@ const PUBLIC_SOURCE_REFUSAL =
   'The web remote refuses internet addresses unless Access uses the admin password and the admin login is allowed ' +
   'from anywhere, or Access includes the jukebox and a jukebox code is open. Connect from the local network or over a VPN, or change the access settings on the settings page.';
 
+// An internet guest who reloads the guest page reads it as well as the owner, so it is worded for both.
+function closedJukeboxRefusal(adminAccess: AuthService['adminAccess']): string {
+  const ownerPlace = adminAccess === 'localhost' ? "the player's computer" : 'the local network';
+  return `The jukebox is closed. Guests can ask the host for a new code. The owner can connect from ${ownerPlace}.`;
+}
+
 const NETWORK_BAN_REFUSAL = 'Access denied';
 
 type InternetAccess = Pick<AuthService, 'mode' | 'adminAccess' | 'hasJukeboxCode'>;
@@ -167,6 +173,25 @@ type InternetAccess = Pick<AuthService, 'mode' | 'adminAccess' | 'hasJukeboxCode
 function servesInternetPeers(auth: InternetAccess): boolean {
   if (auth.mode === 'none') return false;
   return auth.adminAccess === 'anywhere' || isJukeboxOpen(auth);
+}
+
+/** A guest page reload is a browser page load, so a closed jukebox answers it in text instead of JSON. */
+function refusePublicSource(res: ServerResponse, auth: InternetAccess, url: string | undefined): void {
+  if (auth.mode !== 'jukebox') {
+    writeError(res, 403, PUBLIC_SOURCE_REFUSAL);
+    return;
+  }
+  const refusal = closedJukeboxRefusal(auth.adminAccess);
+  if (url?.startsWith('/api/') === true) {
+    writeError(res, 403, refusal);
+    return;
+  }
+  res.writeHead(403, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Content-Length': Buffer.byteLength(refusal).toString(),
+    'Cache-Control': 'no-store',
+  });
+  res.end(refusal);
 }
 
 function isJukeboxOpen(auth: InternetAccess): boolean {
@@ -293,15 +318,17 @@ interface Route {
 }
 
 /**
- * Counts the stream against the stream caps. The server-wide cap refuses a stream with an empty
- * stream that ends at once, so the browser reconnects after the retry interval.
+ * Counts the stream against the stream caps. A full pool refuses a stream with an empty stream that
+ * ends at once, so the browser reconnects after the retry interval. Only a guest session draws from
+ * the guest pool, so the host on the guest page, a local principal and mode `none` keep their streams.
  * Logout, expiry, a password change and closing the jukebox close a session's streams, so each stream
  * is tagged with it.
  */
 function admitStream({ deps, principal, req, res, streams }: RouteContext, route: StreamRoute): boolean {
   const sessionId = sessionIdOf(principal);
   const address = req.socket.remoteAddress;
-  if (!streams.admit(res, route, sessionId, address)) {
+  const pool = principal.kind === 'guest' ? 'guest' : 'host';
+  if (!streams.admit(res, route, pool, sessionId, address)) {
     openSseStream(res, REFUSED_STREAM_RETRY_MS);
     res.end();
     return false;
@@ -528,7 +555,7 @@ async function handleRequest(
   }
 
   if (!servesInternetPeers(deps.auth) && classifySource(req.socket.remoteAddress) === 'public') {
-    writeError(res, 403, PUBLIC_SOURCE_REFUSAL);
+    refusePublicSource(res, deps.auth, req.url);
     return;
   }
 
@@ -560,8 +587,9 @@ async function handleRequest(
     return;
   }
 
-  if (method === 'POST' && isCrossOriginPost(req)) {
-    writeError(res, 403, 'Cross-origin request refused');
+  const originRefusal = method === 'POST' ? crossOriginRefusal(req) : null;
+  if (originRefusal !== null) {
+    writeError(res, 403, originRefusal);
     return;
   }
 

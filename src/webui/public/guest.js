@@ -35,6 +35,8 @@ const HOST_PLAYER_LINK = 'Open the player';
 const HOST_OPEN_POLL_MS = 5000;
 // The end reason outlives a reload, since the ended session leaves the server nothing to say why.
 const ENDED_REASON_KEY = 'navidrome-mcp.guest-end-reason';
+const EVICTED_TITLE = 'This page is open in another tab';
+const EVICTED_HELP = 'Reload this page to use it here.';
 // A refusal carries the server's error text, so a reply with no body means the request never got an answer.
 const NO_ANSWER = 'The player did not answer. Check the connection and try again.';
 
@@ -170,6 +172,13 @@ function showEnded(reason) {
   showEndCard(reason);
 }
 
+// The session stays valid, so no end reason is stored, and the card hides the stale Add buttons.
+function showEvictedCard() {
+  if (tickTimer !== null) window.clearInterval(tickTimer);
+  tickTimer = null;
+  showJoinCard(EVICTED_TITLE, { help: EVICTED_HELP });
+}
+
 // The host keeps its admin session when the jukebox closes, so an end reason or a live admin session
 // means the jukebox closed, and anything else means the admin session ended.
 async function showHostEnded(reason) {
@@ -221,6 +230,7 @@ function startGuestView(csrfToken, role) {
     onSnapshot: applySnapshot,
     onClosed: () => void checkSessionEnded(),
     onEnded: showEnded,
+    onEvicted: showEvictedCard,
   });
 }
 

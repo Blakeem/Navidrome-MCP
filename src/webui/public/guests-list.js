@@ -26,6 +26,8 @@ const banList = byId('ban-list');
 const banMessage = byId('ban-message');
 
 let banTarget = null;
+// The Ban button that opened the panel, so Cancel returns focus to its row.
+let banOpener = null;
 let rotateCode = async () => null;
 let onChange = async () => {};
 
@@ -35,7 +37,7 @@ export function bindGuestList({ rotate, changed }) {
   rotateCode = rotate;
   onChange = changed;
   banConfirm.addEventListener('click', () => void confirmBan());
-  banCancel.addEventListener('click', closeBanPanel);
+  banCancel.addEventListener('click', cancelBan);
 }
 
 export function resetGuests() {
@@ -83,8 +85,8 @@ function buildGuestRow(guest) {
   info.append(head, details, buildSongs(guest.songs));
   actions.className = 'guest-row-actions';
   actions.append(
-    buildButton('Remove', ICON_REMOVE, 'btn-secondary small', (event) => void removeGuest(guest, event.currentTarget)),
-    buildButton('Ban', ICON_BAN, 'btn-secondary small danger', () => openBanPanel(guest)),
+    buildButton('Remove', `Remove ${displayName(guest)}`, ICON_REMOVE, 'btn-secondary small', (event) => void removeGuest(guest, event.currentTarget)),
+    buildButton('Ban', `Ban ${displayName(guest)}`, ICON_BAN, 'btn-secondary small danger', (event) => openBanPanel(guest, event.currentTarget)),
   );
   li.append(info, actions);
   return li;
@@ -112,10 +114,12 @@ function buildSongs(songs) {
   return details;
 }
 
-function buildButton(text, iconPath, className, onClick) {
+// The icon is aria-hidden, so `ariaLabel` names the row's target. It starts with the visible text.
+function buildButton(text, ariaLabel, iconPath, className, onClick) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = className;
+  button.setAttribute('aria-label', ariaLabel);
   button.append(buildIcon('', iconPath, SYMBOL_VIEWBOX), text);
   button.addEventListener('click', onClick);
   return button;
@@ -132,10 +136,12 @@ async function removeGuest(guest, button) {
   button.disabled = false;
 }
 
-// No network ban blocks this computer, so the server refuses a network ban on a loopback guest.
-function openBanPanel(guest) {
+// No network ban blocks this computer, so the server refuses a network ban on a loopback guest. The panel
+// sits below the entire list, so focus moves into it, which scrolls it into view.
+function openBanPanel(guest, opener) {
   const loopback = guest.addressClass === 'loopback';
   banTarget = guest;
+  banOpener = opener;
   banTitle.textContent = `Ban ${displayName(guest)}? They are signed out and their waiting songs leave the queue. Their browser stays blocked until the jukebox closes, but a private window or another device gets around it.`;
   banHours.value = loopback ? '0' : DEFAULT_NETWORK_BAN_HOURS;
   banHours.disabled = loopback;
@@ -146,6 +152,8 @@ function openBanPanel(guest) {
   setHidden(banWarn, banWarn.textContent === '');
   setHidden(banPanel, false);
   guestMessage.textContent = '';
+  // A disabled select cannot take focus.
+  (loopback ? banConfirm : banHours).focus();
 }
 
 function sharedWarnings(guest) {
@@ -160,7 +168,15 @@ function sharedWarnings(guest) {
 
 function closeBanPanel() {
   banTarget = null;
+  banOpener = null;
   setHidden(banPanel, true);
+}
+
+// A refresh may have rebuilt the rows, so a detached opener takes no focus.
+function cancelBan() {
+  const opener = banOpener;
+  closeBanPanel();
+  if (opener?.isConnected === true) opener.focus();
 }
 
 async function confirmBan() {
@@ -212,7 +228,9 @@ function buildBanRow(ban) {
   info.className = 'guest-info';
   info.append(name, details);
   actions.className = 'guest-row-actions';
-  actions.appendChild(buildButton('Unban', ICON_UNBAN, 'btn-secondary small', (event) => void liftBan(ban, event.currentTarget)));
+  actions.appendChild(
+    buildButton('Unban', `Unban ${displayName(ban)}`, ICON_UNBAN, 'btn-secondary small', (event) => void liftBan(ban, event.currentTarget)),
+  );
   li.append(info, actions);
   return li;
 }

@@ -21,6 +21,7 @@ interface StubElement {
   value: string;
   checked: boolean;
   hidden: boolean;
+  disabled: boolean;
   type: string;
   textContent: string;
   className: string;
@@ -35,12 +36,15 @@ interface StubElement {
 }
 
 interface FormApi {
-  collectChecked: (confirmPassword?: boolean) => { webui: { auth: { adminPassword: string } } } | null;
+  collectChecked: (
+    confirmPassword?: boolean,
+  ) => { webui: { auth: { adminPassword: string } }; jukebox?: { guestQueueLimit?: number } } | null;
   renderAuthMode: () => void;
   renderAdminPasswordConfirm: () => void;
   renderExposeWarning: () => void;
   bindRevealButton: (button: StubElement) => void;
   markPasswordStored: () => void;
+  storeProblemMessage: (problem: string, unreadable: boolean) => string;
 }
 
 function stubElement(): StubElement {
@@ -50,6 +54,7 @@ function stubElement(): StubElement {
     value: '',
     checked: false,
     hidden: false,
+    disabled: false,
     type: 'text',
     textContent: '',
     className: '',
@@ -89,7 +94,7 @@ function loadForm(): { api: FormApi; byId: (id: string) => StubElement } {
     fetch: () => Promise.reject(new Error('offline')),
     crypto: globalThis.crypto,
   });
-  runInContext(`${APP_SOURCE}\nglobalThis.api = { collectChecked, renderAuthMode, renderAdminPasswordConfirm, renderExposeWarning, bindRevealButton, markPasswordStored: () => { adminPasswordSet = true; } };`, context);
+  runInContext(`${APP_SOURCE}\nglobalThis.api = { collectChecked, renderAuthMode, renderAdminPasswordConfirm, renderExposeWarning, bindRevealButton, storeProblemMessage, markPasswordStored: () => { adminPasswordSet = true; } };`, context);
   return { api: (context as { api: FormApi }).api, byId };
 }
 
@@ -163,6 +168,63 @@ describe('admin password confirmation', () => {
     form.byId('webuiAuthMode').value = 'none';
     form.api.renderAdminPasswordConfirm();
     expect(row.hidden).toBe(true);
+  });
+});
+
+describe('guest song limit row', () => {
+  let form: ReturnType<typeof loadForm>;
+
+  beforeEach(() => {
+    form = loadForm();
+    form.byId('webuiAuthMode').value = 'password';
+    form.api.markPasswordStored();
+  });
+
+  it('hides and disables an in-range limit outside jukebox mode, and omits it from the payload', () => {
+    form.byId('jukeboxGuestQueueLimit').value = '5';
+
+    form.api.renderAuthMode();
+
+    expect(form.byId('jukeboxGuestQueueLimitRow').hidden).toBe(true);
+    expect(form.byId('jukeboxGuestQueueLimit').disabled).toBe(true);
+    expect(form.api.collectChecked(true)?.jukebox?.guestQueueLimit).toBeUndefined();
+  });
+
+  it.each(['25', '2.5', '0'])('keeps an out-of-range limit %s visible and enabled, and posts it', (value) => {
+    form.byId('jukeboxGuestQueueLimit').value = value;
+
+    form.api.renderAuthMode();
+
+    expect(form.byId('jukeboxGuestQueueLimitRow').hidden).toBe(false);
+    expect(form.byId('jukeboxGuestQueueLimit').disabled).toBe(false);
+    expect(form.api.collectChecked(true)?.jukebox?.guestQueueLimit).toBe(parseInt(value, 10));
+  });
+
+  it('shows and enables the row in jukebox mode', () => {
+    form.byId('webuiAuthMode').value = 'jukebox';
+    form.byId('jukeboxGuestQueueLimit').value = '5';
+
+    form.api.renderAuthMode();
+
+    expect(form.byId('jukeboxGuestQueueLimitRow').hidden).toBe(false);
+    expect(form.byId('jukeboxGuestQueueLimit').disabled).toBe(false);
+    expect(form.api.collectChecked(true)?.jukebox?.guestQueueLimit).toBe(5);
+  });
+});
+
+describe('store problem notice', () => {
+  it('promises the backup for a store the server could read', () => {
+    const message = loadForm().api.storeProblemMessage('settings.json is not valid JSON (x)', false);
+
+    expect(message).toContain('settings.json.bak');
+    expect(message).not.toContain('permissions');
+  });
+
+  it('asks for the file to be fixed first when the server cannot read it', () => {
+    const message = loadForm().api.storeProblemMessage('settings.json at x is unreadable (EACCES)', true);
+
+    expect(message).toContain("Fix the file's permissions or move it away");
+    expect(message).not.toContain('settings.json.bak');
   });
 });
 

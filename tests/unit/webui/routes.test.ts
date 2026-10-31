@@ -9,6 +9,7 @@ import { hostname } from 'node:os';
 import type { Config } from '../../../src/config.js';
 import type { SettingsFile } from '../../../src/config/store.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
+import { CROSS_ORIGIN_REFUSAL, ORIGIN_MISMATCH_REFUSAL } from '../../../src/webui/http-helpers.js';
 
 // player.ts validates merged settings with the real SettingsFileSchema, so only disk I/O is fake.
 vi.mock('../../../src/config/store.js', async (importOriginal) => {
@@ -1461,19 +1462,21 @@ describe('POST Origin gate', () => {
   const shuffle = (headers: HeadersForPort): Promise<ServerReply> =>
     requestServer('POST', '/api/controls/shuffle', { headers: (port) => ({ ...JSON_HEADERS, ...headers(port) }), body: '{}' });
 
-  it.each<[string, HeadersForPort]>([
-    ['a foreign Origin', () => ({ Origin: 'http://evil.example' })],
-    ['an Origin on another port', () => ({ Origin: 'http://127.0.0.1:1' })],
-    ['an Origin with another scheme', (port) => ({ Origin: `https://127.0.0.1:${port}` })],
-    ['an Origin of null', () => ({ Origin: 'null' })],
-    ['Sec-Fetch-Site cross-site', () => ({ 'Sec-Fetch-Site': 'cross-site' })],
-    ['Sec-Fetch-Site same-site', () => ({ 'Sec-Fetch-Site': 'same-site' })],
-    ['its own Origin with Sec-Fetch-Site cross-site', (port) => ({ Origin: `http://127.0.0.1:${port}`, 'Sec-Fetch-Site': 'cross-site' })],
-  ])('refuses a POST with %s with 403 and runs no handler', async (_label, headers) => {
+  // Only the Origin compare reads the Host header, so only its refusal names the proxy remedy.
+  it.each<[string, HeadersForPort, string]>([
+    ['a foreign Origin', () => ({ Origin: 'http://evil.example' }), ORIGIN_MISMATCH_REFUSAL],
+    ['an Origin on another port', () => ({ Origin: 'http://127.0.0.1:1' }), ORIGIN_MISMATCH_REFUSAL],
+    ['an Origin with another scheme', (port) => ({ Origin: `https://127.0.0.1:${port}` }), ORIGIN_MISMATCH_REFUSAL],
+    ['an Origin of null', () => ({ Origin: 'null' }), ORIGIN_MISMATCH_REFUSAL],
+    ['Sec-Fetch-Site cross-site', () => ({ 'Sec-Fetch-Site': 'cross-site' }), CROSS_ORIGIN_REFUSAL],
+    ['Sec-Fetch-Site same-site', () => ({ 'Sec-Fetch-Site': 'same-site' }), CROSS_ORIGIN_REFUSAL],
+    ['its own Origin with Sec-Fetch-Site cross-site', (port) => ({ Origin: `http://127.0.0.1:${port}`, 'Sec-Fetch-Site': 'cross-site' }), CROSS_ORIGIN_REFUSAL],
+    ['its own Origin with Sec-Fetch-Site same-site', (port) => ({ Origin: `http://127.0.0.1:${port}`, 'Sec-Fetch-Site': 'same-site' }), CROSS_ORIGIN_REFUSAL],
+  ])('refuses a POST with %s with 403 and runs no handler', async (_label, headers, refusal) => {
     const reply = await shuffle(headers);
 
     expect(reply.status).toBe(403);
-    expect(JSON.parse(reply.body)).toEqual({ error: 'Cross-origin request refused' });
+    expect(JSON.parse(reply.body)).toEqual({ error: refusal });
     expect(shuffleQueueFromTop).not.toHaveBeenCalled();
   });
 
@@ -1483,6 +1486,10 @@ describe('POST Origin gate', () => {
     ['its own Origin with Sec-Fetch-Site same-origin', (port) => ({ Origin: `http://127.0.0.1:${port}`, 'Sec-Fetch-Site': 'same-origin' })],
     ['Sec-Fetch-Site none', () => ({ 'Sec-Fetch-Site': 'none' })],
     ['neither header, as a non-browser client sends', () => ({})],
+    // A default nginx proxy_pass sends the upstream address as Host, so only Sec-Fetch-Site can vouch.
+    ['a proxy-rewritten Host with Sec-Fetch-Site same-origin', () => ({ Origin: 'https://jukebox.example.com', 'Sec-Fetch-Site': 'same-origin' })],
+    // A TLS-terminating proxy delivers an https Origin to the plain HTTP socket.
+    ['an https Origin on the plain socket with Sec-Fetch-Site same-origin', (port) => ({ Origin: `https://127.0.0.1:${port}`, 'Sec-Fetch-Site': 'same-origin' })],
   ])('accepts a POST with %s', async (_label, headers) => {
     vi.mocked(shuffleQueueFromTop).mockResolvedValue({ success: true });
 

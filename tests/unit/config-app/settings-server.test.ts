@@ -4,11 +4,12 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startConfigServer } from '../../../src/config-app/server.js';
+import { CROSS_ORIGIN_REFUSAL } from '../../../src/webui/http-helpers.js';
 import { readSettings } from '../../../src/config/store.js';
 import { WEBUI_AUTH_MODES } from '../../../src/constants/defaults.js';
 import { verifyPassword } from '../../../src/utils/secrets.js';
@@ -86,6 +87,29 @@ describe('settings server seed/save', () => {
     const seed = await getJson(await fetch(`${base}/api/settings/seed`));
     expect(seed.navidrome.password).toBe(MASK);
     expect(seed.navidrome.url).toBe('http://h:4533');
+  });
+
+  it('names the field that voids an unusable store in the seed response', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533' }, webui: { auth: { mode: 'Jukebox' } } }));
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.storeProblem).toEqual(expect.stringContaining('webui.auth.mode'));
+    expect(seed.storeUnreadable).toBe(false);
+  });
+
+  it('marks a store the server cannot read as unreadable in the seed response', async () => {
+    mkdirSync(file);
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.storeProblem).toMatch(/is unreadable \(EISDIR\)/);
+    expect(seed.storeUnreadable).toBe(true);
+  });
+
+  it('answers a null store problem for a usable store and for no store', async () => {
+    const base = await start();
+    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeProblem: null, storeUnreadable: false });
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } }));
+    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeProblem: null, storeUnreadable: false });
   });
 
   it('masks the MCP auth token in the seed response', async () => {
@@ -491,6 +515,7 @@ describe('settings server seed/save', () => {
       body: JSON.stringify({ navidrome: { url: 'http://attacker.example', username: 'u', password: MASK } }),
     });
     expect(res.status).toBe(403);
+    expect(await getJson(res)).toEqual({ error: CROSS_ORIGIN_REFUSAL });
     expect(readSettings()).toEqual(stored);
   });
 

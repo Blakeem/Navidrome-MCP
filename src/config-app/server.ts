@@ -8,7 +8,13 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleSettingsRoute } from './routes.js';
-import { isCrossOriginPost, isJsonContentType, setSecurityHeaders, writeError } from '../webui/http-helpers.js';
+import {
+  CROSS_ORIGIN_REFUSAL,
+  crossOriginRefusal,
+  isJsonContentType,
+  setSecurityHeaders,
+  writeError,
+} from '../webui/http-helpers.js';
 import { hasProxyForwardingHeader, isLoopbackHostHeader, isLoopbackPeer } from '../webui/loopback.js';
 import { handleStatic } from '../webui/routes/static-files.js';
 import { logger } from '../utils/logger.js';
@@ -102,8 +108,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
-  if (method === 'POST' && isCrossOriginPost(req)) {
-    writeError(res, 403, 'Cross-origin request refused');
+  // The settings page is local-only, so the refusal names no proxy remedy.
+  if (method === 'POST' && crossOriginRefusal(req) !== null) {
+    writeError(res, 403, CROSS_ORIGIN_REFUSAL);
     return;
   }
 

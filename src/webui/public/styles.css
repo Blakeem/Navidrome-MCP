@@ -552,10 +552,11 @@ main {
 }
 /* An empty line leaves the flex flow so it adds no gap. It stays in the accessibility tree,
    so the live region still announces the next message. */
-.control-status:empty {
+[aria-live]:empty {
   position: absolute;
   width: 1px;
   height: 1px;
+  padding: 0;
   overflow: hidden;
   clip-path: inset(50%);
 }
@@ -822,8 +823,6 @@ main {
 }
 
 .modal-hint { font-size: 0.82rem; }
-/* Out of the flow while empty, so an idle status line adds no gap, yet it stays in place for screen readers to announce. */
-.modal-hint[aria-live]:empty { position: absolute; }
 
 .network-list {
   list-style: none;
@@ -956,6 +955,7 @@ body.login-required .topbar-actions { display: none; }
 .login-view {
   display: flex;
   justify-content: center;
+  width: 100%;
   padding: 32px 16px;
 }
 .login-view[hidden],
@@ -982,9 +982,10 @@ body.login-required .topbar-actions { display: none; }
 .login-status:empty { display: none; }
 
 body.player-stopped main,
-body.player-stopped .topbar-actions .ghost-btn { opacity: 0.45; }
-body.player-stopped::after {
-  content: 'Player stopped. Relaunch navidrome-web or restart the MCP server to use it again.';
+body.player-stopped .topbar-actions .ghost-btn,
+body.stream-evicted main { opacity: 0.45; }
+body.player-stopped::after,
+body.stream-evicted::after {
   display: block;
   position: fixed;
   inset: auto 0 0 0;
@@ -993,6 +994,14 @@ body.player-stopped::after {
   background: var(--surface-2);
   color: var(--text-muted);
   font-size: 0.9rem;
+}
+body.player-stopped::after {
+  content: 'Player stopped. Relaunch navidrome-web or restart the MCP server to use it again.';
+}
+/* The connection label is hidden at phone width, so the notice names the cause. It sits above the lyrics overlay. */
+body.stream-evicted::after {
+  content: 'This page closed because it is open in other tabs or windows on this device. Reload it to use it here.';
+  z-index: 30;
 }
 
 /* One row that scrolls sideways, so the tabs never wrap on a narrow phone. */
@@ -1399,7 +1408,6 @@ body.player-stopped::after {
   font-size: 0.95rem;
   color: var(--text-muted);
 }
-.lyrics-status:empty { display: none; }
 
 .lyrics-placard-head {
   display: block;
@@ -1722,7 +1730,6 @@ body.player-stopped::after {
   background: linear-gradient(to right, var(--accent) var(--progress, 0%), var(--surface-2) var(--progress, 0%));
 }
 .guest-jukebox { margin: 0; padding: 0 4px; font-size: 0.88rem; color: var(--text-muted); }
-.guest-jukebox:empty { display: none; }
 .guest-name [hidden] { display: none; }
 .guest-who {
   display: flex;
@@ -1752,7 +1759,6 @@ body.player-stopped::after {
 .guest-queue-more { margin: 8px 14px 0; }
 .guest-lyrics-toggle { margin-left: auto; }
 .guest-lyrics-status { margin: 0; padding: 4px 14px; font-size: 0.9rem; color: var(--text-muted); }
-.guest-lyrics-status:empty { display: none; }
 .guest-lyrics-lines {
   list-style: none;
   margin: 0;
@@ -1772,7 +1778,6 @@ body.player-stopped::after {
 .guest-slots { margin-left: auto; font-size: 0.85rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .guest-search { padding: 0 14px 6px; }
 .guest-add-status { margin: 0; padding: 4px 14px; font-size: 0.9rem; color: var(--text-muted); }
-.guest-add-status:empty { display: none; }
 .guest-results { max-height: 40svh; }
 /* The minimum width fits the longest label, so the row stays still while the label changes. */
 .guest-add-btn { flex: none; min-width: 8.5rem; padding-inline: 12px; }

@@ -1,6 +1,7 @@
 import { postLogin } from './api.js';
 import { stopConnection } from './connection.js';
 import { bindPasswordReveal, byId, setHidden } from './dom.js';
+import { closeLyrics } from './lyrics-view.js';
 import { loginCard } from './page-view.js';
 
 const view = byId('login-view');
@@ -40,9 +41,12 @@ function loginHelp(card, session) {
   return card === 'unavailable' ? UNAVAILABLE_HELP : LOGIN_HELP;
 }
 
-// The stream closes first, so it stops reconnecting with the ended session.
+// The stream closes first, so it stops reconnecting with the ended session. The open dialogs and the
+// lyrics overlay close next, since they would cover the login card.
 export function showLoginView(session) {
   stopConnection();
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+  closeLyrics();
   document.body.classList.add('login-required');
   view.hidden = false;
   address.textContent = session === null ? '' : `Your address as the player sees it: ${session.yourAddress}`;

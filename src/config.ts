@@ -61,50 +61,73 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
 /** Tells the web player whether env-only values, such as WEBUI_ADMIN_PASSWORD, apply. */
 export type ConfigSource = 'store' | 'env';
 
+export interface StartupFailure {
+  reason: string;
+  /** Navidrome could not be reached, so the configuration was never judged. */
+  unreachable: boolean;
+  /** Picks the remedy, since env vars cannot fix a store and a settings save replaces env. */
+  source: ConfigSource;
+}
+
 /**
  * Lets the entry point branch into setup mode without turning `Config` into a union,
- * so every `Config` field stays non-optional.
+ * so every `Config` field stays non-optional. An absent failure means a first run.
  */
 type ConfigState =
   | { configured: true; config: Config; source: ConfigSource }
-  | { configured: false };
+  | { configured: false; failure?: StartupFailure };
+
+function rejected(source: ConfigSource, reason: string): ConfigState {
+  return { configured: false, failure: { reason, unreachable: false, source } };
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export async function resolveConfigState(): Promise<ConfigState> {
-  const { settings, requestsWebuiAuth } = readSettingsForStartup();
-  const url = settings?.navidrome?.url;
-  if (settings === null || url === undefined || url.trim() === '') {
-    return await resolveEnvFallbackState(requestsWebuiAuth);
+  const store = readSettingsForStartup();
+  const url = store.settings?.navidrome?.url;
+  if (store.settings === null || url === undefined || url.trim() === '') {
+    return await resolveEnvFallbackState(store);
   }
 
   try {
     // Reuse the snapshot the URL guard read, since a second read could see a concurrent save.
-    return { configured: true, config: await loadConfig(settings), source: 'store' };
+    return { configured: true, config: await loadConfig(store.settings), source: 'store' };
   } catch (err) {
     // An invalid store opens the settings GUI instead of crashing. The logged reason
     // keeps a malformed hand-edited store from looking like a fresh first run.
     logger.warn('settings.json is present but invalid; entering setup mode:', err);
-    return { configured: false };
+    return rejected('store', errorMessage(err));
   }
 }
 
+/** The env config defaults the web remote to open, so it must not replace a store that asked for auth. */
+function envSkipReason(problem: string | null): string {
+  const cause = problem ?? `settings.json at ${getSettingsStorePath()} has no Navidrome URL`;
+  return (
+    `${cause}. The environment fallback is skipped, since the file names, or may name, a web remote ` +
+    'auth mode other than none. Fix the store, or remove it to run from the environment variables.'
+  );
+}
+
 /**
- * Applies only when settings.json is absent, unreadable, malformed, or has no Navidrome URL, and
+ * Applies only when settings.json is absent, fails the settings schema, or has no Navidrome URL, and
  * names no web remote auth mode other than none. A rejected env config logs its reason, so set env
  * vars never fail without a trace.
  */
-async function resolveEnvFallbackState(storeRequestsWebuiAuth: boolean): Promise<ConfigState> {
+async function resolveEnvFallbackState(store: ReturnType<typeof readSettingsForStartup>): Promise<ConfigState> {
+  if (store.requestsWebuiAuth) {
+    const reason = envSkipReason(store.problem);
+    logger.warn(`${reason} Setup mode starts.`);
+    return rejected('store', reason);
+  }
   const envSettings = buildEnvRuntimeSettings();
   const envUrl = envSettings.navidrome?.url;
   if (envUrl === undefined || envUrl.trim() === '') {
-    return { configured: false };
-  }
-  // The env config defaults the web remote to open, so it must not replace a store that asked for auth.
-  if (storeRequestsWebuiAuth) {
-    logger.warn(
-      `settings.json at ${getSettingsStorePath()} sets webui.auth.mode but is not usable, so the ` +
-      'environment fallback is skipped and setup mode starts. Fix the store, or remove it to run from the environment variables.'
-    );
-    return { configured: false };
+    // A present store that failed to load is a rejected config, not a first run.
+    return store.problem === null ? { configured: false } : rejected('store', store.problem);
   }
 
   try {
@@ -119,7 +142,9 @@ async function resolveEnvFallbackState(storeRequestsWebuiAuth: boolean): Promise
       'NAVIDROME_URL is set but the environment-derived config is invalid; entering setup mode:',
       err
     );
-    return { configured: false };
+    // A schema-invalid store also reaches the env path, so the reason says the file was ignored.
+    const ignoredStore = store.problem === null ? '' : `${store.problem}. Its values are ignored. `;
+    return rejected('env', `${ignoredStore}The environment-derived config is invalid: ${errorMessage(err)}`);
   }
 }
 

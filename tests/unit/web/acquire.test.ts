@@ -19,12 +19,20 @@ import {
   type WebEndpoint,
   acquireOrAttach,
   probeHealthz,
+  probeOwner,
   probeWebOwner,
   webOwnerPresent,
 } from '../../../src/web/acquire.js';
+import { loopbackRequest } from '../../../src/web/loopback-client.js';
 import { HEALTH_APP_ID } from '../../../src/webui/routes/health.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
 import { readPair, TLS_PAIR_A, TLS_PAIR_PUBLIC } from '../../helpers/tls-fixtures.js';
+
+// A pass-through spy, so a test can count the probes while every probe still reaches its socket.
+vi.mock('../../../src/web/loopback-client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/web/loopback-client.js')>();
+  return { ...actual, loopbackRequest: vi.fn(actual.loopbackRequest) };
+});
 
 const config = makeTestConfig();
 
@@ -50,7 +58,7 @@ function deps(
     probe: async () => {
       const outcome = probeOutcomes[Math.min(probeCalls, probeOutcomes.length - 1)];
       probeCalls += 1;
-      return outcome as ProbeOutcome;
+      return { outcome: outcome as ProbeOutcome, secure: false };
     },
     // eslint-disable-next-line @typescript-eslint/require-await -- AcquireDeps.bind is async
     bind: async () => {
@@ -110,7 +118,7 @@ describe('acquireOrAttach', () => {
 
   it('probes at the configured bind host', async () => {
     const lanConfig = makeTestConfig({ webui: { ...config.webui, host: '192.168.1.10' } });
-    const probe = vi.fn().mockResolvedValue('ours');
+    const probe = vi.fn().mockResolvedValue({ outcome: 'ours', secure: false });
     await acquireOrAttach(lanConfig, fakeServer, { probe, bind: vi.fn() });
 
     expect(probe).toHaveBeenCalledWith(8808, '192.168.1.10', false);
@@ -118,11 +126,30 @@ describe('acquireOrAttach', () => {
 
   it('probes over HTTPS and reports an https URL when a TLS pair is configured', async () => {
     const tlsConfig = makeTestConfig({ webui: { ...config.webui, tls: TLS_PAIR_A } });
-    const probe = vi.fn().mockResolvedValue('ours');
+    const probe = vi.fn().mockResolvedValue({ outcome: 'ours', secure: true });
     const result = await acquireOrAttach(tlsConfig, fakeServer, { probe, bind: vi.fn() });
 
     expect(probe).toHaveBeenCalledWith(8808, '127.0.0.1', true);
     expect(result.url).toBe('https://127.0.0.1:8808');
+  });
+
+  it("reports the owner's scheme in the attached URL when it differs from the configured one", async () => {
+    const probe = vi.fn().mockResolvedValue({ outcome: 'ours', secure: true });
+    const result = await acquireOrAttach(config, fakeServer, { probe, bind: vi.fn() });
+
+    expect(result).toEqual({ mode: 'attached', url: 'https://127.0.0.1:8808' });
+  });
+
+  it("reports the owner's scheme after a lost bind race", async () => {
+    const probe = vi.fn()
+      .mockResolvedValueOnce({ outcome: 'refused', secure: false })
+      .mockResolvedValueOnce({ outcome: 'ours', secure: true });
+    const bind = vi.fn().mockResolvedValue('eaddrinuse');
+
+    expect(await acquireOrAttach(config, fakeServer, { probe, bind })).toEqual({
+      mode: 'attached',
+      url: 'https://127.0.0.1:8808',
+    });
   });
 });
 
@@ -228,10 +255,45 @@ describe('owner probe over HTTPS', () => {
     expect(await probeHealthz(port, '127.0.0.1', false)).toBe('foreign');
   });
 
-  it('probes the saved endpoint again when only its scheme differs from the startup endpoint', async () => {
+  it('finds an HTTPS owner when the saved endpoint differs from the startup endpoint only in scheme', async () => {
     const port = await serveSecureHealthz();
 
     expect(await probeWebOwner(loopback(port), () => secureLoopback(port))).toEqual({ outcome: 'ours', port, secure: true });
+  });
+
+  it('finds an HTTPS owner from an HTTP-configured probe when the saved scheme matches the startup one', async () => {
+    const port = await serveSecureHealthz();
+
+    expect(await probeOwner(port, '127.0.0.1', false)).toEqual({ outcome: 'ours', secure: true });
+    expect(await probeWebOwner(loopback(port), () => loopback(port))).toEqual({ outcome: 'ours', port, secure: true });
+  });
+
+  it('finds an HTTP owner from an HTTPS-configured probe', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ app: HEALTH_APP_ID }));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    expect(await probeOwner(port, '127.0.0.1', true)).toEqual({ outcome: 'ours', secure: false });
+    expect(await probeWebOwner(secureLoopback(port), () => secureLoopback(port))).toEqual({
+      outcome: 'ours',
+      port,
+      secure: false,
+    });
+  });
+
+  it('keeps the preferred scheme on a refused probe, without a second try', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    vi.mocked(loopbackRequest).mockClear();
+
+    expect(await probeOwner(port, '127.0.0.1', true)).toEqual({ outcome: 'refused', secure: true });
+    expect(loopbackRequest).toHaveBeenCalledTimes(1);
   });
 });
 

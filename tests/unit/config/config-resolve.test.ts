@@ -49,6 +49,18 @@ describe('config resolution', () => {
   });
 
   const write = (obj: unknown): void => writeFileSync(file, JSON.stringify(obj));
+  const storeRejected = (reason: RegExp): unknown => ({
+    configured: false,
+    failure: { reason: expect.stringMatching(reason), unreachable: false, source: 'store' },
+  });
+  const envRejected = {
+    configured: false,
+    failure: {
+      reason: expect.stringMatching(/^The environment-derived config is invalid: Configuration validation failed/),
+      unreachable: false,
+      source: 'env',
+    },
+  };
 
   describe('loadConfig mapping', () => {
     it('maps the core required fields', async () => {
@@ -294,8 +306,8 @@ describe('config resolution', () => {
 
     it('rejects an unknown transport type', async () => {
       write({ ...BASE, transport: { type: 'websocket' } });
-      // SettingsFileSchema rejects the unknown enum value, so the store reads as unconfigured.
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      // SettingsFileSchema rejects the unknown enum value, so the store is rejected, not a first run.
+      expect(await resolveConfigState()).toEqual(storeRejected(/failed validation .*transport\.type/));
     });
 
     it('requires BOTH provider and user agent to enable lyrics', async () => {
@@ -345,14 +357,14 @@ describe('config resolution', () => {
       expect(await resolveConfigState()).toEqual({ configured: false });
     });
 
-    it('is unconfigured for corrupt JSON', async () => {
+    it('rejects the store for corrupt JSON', async () => {
       writeFileSync(file, '{ broken');
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(storeRejected(/settings\.json is not valid JSON/));
     });
 
-    it('is unconfigured when present-but-invalid (bad URL)', async () => {
+    it('rejects the store when present-but-invalid (bad URL)', async () => {
       write({ navidrome: { url: 'not-a-url', username: 'u', password: 'p' } });
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(storeRejected(/Configuration validation failed/));
     });
   });
 
@@ -413,7 +425,15 @@ describe('config resolution', () => {
     ])('enters setup mode instead of the open env fallback for a store with %s', async (_label, store) => {
       write(store);
       setEnvCreds();
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(storeRejected(/The environment fallback is skipped/));
+    });
+
+    it('enters setup mode instead of the open env fallback for a store with a JSON syntax error', async () => {
+      writeFileSync(file, '{"navidrome": {"url": "http://h:4533"}, "webui": {"auth": {"mode": "jukebox"}},}');
+      setEnvCreds();
+      expect(await resolveConfigState()).toEqual(
+        storeRejected(/settings\.json is not valid JSON .*The environment fallback is skipped/),
+      );
     });
 
     it.each([
@@ -435,16 +455,31 @@ describe('config resolution', () => {
       }
     });
 
-    it('is unconfigured when the env config is incomplete (URL only)', async () => {
+    it('rejects the env config when it is incomplete (URL only)', async () => {
       process.env['NAVIDROME_URL'] = 'http://env-host:4533';
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(envRejected);
     });
 
-    it('is unconfigured when NAVIDROME_URL is not a valid URL', async () => {
+    it('rejects the env config when NAVIDROME_URL is not a valid URL', async () => {
       process.env['NAVIDROME_URL'] = 'not-a-url';
       process.env['NAVIDROME_USERNAME'] = 'u';
       process.env['NAVIDROME_PASSWORD'] = 'p';
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(envRejected);
+    });
+
+    it('names the ignored invalid store when the env config is then rejected', async () => {
+      write({ ...BASE, transport: { type: 'HTTP' } });
+      process.env['NAVIDROME_URL'] = 'http://env-host:4533';
+      expect(await resolveConfigState()).toEqual({
+        configured: false,
+        failure: {
+          reason: expect.stringMatching(
+            /^settings\.json failed validation .*transport\.type.*\. Its values are ignored\. The environment-derived config is invalid: /,
+          ),
+          unreachable: false,
+          source: 'env',
+        },
+      });
     });
 
     it('ignores a blank NAVIDROME_URL', async () => {

@@ -16,8 +16,9 @@ export function setConnState(state) {
 
 // EventSource gives up on a non-200 answer, such as the 401 after a session ends, so `onClosed`
 // lets the page check why. The guest page reads its own stream through `url`, and `onEnded` receives
-// the reason the server sends as the last event of an ended guest session.
-export function connect({ url = '/api/events', onOpen, onSnapshot, onClosed, onEnded = null }) {
+// the reason the server sends as the last event of an ended guest session. `onEvicted` lets the page
+// show why it stopped, since the indicator label is hidden at phone width.
+export function connect({ url = '/api/events', onOpen, onSnapshot, onClosed, onEnded = null, onEvicted = null }) {
   // A new link opened in a live guest tab joins again, and its stream replaces the open one.
   eventSource?.close();
   stopped = false;
@@ -40,6 +41,7 @@ export function connect({ url = '/api/events', onOpen, onSnapshot, onClosed, onE
   eventSource.addEventListener('evicted', () => {
     stopConnection();
     setConnState('evicted');
+    onEvicted?.();
   });
   eventSource.addEventListener('snapshot', (ev) => {
     const data = parseEventData(ev, 'snapshot');

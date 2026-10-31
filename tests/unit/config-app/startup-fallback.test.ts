@@ -60,9 +60,9 @@ let listenersBefore = new Map<string, unknown[]>();
 let stdinListenersBefore = new Map<string, unknown[]>();
 
 /** src/index.ts runs main() on import, so each scenario imports a fresh copy. */
-async function startServer(transportType: 'stdio' | 'http'): Promise<void> {
+async function startServer(transportType: 'stdio' | 'http', source: 'store' | 'env' = 'store'): Promise<void> {
   const config = makeTestConfig({ transport: { type: transportType, host: '127.0.0.1', port: 3000, expose: false } });
-  mocks.resolveConfigState.mockResolvedValue({ configured: true, config, source: 'store' });
+  mocks.resolveConfigState.mockResolvedValue({ configured: true, config, source });
   vi.resetModules();
   await import('../../../src/index.js');
 }
@@ -102,7 +102,7 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
       expect(mocks.registerDegradedTools).toHaveBeenCalledWith(
         expect.anything(),
         SETTINGS_URL,
-        { reason: FAILURE, unreachable: false },
+        { reason: FAILURE, unreachable: false, source: 'store' },
       );
     });
     expect(mocks.openBrowser).toHaveBeenCalledWith(SETTINGS_URL);
@@ -123,11 +123,25 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
       expect(mocks.registerDegradedTools).toHaveBeenCalledWith(
         expect.anything(),
         SETTINGS_URL,
-        { reason: 'Navidrome /auth/login failed: connect ECONNREFUSED 10.0.0.5:4533', unreachable: true },
+        { reason: 'Navidrome /auth/login failed: connect ECONNREFUSED 10.0.0.5:4533', unreachable: true, source: 'store' },
       );
     });
     expect(mocks.openBrowser).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
+  });
+
+  it('passes a rejected config to setup mode, so the notice names its cause instead of a first run', async () => {
+    vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const failure = { reason: 'The environment-derived config is invalid: x', unreachable: false, source: 'env' };
+    mocks.resolveConfigState.mockResolvedValue({ configured: false, failure });
+    vi.resetModules();
+
+    await import('../../../src/index.js');
+
+    await vi.waitFor(() => {
+      expect(mocks.registerDegradedTools).toHaveBeenCalledWith(expect.anything(), SETTINGS_URL, failure);
+    });
+    expect(mocks.createRuntime).not.toHaveBeenCalled();
   });
 
   it('still exits on HTTP, with a fatal log line that names navidrome-config', async () => {
@@ -142,5 +156,20 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
     const fatal = mocks.logger.error.mock.calls.find((call) => call[0] === 'Failed to start server:');
     expect(fatal?.[1]).toBeInstanceOf(Error);
     expect((fatal?.[1] as Error).message).toContain('navidrome-config');
+  });
+
+  // navidrome-config binds loopback only, so a container that runs from env vars cannot use it.
+  it('names the environment variables instead of navidrome-config when HTTP runs from env', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    await startServer('http', 'env');
+
+    await vi.waitFor(() => {
+      expect(exit).toHaveBeenCalledWith(1);
+    });
+    const fatal = mocks.logger.error.mock.calls.find((call) => call[0] === 'Failed to start server:');
+    const message = (fatal?.[1] as Error).message;
+    expect(message).toContain('fix the environment variable that holds the named setting, then restart');
+    expect(message).not.toContain('navidrome-config');
   });
 });

@@ -114,7 +114,7 @@ const tools: Tool[] = [
   },
   {
     name: 'set_audio_device',
-    description: 'Play through the audio output with this `id` from list_audio_devices, or `auto` for the system default. When mpv is running it switches at once and keeps the position. The choice is saved and applies each time mpv starts. If the chosen output disconnects, playback pauses. Does not start mpv.',
+    description: 'Play through the audio output with this `id` from list_audio_devices, or `auto` for the system default. When mpv is running it switches at once and keeps the position and the pause state, so call resume after switching a paused player. The choice is saved and applies each time mpv starts. If the chosen output disconnects, playback pauses. Does not start mpv.',
     inputSchema: {
       type: 'object',
       properties: {

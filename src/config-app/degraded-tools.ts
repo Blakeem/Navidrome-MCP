@@ -11,19 +11,23 @@ import { getSettingsStorePath } from '../config/store-path.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { redact } from '../utils/logger.js';
-
-export interface StartupFailure {
-  reason: string;
-  /** Navidrome could not be reached, so the configuration was never judged. */
-  unreachable: boolean;
-}
+import type { StartupFailure } from '../config.js';
 
 /** A settings.json with a URL overrides env vars, so env advice cannot fix a failing store. */
 function configFixHint(): string {
   return (
     `Fix the values on the settings page, or edit or remove settings.json at ${getSettingsStorePath()}. ` +
     'The environment variables NAVIDROME_URL, NAVIDROME_USERNAME and NAVIDROME_PASSWORD apply only ' +
-    'when no settings.json with a Navidrome URL exists.'
+    'when settings.json is absent, fails the settings schema, or has no Navidrome URL. A settings.json ' +
+    'that cannot be read, is not valid JSON, or names a web remote auth mode other than none blocks them.'
+  );
+}
+
+/** The env config failed with no usable settings.json in force, so env advice can fix it. */
+function envFixHint(): string {
+  return (
+    'Fix the environment variable that holds the named setting, then restart this server. A save on the ' +
+    'settings page writes settings.json, which then takes precedence over the environment variables.'
   );
 }
 
@@ -53,7 +57,7 @@ export function buildSetupNotice(settingsUrl: string, failure?: StartupFailure):
   }
   return (
     `Navidrome MCP could not start with the current configuration: ${reason}\n` +
-    `${openSettings}${saveAndRestart}${configFixHint()}`
+    `${openSettings}${saveAndRestart}${failure.source === 'env' ? envFixHint() : configFixHint()}`
   );
 }
 

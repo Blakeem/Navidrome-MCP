@@ -34,8 +34,14 @@ export interface WebOwnerProbe {
   secure: boolean;
 }
 
+/** `secure` is the scheme the owner answered on, or the preferred one when no owner answered. */
+interface OwnerAnswer {
+  outcome: ProbeOutcome;
+  secure: boolean;
+}
+
 export interface AcquireDeps {
-  probe: (port: number, bindHost: string, secure: boolean) => Promise<ProbeOutcome>;
+  probe: (port: number, bindHost: string, preferSecure: boolean) => Promise<OwnerAnswer>;
   bind: (server: Server, port: number, host: string) => Promise<'ok' | 'eaddrinuse'>;
 }
 
@@ -98,6 +104,18 @@ export function probeHealthz(port: number, bindHost: string, secure: boolean): P
 }
 
 /**
+ * A running player fixed its scheme at its own start, and settings.json may have gained or lost the
+ * TLS pair since, so a foreign answer on the preferred scheme is retried on the other one.
+ */
+export async function probeOwner(port: number, bindHost: string, preferSecure: boolean): Promise<OwnerAnswer> {
+  const preferred = await probeHealthz(port, bindHost, preferSecure);
+  if (preferred !== 'foreign') return { outcome: preferred, secure: preferSecure };
+  const other = await probeHealthz(port, bindHost, !preferSecure);
+  if (other === 'ours') return { outcome: 'ours', secure: !preferSecure };
+  return { outcome: preferred, secure: preferSecure };
+}
+
+/**
  * The MCP keeps its startup endpoint, but a spawned or re-run web player binds the endpoint that
  * settings.json holds now, so the saved endpoint is probed second.
  */
@@ -105,24 +123,22 @@ export async function probeWebOwner(
   startup: WebEndpoint,
   readSaved: () => WebEndpoint | null,
 ): Promise<WebOwnerProbe> {
-  const startupSecure = isTlsEnabled(startup.tls);
-  const first = await probeHealthz(startup.port, startup.host, startupSecure);
-  const firstResult: WebOwnerProbe = { outcome: first, port: startup.port, secure: startupSecure };
-  if (first === 'ours') return firstResult;
+  const first = await probeOwner(startup.port, startup.host, isTlsEnabled(startup.tls));
+  const firstResult: WebOwnerProbe = { ...first, port: startup.port };
+  if (first.outcome === 'ours') return firstResult;
 
   const saved = readSaved();
   if (saved === null) return firstResult;
-  const savedSecure = isTlsEnabled(saved.tls);
-  const sameEndpoint =
-    saved.port === startup.port && probeHost(saved.host) === probeHost(startup.host) && savedSecure === startupSecure;
+  // One port probe already covered both schemes.
+  const sameEndpoint = saved.port === startup.port && probeHost(saved.host) === probeHost(startup.host);
   if (sameEndpoint) return firstResult;
 
-  const second = await probeHealthz(saved.port, saved.host, savedSecure);
-  const secondResult: WebOwnerProbe = { outcome: second, port: saved.port, secure: savedSecure };
-  if (second === 'ours') return secondResult;
+  const second = await probeOwner(saved.port, saved.host, isTlsEnabled(saved.tls));
+  const secondResult: WebOwnerProbe = { ...second, port: saved.port };
+  if (second.outcome === 'ours') return secondResult;
   // A foreign startup answer keeps the caller's warn-and-skip. A foreign saved endpoint would fail
   // a spawned player's bind.
-  return first === 'foreign' ? firstResult : secondResult;
+  return first.outcome === 'foreign' ? firstResult : secondResult;
 }
 
 /** The MCP teardown path keys off this, since the owner quits mpv whether or not it is attached. */
@@ -154,7 +170,7 @@ function realBind(server: Server, port: number, host: string): Promise<'ok' | 'e
   });
 }
 
-const DEFAULT_DEPS: AcquireDeps = { probe: probeHealthz, bind: realBind };
+const DEFAULT_DEPS: AcquireDeps = { probe: probeOwner, bind: realBind };
 
 function conflictError(port: number): Error {
   return new Error(
@@ -174,8 +190,8 @@ export async function acquireOrAttach(
   const url = loopbackUrl(port, secure);
 
   const first = await deps.probe(port, host, secure);
-  if (first === 'ours') return { mode: 'attached', url };
-  if (first === 'foreign') throw conflictError(port);
+  if (first.outcome === 'ours') return { mode: 'attached', url: loopbackUrl(port, first.secure) };
+  if (first.outcome === 'foreign') throw conflictError(port);
 
   const server = makeServer();
   const bound = await deps.bind(server, port, host);
@@ -184,6 +200,6 @@ export async function acquireOrAttach(
   // EADDRINUSE after a refused probe means another process bound first. It is either a
   // navidrome-web that won a cold-start race or a foreign process.
   const second = await deps.probe(port, host, secure);
-  if (second === 'ours') return { mode: 'attached', url };
+  if (second.outcome === 'ours') return { mode: 'attached', url: loopbackUrl(port, second.secure) };
   throw conflictError(port);
 }

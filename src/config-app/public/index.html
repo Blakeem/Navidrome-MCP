@@ -179,7 +179,7 @@
         <label>Public URL <span class="hint">The internet address of this player, such as <code>https://jukebox.duckdns.org:8808</code>. Use https:// when the HTTPS files are set.</span>
           <input id="webuiPublicUrl" type="text" placeholder="(none)" />
         </label>
-        <label>HTTPS certificate file <span class="hint">PEM certificate chain, such as Let's Encrypt <code>fullchain.pem</code>. Set both files for HTTPS, or leave both blank for HTTP</span>
+        <label>HTTPS certificate file <span class="hint">PEM certificate chain, such as Let's Encrypt <code>fullchain.pem</code>. Set both files for HTTPS, or leave both blank for HTTP. When the certificate names only the public host, the browser warns that the connection is not private on the 127.0.0.1 and LAN addresses. This warning is expected for this player</span>
           <input id="webuiTlsCert" type="text" placeholder="(HTTP)" />
         </label>
         <label>HTTPS key file <span class="hint">PEM private key for the certificate, such as <code>privkey.pem</code>. The player reloads a renewed pair within a minute</span>

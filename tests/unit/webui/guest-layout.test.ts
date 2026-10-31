@@ -183,3 +183,23 @@ describe('guest page for the host', () => {
     expect(guest).toMatch(/view === 'host-closed'\) \{\s*isHost = true;\s*showHostClosedCard\(\);/);
   });
 });
+
+describe('live regions and the login card', () => {
+  // A display: none region leaves the accessibility tree, so screen readers tend to skip its first message.
+  it('hides no empty live region with display: none', () => {
+    const css = read('styles.css');
+    const liveClasses = [HTML, read('index.html')].flatMap((page) =>
+      [...page.matchAll(/class="([^"]+)"[^>]*aria-live=/g)].flatMap((match) => (match[1] ?? '').split(' ')),
+    );
+
+    expect(liveClasses.length).toBeGreaterThan(0);
+    for (const name of liveClasses) {
+      expect(css).not.toMatch(new RegExp(String.raw`\.${name}:empty\s*\{[^}]*display:\s*none`));
+    }
+    expect(css).toMatch(/\[aria-live\]:empty \{\s*position: absolute;/);
+  });
+
+  it('gives the login view the full width, so its card fits a phone', () => {
+    expect(read('styles.css')).toMatch(/\.login-view \{[^}]*width: 100%;/);
+  });
+});

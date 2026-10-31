@@ -54,7 +54,13 @@ import type { QueuedNames } from '../../../src/webui/jukebox/jukebox-names.js';
 import { outsideLevelMessage } from '../../../src/webui/auth/principal.js';
 import { GuestQueue } from '../../../src/webui/jukebox/guest-queue.js';
 import { adminView, guestEndCard, guestView, hostPollView, keyFromHash } from '../../../src/webui/public/page-view.js';
-import { MAX_OPEN_STREAMS, REFUSED_STREAM_RETRY_MS, STREAM_EVICTED_EVENT } from '../../../src/webui/stream-limiter.js';
+import {
+  MAX_GUEST_STREAMS,
+  MAX_HOST_STREAMS,
+  REFUSED_STREAM_RETRY_MS,
+  STREAM_EVICTED_EVENT,
+  STREAMS_PER_SESSION_ROUTE,
+} from '../../../src/webui/stream-limiter.js';
 import { createServer, listRoutes } from '../../../src/webui/server.js';
 
 const LOOPBACK = '127.0.0.1';
@@ -466,12 +472,41 @@ describe('login mode gate', () => {
 
   it.each([
     ['mode none', { mode: 'none' }],
-    ['level localhost', { adminAccess: 'localhost' }],
-    ['level lan', { adminAccess: 'lan' }],
+    ['mode password at level localhost', { mode: 'password', adminAccess: 'localhost' }],
     ['mode password at level lan', { mode: 'password', adminAccess: 'lan' }],
   ] as const)('refuses an internet peer at %s, where it cannot log in, and names the access settings', async (_label, auth) => {
     const config = lanConfig(auth);
     const reply = await dispatch(config, new AuthService(config), '/api/auth/session', { peer: INTERNET_PEER });
+
+    expect(reply.status).toBe(403);
+    expect(JSON.parse(reply.body).error).toContain('admin login is allowed from anywhere');
+  });
+
+  it.each(['/guest', '/guest.js'])('answers an internet page GET of %s in a closed jukebox with the closed text, not JSON', async (path) => {
+    const config = lanConfig({ adminAccess: 'lan' });
+    const reply = await dispatch(config, new AuthService(config), path, { peer: INTERNET_PEER });
+
+    expect(reply.status).toBe(403);
+    expect(reply.headers['content-type']).toBe('text/plain; charset=utf-8');
+    expect(reply.headers['cache-control']).toBe('no-store');
+    expect(reply.body).toBe('The jukebox is closed. Guests can ask the host for a new code. The owner can connect from the local network.');
+  });
+
+  it.each([
+    ['localhost', "The owner can connect from the player's computer."],
+    ['lan', 'The owner can connect from the local network.'],
+  ] as const)('answers an internet API request in a closed jukebox at level %s with the closed text as JSON', async (adminAccess, ownerSentence) => {
+    const config = lanConfig({ adminAccess });
+    const reply = await dispatch(config, new AuthService(config), '/api/auth/session', { peer: INTERNET_PEER });
+
+    expect(reply.status).toBe(403);
+    expect(reply.headers['content-type']).toContain('application/json');
+    expect(JSON.parse(reply.body).error).toBe(`The jukebox is closed. Guests can ask the host for a new code. ${ownerSentence}`);
+  });
+
+  it.each(['none', 'password'] as const)('keeps the access settings refusal for an internet page GET in mode %s', async (mode) => {
+    const config = lanConfig({ mode });
+    const reply = await dispatch(config, new AuthService(config), '/admin', { peer: INTERNET_PEER });
 
     expect(reply.status).toBe(403);
     expect(JSON.parse(reply.body).error).toContain('admin login is allowed from anywhere');
@@ -973,7 +1008,7 @@ describe('guest sessions at the gate', () => {
     expect(during.status).toBe(200);
     expect(admin.status).toBe(403);
     expect(after.status).toBe(403);
-    expect(JSON.parse(after.body).error).toContain('jukebox code');
+    expect(JSON.parse(after.body).error).toContain('The jukebox is closed.');
   });
 
   it('ends a guest stream with the closed reason and answers 401 after the admin revokes the key', async () => {
@@ -1362,6 +1397,26 @@ describe('jukebox code routes', () => {
     expect(view.active).toBe(true);
     expect(view.links).toEqual({ lan: [], internet: null });
     expect(view.problem).toContain('Turn on Expose on LAN');
+  });
+
+  it('names the bind host as the cause when it overrides Expose on LAN', async () => {
+    osStub.interfaces = ONE_LAN as never;
+    const config = makeTestConfig({ webui: { ...lanConfig().webui, host: '127.0.0.1', expose: true } });
+    const auth = new AuthService(config);
+
+    const refused = await dispatch(config, auth, '/api/jukebox/key', {
+      method: 'POST', host: '127.0.0.1:8808', headers: adminHeaders(auth), body: { lifetimeHours: 1 },
+    });
+    auth.createJukeboxCode(24, false);
+    const view = JSON.parse(
+      (await dispatch(config, auth, '/api/jukebox/code', { host: '127.0.0.1:8808', headers: adminHeaders(auth) })).body,
+    ) as CodeView;
+
+    expect(refused.status).toBe(409);
+    for (const text of [JSON.parse(refused.body).error as string, view.problem]) {
+      expect(text).toContain('Clear Bind host');
+      expect(text).not.toContain('Turn on Expose on LAN');
+    }
   });
 
   it('names the missing LAN address as the cause when a live code has no link on a LAN bind', async () => {
@@ -1805,7 +1860,7 @@ describe('stream caps', () => {
     expect(streams[0]?.res.body).toBe(`event: ${STREAM_EVICTED_EVENT}\ndata: {}\n\n`);
   });
 
-  it('ends a stream over the server-wide cap with a retry interval, then admits one after a stream closes', async () => {
+  it('ends a stream over the host pool cap with a retry interval, then admits one after a stream closes', async () => {
     const config = lanConfig({ mode: 'none' });
     const auth = new AuthService(config);
     const server = buildServer(config, auth);
@@ -1813,8 +1868,8 @@ describe('stream caps', () => {
     const refusedFrame = `retry: ${String(REFUSED_STREAM_RETRY_MS)}\n\n`;
 
     const streams: Reply[] = [];
-    for (let n = 0; n < MAX_OPEN_STREAMS; n += 1) streams.push(await open(n));
-    const refused = await open(MAX_OPEN_STREAMS);
+    for (let n = 0; n < MAX_HOST_STREAMS; n += 1) streams.push(await open(n));
+    const refused = await open(MAX_HOST_STREAMS);
 
     expect(streams.every((stream) => stream.status === 200 && !stream.res.writableEnded)).toBe(true);
     expect(refused.status).toBe(200);
@@ -1823,8 +1878,32 @@ describe('stream caps', () => {
     expect(refused.res.written).toEqual([refusedFrame]);
 
     streams[0]?.res.emit('close');
-    const admitted = await open(MAX_OPEN_STREAMS + 1);
+    const admitted = await open(MAX_HOST_STREAMS + 1);
     expect(admitted.res.writableEnded).toBe(false);
     expect(admitted.res.written).not.toContain(refusedFrame);
+  });
+
+  it('still opens an admin event stream once guest streams fill the guest pool', async () => {
+    const config = lanConfig();
+    const auth = new AuthService(config);
+    const server = buildServer(config, auth);
+    const key = auth.createJukeboxCode(24, false).key;
+    const guestCount = Math.ceil(MAX_GUEST_STREAMS / STREAMS_PER_SESSION_ROUTE);
+
+    const guestStreams: Reply[] = [];
+    for (let n = 0; n < guestCount; n += 1) {
+      const headers = guestHeaders(auth, key);
+      for (let i = 0; i < STREAMS_PER_SESSION_ROUTE; i += 1) {
+        guestStreams.push(await dispatch(config, auth, '/api/guest/events', { peer: LAN_PEER, headers, server }));
+      }
+    }
+    const refusedGuest = guestStreams.slice(MAX_GUEST_STREAMS);
+    const admin = await dispatch(config, auth, '/api/events', { host: STREAM_HOST, headers: adminHeaders(auth), server });
+
+    expect(guestStreams.slice(0, MAX_GUEST_STREAMS).every((stream) => !stream.res.writableEnded)).toBe(true);
+    expect(refusedGuest.length).toBeGreaterThan(0);
+    expect(refusedGuest.every((stream) => stream.res.writableEnded)).toBe(true);
+    expect(admin.status).toBe(200);
+    expect(admin.res.writableEnded).toBe(false);
   });
 });

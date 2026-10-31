@@ -64,7 +64,7 @@ describe('play_songs active-library lookup', () => {
       success: true,
       count: 1,
       paused: true,
-      message: "The selected audio device 'wasapi/{katana}' is not connected. Turn it on, then call resume, or call set_audio_device to pick another output.",
+      message: "The selected audio device 'wasapi/{katana}' is not connected. Turn it on or call set_audio_device to pick another output, then call resume.",
       code: 'output-missing',
     });
   });

@@ -86,7 +86,12 @@ function bootPlayer(session) {
   void loadPlayerState();
   // A reconnect may have missed any amount of the song,
   // so the next snapshot snaps the lyrics clock.
-  connect({ onOpen: snapLyricsClock, onSnapshot: applySnapshot, onClosed: () => void checkSessionEnded() });
+  connect({
+    onOpen: snapLyricsClock,
+    onSnapshot: applySnapshot,
+    onClosed: () => void checkSessionEnded(),
+    onEvicted: () => document.body.classList.add('stream-evicted'),
+  });
 }
 
 // A mode with a login shows the login view until an admin session exists, a guest session included.

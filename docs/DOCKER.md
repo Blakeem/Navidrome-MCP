@@ -90,6 +90,8 @@ the host when you want audio.
 
 Prefer a file over env vars? Mount a `settings.json` at `/config/settings.json` (the
 image points `NAVIDROME_CONFIG_PATH` there). A usable mounted file is used instead of env.
+Some unusable files start setup mode instead of the env fallback, as
+[Headless Machines and Containers](../README.md#headless-machines-and-containers) lists.
 The file holds your Navidrome credentials in plaintext, so in an orchestrator mount
 it from a secret store (a Kubernetes `Secret`, compose secrets), not a plain config
 object:

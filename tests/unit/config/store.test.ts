@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readSettings, writeSettings, type SettingsFile } from '../../../src/config/store.js';
+import { readSettings, readSettingsForStartup, writeSettings, type SettingsFile } from '../../../src/config/store.js';
 import { logger } from '../../../src/utils/logger.js';
 
 describe('settings store read/write', () => {
@@ -81,6 +81,46 @@ describe('settings store read/write', () => {
       } finally {
         warn.mockRestore();
       }
+    });
+  });
+
+  describe('readSettingsForStartup', () => {
+    const path = (): string => process.env['NAVIDROME_CONFIG_PATH']!;
+
+    it('reports no auth request and no problem for an absent file', () => {
+      expect(readSettingsForStartup()).toEqual({ settings: null, requestsWebuiAuth: false, problem: null });
+    });
+
+    // A file that cannot be parsed cannot prove it names no auth mode, so the open env config must not replace it.
+    it('fails closed on a present file with a JSON syntax error', () => {
+      writeFileSync(path(), '{"webui": {"auth": {"mode": "jukebox"}},}');
+      const startup = readSettingsForStartup();
+      expect(startup.requestsWebuiAuth).toBe(true);
+      expect(startup.problem).toMatch(/settings\.json is not valid JSON/);
+    });
+
+    it('fails closed on a present file whose read fails', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      mkdirSync(path());
+      try {
+        const startup = readSettingsForStartup();
+        expect(startup.requestsWebuiAuth).toBe(true);
+        expect(startup.problem).toMatch(/is unreadable \(EISDIR\)/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('names the failing field of a schema-invalid file and keeps its parsed mode', () => {
+      writeFileSync(path(), JSON.stringify({ webui: { port: 'nope', auth: { mode: 'none' } } }));
+      const startup = readSettingsForStartup();
+      expect(startup.requestsWebuiAuth).toBe(false);
+      expect(startup.problem).toMatch(/failed validation .*webui\.port/);
+    });
+
+    it('reports no problem for a usable file', () => {
+      writeFileSync(path(), JSON.stringify({ navidrome: { url: 'http://x:4533' }, webui: { auth: { mode: 'password' } } }));
+      expect(readSettingsForStartup()).toMatchObject({ requestsWebuiAuth: true, problem: null });
     });
   });
 

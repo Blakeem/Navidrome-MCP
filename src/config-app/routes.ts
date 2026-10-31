@@ -8,7 +8,14 @@ import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateMappedSettings } from '../config.js';
 import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
-import { mergeOntoStored, readRawSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import {
+  mergeOntoStored,
+  readRawSettings,
+  readStoreProblem,
+  writeSettings,
+  SettingsFileSchema,
+  type SettingsFile,
+} from '../config/store.js';
 import { getSettingsStorePath } from '../config/store-path.js';
 import {
   ADMIN_PASSWORD_MAX_LENGTH,
@@ -64,7 +71,12 @@ export async function handleSettingsRoute(
 
 function handleSeed(res: ServerResponse): void {
   try {
-    writeJson(res, 200, seedForBrowser(buildFormSeed()));
+    const problem = readStoreProblem();
+    writeJson(res, 200, {
+      ...seedForBrowser(buildFormSeed()),
+      storeProblem: problem?.text ?? null,
+      storeUnreadable: problem?.unreadable === true,
+    });
   } catch (err) {
     logger.warn('settings seed failed:', err);
     writeError(res, 500, 'Failed to read settings');

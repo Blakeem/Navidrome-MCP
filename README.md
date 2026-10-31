@@ -326,7 +326,7 @@ Settings load only at startup. To apply a change, quit and reopen the MCP client
 
 #### Headless Machines and Containers
 
-The settings page binds loopback only, so a host with no browser, such as a VPS or a Docker container, uses environment variables instead. When no usable `settings.json` exists, the server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD`. A `settings.json` that sets an access mode with the admin password is the exception. When it is unusable, the server starts in setup mode, so a broken file never opens a player that needs a password. These variables set the optional settings.
+The settings page binds loopback only, so a host with no browser, such as a VPS or a Docker container, uses environment variables instead. When no usable `settings.json` exists, the server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD`. A `settings.json` that sets an access mode with the admin password is the exception. When it is unusable, the server starts in setup mode, so a broken file never opens a player that needs a password. A `settings.json` that cannot be read or is not valid JSON also starts setup mode. These variables set the optional settings.
 
 - `LASTFM_API_KEY` enables Last.fm discovery.
 - `RADIO_BROWSER_USER_AGENT` (such as `Navidrome-MCP`) enables radio discovery.
@@ -549,6 +549,8 @@ The player uses HTTPS when **HTTPS certificate file** and **HTTPS key file** are
      --key-file /path/to/certs/privkey.pem
    ```
 5. Set the two HTTPS files in the settings page, and set **Public URL** to `https://jukebox.duckdns.org:8808`. Restart the player.
+
+The browser warns that the connection is not private on the 127.0.0.1 and LAN addresses, since the certificate names only the public host. This warning is expected for this player.
 
 ### HTTP Transport
 

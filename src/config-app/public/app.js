@@ -204,6 +204,8 @@ const WEBUI_BIND_HOSTS = ['127.0.0.1', '0.0.0.0', '::'];
 
 const ADMIN_PASSWORD_MIN_LENGTH = 12;
 const ADMIN_PASSWORD_MAX_LENGTH = 128;
+const GUEST_QUEUE_LIMIT_MIN = 1;
+const GUEST_QUEUE_LIMIT_MAX = 20;
 // The seed reports only whether a hash is stored, never the hash.
 let adminPasswordSet = false;
 
@@ -274,6 +276,14 @@ const AUTH_MODE_HINTS = {
 // The mode the form loaded with, so leaving `jukebox` warns that the restart ends the jukebox.
 let loadedAuthMode = 'none';
 
+function isGuestQueueLimitInRange(value) {
+  const text = value.trim();
+  if (text === '') return true;
+  if (!/^\d+$/.test(text)) return false;
+  const limit = Number(text);
+  return limit >= GUEST_QUEUE_LIMIT_MIN && limit <= GUEST_QUEUE_LIMIT_MAX;
+}
+
 function renderAuthMode() {
   const mode = document.getElementById('webuiAuthMode').value;
   const hasLogin = mode === 'password' || mode === 'jukebox';
@@ -281,7 +291,12 @@ function renderAuthMode() {
   document.getElementById('webuiAuthModeWarn').hidden = !(loadedAuthMode === 'jukebox' && mode !== 'jukebox');
   document.getElementById('webuiAdminPasswordRow').hidden = !hasLogin;
   document.getElementById('webuiAdminAccessRow').hidden = !hasLogin;
-  document.getElementById('jukeboxGuestQueueLimitRow').hidden = mode !== 'jukebox';
+  // The browser blocks Save without a message on an invalid control it cannot show, so only a valid
+  // limit hides, and its disabled input skips the constraint check.
+  const limitInput = document.getElementById('jukeboxGuestQueueLimit');
+  const hideLimit = mode !== 'jukebox' && isGuestQueueLimitInRange(limitInput.value);
+  document.getElementById('jukeboxGuestQueueLimitRow').hidden = hideLimit;
+  limitInput.disabled = hideLimit;
   renderAdminPasswordConfirm();
   renderExposeWarning();
 }
@@ -308,7 +323,7 @@ function collectChecked(confirmPassword = false) {
       auth.adminPassword = '';
       delete auth.adminAccess;
     }
-    if (auth.mode !== 'jukebox' && payload.jukebox) delete payload.jukebox.guestQueueLimit;
+    if (document.getElementById('jukeboxGuestQueueLimit').disabled && payload.jukebox) delete payload.jukebox.guestQueueLimit;
     const confirmation = document.getElementById('webuiAdminPasswordConfirm').value;
     if (confirmPassword && auth.adminPassword !== '' && auth.adminPassword !== confirmation) {
       showStatus('The passwords do not match.', 'err');
@@ -442,6 +457,17 @@ async function onSave(event) {
   }
 }
 
+const SEED_FAILED_MESSAGE = 'Could not load existing settings; starting blank.';
+
+// A save over an unusable store replaces it, so the user must learn before Save that its values did not load.
+// A file the server cannot read cannot be backed up either, so Save fails until the file is fixed.
+function storeProblemMessage(problem, unreadable) {
+  const remedy = unreadable
+    ? "Save fails until the server can read the file. Fix the file's permissions or move it away, then reload this page."
+    : 'A save keeps the old file as settings.json.bak.';
+  return `${problem}. This form shows default and environment values instead of the file's values. ${remedy}`;
+}
+
 // The options go in before populate() picks one, so a slow probe cannot reset the field.
 async function loadForm() {
   const devicesRequest = loadAudioDevices();
@@ -449,13 +475,18 @@ async function loadForm() {
     const res = await fetch('/api/settings/seed');
     const seed = res.ok ? await res.json() : null;
     fillAudioDevices(await devicesRequest);
-    if (seed !== null) {
-      populate(seed);
-      adminPasswordSet = getPath(seed, 'webui.auth.adminPasswordSet') === true;
-      loadedAuthMode = document.getElementById('webuiAuthMode').value;
+    if (seed === null) {
+      showStatus(SEED_FAILED_MESSAGE, 'err');
+      return;
+    }
+    populate(seed);
+    adminPasswordSet = getPath(seed, 'webui.auth.adminPasswordSet') === true;
+    loadedAuthMode = document.getElementById('webuiAuthMode').value;
+    if (typeof seed.storeProblem === 'string') {
+      showStatus(storeProblemMessage(seed.storeProblem, seed.storeUnreadable === true), 'err');
     }
   } catch (_) {
-    showStatus('Could not load existing settings; starting blank.', 'err');
+    showStatus(SEED_FAILED_MESSAGE, 'err');
   }
 }
 

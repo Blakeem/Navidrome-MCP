@@ -19,7 +19,7 @@ export interface MissingOutputFields {
 
 export function missingAudioOutputMessage(missing: MissingAudioOutput): string {
   if (missing.id === AUTO_DEVICE_ID) return 'No audio output device is available. Connect one, then call resume.';
-  return `The selected audio device '${missing.name ?? missing.id}' is not connected. Turn it on, then call resume, or call set_audio_device to pick another output.`;
+  return `The selected audio device '${missing.name ?? missing.id}' is not connected. Turn it on or call set_audio_device to pick another output, then call resume.`;
 }
 
 export function missingOutputFields(missing: MissingAudioOutput | null): MissingOutputFields {

@@ -22,6 +22,10 @@ import { isTlsEnabled } from '../tls.js';
 const LOOPBACK_ONLY =
   'No address reaches guests, since the web remote listens on this computer only. ' +
   'Turn on Expose on LAN in navidrome-config, then restart the player.';
+// An explicit bind host wins over Expose on LAN, so turning Expose on cannot fix this bind.
+const BIND_HOST_OVERRIDES_EXPOSE =
+  'No address reaches guests, since the web player bind host is a loopback address, which overrides Expose on LAN. ' +
+  'Clear Bind host in the Web Player section of navidrome-config, then restart the player.';
 const NO_LAN_ADDRESS =
   'No LAN IPv4 address was found. Connect this computer to the network, or set webui.publicUrl in navidrome-config.';
 
@@ -57,7 +61,8 @@ function joinBases(config: Config): JoinBases {
 /** Null when some address reaches guests. */
 function noLinkReason(config: Config, bases: JoinBases): string | null {
   if (bases.lan.length > 0 || bases.internet !== null) return null;
-  return isLanReachable(config.webui.host) ? NO_LAN_ADDRESS : LOOPBACK_ONLY;
+  if (isLanReachable(config.webui.host)) return NO_LAN_ADDRESS;
+  return config.webui.expose ? BIND_HOST_OVERRIDES_EXPOSE : LOOPBACK_ONLY;
 }
 
 /** The key rides in the fragment, which a browser never sends to a server, a referrer or a link preview. */
