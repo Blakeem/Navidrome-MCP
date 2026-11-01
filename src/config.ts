@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { ErrorFormatter } from './utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { ConfigSchema, type Config } from './config/schema.js';
 import {
@@ -79,10 +79,6 @@ type ConfigState =
 
 function rejected(source: ConfigSource, reason: string): ConfigState {
   return { configured: false, failure: { reason, unreachable: false, source } };
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export async function resolveConfigState(): Promise<ConfigState> {

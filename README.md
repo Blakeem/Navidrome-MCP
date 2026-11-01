@@ -326,7 +326,7 @@ Settings load only at startup. To apply a change, quit and reopen the MCP client
 
 #### Headless Machines and Containers
 
-The settings page binds loopback only, so a host with no browser, such as a VPS or a Docker container, uses environment variables instead. When no usable `settings.json` exists, the server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD`. A `settings.json` that sets an access mode with the admin password is the exception. When it is unusable, the server starts in setup mode, so a broken file never opens a player that needs a password. A `settings.json` that cannot be read or is not valid JSON also starts setup mode. These variables set the optional settings.
+The settings page binds loopback only, so a host with no browser, such as a VPS or a Docker container, uses environment variables instead. The server runs from `NAVIDROME_URL`, `NAVIDROME_USERNAME`, and `NAVIDROME_PASSWORD` when `settings.json` is absent, fails the settings schema, or has no Navidrome URL. A `settings.json` that cannot be read, is not valid JSON, or has a Navidrome URL that fails validation starts setup mode instead. An unusable `settings.json` that sets an access mode with the admin password also starts setup mode, so a broken file never opens a player that needs a password. With `MCP_TRANSPORT=http`, the server logs the reason and exits instead of starting setup mode. These variables set the optional settings.
 
 - `LASTFM_API_KEY` enables Last.fm discovery.
 - `RADIO_BROWSER_USER_AGENT` (such as `Navidrome-MCP`) enables radio discovery.
@@ -335,6 +335,11 @@ The settings page binds loopback only, so a host with no browser, such as a VPS 
 - `MPV_PATH` sets the mpv binary location.
 - `PLAYBACK_AUDIO_DEVICE` sets the audio output by its id from `list_audio_devices`.
 - `JUKEBOX_GUEST_QUEUE_LIMIT` sets how many songs each jukebox guest can have waiting.
+- `PLAYBACK_TRANSCODE_FORMAT` and `PLAYBACK_TRANSCODE_BITRATE` set the stream format and bitrate.
+- `NAVIDROME_FILTER_CACHE_ENABLED=false` turns off the filter cache.
+- `MUSICBRAINZ_USER_AGENT` sets the MusicBrainz user agent.
+- `RADIO_BROWSER_BASE` and `LRCLIB_BASE` set the Radio Browser and LRCLIB server URLs.
+- `TOKEN_EXPIRY` sets how long a Navidrome login token is kept, in seconds.
 - `DEBUG=true` turns on verbose logs.
 
 [HTTP Transport](#http-transport) lists the transport variables.
@@ -421,7 +426,7 @@ If you move or rebuild the project, run the generator again so the paths stay cu
 
 #### Configuration
 
-Every setting below except `webui.theme` is in the **Web Player** section of the settings page. The gear modal applies `persistAfterMcpExit`, `theme`, and `visualizer` live, and the **Guests** dialog applies `jukebox.guestQueueLimit` live. Other changes apply after you stop the player with **Shut down player** and restart the MCP client or `navidrome-web`.
+Every setting below except `webui.theme` is in the **Web Player** section of the settings page. The gear modal applies `persistAfterMcpExit`, `theme`, and `visualizer` live, and the **Guests** dialog applies `jukebox.guestQueueLimit` live. The **Jukebox** dialog applies `jukebox.shareLink` live. Other changes apply after you stop the player with **Shut down player** and restart the MCP client or `navidrome-web`.
 
 | Setting (`settings.json`) | Default | Effect |
 |---|---|---|
@@ -440,6 +445,7 @@ Every setting below except `webui.theme` is in the **Web Player** section of the
 | `webui.auth.adminPasswordHash` | `null` | The admin password hash. Type the password in the settings page, which stores only the hash. Passwords are 12 to 128 characters. |
 | `webui.auth.adminAccess` | `localhost` | Where an admin can log in, one of `localhost` (this computer), `lan`, or `anywhere`. |
 | `jukebox.guestQueueLimit` | `3` | How many songs each jukebox guest can have waiting, from 1 to 20. |
+| `jukebox.shareLink` | `lan` | Which link the jukebox code holds, `lan` or `internet`. The **Local network** and **Internet** buttons in the **Jukebox** dialog set it. |
 | `webui.theme` | unset | Forces `light` or `dark` on every device viewing the player. When unset, each device follows its own setting. The gear modal sets it, and its **System** option clears it. |
 
 #### Phone and Tablet Remote
@@ -527,7 +533,7 @@ The player saves bans and sessions in `webui-auth-<port>.json` in your config di
 2. Set **Public URL** in the settings page to the address guests reach, such as `http://203.0.113.7:8808`. A DuckDNS name stays valid when your home IP address changes.
 3. Restart the player and open the jukebox. Pick **Internet** to show the code for the public URL.
 
-Internet addresses reach the player only while the jukebox is open. Each internet address can join 10 times per hour, and each code admits at most 100 guests.
+Internet guests reach the player only while the jukebox is open. Each internet address can join 10 times per hour, and each code admits at most 100 guests.
 
 #### HTTPS
 

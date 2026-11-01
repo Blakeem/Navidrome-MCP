@@ -7,7 +7,8 @@
  * real port.
  */
 
-import { createServer, type RequestListener, type Server } from 'node:http';
+import { EventEmitter } from 'node:events';
+import { type ClientRequest, createServer, type RequestListener, type Server } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -286,13 +287,19 @@ describe('owner probe over HTTPS', () => {
   });
 
   it('keeps the preferred scheme on a refused probe, without a second try', async () => {
-    const server = createServer();
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as AddressInfo).port;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // A freed ephemeral port can be taken by a parallel test, so the refusal is simulated.
     vi.mocked(loopbackRequest).mockClear();
+    vi.mocked(loopbackRequest).mockImplementationOnce(() => {
+      const req = new EventEmitter() as ClientRequest;
+      req.end = (() => {
+        const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+        process.nextTick(() => req.emit('error', refused));
+        return req;
+      }) as ClientRequest['end'];
+      return req;
+    });
 
-    expect(await probeOwner(port, '127.0.0.1', true)).toEqual({ outcome: 'refused', secure: true });
+    expect(await probeOwner(4533, '127.0.0.1', true)).toEqual({ outcome: 'refused', secure: true });
     expect(loopbackRequest).toHaveBeenCalledTimes(1);
   });
 });

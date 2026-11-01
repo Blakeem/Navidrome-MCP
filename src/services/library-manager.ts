@@ -7,7 +7,7 @@
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { decodeJwtPayload } from '../utils/jwt-decode.js';
 
 interface LibraryInfo {
@@ -187,7 +187,7 @@ class LibraryManager {
       return { libraries: enrichedLibraries, enrichedIds };
     } catch (error) {
       logger.warn(
-        `LibraryManager: failed to enrich library stats from /api/library. Stats will be reported as unavailable: ${error instanceof Error ? error.message : String(error)}`,
+        `LibraryManager: failed to enrich library stats from /api/library. Stats will be reported as unavailable: ${errorMessage(error)}`,
       );
       return { libraries: userLibraries, enrichedIds };
     }
@@ -210,7 +210,7 @@ class LibraryManager {
       }
     } catch (error) {
       logger.warn(
-        `LibraryManager: library refresh failed. Keeping the previous snapshot: ${error instanceof Error ? error.message : String(error)}`,
+        `LibraryManager: library refresh failed. Keeping the previous snapshot: ${errorMessage(error)}`,
       );
       return;
     }

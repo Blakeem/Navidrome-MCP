@@ -28,7 +28,7 @@ import { NavidromeClient } from '../client/navidrome-client.js';
 import { audioDeviceDriver, filterToOneDriver, probeAudioDevices } from '../services/playback/audio-devices.js';
 import { resolveMpvBinary } from '../services/playback/mpv-process.js';
 import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { logger, redact } from '../utils/logger.js';
 import { describeFetchError } from '../utils/network-safety.js';
 import { hashPassword, isPasswordHash } from '../utils/secrets.js';
@@ -99,7 +99,7 @@ async function handleAudioDevices(res: ServerResponse): Promise<void> {
     writeJson(res, 200, { devices });
   } catch (err) {
     logger.warn('settings audio device probe failed:', err);
-    writeJson(res, 200, { devices: [], message: err instanceof Error ? err.message : String(err) });
+    writeJson(res, 200, { devices: [], message: errorMessage(err) });
   }
 }
 
@@ -140,7 +140,7 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
       settings = withAdminPasswordHash(merged, await hashPassword(newAdminPassword));
     } catch (err) {
       logger.error('admin password hash failed:', err);
-      writeError(res, 500, `Failed to hash the admin password: ${err instanceof Error ? err.message : String(err)}`);
+      writeError(res, 500, `Failed to hash the admin password: ${errorMessage(err)}`);
       return;
     }
   }
@@ -151,7 +151,7 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
     writeSettings(settings);
   } catch (err) {
     logger.error('settings save failed:', err);
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = errorMessage(err);
     writeError(res, 500, `Failed to write settings to ${getSettingsStorePath()}: ${reason}`);
     return;
   }

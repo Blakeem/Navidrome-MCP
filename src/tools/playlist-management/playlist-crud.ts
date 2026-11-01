@@ -22,7 +22,7 @@ import {
   UpdatePlaylistSchema,
   PlaylistIdSchema,
 } from '../../schemas/index.js';
-import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { libraryManager } from '../../services/library-manager.js';
 
@@ -220,7 +220,7 @@ export async function createPlaylist(client: NavidromeClient, args: unknown): Pr
       const rawPlaylist = await client.request<unknown>(`/playlist/${encodeURIComponent(newId)}`);
       playlist = transformToPlaylistDTO(rawPlaylist as RawPlaylist, { verbose: true });
     } catch (error) {
-      logger.warn(`create_playlist: created ${newId}, but reading it back failed: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`create_playlist: created ${newId}, but reading it back failed: ${errorMessage(error)}`);
       const sentPlaylist: RawPlaylist = { id: newId, name: params.name, public: params.public, songCount: 0 };
       if (params.comment !== undefined) {
         sentPlaylist.comment = params.comment;

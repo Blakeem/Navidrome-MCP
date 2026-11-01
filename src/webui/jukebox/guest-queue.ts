@@ -14,6 +14,7 @@ import {
   type QueueEntry,
   type QueueTrackMetadata,
 } from '../../services/playback/playback-engine.js';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { getGuestQueueLimit } from '../../web/player-runtime.js';
 import { TokenBuckets } from '../auth/token-bucket.js';
@@ -315,7 +316,7 @@ export class GuestQueue {
       this.addChain = this.addChain
         .then(() => this.restoreReplaced())
         .catch((err: unknown) => {
-          logger.debug(`webui: guest song restore failed: ${err instanceof Error ? err.message : String(err)}`);
+          logger.debug(`webui: guest song restore failed: ${errorMessage(err)}`);
         });
     }
     return queue;
@@ -368,7 +369,7 @@ export class GuestQueue {
       });
     } catch (err) {
       // A radio stream started after the replace refuses the append, as a radio replace drops guest songs.
-      const message = `webui: guest songs not restored after a replace: ${err instanceof Error ? err.message : String(err)}`;
+      const message = `webui: guest songs not restored after a replace: ${errorMessage(err)}`;
       if (err instanceof RadioQueueRefusedError) logger.debug(message);
       else logger.warn(message);
     }
@@ -397,7 +398,7 @@ export class GuestQueue {
         again = this.refreshAgain;
       }
     } catch (err) {
-      logger.debug(`webui: guest ledger refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`webui: guest ledger refresh failed: ${errorMessage(err)}`);
     } finally {
       this.refreshing = false;
     }

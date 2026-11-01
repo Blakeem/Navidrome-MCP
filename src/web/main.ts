@@ -22,6 +22,7 @@ import { startConfigServer } from '../config-app/server.js';
 import { WEB_OWNER_ATTACH_INTERVAL_MS } from '../constants/timeouts.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { assertArgon2Available } from '../utils/secrets.js';
@@ -288,7 +289,7 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   logger.error('navidrome-web failed to start:', error);
   // A direct terminal run would otherwise exit with no visible reason.
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   try {
     process.stderr.write(`navidrome-web failed to start: ${message} (log: ${logPath})\n`);
   } catch {

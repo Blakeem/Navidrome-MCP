@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../src/utils/open-browser.js', () => ({ openBrowser: vi.fn() }));
 
-import { registerDegradedTools } from '../../../src/config-app/degraded-tools.js';
+import { buildHeadlessStartupError, registerDegradedTools } from '../../../src/config-app/degraded-tools.js';
 import type { StartupFailure } from '../../../src/config.js';
 
 const SETTINGS_URL = 'http://127.0.0.1:5000/';
@@ -113,5 +113,24 @@ describe('registerDegradedTools notice', () => {
     expect(callDegradedTool('test_connection', failure)?.isError).toBe(true);
     expect(callDegradedTool('test_connection')?.isError).toBe(true);
     expect(callDegradedTool('open_settings', failure)?.isError).toBeUndefined();
+  });
+});
+
+describe('buildHeadlessStartupError', () => {
+  it('names the env vars on a first run and says why setup mode cannot run', () => {
+    const text = buildHeadlessStartupError();
+    expect(text).toContain('not configured');
+    expect(text).toContain('MCP_TRANSPORT=http');
+    expect(text).toContain('NAVIDROME_URL');
+  });
+
+  it('gives an env failure the env remedy and redacts credentials in the reason', () => {
+    const text = buildHeadlessStartupError({
+      reason: 'fetch failed for http://bob:hunter2@nd.local',
+      unreachable: false,
+      source: 'env',
+    });
+    expect(text).toContain('Fix the environment variable that holds the named setting');
+    expect(text).not.toContain('hunter2');
   });
 });

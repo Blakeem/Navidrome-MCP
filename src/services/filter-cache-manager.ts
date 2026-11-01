@@ -6,6 +6,7 @@
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { Config } from '../config.js';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import { FilterOptionsSchema } from '../schemas/index.js';
 import { transformTagsToMeta } from '../transformers/index.js';
@@ -156,7 +157,7 @@ class FilterCacheManager {
 
       logger.debug(`Loaded ${set.originals.size} ${type} values for filtering`);
     } catch (error) {
-      logger.error(`Failed to load ${type} filter values:`, error instanceof Error ? error.message : String(error));
+      logger.error(`Failed to load ${type} filter values:`, errorMessage(error));
     }
   }
 

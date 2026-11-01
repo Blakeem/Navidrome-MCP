@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { ErrorFormatter } from '../../../src/utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../../../src/utils/error-formatter.js';
 
 function makeResponse(status: number, statusText: string): Response {
   return { ok: status < 400, status, statusText } as unknown as Response;
@@ -118,5 +118,24 @@ describe('ErrorFormatter.configValidation', () => {
     const msg = ErrorFormatter.configValidation(['URL is required', 'Password is required']);
     expect(msg).toContain('URL is required');
     expect(msg).toContain('Password is required');
+  });
+});
+
+describe('errorMessage', () => {
+  it('returns the message of an Error', () => {
+    expect(errorMessage(new TypeError('bad input'))).toBe('bad input');
+  });
+
+  it('returns a thrown string unchanged', () => {
+    expect(errorMessage('raw string')).toBe('raw string');
+  });
+
+  it('stringifies a non-Error object', () => {
+    expect(errorMessage({ code: 42 })).toBe('[object Object]');
+  });
+
+  it('stringifies null and undefined', () => {
+    expect(errorMessage(null)).toBe('null');
+    expect(errorMessage(undefined)).toBe('undefined');
   });
 });

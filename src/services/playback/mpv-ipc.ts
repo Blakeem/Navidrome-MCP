@@ -13,6 +13,7 @@ import {
   MPV_IPC_CONNECT_TIMEOUT_MS,
   MPV_LOAD_COMMANDS,
 } from '../../constants/timeouts.js';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 
 type IpcArg = string | number | boolean | null;
@@ -69,7 +70,7 @@ export class MpvIpc {
         return;
       } catch (err) {
         if (attempt === retries - 1) {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = errorMessage(err);
           throw new Error(`Could not connect to mpv IPC at ${path}: ${message}`);
         }
         await sleep(delayMs);

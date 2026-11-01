@@ -7,7 +7,7 @@
 import type { Config } from '../config.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import { logger } from '../utils/logger.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { safeNumber } from '../utils/safe-number.js';
 import { Cache } from '../utils/cache.js';
 import { normTitle, isJunkAlbumName } from '../utils/normalize-title.js';
@@ -262,7 +262,7 @@ async function probeAlbumsByName(client: NavidromeClient, title: string): Promis
     );
     return data;
   } catch (error) {
-    logger.warn(`Navidrome album probe for "${title}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    logger.warn(`Navidrome album probe for "${title}" failed: ${errorMessage(error)}`);
     return null;
   }
 }
@@ -495,7 +495,7 @@ export async function getArtistAlbums(
         : await cachedOr(mbArtistCache, `name:${(params.artist as string).toLowerCase()}`, () => searchMbArtist(params.artist as string, config));
     } catch (error) {
       mbRequestFailed = true;
-      logger.warn(`MusicBrainz artist resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`MusicBrainz artist resolution failed: ${errorMessage(error)}`);
     }
 
     const artistName = params.artist ?? mbArtist?.name;
@@ -767,7 +767,7 @@ export async function getAlbumInfo(
           );
     } catch (error) {
       mbResolveFailed = true;
-      logger.warn(`MusicBrainz release-group resolution failed: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`MusicBrainz release-group resolution failed: ${errorMessage(error)}`);
     }
 
     const artistName = params.artist ?? rg?.artistName ?? undefined;

@@ -6,7 +6,7 @@
 
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { safeNumber } from '../utils/safe-number.js';
 import {
   asLastFmArray,
@@ -138,7 +138,7 @@ async function fetchEnglishBiography(artist: string, apiKey: string): Promise<st
     const data = await callLastFmApi('artist.getInfo', { artist, lang: 'en', autocorrect: '1' }, apiKey);
     return readBiography(readArtistInfo(data));
   } catch (error) {
-    logger.warn(`English biography fallback for "${artist}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    logger.warn(`English biography fallback for "${artist}" failed: ${errorMessage(error)}`);
     return null;
   }
 }

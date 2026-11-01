@@ -13,7 +13,7 @@ import type {
 } from '../types/index.js';
 import type { Config } from '../config.js';
 import type { NavidromeClient } from '../client/navidrome-client.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import {
   fetchWithTimeout,
@@ -168,7 +168,7 @@ async function readLocalLyrics(source: LocalLyricsSource, durationMs?: number): 
     // that LRCLIB can still answer.
     logger.warn(
       'resolveLyricsByMetadata: local file lyrics unavailable, continuing with LRCLIB:',
-      error instanceof Error ? error.message : String(error),
+      errorMessage(error),
     );
     return null;
   }
@@ -350,7 +350,7 @@ async function resolveFromLrclib(
       if (bestPlain === null) throw error;
       logger.warn(
         'resolveFromLrclib: LRCLIB failed after a plain hit, keeping it:',
-        error instanceof Error ? error.message : String(error),
+        errorMessage(error),
       );
       return bestPlain;
     }
@@ -493,7 +493,7 @@ export async function resolveLyricsByMetadata(
         if (local === null) throw error;
         logger.warn(
           'resolveLyricsByMetadata: LRCLIB failed, returning the file lyrics:',
-          error instanceof Error ? error.message : String(error),
+          errorMessage(error),
         );
       }
     }
@@ -507,7 +507,7 @@ export async function resolveLyricsByMetadata(
   } catch (error) {
     logger.warn(
       'resolveLyricsByMetadata: lookup failed (transport/config error, not a missing track):',
-      error instanceof Error ? error.message : String(error),
+      errorMessage(error),
     );
     throw new Error(ErrorFormatter.toolExecution('resolveLyricsByMetadata', error));
   }
@@ -701,7 +701,7 @@ async function findLibrarySong(
     // the entire lookup.
     logger.warn(
       'searchLyricsCandidates: library lookup failed:',
-      error instanceof Error ? error.message : String(error),
+      errorMessage(error),
     );
     return null;
   }
@@ -737,7 +737,7 @@ export async function searchLyricsCandidates(
   } catch (error) {
     logger.warn(
       'searchLyricsCandidates: LRCLIB search failed (transport/config error):',
-      error instanceof Error ? error.message : String(error),
+      errorMessage(error),
     );
     throw new Error(ErrorFormatter.toolExecution('search_lyrics', error));
   }

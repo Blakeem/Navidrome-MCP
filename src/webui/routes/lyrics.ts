@@ -12,6 +12,7 @@ import { buildLyricsLookup, resolveLyricsByMetadata } from '../../tools/lyrics.j
 import { getPlayQueue } from '../../tools/playback.js';
 import type { LyricsDTO } from '../../types/index.js';
 import { Cache } from '../../utils/cache.js';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { writeError, writeJson } from '../http-helpers.js';
 
@@ -29,10 +30,6 @@ const MISS_TTL_SECONDS = 60;
 // `Cache` fixes one TTL per instance, so hits and misses need separate stores.
 const hitCache = new Cache<LyricsDTO>(HIT_TTL_SECONDS);
 const missCache = new Cache<LyricsDTO>(MISS_TTL_SECONDS);
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /** A DTO with no text and no instrumental flag is a miss to retry, not an answer to hold. */
 function isAnswered(dto: LyricsDTO): boolean {
@@ -52,7 +49,7 @@ async function lookupLyrics(config: Config, client: NavidromeClient, songId: str
     const queue = await getPlayQueue(client, {});
     entry = queue.items.find((item) => item.songId === songId);
   } catch (err) {
-    logger.debug(`webui: lyrics queue lookup failed for id=${songId}: ${errorText(err)}`);
+    logger.debug(`webui: lyrics queue lookup failed for id=${songId}: ${errorMessage(err)}`);
     return { ok: false, status: 502, message: 'Play-queue lookup failed' };
   }
   if (entry === undefined) {
@@ -72,7 +69,7 @@ async function lookupLyrics(config: Config, client: NavidromeClient, songId: str
   try {
     dto = await resolveLyricsByMetadata(config, lookup.metadata, { local: { client, songId }, allowLrclib });
   } catch (err) {
-    logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorText(err)}`);
+    logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorMessage(err)}`);
     return { ok: false, status: 502, message: 'Lyrics lookup failed' };
   }
 

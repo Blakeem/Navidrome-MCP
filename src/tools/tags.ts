@@ -17,7 +17,7 @@ import {
 } from '../schemas/index.js';
 import { filterCacheManager, type FilterType } from '../services/filter-cache-manager.js';
 import { transformTagsToMeta, type TagWithMeta } from '../transformers/index.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 
 interface ListTagValuesResult {
@@ -84,7 +84,7 @@ async function backfillTagCounts(
         } catch (error) {
           entry.backfillFailed = true;
           logger.debug(
-            `backfillTagCounts: failed for ${entry.tagName}=${entry.tag.tagValue}: ${error instanceof Error ? error.message : String(error)}`,
+            `backfillTagCounts: failed for ${entry.tagName}=${entry.tag.tagValue}: ${errorMessage(error)}`,
           );
         }
       }),

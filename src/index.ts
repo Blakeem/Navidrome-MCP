@@ -17,6 +17,7 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
 import { ScrobbleTracker } from './services/playback/scrobble-tracker.js';
+import { errorMessage } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES, SETUP_CAPABILITIES } from './capabilities.js';
@@ -24,7 +25,8 @@ import { ensureWebForPlayback } from './web/spawn.js';
 import { holdOwnerLease } from './web/lease.js';
 import { probeWebOwner, webOwnerPresent } from './web/acquire.js';
 import { startConfigServer } from './config-app/server.js';
-import { buildSetupNotice, registerDegradedTools } from './config-app/degraded-tools.js';
+import { buildHeadlessStartupError, buildSetupNotice, registerDegradedTools } from './config-app/degraded-tools.js';
+import { envRequestsHttpTransport } from './config/env-settings.js';
 import { openBrowser } from './utils/open-browser.js';
 import { isLanReachable } from './webui/network.js';
 
@@ -104,7 +106,7 @@ async function createRuntimeOrSetupMode(config: Config, source: ConfigSource): P
   try {
     return await createRuntime(config);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     if (config.transport.type === 'http') {
       // navidrome-config binds loopback only, so a container running from env vars cannot reach it.
       const remedy = source === 'env'
@@ -125,6 +127,8 @@ async function main(): Promise<void> {
 
   const state = await resolveConfigState();
   if (!state.configured) {
+    // A detached container's stdin is at EOF, so stdio setup mode would exit 0 and never restart.
+    if (envRequestsHttpTransport()) throw new Error(buildHeadlessStartupError(state.failure));
     await runSetupMode(state.failure);
     return;
   }

@@ -59,6 +59,7 @@ tests/
 ├── integration/coordination/    # Multi-process tests against dist/ (run via `pnpm test:playback`)
 ├── helpers/                     # Test setup and config helpers (setup-config-store, test-config, env-detection)
 ├── factories/                   # Mock client & data factories
+├── fixtures/                    # Static test inputs (TLS key and certificate pairs)
 └── CLAUDE.md                    # This file
 ```
 
@@ -114,12 +115,7 @@ files that also hold mocked tests. **A new file with a `describeLive` block must
 be added there**, or its live tests never run.
 
 ### Current Test Coverage
-1. **Playlist** (data modification safety)
-2. **Search** (high user impact)
-3. **User Preferences** (data integrity)
-4. **Radio Validation** (stream validation)
-5. **Tools Registry** (comprehensive tool validation)
-6. **Message Manager** (utility testing)
+Unit tests mirror `src/`, with one subdirectory per `src/` area under `tests/unit/`.
 
 ---
 

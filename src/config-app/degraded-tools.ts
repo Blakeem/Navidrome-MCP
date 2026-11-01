@@ -62,6 +62,25 @@ export function buildSetupNotice(settingsUrl: string, failure?: StartupFailure):
 }
 
 /**
+ * An HTTP deployment has no terminal and no browser, so it exits with this text instead of serving
+ * setup mode, and an orchestrator sees a failed start.
+ */
+export function buildHeadlessStartupError(failure?: StartupFailure): string {
+  const exits = 'Setup mode needs stdio and the local settings page, which MCP_TRANSPORT=http cannot offer, so the server exits.';
+  if (failure === undefined) {
+    return (
+      `Navidrome MCP is not configured. ${exits} Set NAVIDROME_URL, NAVIDROME_USERNAME and ` +
+      'NAVIDROME_PASSWORD, or provide a usable settings.json, then restart.'
+    );
+  }
+  const reason = redact(failure.reason) as string;
+  const remedy = failure.source === 'env'
+    ? 'Fix the environment variable that holds the named setting, then restart.'
+    : `Fix or remove settings.json at ${getSettingsStorePath()}, and make sure this server's user can read it, then restart.`;
+  return `Navidrome MCP could not start with the current configuration: ${reason} ${exits} ${remedy}`;
+}
+
+/**
  * Every response carries the settings URL, since the browser auto-open does nothing on headless
  * or SSH hosts.
  */

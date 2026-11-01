@@ -2,7 +2,7 @@
 
 ## Goal
 
-Let the AI queue and play songs/albums directly through the speakers of the machine running the MCP server, with no browser or external Navidrome client required. Cross-platform: Linux and Windows 11.
+Let the AI queue and play songs/albums directly through the speakers of the machine running the MCP server, with no browser or external Navidrome client required. Cross-platform: Linux, macOS and Windows 11.
 
 Use case driver: "Queue 5 random favorite albums" should be one tool call. Long-term: voice-controlled music device on a Raspberry Pi or similar.
 
@@ -60,6 +60,7 @@ src/services/playback/
 ├── mpv-run.ts            # one headless mpv run with a timeout, shared by the filter check and the device probe
 ├── audio-devices.ts      # audio output device parsing, the one-driver filter and the device probe
 ├── playback-engine.ts    # high-level facade; the only thing handlers use
+├── scrobble-tracker.ts   # now-playing and scrobble submission, with the cross-process claim
 ├── visualizer-filter.ts  # the visualizer's mpv audio filter, its validation run and install rule
 └── visualizer-log.ts     # groups the filter's log lines into level records
 
@@ -75,7 +76,7 @@ Mirrors how Last.fm and lyrics features are organized.
 
 ### Detection
 
-At startup the engine uses `playback.mpvPath` from settings.json when it is set and executable, otherwise a PATH lookup (`command -v mpv` / `where mpv`). If no binary is found, `config.features.playback === false` and no playback tools are registered. Result: install mpv → restart MCP → tools appear.
+At startup the engine uses `playback.mpvPath` from settings.json when it is set. A set path that is not executable turns playback off and logs the reason. A blank path searches PATH: Linux and macOS run `command -v mpv`, and Windows scans PATH for `mpv.exe`. If no binary is found, `config.features.playback === false` and no playback tools are registered. Result: install mpv → restart MCP → tools appear.
 
 ### Settings
 
@@ -86,7 +87,7 @@ At startup the engine uses `playback.mpvPath` from settings.json when it is set 
 | `playback.transcodeBitrate` | `192` | Max kbps, applied only when a codec is set |
 | `playback.audioDevice` | `null` | The output mpv plays to, saved by `set_audio_device`. `null` plays to the system default. |
 
-`MPV_PATH`, `PLAYBACK_TRANSCODE_FORMAT`, `PLAYBACK_TRANSCODE_BITRATE` and `PLAYBACK_AUDIO_DEVICE` are read only by the env fallback when no usable store exists, and to pre-fill the first-run settings form.
+`MPV_PATH`, `PLAYBACK_TRANSCODE_FORMAT`, `PLAYBACK_TRANSCODE_BITRATE` and `PLAYBACK_AUDIO_DEVICE` are read only by the env fallback (settings.json absent, failing the settings schema, or with no Navidrome URL), and to pre-fill the first-run settings form.
 
 ## mpv Process Flags
 

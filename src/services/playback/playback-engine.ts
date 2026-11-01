@@ -10,7 +10,7 @@ import { unlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import type { Config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
-import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../../utils/error-formatter.js';
 import {
   AUDIO_OUTPUT_RESUME_WINDOW_MS,
   MPV_ATTACH_CONNECT_DELAY_MS,
@@ -434,7 +434,7 @@ class PlaybackEngine {
           this.propertyCache.set('playlist-pos', null);
           // The rethrow skips the success-path emit, so broadcast the cleared queue here.
           this.emitStateChange({ kind: 'queue' });
-          const reason = err instanceof Error ? err.message : String(err);
+          const reason = errorMessage(err);
           throw new Error(`enqueue failed mid-sequence; queue was cleared and is now empty: ${reason}`);
         }
         // The generation rises before the pending mark clears, so no reader sees neither mark.
@@ -481,7 +481,7 @@ class PlaybackEngine {
     try {
       playlist = await ipc.command('get_property', 'playlist');
     } catch (err) {
-      logger.debug(`enqueue: playlist read for entry ids failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`enqueue: playlist read for entry ids failed: ${errorMessage(err)}`);
     }
     const idByFilename = new Map<string, number>();
     for (const item of Array.isArray(playlist) ? (playlist as unknown[]) : []) {
@@ -608,7 +608,7 @@ class PlaybackEngine {
     try {
       await ipc.command('set_property', name, value);
     } catch (error) {
-      logger.debug(`mpv ${name} not written: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`mpv ${name} not written: ${errorMessage(error)}`);
     }
   }
 
@@ -630,7 +630,7 @@ class PlaybackEngine {
     try {
       generation = await this.readGeneration(ipc);
     } catch (error) {
-      logger.debug(`mpv ${REPLACE_GENERATION_PROPERTY} not read: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`mpv ${REPLACE_GENERATION_PROPERTY} not read: ${errorMessage(error)}`);
       return;
     }
     await this.writeUserData(ipc, REPLACE_GENERATION_PROPERTY, generation + 1);
@@ -997,7 +997,7 @@ class PlaybackEngine {
       try {
         handler(event);
       } catch (err) {
-        logger.debug(`state-change handler threw: ${err instanceof Error ? err.message : String(err)}`);
+        logger.debug(`state-change handler threw: ${errorMessage(err)}`);
       }
     }
   }
@@ -1077,7 +1077,7 @@ class PlaybackEngine {
       if (this.visualizerKeepsInSync) void this.queueVisualizerSync(ipc, {});
       return true;
     } catch (err) {
-      logger.debug(`Could not attach to existing mpv at ${this.ipcPath}: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`Could not attach to existing mpv at ${this.ipcPath}: ${errorMessage(err)}`);
       try { ipc.close(); } catch { /* noop */ }
       return false;
     }
@@ -1190,7 +1190,7 @@ class PlaybackEngine {
       try {
         await ipc.observeProperty(id, name);
       } catch (error) {
-        logger.debug(`mpv cannot observe ${name}: ${error instanceof Error ? error.message : String(error)}`);
+        logger.debug(`mpv cannot observe ${name}: ${errorMessage(error)}`);
       }
     }
   }
@@ -1200,7 +1200,7 @@ class PlaybackEngine {
     this.visualizerSyncChain = this.visualizerSyncChain
       .then(() => this.applyVisualizerFilter(ipc, request))
       .catch((err: unknown) => {
-        logger.debug(`visualizer filter sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.debug(`visualizer filter sync failed: ${errorMessage(err)}`);
       });
     return this.visualizerSyncChain;
   }
@@ -1274,7 +1274,7 @@ class PlaybackEngine {
     try {
       return this.visualizerWanted();
     } catch (err) {
-      logger.debug(`visualizer setting unreadable, treating it as off: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`visualizer setting unreadable, treating it as off: ${errorMessage(err)}`);
       return false;
     }
   }
@@ -1297,7 +1297,7 @@ class PlaybackEngine {
       await ipc.command('set_property', 'audio-device', target.id);
       if (target.id !== saved.id) this.storeReplacementDevice(saved.id, { id: target.id, name: target.name ?? saved.id });
     } catch (err) {
-      logger.warn(`audio device ${saved.id} not applied: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`audio device ${saved.id} not applied: ${errorMessage(err)}`);
     }
   }
 
@@ -1330,7 +1330,7 @@ class PlaybackEngine {
     if (!lost || this.isIdleOrPaused()) return;
     this.lostOutputPause = { at: Date.now(), deviceId: selectedDeviceId(values.audioDevice) };
     void ipc.command('set_property', 'pause', true).catch((err: unknown) => {
-      logger.debug(`pause on lost audio output failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`pause on lost audio output failed: ${errorMessage(err)}`);
     });
   }
 
@@ -1364,7 +1364,7 @@ class PlaybackEngine {
       await ipc.command('set_property', 'audio-device', replacement.id);
       this.storeReplacementDevice(lostId, replacement);
     } catch (err) {
-      logger.warn(`audio device ${replacement.id} not adopted: ${err instanceof Error ? err.message : String(err)}`);
+      logger.warn(`audio device ${replacement.id} not adopted: ${errorMessage(err)}`);
       if (this.lostOutputPause?.deviceId === replacement.id) this.lostOutputPause.deviceId = lostId;
       this.pauseOnLostOutput(ipc, this.readCachedAudioOutputValues());
     } finally {
@@ -1392,7 +1392,7 @@ class PlaybackEngine {
       const missing = await this.checkAudioOutput(ipc);
       if (missing === null && resume) await ipc.command('set_property', 'pause', false);
     } catch (err) {
-      logger.debug(`returned audio output not recovered: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`returned audio output not recovered: ${errorMessage(err)}`);
     }
   }
 
@@ -1407,7 +1407,7 @@ class PlaybackEngine {
       if (!isAudioOutputLost(live)) return;
       await ipc.command('set_property', 'pause', true);
     } catch (err) {
-      logger.debug(`pause on a start over a lost audio output failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`pause on a start over a lost audio output failed: ${errorMessage(err)}`);
     }
   }
 
@@ -1458,7 +1458,7 @@ class PlaybackEngine {
       }
       return true;
     } catch (err) {
-      logger.debug(`audio output ${id} not re-opened: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`audio output ${id} not re-opened: ${errorMessage(err)}`);
       return false;
     }
   }
@@ -1481,7 +1481,7 @@ class PlaybackEngine {
     try {
       return this.audioDeviceSource();
     } catch (err) {
-      logger.debug(`audio device setting unreadable, treating it as none: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`audio device setting unreadable, treating it as none: ${errorMessage(err)}`);
       return null;
     }
   }

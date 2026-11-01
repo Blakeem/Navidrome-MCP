@@ -6,6 +6,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { JukeboxBanRemoveSchema, JukeboxGuestBanSchema, JukeboxGuestRemoveSchema } from '../../schemas/index.js';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import type { AuthService, GuestStatus } from '../auth/auth-service.js';
 import type { Ban } from '../auth/auth-store.js';
@@ -125,7 +126,7 @@ export async function handleBanGuest(
       logger.warn(`webui: no player is attached, so ${String(removal.stayed)} queued songs of banned ${session.label} stay in the queue`);
     }
   } catch (err) {
-    logger.warn(`webui: the songs of banned ${session.label} were not removed from the queue: ${err instanceof Error ? err.message : String(err)}`);
+    logger.warn(`webui: the songs of banned ${session.label} were not removed from the queue: ${errorMessage(err)}`);
   }
   writeJson(res, 200, { ok: true, bans: bans.map(banView), songsRemoved, songsStayed });
 }

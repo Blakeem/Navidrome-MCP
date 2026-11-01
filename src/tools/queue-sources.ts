@@ -8,6 +8,7 @@ import type { z } from 'zod';
 import type { NavidromeClient } from '../client/navidrome-client.js';
 import type { LibraryPlayRequestSchema } from '../schemas/index.js';
 import type { QueueTrackMetadata } from '../services/playback/playback-engine.js';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import { QUEUE_READ_PAGE_SIZE, MAX_QUEUE_READ_PAGES } from '../constants/defaults.js';
 
@@ -243,7 +244,7 @@ export async function fetchSongMetadata(
     } catch (err) {
       if (strict) throw err;
       // The affected entries fall back to mpv's own metadata.
-      logger.debug(`fetchSongMetadata chunk failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`fetchSongMetadata chunk failed: ${errorMessage(err)}`);
     }
   }
   return out;

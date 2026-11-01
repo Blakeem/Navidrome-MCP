@@ -54,10 +54,17 @@ export function buildFormSeed(): SettingsFile {
  * suggestions, so those features turn on only by explicit env opt-in.
  */
 export function buildEnvRuntimeSettings(): SettingsFile {
-  return settingsFromEnvSource((key) => {
-    const value = process.env[key];
-    return value !== undefined && value.trim() !== '' ? value : undefined;
-  }, false);
+  return settingsFromEnvSource(readProcessEnv, false);
+}
+
+/** Setup mode serves stdio and a local page, which a headless HTTP deployment can reach neither of. */
+export function envRequestsHttpTransport(): boolean {
+  return toTransportType(readProcessEnv('MCP_TRANSPORT')) === 'http';
+}
+
+function readProcessEnv(key: string): string | undefined {
+  const value = process.env[key];
+  return value !== undefined && value.trim() !== '' ? value : undefined;
 }
 
 /**

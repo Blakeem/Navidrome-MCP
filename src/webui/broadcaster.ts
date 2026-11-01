@@ -15,6 +15,7 @@ import {
 import { SSE_HEARTBEAT_MS } from '../constants/timeouts.js';
 import { getPlayQueueEntries, nowPlaying, playbackStatus, toPlayQueueResult } from '../tools/playback.js';
 import { getTheme, getVisualizer } from '../web/player-runtime.js';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import type { GuestJukebox } from './auth/auth-service.js';
 import { toGuestNowPlaying, toGuestQueue, type GuestJukeboxView, type GuestSnapshot } from './guest-snapshot.js';
@@ -128,7 +129,7 @@ export class SseBroadcaster {
       } catch (err) {
         this.clients.delete(res);
         logger.debug(
-          `webui: SSE heartbeat failed, dropping client: ${err instanceof Error ? err.message : String(err)}`,
+          `webui: SSE heartbeat failed, dropping client: ${errorMessage(err)}`,
         );
       }
     }
@@ -284,7 +285,7 @@ export class SseBroadcaster {
       return !res.destroyed;
     } catch (err) {
       logger.debug(
-        `webui: SSE write failed: ${err instanceof Error ? err.message : String(err)}`,
+        `webui: SSE write failed: ${errorMessage(err)}`,
       );
       return false;
     }
@@ -379,7 +380,7 @@ function snapshotStatus(
 
 function settled<T>(result: PromiseSettledResult<T>, field: string): T | null {
   if (result.status === 'fulfilled') return result.value;
-  const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+  const reason = errorMessage(result.reason);
   logger.debug(`webui: buildSnapshot ${field} read failed: ${reason}`);
   return null;
 }

@@ -55,7 +55,7 @@ slack. The image's `HEALTHCHECK` sets `--start-period=10s`. In Kubernetes, use a
 
 ## No audio in the image, by design
 
-mpv is not installed, so the container registers the library toolset only: the 20
+mpv is not installed, so the container registers the library toolset only: the 22
 playback tools (`play_songs`, `pause`, `seek`, `set_volume`, the mpv play-queue
 tools, ...) are absent from `tools/list`, and the Jukebox Remote web UI never starts.
 Everything else (search, playlists, ratings, listening history, radio, Last.fm,
@@ -90,8 +90,12 @@ the host when you want audio.
 
 Prefer a file over env vars? Mount a `settings.json` at `/config/settings.json` (the
 image points `NAVIDROME_CONFIG_PATH` there). A usable mounted file is used instead of env.
-Some unusable files start setup mode instead of the env fallback, as
+Some unusable files block the env fallback, as
 [Headless Machines and Containers](../README.md#headless-machines-and-containers) lists.
+Setup mode cannot run under `MCP_TRANSPORT=http`, so the container then logs the
+reason and exits with code 1. The image runs as the `node` user (UID 1000), which
+must be able to read the mounted file. An unreadable file stops the container the
+same way.
 The file holds your Navidrome credentials in plaintext, so in an orchestrator mount
 it from a secret store (a Kubernetes `Secret`, compose secrets), not a plain config
 object:

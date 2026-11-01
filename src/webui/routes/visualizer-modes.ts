@@ -7,6 +7,7 @@
 import { readdir } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { join } from 'node:path';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { writeError, writeJson } from '../http-helpers.js';
 import { PUBLIC_DIR } from './static-files.js';
@@ -21,7 +22,7 @@ export async function handleVisualizerModes(res: ServerResponse, publicDir: stri
   try {
     names = await readdir(join(publicDir, 'visualizers'));
   } catch (err) {
-    logger.error(`webui: cannot list the visualizer modes: ${err instanceof Error ? err.message : String(err)}`);
+    logger.error(`webui: cannot list the visualizer modes: ${errorMessage(err)}`);
     writeError(res, 500, 'Visualizer modes unavailable');
     return;
   }

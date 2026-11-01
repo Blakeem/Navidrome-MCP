@@ -10,6 +10,7 @@ import type { Config } from '../../config.js';
 import { IdSchema } from '../../schemas/index.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
 import { fetchWithTimeout, getNavidromeRequestTimeoutMs } from '../../utils/fetch-with-timeout.js';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
@@ -78,7 +79,7 @@ export async function handleCover(
   } catch (err) {
     // A 502 lets the UI render a placeholder without implying the web server itself is down.
     logger.debug(
-      `webui: cover proxy fetch failed for id=${id}: ${err instanceof Error ? err.message : String(err)}`,
+      `webui: cover proxy fetch failed for id=${id}: ${errorMessage(err)}`,
     );
     writeError(res, 502, 'Upstream cover-art fetch failed');
     return;

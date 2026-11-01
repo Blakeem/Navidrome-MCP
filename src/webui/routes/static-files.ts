@@ -9,6 +9,7 @@ import { readFile } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { writeError } from '../http-helpers.js';
 
@@ -87,7 +88,7 @@ export async function handleStatic(
       writeError(res, 404, 'Not found');
       return;
     }
-    logger.debug(`webui: static read failed for ${pathname}: ${err instanceof Error ? err.message : String(err)}`);
+    logger.debug(`webui: static read failed for ${pathname}: ${errorMessage(err)}`);
     writeError(res, 500, 'Static file error');
   }
 }

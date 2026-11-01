@@ -7,6 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { BlockList, isIPv4, isIPv6 } from 'node:net';
 import { networkInterfaces } from 'node:os';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 
 type SourceClass = 'loopback' | 'lan' | 'public';
@@ -94,7 +95,7 @@ function readLocalSubnets(): BlockList {
   try {
     interfaces = networkInterfaces();
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     logger.warn(`webui: cannot list network interfaces, so only the fixed LAN ranges count as local: ${reason}`);
   }
   for (const entries of Object.values(interfaces)) {

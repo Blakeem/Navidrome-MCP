@@ -8,6 +8,7 @@ import { VISUALIZER_FEED_RETRY_MS } from '../constants/timeouts.js';
 import { MpvIpc } from '../services/playback/mpv-ipc.js';
 import { getDefaultIpcPath } from '../services/playback/mpv-process.js';
 import { VisualizerLogParser, type LevelRecord } from '../services/playback/visualizer-log.js';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -61,7 +62,7 @@ export class VisualizerFeed {
       });
       await ipc.command('request_log_messages', 'v');
     } catch (err) {
-      logger.debug(`visualizer feed: mpv is not reachable yet: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`visualizer feed: mpv is not reachable yet: ${errorMessage(err)}`);
       ipc.close();
       this.connecting = false;
       this.scheduleRetry();

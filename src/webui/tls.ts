@@ -8,6 +8,7 @@ import { readFileSync, unwatchFile, watchFile } from 'node:fs';
 import type { Server as HttpsServer } from 'node:https';
 import { createSecureContext, type SecureContextOptions } from 'node:tls';
 import type { Config } from '../config.js';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 
 interface TlsPaths {
@@ -28,10 +29,6 @@ const TLS_RELOAD_POLL_MS = 60_000;
 
 export function isTlsEnabled(tls: Config['webui']['tls']): tls is TlsPaths {
   return tls.certPath !== null && tls.keyPath !== null;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function readPem(path: string, label: string): Buffer {

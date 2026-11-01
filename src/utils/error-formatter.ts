@@ -6,6 +6,11 @@
 
 import { z } from 'zod';
 
+/** A thrown value need not be an Error, so a non-Error is stringified instead of dropped. */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 export class ErrorFormatter {
   /** A ZodError's own message is a JSON dump of its issues, too noisy for the agent to act on. */
   private static extractMessage(error: unknown): string {

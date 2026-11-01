@@ -144,6 +144,30 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
     expect(mocks.createRuntime).not.toHaveBeenCalled();
   });
 
+  // A detached container's stdin is at EOF, so stdio setup mode there would exit 0 and never restart.
+  it('exits 1 with the reason instead of serving setup mode when MCP_TRANSPORT=http', async () => {
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    vi.stubEnv('MCP_TRANSPORT', 'http');
+    const failure = { reason: 'settings.json is not valid JSON (/config/settings.json)', unreachable: false, source: 'store' };
+    mocks.resolveConfigState.mockResolvedValue({ configured: false, failure });
+    vi.resetModules();
+
+    try {
+      await import('../../../src/index.js');
+      await vi.waitFor(() => {
+        expect(exit).toHaveBeenCalledWith(1);
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(mocks.startConfigServer).not.toHaveBeenCalled();
+    expect(mocks.registerDegradedTools).not.toHaveBeenCalled();
+    const fatal = mocks.logger.error.mock.calls.find((call) => call[0] === 'Failed to start server:');
+    const message = (fatal?.[1] as Error).message;
+    expect(message).toContain(failure.reason);
+    expect(message).toContain('make sure this server\'s user can read it');
+  });
+
   it('still exits on HTTP, with a fatal log line that names navidrome-config', async () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
