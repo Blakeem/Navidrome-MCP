@@ -21,6 +21,8 @@ build/
 
 coverage/
 *.lcov
+tests/e2e/test-results/
+tests/e2e/playwright-report/
 .nyc_output/
 
 logs/

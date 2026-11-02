@@ -4,6 +4,7 @@ import typescriptParser from '@typescript-eslint/parser';
 import unicorn from 'eslint-plugin-unicorn';
 import eslintComments from '@eslint-community/eslint-plugin-eslint-comments';
 import prettier from 'eslint-config-prettier';
+import playwright from 'eslint-plugin-playwright';
 
 export default [
   js.configs.recommended,
@@ -138,6 +139,17 @@ export default [
       'no-console': ['error', { allow: ['error', 'warn'] }],
       // TypeScript resolves names here, including the vitest globals that ESLint does not declare.
       'no-undef': 'off',
+    },
+  },
+  {
+    ...playwright.configs['flat/recommended'],
+    files: ['tests/e2e/**/*.ts'],
+    rules: {
+      ...playwright.configs['flat/recommended'].rules,
+      // flat/recommended only warns on these, and `pnpm lint` exits 0 on a warning.
+      'playwright/no-wait-for-timeout': 'error',
+      'playwright/no-conditional-in-test': 'error',
+      'playwright/no-conditional-expect': 'error',
     },
   },
   {

@@ -20,7 +20,8 @@ export default defineConfig({
     },
     include: ['tests/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
     // The integration suites need mpv or a built dist/, so they run under `pnpm test:playback`.
-    exclude: ['node_modules', 'dist', 'coverage', 'tests/integration/**'],
+    // The Playwright e2e suite runs under `pnpm test:e2e`.
+    exclude: ['node_modules', 'dist', 'coverage', 'tests/integration/**', 'tests/e2e/**'],
     // Each test file gets a throwaway settings.json store, so the suite never touches the real one.
     setupFiles: ['tests/helpers/setup-config-store.ts'],
     // Per-file workers log in to Navidrome at once and get 429, so live reads run in test:live.

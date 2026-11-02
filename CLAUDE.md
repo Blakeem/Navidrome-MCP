@@ -28,6 +28,9 @@ analysis, so tests importing a symbol keep it alive.
 `pnpm test:playback` is the live integration suite, and only the user runs it.
 It builds `dist/` first, needs mpv and Navidrome, and clears the live mpv queue.
 
+`pnpm test:e2e` is the on-demand Playwright suite for the web remote in jukebox mode, and
+`tests/CLAUDE.md` says how it runs, what it touches and how to write a spec.
+
 `pnpm test` is watch-mode for development; use `pnpm test:run` for one-shot.
 
 See `tests/CLAUDE.md` for the testing strategy (live reads / mocked writes /

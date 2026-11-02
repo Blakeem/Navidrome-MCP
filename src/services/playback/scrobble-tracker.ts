@@ -12,9 +12,9 @@ import type { StateChangeEvent } from './playback-engine.js';
 import type { RetryPolicy } from '../../utils/fetch-with-timeout.js';
 
 // Last.fm counts a play of a track 30s or longer after half its duration or 4 minutes, whichever
-// comes first.
-const MIN_DURATION_SECONDS = 30;
-const MAX_THRESHOLD_SECONDS = 240;
+// comes first. The e2e scrobble guard reads both, so a test stops a track before Navidrome counts a play.
+export const MIN_DURATION_SECONDS = 30;
+export const MAX_THRESHOLD_SECONDS = 240;
 
 /** The script-message topic for a claim. Its args are the play key and the claimant id. */
 const SCROBBLE_CLAIM_TOPIC = 'navidrome-mcp-scrobble-claim';

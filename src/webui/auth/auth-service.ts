@@ -17,6 +17,7 @@ import {
   type WebuiAdminAccess,
   type WebuiAuthMode,
 } from '../../constants/defaults.js';
+import { GUEST_ONLINE_WINDOW_MS } from '../../constants/timeouts.js';
 import { logger } from '../../utils/logger.js';
 import { constantTimeEqual, hashPassword, isPasswordHash, randomToken, sha256Hex, verifyPassword } from '../../utils/secrets.js';
 import { endSseStream } from '../http-helpers.js';
@@ -59,8 +60,6 @@ export const MAX_GUESTS_PER_CODE = 100;
 const PUBLIC_JOINS_PER_HOUR = 10;
 const LOCAL_JOINS_PER_HOUR = 60;
 const NICKNAME_CHANGES_PER_HOUR = 10;
-// A phone may close the stream of a page in the background, so a recent request also counts as online.
-const GUEST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
 const BAN_ID_BYTES = 16;
 const DEVICE_ID_BYTES = 16;
 // The base64url form of DEVICE_ID_BYTES, so a forged cookie of any other shape never reaches the store.

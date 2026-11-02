@@ -82,6 +82,9 @@ export const VISUALIZER_FEED_GRACE_MS = 5000;
  *  this often. The interval also bounds how long a dead client lingers. */
 export const SSE_HEARTBEAT_MS = 10_000;
 
+// A phone may close the stream of a page in the background, so a recent request also counts as online.
+export const GUEST_ONLINE_WINDOW_MS = 2 * 60 * 1000;
+
 export const MPV_LOAD_COMMANDS: ReadonlySet<string> = new Set([
   'loadfile',
   'loadlist',
