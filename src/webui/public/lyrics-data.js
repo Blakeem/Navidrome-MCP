@@ -1,4 +1,4 @@
-// Lyrics lookups. A track's lyrics never change, so an answer is held for the life of the page.
+// A track's lyrics never change, so an answer is held for the life of the page.
 // Only answers are cached, so a transient failure stays retryable.
 
 import { getJson } from './api.js';
@@ -6,8 +6,8 @@ import { getJson } from './api.js';
 const cache = new Map();
 const inFlight = new Map();
 
-// Mirrors isAnswered in src/webui/routes/lyrics.ts, so a change to what counts as an answer edits both.
-// The server holds a miss for 60 s only, since the track may become searchable, so the browser must ask again.
+// Mirrors isAnswered in src/webui/routes/lyrics.ts, so a change to either edits both. A miss is
+// not held, since the server expires one after 60 s in case the track becomes searchable.
 function isAnswered(dto) {
   return dto.hasSynced === true || typeof dto.unsynced === 'string' || dto.isInstrumental === true;
 }

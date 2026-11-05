@@ -1,20 +1,7 @@
 #!/usr/bin/env python3
-"""Generate platform launcher icons from assets/icon.png.
+"""Regenerate the committed launcher icons from assets/icon.png (needs Pillow).
 
-Dev-time tool (requires Pillow): regenerates the committed icon assets that
-`make-launcher.mjs` bakes into the desktop shortcuts. Re-run after replacing
-assets/icon.png with new art.
-
-    python3 scripts/generate-icons.py
-
-Outputs (all derived from the single source, Lanczos-resampled at every size):
-    assets/navidrome-player.png    512x512 PNG  -> Linux .desktop Icon=
-    assets/navidrome-player.ico    16..256      -> Windows .lnk IconLocation
-    assets/navidrome-player.icns   16..1024     -> macOS .app bundle icon
-
-The source is padded to a square canvas (transparent) rather than cropped, so
-its rounded corners survive. ICO/ICNS embed PNG-compressed entries directly, so
-no resampling beyond our explicit Image.LANCZOS pass ever touches the pixels.
+The ICO and ICNS files embed PNG entries directly, so only the explicit Lanczos pass resamples.
 """
 
 import struct
@@ -29,6 +16,7 @@ SRC = ASSETS / "icon.png"
 
 
 def load_square():
+    # Padding to a transparent square instead of cropping keeps the art's rounded corners.
     im = Image.open(SRC).convert("RGBA")
     w, h = im.size
     side = max(w, h)
@@ -40,7 +28,6 @@ def load_square():
 
 
 def png_bytes(base, size):
-    """Lanczos-resample `base` to size x size and return PNG-encoded bytes."""
     resized = base.resize((size, size), Image.LANCZOS)
     buf = BytesIO()
     resized.save(buf, format="PNG")
@@ -82,8 +69,7 @@ def write_ico(base):
 
 
 def write_icns(base):
-    # OSType -> pixel dimension. These are the PNG-accepting ICNS element types
-    # macOS reads natively (retina @2x variants included for crisp scaling).
+    # The PNG-accepting ICNS element types that macOS reads, each with its pixel size.
     types = [
         (b"icp4", 16),
         (b"icp5", 32),

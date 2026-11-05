@@ -2,10 +2,10 @@ import { average, detectBeat } from '../visualizer-kit.js';
 
 const TAU = Math.PI * 2;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-// An 8-bit channel rounds an alpha under this to nothing, so paint that faint is skipped.
+// An 8-bit channel stores an alpha under this as 0 or 1 of 255, so paint that faint is skipped.
 const VISIBLE_ALPHA = 0.003;
 
-// Shell hues run from red in the bass to violet in the treble, so a burst wears the color of the band that fired it.
+// Shell hues run from red in the bass to violet in the treble, so a burst takes its band's color.
 const HUE_BASS = 350;
 const HUE_SPAN = 290;
 const HUE_JITTER = 16;
@@ -20,14 +20,15 @@ const SIZE_BASE = 0.24;
 const SIZE_LEVEL = 0.22;
 // Louder bands climb higher, the way a heavier lift charge carries a shell further.
 const LOUD_LIFT = 0.6;
-// Spots tried around the band's column, and how far from it a try may stray as a share of the sky's width.
+// Spots tried around the band's column, and their window's width as a share of the sky's width.
 const SPOT_TRIES = 4;
 const COLUMN_SPREAD = 0.5;
 const MIN_BURST_PX = 4;
 // A pistil or a second ring needs this much room around it to read as its own shape.
 const COMPANION_MIN_PX = 16;
 
-// Drag and life are per second. Gravity counts burst radii per second squared, so a small burst droops like a big one.
+// Drag is per second and life is in seconds. Gravity is in burst radii per second squared, so a
+// small burst droops like a big one.
 const KINDS = {
   peony: { drag: 3.2, gravity: 0.55, life: 1.7, trail: 0.24, density: 1, shape: 'sphere', hueShift: 40, crackle: 1, gold: false, companion: { kind: 'pistil', size: 0.42, hueTurn: 180 } },
   pistil: { drag: 3.4, gravity: 0.5, life: 1.3, trail: 0.16, density: 1, shape: 'sphere', hueShift: -25, crackle: 0.5, gold: false, companion: null },
@@ -35,9 +36,9 @@ const KINDS = {
   halo: { drag: 3.6, gravity: 0.4, life: 1.4, trail: 0.18, density: 0.8, shape: 'ring', hueShift: 30, crackle: 0.8, gold: false, companion: null },
   willow: { drag: 4.5, gravity: 1.4, life: 2.3, trail: 0.55, density: 0.6, shape: 'sphere', hueShift: 0, crackle: 0.35, gold: true, companion: null },
 };
-// Stars of a sphere fly a little slower or faster, so the shell has depth instead of one hard rim.
+// Each sphere star flies at this share of full speed or more, so the shell has depth, not one rim.
 const SPHERE_SPEED_MIN = 0.9;
-// A ring flattened to this share of its width or less reads as a line, so tilts stop short of edge-on.
+// A ring flattened to this share of its width reads as a line, so tilts stop short of edge-on.
 const RING_TILT_MIN = 0.25;
 
 // Dark theme stars burst white hot, settle into their color, then cool toward embers.
@@ -58,7 +59,7 @@ const TRAIL_SEGMENTS = 4;
 const TRAIL_WIDTH = [1, 0.8, 0.62, 0.45];
 const TRAIL_ALPHA = [0.95, 0.55, 0.28, 0.12];
 const MIN_STRETCH_PX = 0.3;
-// A wide faint stroke over the newest stretch stands in for shadowBlur, which costs too much per star.
+// A wide faint stroke over a trail's newest half stands in for shadowBlur, too costly per star.
 const GLOW_WIDTH = 3.4;
 const GLOW_ALPHA = 0.14;
 const GLOW_LIGHT = 60;
@@ -67,7 +68,7 @@ const HEAD_SCALE = 0.85;
 const FADE_FROM = 0.55;
 const FADE_POWER = 1.6;
 
-// Late in life stars crackle, each flashing on random ticks of this clock, more often with more treble.
+// Late in life stars crackle, each flashing on random ticks of this clock. Treble adds flashes.
 const TWINKLE_HZ = 18;
 const CRACKLE_FROM = 0.45;
 const CRACKLE_RAMP = 0.15;
@@ -79,7 +80,7 @@ const LIT_BOOST = 1.8;
 const LIT_DARK = 92;
 const LIT_LIGHT = 30;
 
-// A burst lights its own smoke: a hot core that dies in a blink over a tinted wash that lingers.
+// A burst lights its own smoke, with a hot core that fades fast over a tinted wash that lingers.
 const FLASH_PEAK = 0.5;
 const FLASH_DECAY = 9;
 const WASH_PEAK = 0.1;
@@ -88,7 +89,7 @@ const WASH_REACH = 1.5;
 const FLASH_CORE_LIGHT = 92;
 const LIGHT_FLASH_SCALE = 0.35;
 
-// About one beat at 90 to 120 BPM, so a rocket launched on a beat tends to burst on the next.
+// With BEAT_BURST_FROM, a rocket launched on a beat at 90 to 120 BPM tends to burst on the next.
 const FLIGHT_S = 0.7;
 const FLIGHT_JITTER = 0.3;
 // A beat bursts a rocket once it has flown this share of its flight, so bursts snap to the beat.
@@ -101,10 +102,10 @@ const ROCKET_TAIL_S = [0, 0.05, 0.14];
 const ROCKET_TAIL_WIDTH = [1.2, 0.7];
 const ROCKET_TAIL_ALPHA = [0.9, 0.4];
 const ROCKET_HEAD_SCALE = 0.9;
-// Sparks shed on a fixed clock of the rocket's age, so each one keeps its place from frame to frame.
+// Sparks shed on a fixed clock of the rocket's age, so each keeps its place from frame to frame.
 const SPARK_STEP_S = 0.03;
 const SPARK_LIFE_S = 0.32;
-// Spark fall and scatter count sky units per second, so the tail keeps its shape at every size.
+// Spark fall and scatter are in sky units, so the tail keeps its shape at every size.
 const SPARK_FALL = 0.9;
 const SPARK_SCATTER = 0.12;
 const SPARK_SCALE = 0.5;
@@ -112,26 +113,26 @@ const SPARK_ALPHA = [0.9, 0.35];
 const ROCKET_DARK = { tail: { hue: 38, sat: 100, light: 72 }, spark: { hue: 34, sat: 100, light: 66 }, head: { hue: 45, sat: 100, light: 92 } };
 const ROCKET_LIGHT = { tail: { hue: 26, sat: 95, light: 42 }, spark: { hue: 22, sat: 95, light: 44 }, head: { hue: 20, sat: 95, light: 34 } };
 
-// Ambient launches per second for each unit of loudness over the floor, so music with soft beats still has a show.
+// Ambient launches per second per unit of loudness over the floor, so soft beats still get a show.
 const AMBIENT_RATE = 2.2;
 const AMBIENT_FLOOR = 0.2;
 const SALVO_BASS = 0.7;
 const SALVO_ENERGY = 0.5;
-// A rising band pulls the beat's rockets toward it, so the shells answer the sound that made the beat.
+// A rising band pulls the beat's rockets toward it, so the shells answer the sound of the beat.
 const ONSET_WEIGHT = 4;
 const ONSET_DECAY_PER_SECOND = 12;
-// Presence maps loudness to how lit the sky is, and launches need most of it, so the fall to silence fires nothing.
+// Presence maps loudness to how lit the sky is. Launches need most of it, so a fade fires nothing.
 const PRESENCE_FLOOR = 0.02;
 const PRESENCE_GAIN = 6;
 const LAUNCH_PRESENCE = 0.5;
 const DUSK_RISE_PER_SECOND = 8;
-// After the music stops the sky dims over about 1.5 s, inside the 3 s the host allows.
+// After the music stops the sky dims over about 1.5 s, inside the 3 s the plugin contract allows.
 const DUSK_FALL_PER_SECOND = 0.7;
 const DUSK_OFF = 0.01;
 // Under reduced motion a burst shows still, at this age of its spread, and only fades.
 const FROZEN_AGE = 0.55;
 
-// The mode fades its own edges over this share of the shorter side, inside the host's feather.
+// The mode fades its own edges over this share of the shorter side, just inside the pad.
 const FEATHER_RATIO = 0.05;
 const LINE_RATIO = 0.012;
 const MIN_LINE = 1;
@@ -147,7 +148,7 @@ const PARTICLES_PER_PX = 0.85;
 const MIN_PARTICLES = 12;
 const MAX_PARTICLES = 64;
 
-/** A fireworks show: beats launch rockets from the band that fired them, which burst in its color under gravity and drag. */
+/** Beats launch rockets that burst in the color of the band that fired them. */
 function draw(ctx, frame) {
   const sky = skyOf(frame);
   const show = showOf(frame.state, frame);
@@ -168,7 +169,7 @@ function draw(ctx, frame) {
   return true;
 }
 
-// The sky keeps bursts clear of the pad and the feather, so a star rarely meets the edge fade.
+// The sky keeps bursts clear of the pad and half the feather, so a star rarely meets the edge fade.
 function skyOf(frame) {
   const { width, height, pad } = frame;
   const shorter = Math.min(width, height);
@@ -292,7 +293,6 @@ function particleCount(show) {
   return show.bursts.reduce((sum, burst) => sum + burst.count, 0);
 }
 
-// Bass fires drooping willows, the mids fire peonies, and the treble fires rings.
 function kindFor(band) {
   const roll = Math.random();
   if (band < BASS_BANDS) return roll < 0.55 ? 'willow' : 'peony';
@@ -300,7 +300,7 @@ function kindFor(band) {
   return roll < 0.55 ? 'ring' : 'peony';
 }
 
-// The band sets the column, the color and the height, and the burst is sized so its droop stays in the sky.
+// The burst is sized so its droop stays in the sky.
 function planShell(show, frame, sky, band) {
   const kindName = kindFor(band);
   const kind = KINDS[kindName];
@@ -320,7 +320,7 @@ function planShell(show, frame, sky, band) {
     launchX,
     launchY: sky.horizon,
     driftX: (spot.x - launchX) / flight,
-    // The launch speed and a constant pull are matched, so the rocket stops at the planned height after one flight.
+    // Launch speed and pull are matched, so the rocket stops at its planned height on time.
     lift: (2 * rise) / flight,
     fall: (2 * rise) / flight ** 2,
     flight,
@@ -329,7 +329,7 @@ function planShell(show, frame, sky, band) {
   };
 }
 
-// The try farthest from the shells in the air wins, so bursts spread across the sky instead of stacking.
+// The try farthest from the shells in the air wins, so bursts spread out instead of stacking.
 function pickSpot(show, sky, radius, droop, slot, level) {
   const spread = sky.spanX - 2 * radius;
   const highest = sky.top + radius;
@@ -387,7 +387,8 @@ function createBurst(show, kindName, x, y, radius, hue, primary) {
   };
 }
 
-// A golden spiral on a sphere seen from the side, so the stars spread evenly and crowd toward the rim like a real shell.
+// A golden spiral on a sphere seen from the side, so the stars spread evenly and crowd toward the
+// rim, as in a real shell.
 function sphereDirections(count) {
   const dirs = new Float32Array(count * 2);
   const turn = Math.random() * TAU;
@@ -422,7 +423,8 @@ function ringDirections(count) {
   return dirs;
 }
 
-// Linear drag and gravity have a closed form, so a star's past positions draw its trail without stored history.
+// Linear drag and gravity have a closed form, so a star's past positions draw its trail with no
+// stored history.
 function travel(burst, kind, age) {
   const spent = 1 - Math.exp(-kind.drag * age);
   return { reach: burst.radius * spent, drop: ((burst.radius * kind.gravity) / kind.drag) * (age - spent / kind.drag) };
@@ -460,7 +462,7 @@ function paintShow(ctx, show, frame, sky) {
     treble: average(frame.values, TREBLE_FROM, frame.values.length),
     reducedMotion: frame.reducedMotion,
   };
-  // Additive light glows on the dark card but washes out on white, where plain paint keeps the colors deep.
+  // Additive light does not show on white, where plain paint keeps the colors deep.
   ctx.globalCompositeOperation = look.dark ? 'lighter' : 'source-over';
   ctx.lineCap = 'butt';
   for (const burst of show.bursts) paintWash(ctx, burst, look);
@@ -469,7 +471,7 @@ function paintShow(ctx, show, frame, sky) {
   featherEdges(ctx, frame, sky);
 }
 
-// The core flash is skipped under reduced motion, since a sudden flare is the harshest change on screen.
+// Reduced motion skips the core flash, since a sudden flare is the harshest change on screen.
 function paintWash(ctx, burst, look) {
   if (!burst.primary) return;
   const scale = look.dark ? 1 : LIGHT_FLASH_SCALE;
@@ -595,7 +597,6 @@ function paintRockets(ctx, rockets, look, sky) {
   ctx.fill();
 }
 
-// Sparks fall and scatter from where the rocket was when it shed them.
 function traceSparks(ctx, rockets, sky, young) {
   const scatter = sky.unit * SPARK_SCATTER;
   const fall = sky.unit * SPARK_FALL;
@@ -615,7 +616,7 @@ function traceSparks(ctx, rockets, sky, young) {
   }
 }
 
-// The sky fades to nothing at the pad, so a star or a wash that reaches the edge dissolves instead of clipping.
+// The sky fades to nothing at the pad, so a star or wash at the edge fades instead of clipping.
 function featherEdges(ctx, frame, sky) {
   const { width, height, pad } = frame;
   ctx.globalCompositeOperation = 'destination-in';
@@ -637,7 +638,7 @@ function hsla(tone, alpha) {
   return `hsla(${tone.hue.toFixed(1)}, ${tone.sat}%, ${tone.light.toFixed(1)}%, ${clamp01(alpha).toFixed(3)})`;
 }
 
-// A stateless hash, so a spark's scatter and a star's flicker stay fixed for a given seed and tick.
+// A stateless hash, so a spark's scatter and a star's flicker stay fixed for one seed and tick.
 function sparkleHash(seed, tick) {
   const value = Math.sin(seed * 12.9898 + tick * 78.233) * 43758.5453;
   return value - Math.floor(value);

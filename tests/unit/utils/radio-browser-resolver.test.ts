@@ -1,20 +1,15 @@
 /**
  * Navidrome MCP Server - radio-browser SRV resolver tests
  * Copyright (C) 2025
- *
- * Mocks `node:dns/promises` to verify the SRV-based mirror picker, the
- * cache reuse path, and the fallback to the historical hardcoded host
- * when DNS fails.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock dns/promises BEFORE importing the resolver module.
 vi.mock('node:dns/promises', () => ({
   resolveSrv: vi.fn(),
 }));
 
-// Imported after the mock so the resolver wires up the mocked function.
 import { resolveSrv } from 'node:dns/promises';
 import {
   getRadioBrowserBase,
@@ -128,18 +123,15 @@ describe('getRadioBrowserBase', () => {
     const b = getRadioBrowserBase();
     const c = getRadioBrowserBase();
 
-    // Trigger the deferred resolution
     resolveDeferred!([{ name: 'de1.api.radio-browser.info', port: 443, priority: 1, weight: 1 }]);
 
     await Promise.all([a, b, c]);
 
-    // Only ONE DNS lookup, not three
     expect(mockedResolveSrv).toHaveBeenCalledTimes(1);
   });
 
   it('picks one of the SRV records when multiple are returned', async () => {
-    // Three mirrors — random pick, but all should produce a valid https:// URL
-    // matching one of the names.
+    // The pick is random, so the assertion accepts any of the three mirrors.
     mockedResolveSrv.mockResolvedValue([
       { name: 'de1.api.radio-browser.info', port: 443, priority: 1, weight: 1 },
       { name: 'us1.api.radio-browser.info', port: 443, priority: 1, weight: 1 },

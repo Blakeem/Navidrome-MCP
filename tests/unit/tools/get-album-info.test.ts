@@ -1,13 +1,9 @@
 /**
  * Navidrome MCP Server - get_album_info orchestration tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the single-album deep dive per docs/ARTIST-ALBUMS-SPEC.md §9:
- * MB-primary tracklist (Official-release pick, ms→s durations), Last.fm
- * wiki/tags/popularity, the live-verified Last.fm parsing quirks (single-track
- * object, tags:"", absent keys), genre fallback, library matching, per-source
- * degradation, and verbose fields. External APIs are mocked via a host-routed
- * global.fetch; Navidrome via createMockClient().
+ * Checks get_album_info against the contract in docs/ARTIST-ALBUMS-SPEC.md §9.
  */
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,8 +15,6 @@ import {
   getAlbumInfo,
   clearAlbumInfoCachesForTests,
 } from '../../../src/tools/artist-discography.js';
-
-// ---- fetch routing ----------------------------------------------------------
 
 function jsonResponse(body: unknown, status = 200): Response {
   return {
@@ -41,7 +35,7 @@ interface FetchRoutes {
   lastFmStatus?: number;
 }
 
-/** Route global.fetch by host/path; throwing handlers simulate a source being down. */
+/** A route handler that throws makes fetch reject, which simulates that source being down. */
 function installFetch(routes: FetchRoutes): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: unknown) => {
     const url = new URL(String(input));
@@ -74,7 +68,7 @@ function installFetch(routes: FetchRoutes): ReturnType<typeof vi.fn> {
   return fetchMock;
 }
 
-// ---- fixtures (mirror live shapes verified 2026-06-12) ------------------------
+// The fixtures mirror live MusicBrainz and Last.fm response shapes.
 
 const RG_UNICORN = {
   id: 'rg-unicorn',
@@ -86,7 +80,7 @@ const RG_UNICORN = {
   'artist-credit': [{ name: 'GUNSHIP', artist: { id: 'mb-gunship', name: 'GUNSHIP' } }],
 };
 
-// Search hits carry score but no genres (live-verified).
+// MusicBrainz search hits carry a score but no genres (verified live).
 const RG_SEARCH_UNICORN = {
   'release-groups': [{
     id: 'rg-unicorn',
@@ -98,7 +92,7 @@ const RG_SEARCH_UNICORN = {
   }],
 };
 
-// Bootleg predates the Official release: the pick must prefer Official.
+// The bootleg predates the Official release, so the release pick must prefer Official status.
 const RELEASES_UNICORN = {
   'release-count': 2,
   releases: [
@@ -128,7 +122,7 @@ const LASTFM_UNICORN = {
     url: 'https://www.last.fm/music/Gunship/Unicorn',
     listeners: '61766',
     playcount: '1462447',
-    // Mixes real genres with user shelf-keeping junk (observed live).
+    // Last.fm tags mix real genres with user shelf-keeping tags (observed live).
     tags: {
       tag: [
         { name: 'Synthwave', url: '' },
@@ -161,7 +155,6 @@ function unicornRoutes(): FetchRoutes {
   };
 }
 
-/** Navidrome mock: GUNSHIP resolved, owning exactly "Unicorn". */
 function wireNavidromeOwningUnicorn(client: MockNavidromeClient): void {
   client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
     if (endpoint.startsWith('/artist?')) {
@@ -181,8 +174,6 @@ function wireEmptyNavidrome(client: MockNavidromeClient): void {
 function asClient(mock: MockNavidromeClient): NavidromeClient {
   return mock as unknown as NavidromeClient;
 }
-
-// ---- tests --------------------------------------------------------------------
 
 let client: MockNavidromeClient;
 
@@ -223,8 +214,6 @@ describe('getAlbumInfo — happy path (Unicorn fixture)', () => {
     });
     expect(result.sources).toEqual({ musicbrainz: true, lastfm: true });
 
-    // MB is the tracklist source: Official release wins over the earlier
-    // bootleg, lengths are ms→whole seconds, null length stays null.
     expect(result.tracksSource).toBe('musicbrainz');
     expect(result.trackCount).toBe(3);
     expect(result.tracks).toEqual([
@@ -233,7 +222,6 @@ describe('getAlbumInfo — happy path (Unicorn fixture)', () => {
       { position: 3, title: 'Tech Noir II', durationSeconds: null },
     ]);
 
-    // MB genres (count-desc), Last.fm popularity as numbers, stripped wiki.
     expect(result.genres).toEqual(['synthwave', 'pop']);
     expect(result.listeners).toBe(61766);
     expect(result.playcount).toBe(1462447);
@@ -241,7 +229,7 @@ describe('getAlbumInfo — happy path (Unicorn fixture)', () => {
     expect(result.summary).not.toMatch(/<|Read more/);
     expect(result.note).toBeUndefined();
 
-    // Compact mode: no verbose-only fields.
+    // Compact mode omits the verbose-only fields.
     expect(result).not.toHaveProperty('wikiFull');
     expect(result).not.toHaveProperty('tags');
     expect(result).not.toHaveProperty('tracklistRelease');
@@ -257,11 +245,10 @@ describe('getAlbumInfo — happy path (Unicorn fixture)', () => {
     expect(result.album.mbid).toBe('rg-unicorn');
     expect(result.album.year).toBe(2023);
     expect(result.tracksSource).toBe('musicbrainz');
-    // Search hits carry no genres ⇒ fallback to genre-like Last.fm tags,
-    // lowercased, with shelf-keeping junk (":3star", "2015", "albums I own") dropped.
+    // Search hits carry no genres, so genres fall back to the genre-like Last.fm tags, lowercased.
     expect(result.genres).toEqual(['synthwave', 'electronic']);
 
-    // 2 MB (search + release browse) + 1 Last.fm — constant budget.
+    // The external budget is fixed at two MusicBrainz calls and one Last.fm call.
     expect(fetchMock).toHaveBeenCalledTimes(3);
     const searchCall = fetchMock.mock.calls.find(c => String(c[0]).includes('query='));
     expect(String(searchCall?.[0])).toContain('releasegroup');
@@ -277,7 +264,7 @@ describe('getAlbumInfo — happy path (Unicorn fixture)', () => {
     expect(result.wikiFull).toContain('Long-form content');
     expect(result.wikiFull).not.toMatch(/<|Read more/);
     expect(result.lastFmUrl).toBe('https://www.last.fm/music/Gunship/Unicorn');
-    // verbose tags are the RAW Last.fm list — junk filtering applies only to genres.
+    // Verbose tags keep the raw Last.fm list. The junk filter applies only to genres.
     expect(result.tags).toEqual(['Synthwave', ':3star', '2015', 'albums I own', 'electronic']);
     expect(result.tracklistRelease).toEqual({
       mbid: 'rel-official', status: 'Official', date: '2023-09-29', country: 'XW',
@@ -295,7 +282,7 @@ describe('getAlbumInfo — Last.fm parsing quirks (live-verified)', () => {
           name: 'The Mountain', artist: 'Gunship', url: 'https://last.fm/x',
           listeners: '1000', playcount: '5000',
           tags: { tag: [{ name: 'synthwave', url: '' }] },
-          // Single track ⇒ Last.fm serves an OBJECT, not a one-element array.
+          // Last.fm serves a single track as an object, not as a one-element array.
           tracks: { track: { name: 'The Mountain', duration: 264, url: '', '@attr': { rank: 1 }, artist: { name: 'Gunship' } } },
         },
       }),
@@ -372,7 +359,6 @@ describe('getAlbumInfo — degradation', () => {
     expect(result.album.primaryType).toBe('Unknown');
     expect(result.tracksSource).toBe('lastfm');
     expect(result.note).toMatch(/MusicBrainz was unreachable/);
-    // Library compare still works.
     expect(result.album.inLibrary).toBe(true);
   });
 
@@ -386,7 +372,7 @@ describe('getAlbumInfo — degradation', () => {
 
     const result = await getAlbumInfo(asClient(client), config, { mbid: '56a2d3b3-cb32-4ba0-bf6b-e94ca1d45307' });
 
-    // Year/type/genres came from the resolve — the payload must not contradict the note.
+    // Year, type and genres come from the resolve step, so the note must not claim an outage.
     expect(result.sources.musicbrainz).toBe(true);
     expect(result.album.year).toBe(2023);
     expect(result.genres).toEqual(['synthwave', 'pop']);
@@ -464,7 +450,6 @@ describe('getAlbumInfo — degradation', () => {
     expect(result.album.inLibrary).toBeNull();
     expect(result.album.libraryAlbumId).toBeNull();
     expect(result.note).toMatch(/Navidrome was unreachable/);
-    // The rest of the payload is unaffected.
     expect(result.trackCount).toBe(3);
   });
 

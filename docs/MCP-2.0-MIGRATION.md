@@ -34,7 +34,7 @@ The migration is **feasible and worth doing**, but it is not a port — three th
 | `@modelcontextprotocol/sdk` | `1.17.4` (single package) | `@modelcontextprotocol/server` v2 + `/server/stdio` + `@modelcontextprotocol/node` | package split |
 | zod | `^4.1.4` | `^4.2.0` | **bump required** — v2 needs `~standard.jsonSchema`, added in 4.2.0 |
 | TypeScript | `5.9.2` | ≥5.9 works; **≥6.0 requires `"types":["node"]`** in tsconfig | conditional |
-| Node | `>=20.3.0` | Node 20+, ESM-only | **already satisfied** |
+| Node | `>=24.19.0` | Node 20+, ESM-only | **already satisfied** |
 | Server API | low-level `Server` + `setRequestHandler(XRequestSchema, …)` | low-level `Server` survives; handlers keyed by **method string** | mechanical |
 | Transports | `StdioServerTransport`, `StreamableHTTPServerTransport` | `serveStdio`, `createMcpHandler` + `toNodeHandler` | rewrite |
 
@@ -167,7 +167,7 @@ The radio station name (`S16`) is not lost. Since v2.2.0, `now_playing` finds it
 | P4 | **`navidrome-web` becomes sole mpv owner; MCP replicas proxy to it** | High, but **half-built already** | The only design where "any process serves any request" is true |
 | P3/P5 | Externalize queue to Navidrome `/queue`, or state to Redis | Very high | **Reject** — neither fixes the audio-device problem |
 
-**Recommendation: P2 for 3.0.0-next, P4 as the 3.x goal.** Restrict playback registration to stdio (extend the existing `config.features.playback` gate at `registry.ts:122`) plus an explicit opt-in for single-owner HTTP deployments. Then build P4 — the ownership election (`index.ts:159-174`), the web child (`web/spawn.ts:130`), and the `/healthz` probe (`web/acquire.ts:48`) already exist. P4 also fixes the N-scrobblers problem for free, since today's election only distinguishes MCP-vs-web, not MCP-1-vs-MCP-2 (`scrobble-tracker.ts:294-309`). Since v2.2.0, an mpv `script-message` claim picks one submitter per play across any number of processes.
+**Recommendation: P2 for 3.0.0-next, P4 as the 3.x goal.** Restrict playback registration to stdio (extend the existing `config.features.playback` gate at `registry.ts:122`) plus an explicit opt-in for single-owner HTTP deployments. Then build P4 — the web child (`web/spawn.ts:130`) and the `/healthz` probe (`web/acquire.ts:48`) already exist. The MCP process only probes the web player to hold an owner lease. P4 also fixes the N-scrobblers problem for free. Since v2.2.0, an mpv `script-message` claim alone picks one submitter per play across any number of processes.
 
 **Do not attempt P3/P5.** `S15` metadata and `S16` station name are re-fetchable from Navidrome anyway; externalizing them buys nothing the audio-device constraint doesn't immediately take back.
 

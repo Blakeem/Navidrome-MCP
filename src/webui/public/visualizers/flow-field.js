@@ -2,7 +2,7 @@ import { average, detectBeat, hslOf } from '../visualizer-kit.js';
 
 const BANDS = 16;
 
-// Particles per square CSS pixel of the field ellipse, capped so the wide desktop costs no more than the default.
+// Particles per square CSS pixel of the field ellipse, capped so a wide desktop stays cheap.
 const PARTICLE_DENSITY = 0.014;
 const MIN_PARTICLES = 140;
 const MAX_PARTICLES = 700;
@@ -18,16 +18,16 @@ const LIFE_RANGE_S = 3;
 const STEP_S = 1 / 40;
 const MAX_SUBSTEPS = 3;
 
-// Speeds are in field units per second. A field unit is the shorter radius of the ellipse, so the swirls
-// fit the phone strip and the desktop alike.
+// Speeds are in field units per second. A field unit is the shorter radius of the ellipse, so the
+// swirls fit the phone strip and the desktop alike.
 const SPEED_BASE = 0.25;
 const SPEED_BASS = 0.55;
 const SPEED_SURGE = 1.2;
-// Each band's particles ride the field faster or slower by that band's level, so loud bands race ahead.
+// A band's particles speed up with its level, so loud bands move ahead of quiet ones.
 const BAND_SPEED_MIN = 0.55;
 const BAND_SPEED_RANGE = 0.9;
 const MAX_FLOW = 2.6;
-// Noise cycles per field unit. Dark, bass-heavy music opens broad currents and bright music folds them into eddies.
+// Noise cycles per field unit. Bass-heavy music gives broad currents and bright music eddies.
 const SCALE_BROAD = 0.55;
 const SCALE_FINE = 1.45;
 const SCALE_FOLLOW_PER_SECOND = 0.7;
@@ -41,11 +41,11 @@ const EVOLVE_BASE = 0.05;
 const EVOLVE_ENERGY = 0.18;
 const EVOLVE_SURGE = 0.6;
 const SURGE_DECAY_PER_SECOND = 3.5;
-// The spectral centroid of normalized tracks sits in this range, which maps to the full scale and tint swing.
+// The spectral centroid of normalized tracks sits in this range, which maps to the full swing.
 const CENTROID_LOW = 0.3;
 const CENTROID_HIGH = 0.65;
 
-// Each beat opens a whirlpool, the curl of a Gaussian bump, that winds the currents for about a second.
+// Each beat opens a whirlpool, the curl of a Gaussian bump, that winds the currents as it decays.
 const MAX_VORTICES = 3;
 const VORTEX_RADIUS = 0.6;
 const VORTEX_STRENGTH = 1.2;
@@ -56,24 +56,24 @@ const VORTEX_MIN = 0.03;
 // Natural-log fade rates per second, slow for long silk while music plays and fast once it stops.
 const FADE_PLAYING = 1.5;
 const FADE_RELEASE = 3.6;
-// An 8-bit layer strands any pixel whose fade rounds to no change, so the fade runs in steps this far apart.
+// An 8-bit pixel sticks when its fade rounds to no change, so fade steps run this far apart.
 const FADE_INTERVAL_S = 0.03;
-// The residue that still strands retires with its layer, which is shown fading and then wiped.
+// The residue that still sticks retires with its layer, which is shown fading and then wiped.
 const GENERATION_S = 4;
 const END_LEVEL = 0.004;
-// Energy that marks silence and full presence. Levels at rest sit under 0.002.
+// Energy that marks silence and full presence. Levels at rest are at most 0.002.
 const REST_ENERGY = 0.01;
 const FULL_ENERGY = 0.18;
 
-// Bass sits warm at the top of the field and treble cool at the bottom, fanned around the theme accent.
+// Bass hues sit at the top of the field and treble at the bottom, fanned around the theme accent.
 const HUE_BASS_OFFSET = 100;
 const HUE_SPAN = 165;
 const HUE_DRIFT_DEG_PER_SECOND = 4;
-// Bright passages cool the whole field and dark ones warm it.
+// Bright and dark passages shift the hue of the entire field in opposite directions.
 const HUE_CENTROID_SWING = 70;
 const TINT_FOLLOW_PER_SECOND = 1.2;
 const MIN_ALPHA = 0.003;
-// Alpha at each fraction of the field ellipse, so the silk floats on the card with no visible edge.
+// Mask alpha at each fraction of the field ellipse's radius, so the silk shows no visible edge.
 const MASK_STOPS = [[0, 1], [0.5, 1], [0.72, 0.75], [0.88, 0.3], [1, 0]];
 
 // Under reduced motion the field freezes into streamlines that only brighten with their bands.
@@ -85,7 +85,7 @@ const STILL_GAIN = 1.6;
 const STILL_STEPS = 22;
 const STILL_STEP = 0.055;
 
-// The twelve cube-edge gradients of improved Perlin noise, padded to sixteen so a hash picks one with a mask.
+// The 12 cube-edge gradients of improved Perlin noise, padded to 16 so a hash picks one by mask.
 const GRADIENT_X = Float32Array.of(1, -1, 1, -1, 1, -1, 1, -1, 0, 0, 0, 0, 1, 0, -1, 0);
 const GRADIENT_Y = Float32Array.of(1, 1, -1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1);
 const GRADIENT_Z = Float32Array.of(0, 0, 0, 0, 1, 1, -1, -1, 1, 1, -1, -1, 0, 1, 0, -1);
@@ -95,7 +95,7 @@ const SLOPE = new Float32Array(2);
 const FLOW = new Float32Array(2);
 const NO_WHIRLS = [];
 
-/** Silk currents: particles ride a curl-noise flow field that the music drives, swirls, tints and stirs. */
+/** Particles ride a curl-noise flow field that the music speeds, swirls, tints and stirs. */
 function draw(ctx, frame) {
   const { state } = frame;
   const presence = presenceOf(frame.energy);
@@ -127,7 +127,6 @@ function presenceOf(energy) {
   return Math.min(1, Math.max(0, (energy - REST_ENERGY) / (FULL_ENERGY - REST_ENERGY)));
 }
 
-// The field is the ellipse inset from the pad by the widest glow, measured in units of its shorter radius.
 function fieldShape(frame) {
   const inset = frame.pad + EDGE_MARGIN;
   const radiusX = frame.width / 2 - inset;
@@ -159,7 +158,6 @@ function advanceField(state, frame) {
   };
 }
 
-// The spectral centroid, remapped so the range typical music covers spans 0 to 1.
 function brightnessOf(values) {
   let weighted = 0;
   let total = 0;
@@ -216,7 +214,6 @@ function wipeTrails(state, frame) {
   for (const layer of state.trails.layers) layer.ctx.clearRect(0, 0, frame.width, frame.height);
 }
 
-// One layer takes the new silk while the other retires, and the retired one is wiped when its turn comes again.
 function ageTrails(trails, frame, fadeRate) {
   trails.age += frame.dtSeconds;
   trails.pendingFade += frame.dtSeconds;
@@ -273,8 +270,8 @@ function spawn(swarm, i, field) {
   swarm.life[i] = LIFE_MIN_S + Math.random() * LIFE_RANGE_S;
 }
 
-// Bands fan out by birth angle from bass at the top to treble at the bottom, mirrored left and right,
-// so every band holds an equal share of the field and the currents carry its color into the others.
+// Bands fan out by birth angle from bass at the top to treble at the bottom, mirrored left and
+// right, so every band holds an equal share and the currents carry its color into the others.
 function bandAt(angle) {
   const fold = angle <= Math.PI ? angle : Math.PI * 2 - angle;
   return Math.min(BANDS - 1, Math.floor((fold / Math.PI) * BANDS));
@@ -286,7 +283,7 @@ function outside(field, x, y) {
   return across * across + down * down > 1;
 }
 
-// Records each particle's path this frame into its trace, and a particle that leaves or expires is reborn unseen.
+// A particle that leaves or expires is reborn with no stroke, so no line jumps across the field.
 function moveSwarm(swarm, frame, field, motion) {
   const steps = Math.min(MAX_SUBSTEPS, Math.ceil(frame.dtSeconds / STEP_S));
   const stepSeconds = steps === 0 ? 0 : frame.dtSeconds / steps;
@@ -327,8 +324,8 @@ function moveSwarm(swarm, frame, field, motion) {
   }
 }
 
-// The curl of two noise octaves plus the beat whirlpools. A curl has no divergence, so the silk never
-// bunches into sinks or tears open, and each octave's curl is taken per its own cycle so scale leaves speed alone.
+// A curl has no divergence, so the silk never bunches into sinks or tears open. Each octave's curl
+// is taken per its own cycle, so the scale does not change the speed.
 function flowAt(u, v, motion, whirls, out) {
   const fine = motion.scale * DETAIL_RATIO;
   noiseSlope(u * motion.scale, v * motion.scale, motion.time, SLOPE);
@@ -350,7 +347,7 @@ function flowAt(u, v, motion, whirls, out) {
   out[1] = flowY * limit;
 }
 
-/** Writes the x and y slopes of 3D gradient noise at (x, y, z) into out, from the analytic derivative. */
+/** Writes the x and y slopes of 3D gradient noise at (x, y, z) into out. */
 function noiseSlope(x, y, z, out) {
   const cellX = Math.floor(x);
   const cellY = Math.floor(y);
@@ -416,7 +413,6 @@ function trilerp(c000, c100, c010, c110, c001, c101, c011, c111, u, v, w) {
   return lerp(lerp(lerp(c000, c100, u), lerp(c010, c110, u), v), lerp(lerp(c001, c101, u), lerp(c011, c111, u), v), w);
 }
 
-// A fixed seed keeps the field the same on every load, so a favorite passage looks the same twice.
 function shuffledLattice(seed) {
   const order = Array.from({ length: 256 }, (_, i) => i);
   let next = seed;
@@ -428,7 +424,7 @@ function shuffledLattice(seed) {
   return Uint8Array.from([...order, ...order]);
 }
 
-// Additive light on the dark card, and deeper ink laid over on the light one, where additive washes out.
+// Additive light does not show on the light card, so it gets deeper ink laid over instead.
 function bandLooks(frame, hue, surge, presence) {
   const dark = frame.theme === 'dark';
   return Array.from(frame.values, (level, band) => {
@@ -451,8 +447,8 @@ function hsla(hue, saturation, lightness, alpha) {
   return `hsla(${wrapped.toFixed(1)}, ${saturation}%, ${lightness.toFixed(1)}%, ${Math.min(1, alpha).toFixed(3)})`;
 }
 
-// One path per band carries every line of that band, stroked once wide and faint for glow and once thin.
-// Butt caps keep consecutive segments from overlapping, which additive light would show as beads.
+// One path per band keeps the paint calls few. Butt caps keep consecutive segments from
+// overlapping, which additive light would show as beads.
 function strokeLines(c, lines, looks, theme) {
   c.save();
   c.globalCompositeOperation = theme === 'dark' ? 'lighter' : 'source-over';
@@ -485,8 +481,8 @@ function traceBand(c, lines, band) {
   return traced;
 }
 
-// The retiring layer holds full strength for half a generation, by which time its own silk has faded,
-// then dims out so the residue it strands never shows a seam.
+// The retiring layer holds full strength for half a generation, until its own silk has faded.
+// It then dims out, so its stuck residue never shows a seam.
 function showTrails(ctx, trails, frame) {
   const half = GENERATION_S / 2;
   const retiring = Math.min(1, Math.max(0, (GENERATION_S - trails.age) / half));
@@ -514,7 +510,6 @@ function maskField(ctx, frame, field) {
   ctx.restore();
 }
 
-// Reduced motion shows the same field as still streamlines, whose glow and width follow their bands.
 function drawStill(ctx, frame, field, presence) {
   const { state } = frame;
   if ((state.trailLevel ?? 0) > 0) wipeTrails(state, frame);

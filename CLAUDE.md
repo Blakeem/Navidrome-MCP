@@ -17,7 +17,9 @@ pnpm test:run       # unit tests
 pnpm build          # production bundle
 ```
 
-CI runs all three, with `test:ci` in place of `test:run`.
+CI runs lint, both typechecks (src and tests), `test:ci` and the build on
+Node 24 and 26. A separate workflow runs dead-code on Node 24. Node 24.19 is the floor, since admin passwords use
+`crypto.argon2`.
 
 Dead-code (`ts-unused-exports`) blocks PRs. When you delete or refactor
 a function, remove its exports too. Tests under `tests/` are part of the
@@ -25,6 +27,9 @@ analysis, so tests importing a symbol keep it alive.
 
 `pnpm test:playback` is the live integration suite, and only the user runs it.
 It builds `dist/` first, needs mpv and Navidrome, and clears the live mpv queue.
+
+`pnpm test:e2e` is the on-demand Playwright suite for the web remote in jukebox mode, and
+`tests/CLAUDE.md` says how it runs, what it touches and how to write a spec.
 
 `pnpm test` is watch-mode for development; use `pnpm test:run` for one-shot.
 
@@ -61,37 +66,59 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 | `src/tools/` | Tool implementations grouped by surface (`media-library.ts`, `playlist-management/`, `radio.ts`, `radio-discovery.ts`, `radio-validation/`, `user-preferences.ts`, `listening-history.ts`, `lastfm-discovery.ts`, `artist-discography.ts`, `lyrics.ts`, `tags.ts`, `library.ts`, `search/`, `playback.ts` with `queue-sources.ts` and `queue-order.ts`, `queue-management.ts`, `test.ts`) |
 | `src/tools/handlers/` | MCP tool category factories — wire impl functions into `name` + `inputSchema` + `handleToolCall`. `registry.ts` composes all categories. |
 | `src/schemas/` | `common.ts` (reusable patterns + `IdSchema`/`createIdSchema` with `[A-Za-z0-9_-]+` regex), `pagination.ts`, `validation.ts` (input schemas, e.g. `SetActiveLibrariesSchema`, `StarItemSchema`) |
-| `src/transformers/` | Raw Navidrome API rows → DTOs (`song`, `album`, `artist`, `playlist`, `shared-transformers`), plus `lyrics-tag` (parses lyrics stored in file tags) |
+| `src/transformers/` | Raw Navidrome API rows → DTOs (`song`, `album`, `artist`, `playlist`, `tag`, `shared-transformers`), plus `lyrics-tag` (parses lyrics stored in file tags) |
 | `src/types/` | DTO + request/response interfaces (`core.ts` for `SongDTO`/`AlbumDTO`/`ArtistDTO`, others by surface) |
 | `src/services/` | `playback/` (mpv IPC + engine), `library-manager.ts`, `filter-cache-manager.ts` |
 | `src/utils/` | `error-formatter`, `logger`, `subsonic-auth` (salted-MD5), `sanitize-url` (strips creds before LLM exposure), `network-safety` (private-IP block for redirect targets), `lastfm` and `musicbrainz` (API clients), `cache`, `version` |
 | `src/constants/` | `defaults.ts`, `timeouts.ts` |
 | `src/resources/` | MCP resource handlers |
+| `src/config/` | `settings.json` store (`store.ts`, `store-path.ts`), `ConfigSchema`, store-to-config mapping (`map-config.ts`), env fallback (`env-settings.ts`) |
+| `src/config-app/` | `navidrome-config` settings page server and routes, plus the setup-mode tools (`degraded-tools.ts`) |
+| `src/web/` | `navidrome-web` process: port acquire, owner lease, spawn from MCP, banner |
+| `src/webui/` | Web remote HTTP server: `auth/`, `jukebox/`, `routes/`, stream limits, and the browser UI in `public/` |
+| `src/transport/` | Streamable HTTP MCP transport |
 
 ---
 
 ## Established patterns — use these, don't reinvent
 
 - **Schemas:** import from `src/schemas/index.js`. Don't redefine inline. Add new ones to `validation.ts` and they auto-export.
-- **Errors:** `throw new Error(ErrorFormatter.toolExecution('tool_name', error))`. Other helpers: `httpRequest`, `configMissing`, `toolUnknown`, `subsonicApi`, `subsonicResponse`.
+- **Errors:** `throw new Error(ErrorFormatter.toolExecution('tool_name', error))`. Other helpers: `httpRequest`, `configMissing`, `toolUnknown`, `subsonicApi`, `subsonicResponse`. Turn a caught `unknown` into text with `errorMessage(err)` from the same module, never an inline `instanceof Error` ternary.
 - **Logging:** `import { logger }` from `utils/logger.js`. **Never `console.log`** — it breaks MCP stdio.
 - **Path-segment IDs:** wrap with `encodeURIComponent` at every URL interpolation site. The `IdSchema` regex catches obvious abuse, but the encode is defense-in-depth.
 - **Subsonic auth:** `client.subsonicRequest()` — POST + salted-MD5 by default. Don't hand-roll Subsonic fetches.
 - **Stream URLs to mpv:** `buildSubsonicAuthParams()` from `utils/subsonic-auth.ts`. Anything user-facing that may contain a URL goes through `stripSubsonicAuthParams()` first.
 - **Raw responses with `text/plain`:** the client now JSON-sniffs the body, so callers can `await client.request<T>(...)` and just read `response.field` directly. No per-call workarounds needed.
+- **License header:** every `.ts` file under `src/` starts with this short header (after a shebang, if any). Test files may carry it too. Never paste the AGPL text, since `LICENSE` holds it.
+  ```ts
+  /**
+   * Navidrome MCP Server - <module title>
+   * Copyright (C) 2025
+   * SPDX-License-Identifier: AGPL-3.0-or-later
+   */
+  ```
 
 ---
 
 ## Environment
 
 Configuration lives in a single canonical **`settings.json`** store — the
-GUI-managed source of truth. When the store is **absent or unusable**, runtime
-falls back to **environment variables** (`NAVIDROME_URL`/`NAVIDROME_USERNAME`/
-`NAVIDROME_PASSWORD` + the optional `MCP_*`/feature vars, via
+GUI-managed source of truth. When the store is **absent, fails the settings
+schema, or has no `navidrome.url`**, runtime falls back to **environment variables** (`NAVIDROME_URL`/`NAVIDROME_USERNAME`/
+`NAVIDROME_PASSWORD` + the optional `MCP_*`, `WEBUI_*`, `JUKEBOX_*` and feature vars, via
 `buildEnvRuntimeSettings()` — `process.env` only, never `.env` files) — the
-headless/container path. A usable store always wins over env. `.env` files are
-import-only: they pre-fill the settings form on first run, nothing else.
-Store path (mirrors `getDefaultIpcPath()`):
+headless/container path. A store that has a URL but fails config validation enters
+setup mode instead, and env is not consulted. A store that is present but
+unreadable or not valid JSON also enters setup mode, since it cannot prove it
+names no `webui.auth.mode`. A store that names a
+`webui.auth.mode` other than `none` also enters setup mode when it is unusable,
+so a broken store never swaps a protected web remote for the open env config.
+Setup mode serves stdio and a loopback page, so with `MCP_TRANSPORT=http` an
+unconfigured or rejected startup logs the reason and exits 1 instead, which an
+orchestrator sees as a failed start. A usable store always wins over
+env. `.env` files are import-only: they pre-fill the settings form on first run,
+nothing else.
+Store path:
 
 - Linux: `${XDG_CONFIG_HOME:-~/.config}/navidrome-mcp/settings.json`
 - macOS: `~/Library/Application Support/navidrome-mcp/settings.json`
@@ -111,6 +138,7 @@ operational env vars remain env-only and out of the store: timeouts
 `EXTERNAL_API_TIMEOUT_MS`), the proxy vars
 (`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, see below), `XDG_RUNTIME_DIR`,
 `NAVIDROME_CONFIG_PATH` (a *location* override, not a value override),
+`NAVIDROME_WEB_AUTO_OPEN=0` (stops `navidrome-web` from opening a browser, which tests use),
 and `NAVIDROME_DEV` (a dev-only launch-routing override that forces spawning
 `src/web/main.ts` via tsx instead of the compiled `dist/web/main.js` — not
 application config).

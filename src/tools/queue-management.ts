@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Saved Queue Tools (Navidrome cross-device sync)
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -25,7 +13,7 @@ import { nullIfGoZeroTime } from '../utils/go-time.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { assertKnownSongIds } from './queue-sources.js';
 
-/** Raw shape returned by Navidrome's `/queue` GET endpoint. `items` are full media files. */
+/** Navidrome's `/queue` GET body. `items` holds full media file rows. */
 interface RawSavedQueue {
   current?: number;
   /** Milliseconds within the current track. */
@@ -35,13 +23,10 @@ interface RawSavedQueue {
 }
 
 interface SavedQueueResult {
-  /** 0-based index into `tracks`. */
   currentIndex: number;
-  /** Playback offset within the current track, in seconds, the unit now_playing reports. */
   position: number;
   trackCount: number;
   tracks: SongDTO[];
-  /** ISO 8601 timestamp. Null when the queue was never saved or was cleared. */
   updatedAt: string | null;
 }
 
@@ -69,7 +54,7 @@ export async function getSavedQueue(client: NavidromeClient, _args: unknown): Pr
       position: (record.position ?? 0) / 1000,
       trackCount: tracks.length,
       tracks,
-      // A cleared or never-saved queue carries Go's zero time or an empty string, not a real timestamp.
+      // A cleared or never-saved queue carries Go's zero time or an empty string as its timestamp.
       updatedAt: record.updatedAt === '' ? null : nullIfGoZeroTime(record.updatedAt ?? null),
     };
   } catch (error) {
@@ -85,7 +70,8 @@ export async function saveQueue(client: NavidromeClient, args: unknown): Promise
     logger.debug('Tool saveQueue called with args:', { songIdCount: songIds.length, currentIndex, position });
     logger.info(`Saving queue with ${songIds.length} tracks to Navidrome server`);
 
-    // Navidrome drops an unknown ID, which shifts every later index and moves currentIndex onto another track.
+    // Navidrome drops an unknown ID, which shifts every later index and moves currentIndex onto
+    // another track.
     await assertKnownSongIds(client, songIds, 'The saved queue was not changed.');
 
     await client.request('/queue', {

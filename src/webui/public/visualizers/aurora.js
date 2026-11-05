@@ -2,7 +2,7 @@ import { average, detectBeat, rgba } from '../visualizer-kit.js';
 
 const TAU = Math.PI * 2;
 
-// The sky is a small pixel field drawn scaled up. These cell sizes and caps keep it near 200 by 70 pixels.
+// The sky is a field near 200 by 70 pixels, drawn scaled up, so the per-pixel loop stays cheap.
 const CELL_WIDTH = 2;
 const CELL_HEIGHT = 2.4;
 const MIN_COLUMNS = 24;
@@ -12,7 +12,8 @@ const MAX_ROWS = 72;
 const MIN_SIDE = 12;
 // The field sits this far inside the pad, so the scaled-up image never touches the pad line.
 const EDGE_GAP = 1;
-// Curtains thin out over this many pixels at each side, and the sky fades over these fractions at top and bottom.
+// Curtains thin out over this many pixels at each side, within these shares of the width.
+// The sky fades over these fractions of its height at top and bottom.
 const TAPER_PX = 64;
 const MIN_TAPER = 0.07;
 const MAX_TAPER = 0.2;
@@ -20,22 +21,22 @@ const TOP_FADE = 0.22;
 const BOTTOM_FADE = 0.14;
 // Two samples per column keep a curtain continuous where its folds stretch it sideways.
 const SAMPLES_PER_COLUMN = 2;
-// The shapes were tuned at about this width. A wider sky gets more folds and rays rather than wider ones.
+// The shapes are tuned for about this width. A wider sky gets more folds and rays, not wider ones.
 const SHAPE_WIDTH_PX = 400;
 const MIN_SHAPE_SCALE = 0.75;
 const MAX_SHAPE_SCALE = 1.6;
 
-// Slower than the host's smoothing, so the curtains breathe instead of flickering and fade after the music.
+// Slower than the host's smoothing, so the curtains change smoothly instead of flickering.
+// The slow release also fades them out after the music stops.
 const BAND_ATTACK_PER_SECOND = 8;
 const BAND_RELEASE_PER_SECOND = 3;
 const PRESENCE_GAIN = 3.2;
-// Below this the curtains are too faint to see, so the mode stops drawing and the animation can sleep.
+// Below this the curtains are too faint to see, so the mode stops and the animation can sleep.
 const PRESENCE_CUTOFF = 0.012;
 
-// The sky clock runs a little faster when the music is loud, so ripples quicken without ever rushing.
 const CLOCK_RATE = 0.6;
 const CLOCK_ENERGY_RATE = 0.8;
-// One slow swing from green to violet and back. Bright, treble-heavy music pulls it toward violet.
+// The hue swings green to violet and back each period. Treble-heavy music pulls it toward violet.
 const HUE_PERIOD_S = 36;
 const HUE_FLOOR = 0.12;
 const HUE_SWING = 0.7;
@@ -45,15 +46,16 @@ const CENTROID_MIDDLE = 0.45;
 // Altitude is measured in ray lengths above a curtain's lower edge.
 const RAY_TOP = 1.6;
 const RAY_FALLOFF = 2;
-// Treble sharpens the rays into distinct streaks, and quiet passages blur them into a soft sheet.
+// Treble sharpens the rays into distinct streaks. Without treble they blur into a soft sheet.
 const RAY_SHARPNESS = 1.6;
 const RAY_TREBLE_SHARPNESS = 2.4;
-// The lower edge is soft over this fraction of the sky's height, and its faint halo reaches this many soft widths down.
+// The lower edge is soft over this fraction of the sky's height.
+// Its faint halo reaches this many soft widths down.
 const EDGE_SOFT = 0.024;
 const MIN_SOFT_ROWS = 0.7;
 const HALO_REACH = 7;
-// The lower edge follows ripples fixed to the sky, so the runs of a fold share one border and show no steps.
-// A small part follows the curtain itself, so overlapping runs still part slightly.
+// The lower edge follows ripples fixed to the sky, so the runs of a fold share one stepless border.
+// A small part follows the curtain itself, so overlapping runs still separate slightly.
 const EDGE_WAVE = 0.07;
 const EDGE_LAYER = 0.018;
 const EDGE_SHIMMER = 0.012;
@@ -61,13 +63,14 @@ const BASS_DIP = 0.02;
 const FOLD_WIDE_CYCLES = 1.3;
 const FOLD_NARROW_CYCLES = 2.9;
 const FOLD_NARROW_SHARE = 0.45;
-// A fold turns the curtain back over itself. Each run between turns keeps its own channel, so every run shows its own edge.
+// A fold turns the curtain back over itself. Each run between turns keeps its own channel,
+// so every run shows its own edge.
 const FOLD_CHANNELS = 4;
-// Light piled into one column adds up softly, so a fold seen edge on glows without blowing out.
+// Light piled into one column adds up softly, so a fold seen edge on glows without saturating.
 const FOLD_KNEE = 1.5;
 const MIN_LIGHT = 0.004;
 
-// A beat starts a brightening that runs out along one curtain both ways, the way an auroral surge spreads.
+// A beat starts a brightening that spreads both ways along one curtain, as an auroral surge does.
 const MAX_SURGES = 6;
 const SURGE_SPEED = 0.3;
 const SURGE_WIDTH = 0.05;
@@ -99,14 +102,15 @@ const STAR_BUCKETS = 3;
 const STAR_ALPHA = 0.6;
 const STAR_COLOR = { r: 225, g: 235, b: 255 };
 
-// Back to front. Higher curtains answer higher bands and lean violet, like the upper reaches of a real aurora.
+// Back to front. Higher curtains answer higher bands and lean violet, as a real aurora's top does.
 const CURTAINS = [
   { base: 0.52, reach: 0.42, span: 0.88, fold: 0.05, gain: 0.62, from: 9, to: 16, violet: 0.3, seed: 2.3 },
   { base: 0.62, reach: 0.5, span: 0.98, fold: 0.065, gain: 0.85, from: 4, to: 11, violet: 0.14, seed: 4.9 },
   { base: 0.72, reach: 0.58, span: 1.08, fold: 0.08, gain: 1.15, from: 0, to: 7, violet: 0, seed: 0.7 },
 ];
 
-// Additive light glows on the dark card. The white card gets deeper inks laid over it instead, since glow washes out there.
+// Additive light glows on the dark card. The white card gets deeper inks laid over it instead,
+// since additive light does not show on white.
 const LOOKS = {
   dark: {
     green: { edge: [170, 255, 150], body: [60, 250, 150], crown: [130, 95, 255] },
@@ -135,7 +139,7 @@ const ABOVE_GLOW = lookup((z) => Math.exp(-RAY_FALLOFF * z) * (1 - (z / RAY_TOP)
 const BELOW_GLOW = lookup((d) => (0.88 * Math.exp(-d * d) + 0.12 * Math.exp(-((d / 2.6) ** 2))) * (1 - d / HALO_REACH), HALO_REACH);
 const OPACITY = lookup((a) => 1 - Math.exp(-ALPHA_KNEE * a), ALPHA_RANGE);
 
-/** Aurora curtains that ripple and fold, with vertical rays that rise and brighten with the music and drift from green to violet. */
+/** Aurora curtains that ripple and fold, with rays that rise and brighten with the music. */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
@@ -153,7 +157,7 @@ function draw(ctx, frame) {
   if (look.stars) drawStars(ctx, box, music.presence, sky.twinkle);
   ctx.globalCompositeOperation = look.blend;
   ctx.drawImage(field.layer.canvas, 0, 0, field.cols, field.rows, box.x, box.y, box.width, box.height);
-  // The curtains fade with the mode's own slow bands after the music stops, so the host keeps drawing until they go.
+  // The curtains fade with the mode's slow bands after the music, so the host keeps drawing.
   return true;
 }
 
@@ -202,7 +206,7 @@ function advanceSky(state, frame, music, beat) {
   return { clock: state.clock, twinkle: state.hueClock, drift, surges: state.surges };
 }
 
-// A bass-led beat mostly lights the low green curtain, and any other beat picks a curtain at random.
+// A bass-led beat mostly lights the low green curtain. Any other beat picks a curtain at random.
 function addSurge(state, music) {
   state.seed = ((state.seed ?? 1) * 1664525 + 1013904223) >>> 0;
   const roll = state.seed / 2 ** 32;
@@ -218,7 +222,8 @@ function fieldFor(state, frame, box) {
   const wantColumns = clamp(Math.round(box.width / CELL_WIDTH), MIN_COLUMNS, MAX_COLUMNS);
   const wantRows = clamp(Math.round(box.height / CELL_HEIGHT), MIN_ROWS, MAX_ROWS);
   const layer = frame.createLayer(wantColumns, wantRows);
-  // The layer holds device pixels, so a device scale under 1 makes it smaller than asked and the grid shrinks to fit.
+  // putImageData writes device pixels. A device scale under 1 makes the layer smaller than asked,
+  // so the grid shrinks to fit.
   const cols = Math.min(wantColumns, layer.canvas.width);
   const rows = Math.min(wantRows, layer.canvas.height);
   const taper = clamp(TAPER_PX / box.width, MIN_TAPER, MAX_TAPER);
@@ -259,7 +264,6 @@ function paintField(field, music, sky, look) {
   writePixels(field, look);
 }
 
-// Altitude colors for one curtain, each stop mixed between the green and the violet palettes by the drift.
 function paintColors(colors, look, drift) {
   for (let step = 0; step < COLOR_STEPS; step++) {
     const altitude = (step / (COLOR_STEPS - 1)) * RAY_TOP;
@@ -275,7 +279,8 @@ function paintColors(colors, look, drift) {
   }
 }
 
-// Samples along the curtain land in the columns under them, so where a fold doubles the curtain back its light piles up.
+// Samples along the curtain land in the columns under them, so light piles up where a fold
+// doubles the curtain back.
 function gatherCurtain(columns, spec, index, field, music, sky) {
   const { cols, shapeScale: scale } = field;
   const samples = cols * SAMPLES_PER_COLUMN;
@@ -333,8 +338,8 @@ function bandAcross(bands, spec, s) {
   return bands[index] + (bands[next] - bands[index]) * (position - index);
 }
 
-// Three striations at unrelated spacings drift along the curtain at different speeds, so the rays slide and shimmer
-// without a regular comb. A slow swell gathers them into brighter clusters.
+// Three striations at unrelated spacings and speeds keep the rays from forming a regular comb.
+// A slow swell gathers them into brighter clusters.
 function rayAt(s, phase, scale, sharpness) {
   const striation = 0.4 * Math.sin(TAU * 7.3 * scale * s + phase * 0.7)
     + 0.35 * Math.sin(TAU * 17.9 * scale * s - phase * 1.2 + 1.7)
@@ -343,7 +348,6 @@ function rayAt(s, phase, scale, sharpness) {
   return cluster * (0.5 + 0.5 * striation) ** sharpness;
 }
 
-// Two slow ripples travel across the sky, a fine shimmer rides them with the music, and the bass presses the edge down.
 function edgeAt(x, s, base, phase, scale, level, bass) {
   const ripple = 0.6 * Math.sin(TAU * 0.8 * scale * x + phase * 0.55) + 0.4 * Math.sin(TAU * 2.3 * scale * x - phase * 0.9);
   const layer = Math.sin(TAU * 1.7 * scale * s + phase * 0.4);
@@ -366,7 +370,6 @@ function surgeAt(s, index, surges) {
   return Math.min(SURGE_MAX, total);
 }
 
-// Each column glows brightest just above its lower edge and fades up the rays, with a thin soft halo below.
 function shadeCurtain(field, columns, gain, fringeColor) {
   const { cols, rows, colors, taperX, glow } = field;
   const softRows = Math.max(MIN_SOFT_ROWS, EDGE_SOFT * rows);
@@ -379,7 +382,7 @@ function shadeCurtain(field, columns, gain, fringeColor) {
     if (light < MIN_LIGHT) continue;
     const edgeRow = (columns.edge[at] / weight) * rows;
     const reachRows = Math.max(1, (columns.reach[at] / weight) * rows);
-    // The halo under the edge takes on a pink fringe while a surge passes, as a bright aurora's lower border does.
+    // The halo under the edge turns pink during a surge, as a bright aurora's lower border does.
     const fringe = Math.min(1, columns.fringe[at] / weight);
     const belowR = mix(colors[0], fringeColor[0], fringe);
     const belowG = mix(colors[1], fringeColor[1], fringe);
@@ -407,7 +410,6 @@ function addLight(glow, cell, strength, r, g, b) {
   glow.a[cell] += strength;
 }
 
-// Where curtains pile up, the dark theme burns toward white and the light theme deepens the ink.
 function writePixels(field, look) {
   const { cols, rows, glow, taperY, image } = field;
   const data = image.data;
@@ -435,7 +437,7 @@ function writePixels(field, look) {
   field.layer.ctx.putImageData(image, 0, 0);
 }
 
-// A faint field of stars behind the curtains on the dark theme, grouped by twinkle so each group is one fill.
+// Stars group by twinkle level, so each group is one fill.
 function drawStars(ctx, box, presence, twinkle) {
   const count = Math.min(MAX_STARS, Math.round((box.width * box.height) / STAR_AREA_PX));
   for (let bucket = 0; bucket < STAR_BUCKETS; bucket++) {

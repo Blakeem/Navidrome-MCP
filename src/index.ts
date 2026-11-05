@@ -2,26 +2,14 @@
 /**
  * Navidrome MCP Server
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ServerCapabilities } from '@modelcontextprotocol/sdk/types.js';
 import { createRuntime, type Runtime } from './bootstrap.js';
-import { readSavedWebuiEndpoint, resolveConfigState, type Config } from './config.js';
+import { readSavedWebuiEndpoint, resolveConfigState, type Config, type ConfigSource, type StartupFailure } from './config.js';
 import { startHttpTransport, type HttpTransport } from './transport/http.js';
 import type { NavidromeClient } from './client/navidrome-client.js';
 import { isNavidromeUnreachable } from './client/auth-manager.js';
@@ -29,21 +17,21 @@ import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
 import { playbackEngine } from './services/playback/playback-engine.js';
 import { ScrobbleTracker } from './services/playback/scrobble-tracker.js';
+import { errorMessage } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { getPackageVersion } from './utils/version.js';
 import { MCP_CAPABILITIES, SETUP_CAPABILITIES } from './capabilities.js';
 import { ensureWebForPlayback } from './web/spawn.js';
 import { holdOwnerLease } from './web/lease.js';
-import { legacyOwnerScrobbles, probeWebOwner, webOwnerPresent } from './web/acquire.js';
+import { probeWebOwner, webOwnerPresent } from './web/acquire.js';
 import { startConfigServer } from './config-app/server.js';
-import { buildSetupNotice, registerDegradedTools, type StartupFailure } from './config-app/degraded-tools.js';
+import { buildHeadlessStartupError, buildSetupNotice, registerDegradedTools } from './config-app/degraded-tools.js';
+import { envRequestsHttpTransport } from './config/env-settings.js';
 import { openBrowser } from './utils/open-browser.js';
 import { isLanReachable } from './webui/network.js';
 
-// Belt-and-suspenders against any unhandled rejection escaping the system.
-// Without this, Node 20+ terminates the process by default. The mpv IPC layer
-// has its own settled-sentinel safety, but a single regression in tool code
-// shouldn't crash the whole MCP server.
+// Node exits on an unhandled rejection by default, and one stray rejection in tool code
+// must not end the MCP server.
 process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection:', reason);
 });
@@ -56,7 +44,7 @@ function createBareServer(capabilities: ServerCapabilities): Server {
   );
 }
 
-/** HTTP needs one Server per session and stdio needs one, so both build here to keep one tool surface. */
+/** Each HTTP session and the stdio transport build their Server here, so all share one tool set. */
 function createConfiguredServer(client: NavidromeClient, config: Config): Server {
   const server = createBareServer(MCP_CAPABILITIES);
   registerTools(server, client, config);
@@ -65,8 +53,8 @@ function createConfiguredServer(client: NavidromeClient, config: Config): Server
 }
 
 /**
- * Signals and, under stdio, stdin EOF run cleanup then exit, since StdioServerTransport
- * ignores EOF and a ref'd mpv socket or settings listener would keep the process alive.
+ * StdioServerTransport ignores stdin EOF, and a ref'd mpv socket or settings listener keeps the
+ * process alive, so signals and stdin EOF run cleanup and exit here.
  */
 function installExitHandlers(cleanup: () => Promise<void>, watchStdin: boolean): void {
   let stopping = false;
@@ -92,12 +80,7 @@ function installExitHandlers(cleanup: () => Promise<void>, watchStdin: boolean):
   }
 }
 
-/**
- * First-run / degraded mode, used when neither settings.json nor the env-var
- * fallback yields a usable config, or when stdio startup fails. An unreachable
- * Navidrome skips the auto-open, since its settings are not at fault. The auto-open
- * silently no-ops on headless/SSH, so the degraded tools hand the user the settings URL in band.
- */
+/** An unreachable Navidrome skips the browser auto-open, since its settings are not at fault. */
 async function runSetupMode(failure?: StartupFailure): Promise<void> {
   const settings = await startConfigServer();
   logger.warn(buildSetupNotice(settings.url, failure));
@@ -116,23 +99,23 @@ async function runSetupMode(failure?: StartupFailure): Promise<void> {
 }
 
 /**
- * Build the runtime. A stdio exit reaches the user only as a generic client
- * disconnect, so a stdio startup failure falls back to setup mode with the
- * reason and resolves null. An HTTP startup failure still exits.
+ * A stdio exit reaches the user only as a generic client disconnect, so a stdio startup failure
+ * enters setup mode and reports the reason there. An HTTP startup failure exits.
  */
-async function createRuntimeOrSetupMode(config: Config): Promise<Runtime | null> {
+async function createRuntimeOrSetupMode(config: Config, source: ConfigSource): Promise<Runtime | null> {
   try {
     return await createRuntime(config);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     if (config.transport.type === 'http') {
-      throw new Error(
-        `${reason} (fix settings.json with navidrome-config, or the NAVIDROME_* environment variables when no settings.json exists, then restart)`,
-        { cause: error },
-      );
+      // navidrome-config binds loopback only, so a container running from env vars cannot reach it.
+      const remedy = source === 'env'
+        ? 'fix the environment variable that holds the named setting'
+        : 'fix settings.json with navidrome-config';
+      throw new Error(`${reason} (${remedy}, then restart)`, { cause: error });
     }
     logger.error('Navidrome MCP could not start with the current configuration:', error);
-    await runSetupMode({ reason, unreachable: isNavidromeUnreachable(error) });
+    await runSetupMode({ reason, unreachable: isNavidromeUnreachable(error), source });
     return null;
   }
 }
@@ -144,32 +127,32 @@ async function main(): Promise<void> {
 
   const state = await resolveConfigState();
   if (!state.configured) {
-    await runSetupMode();
+    // A detached container's stdin is at EOF, so stdio setup mode would exit 0 and never restart.
+    if (envRequestsHttpTransport()) throw new Error(buildHeadlessStartupError(state.failure));
+    await runSetupMode(state.failure);
     return;
   }
 
-  const runtime = await createRuntimeOrSetupMode(state.config);
+  const runtime = await createRuntimeOrSetupMode(state.config, state.source);
   if (runtime === null) return;
   const { config, client } = runtime;
 
-  // Spawned as an IPC child so it can follow this process's exit. Best effort,
-  // so a player failure never stops MCP.
+  // Best effort, so a player failure never stops MCP.
   await ensureWebForPlayback(config);
 
-  // Every process attached to mpv tracks plays, and the mpv claim channel picks one submitter per play.
+  // Every process attached to mpv tracks plays, and the mpv claim channel picks one submitter
+  // per play.
   if (config.features.playback) {
-    // Subscribe BEFORE adopting mpv so the tracker catches the initial state
-    // emit (it hydrates without re-scrobbling the in-flight track).
+    // Attach before adopting mpv, so the tracker hydrates from the initial state emit without
+    // re-scrobbling the in-flight track.
     const tracker = new ScrobbleTracker(client, playbackEngine, async () => {
       const owner = await probeWebOwner(config.webui, readSavedWebuiEndpoint);
       // A player respawned by another MCP has no lease from this one until a probe finds it.
-      if (owner.outcome === 'ours') void holdOwnerLease(owner.port);
-      return !legacyOwnerScrobbles(owner);
+      if (owner.outcome === 'ours') void holdOwnerLease(owner.port, owner.secure);
     });
     tracker.attach();
-    // Adopt an already-playing mpv (e.g. left by a prior session) so the
-    // scrobbler sees real state immediately. Best-effort and never spawns mpv
-    // (ensureAttached only latches onto an existing socket).
+    // Adopting an mpv left by a prior session lets the scrobbler see real state at once.
+    // ensureAttached never spawns mpv.
     try {
       await playbackEngine.ensureAttached();
     } catch (err) {
@@ -177,8 +160,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Bind the configured transport. HTTP serves remote clients over a socket
-  // (one MCP Server per session). stdio serves the single local-process client.
   let httpHandle: HttpTransport | undefined;
   if (config.transport.type === 'http') {
     // A NetworkPolicy-locked or same-pod deployment is a legitimate no-token

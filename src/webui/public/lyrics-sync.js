@@ -1,30 +1,20 @@
-// Navidrome MCP web UI: lyrics timing arithmetic. Vanilla ES2020, no deps, no build step.
-//
-// The line arithmetic is pure and the seek detector keeps only closure state. Every export takes
-// its clock as a parameter, so vitest runs the module under `node` with no browser global.
+// Every export takes its clock as a parameter and keeps no module state, so vitest runs this module
+// under node with no browser global.
 
-/**
- * Largest media-versus-clock drift a healthy snapshot may show before the
- * position counts as a jump. Sized for the player's 1 Hz snapshots and the
- * 2-to-3-second line gaps of a typical LRC, not borrowed from a 60 Hz loop.
- */
+/** A larger drift between the media position and the clock counts as a seek. Sized for 1 Hz
+ *  snapshots and the 2 to 3 second line gaps of a typical LRC file. */
 export const SEEK_THRESHOLD_MS = 500;
 
 // A paused player must not move at all, so only rounding noise is tolerated.
 const PAUSED_JITTER_MS = 100;
 
-/**
- * Stateful detector over successive player snapshots. The caller supplies both
- * the media position and its own monotonic clock reading, which is what keeps
- * the arithmetic deterministic under test.
- */
+/** The caller supplies the clock reading, which keeps the arithmetic deterministic under test. */
 export function createSeekDetector() {
   let lastMediaMs = null;
   let lastClockMs = null;
 
   return {
     check(mediaMs, clockMs, isPlaying) {
-      // INPUT
       const previousMediaMs = lastMediaMs;
       const previousClockMs = lastClockMs;
       let mediaDelta = 0;
@@ -33,7 +23,6 @@ export function createSeekDetector() {
       lastMediaMs = mediaMs;
       lastClockMs = clockMs;
 
-      // PROCESS
       // The first snapshot has nothing to interpolate from, so the caller must snap.
       if (previousMediaMs === null || previousClockMs === null) return true;
 
@@ -43,7 +32,6 @@ export function createSeekDetector() {
 
       clockDelta = clockMs - previousClockMs;
 
-      // OUTPUT
       return Math.abs(mediaDelta - clockDelta) > SEEK_THRESHOLD_MS;
     },
   };
@@ -68,17 +56,9 @@ function searchActiveLine(lines, timeMs) {
   return found;
 }
 
-/**
- * Index of the line that owns `timeMs`, meaning the last line that has started.
- * A line stays current through the gap after it, so whether that gap is worth
- * showing as a break is the separate question `isInterlude` answers.
- *
- * Feed the previous call's `cursor` back in: ordinary playback then costs a step
- * or two, a forward move of any size walks from the cursor, and a backward move
- * falls back to a search.
- */
+/** A line stays current through the gap after it, and `isInterlude` decides if the gap is a break.
+ *  Passing back the previous `cursor` makes ordinary playback cost a step or two. */
 export function findActiveLine(lines, timeMs, cursor) {
-  // INPUT
   const count = Array.isArray(lines) ? lines.length : 0;
   let cursorUsable = false;
   let index = -1;
@@ -86,7 +66,6 @@ export function findActiveLine(lines, timeMs, cursor) {
   if (count === 0) return { index: -1, cursor: null };
   if (timeMs < lines[0].timeMs) return { index: -1, cursor: null };
 
-  // PROCESS
   cursorUsable =
     Number.isInteger(cursor) && cursor >= 0 && cursor < count && lines[cursor].timeMs <= timeMs;
 
@@ -97,33 +76,22 @@ export function findActiveLine(lines, timeMs, cursor) {
     index = searchActiveLine(lines, timeMs);
   }
 
-  // OUTPUT
   return { index, cursor: index };
 }
 
-/**
- * Whether the player sits in a real instrumental break: the active line has
- * already ended and the next one is still further off than `thresholdMs`. The
- * distance is measured from now, so the break clears as the next line nears.
- */
+/** The distance to the next line is measured from `timeMs`, so the break clears as it nears. */
 export function isInterlude(lines, index, timeMs, thresholdMs) {
-  // INPUT
   const hasLines = Array.isArray(lines);
   const active = hasLines ? lines[index] : undefined;
   const next = hasLines ? lines[index + 1] : undefined;
 
-  // PROCESS
   if (active === undefined || next === undefined) return false;
   if (timeMs <= active.endMs) return false;
 
-  // OUTPUT
   return next.timeMs - timeMs > thresholdMs;
 }
 
-/**
- * Shift a media position by the user's manual offset. Clamped at zero because a
- * negative position matches no line.
- */
+/** Clamped at zero, since a negative position matches no line. */
 export function applyOffset(timeMs, offsetMs) {
   return Math.max(0, timeMs + offsetMs);
 }

@@ -1,9 +1,9 @@
 /**
  * Navidrome MCP Server - listening-history tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Verifies list_recently_played: timeRange filtering is applied client-side,
- * the sort key is `playDate` (not `addedDate`), and each track carries `playDate`.
+ * Navidrome has no playDate range filter, so list_recently_played filters timeRange locally.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -63,7 +63,6 @@ describe('listRecentlyPlayed', () => {
     // playDate is force-kept because it is the filter and sort key.
     expect(result.tracks[0]?.playDate).toBe('2026-05-09T20:00:00Z');
     expect(result.tracks[0]).not.toHaveProperty('lastPlayed');
-    // Secondary fields are dropped in compact mode to save context.
     expect(result.tracks[0]).not.toHaveProperty('playCount');
     expect(result.tracks[0]).not.toHaveProperty('path');
   });
@@ -71,7 +70,7 @@ describe('listRecentlyPlayed', () => {
   it('drops never-played songs (null/missing playDate sorts to the end)', async () => {
     mockClient.requestWithLibraryFilter.mockResolvedValue([
       { id: 's1', title: 'Played', artist: 'A', artistId: 'a', album: 'Al', albumId: 'al', playDate: '2026-05-09T20:00:00Z' },
-      { id: 's2', title: 'NeverPlayed', artist: 'A', artistId: 'a', album: 'Al', albumId: 'al' /* no playDate */ },
+      { id: 's2', title: 'NeverPlayed', artist: 'A', artistId: 'a', album: 'Al', albumId: 'al' },
     ]);
     const result = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { limit: 10 });
     expect(result.tracks).toHaveLength(1);
@@ -79,12 +78,8 @@ describe('listRecentlyPlayed', () => {
   });
 
   it('timeRange="today" drops songs played before local midnight', async () => {
-    // Freeze clock to a known instant: 2026-05-10T15:00:00 local time. We
-    // build playDates with `new Date(year, month, day, ...)` (local-zone)
-    // and then `.toISOString()` (UTC) so the test is timezone-agnostic:
-    // the cutoff math compares absolute ms, so the local→UTC encoding here
-    // is a no-op as long as we treat both `now` and the playDates in the
-    // same zone. Don't change to UTC literals without re-checking this.
+    // `today` starts at local midnight, so the clock and the playDates are built in the local zone
+    // to keep the case timezone-agnostic.
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 4, 10, 15, 0, 0));
 
@@ -118,8 +113,6 @@ describe('listRecentlyPlayed', () => {
     ]);
     const result = await listRecentlyPlayed(mockClient as unknown as NavidromeClient, { timeRange: 'all', limit: 10 });
     expect(result.tracks).toHaveLength(2);
-    // `timeRange` is no longer echoed (LLM input echo). The server-derived
-    // `tracks` and `count` are what the LLM gets back.
     expect(result).not.toHaveProperty('timeRange');
   });
 

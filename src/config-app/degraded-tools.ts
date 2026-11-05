@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Degraded (unconfigured) tool surface
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -23,19 +11,23 @@ import { getSettingsStorePath } from '../config/store-path.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 import { redact } from '../utils/logger.js';
+import type { StartupFailure } from '../config.js';
 
-export interface StartupFailure {
-  reason: string;
-  /** Navidrome could not be reached, so the configuration was never judged. */
-  unreachable: boolean;
-}
-
-/** settings.json wins over env vars on every restart, so env advice alone cannot fix a failing store. */
+/** A settings.json with a URL overrides env vars, so env advice cannot fix a failing store. */
 function configFixHint(): string {
   return (
     `Fix the values on the settings page, or edit or remove settings.json at ${getSettingsStorePath()}. ` +
     'The environment variables NAVIDROME_URL, NAVIDROME_USERNAME and NAVIDROME_PASSWORD apply only ' +
-    'when no settings.json with a Navidrome URL exists.'
+    'when settings.json is absent, fails the settings schema, or has no Navidrome URL. A settings.json ' +
+    'that cannot be read, is not valid JSON, or names a web remote auth mode other than none blocks them.'
+  );
+}
+
+/** The env config failed with no usable settings.json in force, so env advice can fix it. */
+function envFixHint(): string {
+  return (
+    'Fix the environment variable that holds the named setting, then restart this server. A save on the ' +
+    'settings page writes settings.json, which then takes precedence over the environment variables.'
   );
 }
 
@@ -65,11 +57,33 @@ export function buildSetupNotice(settingsUrl: string, failure?: StartupFailure):
   }
   return (
     `Navidrome MCP could not start with the current configuration: ${reason}\n` +
-    `${openSettings}${saveAndRestart}${configFixHint()}`
+    `${openSettings}${saveAndRestart}${failure.source === 'env' ? envFixHint() : configFixHint()}`
   );
 }
 
-/** The settings URL goes in every response because the auto-opened browser no-ops on headless or SSH hosts. */
+/**
+ * An HTTP deployment has no terminal and no browser, so it exits with this text instead of serving
+ * setup mode, and an orchestrator sees a failed start.
+ */
+export function buildHeadlessStartupError(failure?: StartupFailure): string {
+  const exits = 'Setup mode needs stdio and the local settings page, which MCP_TRANSPORT=http cannot offer, so the server exits.';
+  if (failure === undefined) {
+    return (
+      `Navidrome MCP is not configured. ${exits} Set NAVIDROME_URL, NAVIDROME_USERNAME and ` +
+      'NAVIDROME_PASSWORD, or provide a usable settings.json, then restart.'
+    );
+  }
+  const reason = redact(failure.reason) as string;
+  const remedy = failure.source === 'env'
+    ? 'Fix the environment variable that holds the named setting, then restart.'
+    : `Fix or remove settings.json at ${getSettingsStorePath()}, and make sure this server's user can read it, then restart.`;
+  return `Navidrome MCP could not start with the current configuration: ${reason} ${exits} ${remedy}`;
+}
+
+/**
+ * Every response carries the settings URL, since the browser auto-open does nothing on headless
+ * or SSH hosts.
+ */
 export function registerDegradedTools(server: Server, settingsUrl: string, failure?: StartupFailure): void {
   const notice = buildSetupNotice(settingsUrl, failure);
 
@@ -83,7 +97,10 @@ export function registerDegradedTools(server: Server, settingsUrl: string, failu
     },
     {
       name: 'test_connection',
-      description: 'Report Navidrome MCP configuration/connection status.',
+      description:
+        'Report why Navidrome MCP is in setup mode, with the startup error, if any, and the settings page URL. ' +
+        'It does not contact Navidrome, and it always returns an error result, since no Navidrome tools work until ' +
+        'the server is configured and restarted. Use it to tell the user how to finish setup.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     },
   ];

@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - sanitize-url unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it } from 'vitest';
@@ -14,7 +15,6 @@ describe('stripSubsonicAuthParams', () => {
     expect(out).not.toContain('p=plain');
     expect(out).not.toContain('s=salt');
     expect(out).not.toContain('t=token');
-    // Non-auth params survive
     expect(out).toContain('id=abc');
     expect(out).toContain('v=1.16.1');
     expect(out).toContain('c=client');
@@ -33,7 +33,7 @@ describe('stripSubsonicAuthParams', () => {
   });
 
   it('strips ALL leaked auth shapes (plaintext + salted) from same URL', () => {
-    // Defense-in-depth: even if a future code path mixes both, both get gone.
+    // Defense in depth for a code path that mixes plaintext and salted auth.
     const raw = 'http://nav:4533/rest/stream?id=abc&u=user&p=plain&s=salt&t=token';
     const out = stripSubsonicAuthParams(raw);
     expect(out).toBe('http://nav:4533/rest/stream?id=abc');

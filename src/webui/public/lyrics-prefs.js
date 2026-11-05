@@ -1,15 +1,15 @@
-// Reading preferences for the lyrics: the text size stepper and the sync offset dialog.
-// Both are per device, since a speaker's latency and a reader's eyesight belong to the device.
+// The text size and the sync offset are stored per device, since speaker latency and a
+// reader's eyesight belong to the device.
 
 import { byId, setHidden } from './dom.js';
 import { prefWrite, readStoredInt } from './prefs.js';
 
-/** Five fixed sizes. A stepper rather than a slider: the reader picks a legible size instead of hunting for a value. */
+/** A stepper over fixed sizes lets the reader pick a legible size without hunting for a value. */
 const SIZE_STEPS = ['1.05rem', '1.25rem', '1.5rem', '1.85rem', '2.2rem'];
 const SIZE_KEY = 'navidrome-mcp.lyric-size';
 const OFFSET_KEY = 'navidrome-mcp.lyric-offset';
 const OFFSET_STEP_MS = 100;
-/** Past a few seconds the nudge stops correcting latency and starts guessing. */
+/** An offset past a few seconds no longer corrects latency. */
 const OFFSET_LIMIT_MS = 5000;
 
 const view = byId('lyrics-view');
@@ -21,7 +21,6 @@ const offsetDown = byId('lyrics-offset-down');
 const offsetUp = byId('lyrics-offset-up');
 const offsetValue = byId('lyrics-offset-value');
 
-// Index into SIZE_STEPS. Step 1 is the size the overlay ships at.
 let sizeStep = 1;
 let offsetMs = 0;
 
@@ -33,7 +32,7 @@ export function lyricsSettingsOpen() {
   return settingsDialog.open;
 }
 
-// Only timed lines carry a sync worth nudging, so other content removes the control entirely.
+// Only timed lines have a sync to nudge, so other content hides the control.
 export function setOffsetControlVisible(visible) {
   setHidden(settingsBtn, !visible);
   if (!visible && settingsDialog.open) settingsDialog.close();
@@ -49,16 +48,13 @@ export function bindLyricsPrefs(onSizeChange) {
 }
 
 function loadLyricsPrefs() {
-  // INPUT
   const size = readStoredInt(SIZE_KEY, 0, SIZE_STEPS.length - 1);
   const offset = readStoredInt(OFFSET_KEY, -OFFSET_LIMIT_MS, OFFSET_LIMIT_MS);
 
-  // PROCESS
   if (size !== null) sizeStep = size;
   // A stored value off the 100 ms grid would hold every later nudge off it too.
   if (offset !== null) offsetMs = Math.round(offset / OFFSET_STEP_MS) * OFFSET_STEP_MS;
 
-  // OUTPUT
   applySize();
   renderOffset();
 }

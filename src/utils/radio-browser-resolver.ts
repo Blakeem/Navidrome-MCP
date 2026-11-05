@@ -1,28 +1,15 @@
 /**
  * Navidrome MCP Server - Radio Browser Mirror Resolver
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-// Resolves a Radio Browser mirror from the `_api._tcp.radio-browser.info` SRV record, unless settings.json
-// `features.radioBrowserBase` pins one. An SRV failure caches RADIO_BROWSER_FALLBACK_BASE for CACHE_TTL_MS until a request failure invalidates it.
+// Radio Browser publishes its mirrors as SRV records. A failed lookup caches the fallback mirror
+// for CACHE_TTL_MS like any other pick, until a request failure invalidates it.
 
 import { resolveSrv } from 'node:dns/promises';
 import { logger } from './logger.js';
 
-/** Mirror used when SRV resolution fails. */
 export const RADIO_BROWSER_FALLBACK_BASE = 'https://de1.api.radio-browser.info';
 
 const SRV_NAME = '_api._tcp.radio-browser.info';
@@ -48,8 +35,8 @@ export function resetRadioBrowserResolverCacheForTests(): void {
 }
 
 /**
- * Drop the cached mirror and any in-flight resolution so the next call re-resolves.
- * Only a failure against the cached mirror drops it, so a late failure against an older mirror keeps a newer one.
+ * Only a failure against the cached mirror drops it, so a late failure against an older mirror
+ * keeps a newer one.
  */
 export function invalidateRadioBrowserBase(failedBase: string): void {
   if (cached === null || cached.base !== failedBase) return;
@@ -59,9 +46,7 @@ export function invalidateRadioBrowserBase(failedBase: string): void {
 }
 
 /**
- * Returns a Radio Browser API base URL with no trailing slash.
- *
- * @param override - settings.json `features.radioBrowserBase`. A non-empty value skips SRV resolution.
+ * @param override - settings.json `features.radioBrowserBase`. A non-empty value skips SRV lookup.
  */
 export async function getRadioBrowserBase(override?: string): Promise<string> {
   if (override !== undefined && override !== '') {
@@ -86,7 +71,7 @@ export async function getRadioBrowserBase(override?: string): Promise<string> {
       return base;
     })
     .finally(() => {
-      // A newer resolution may own `inflight` after an invalidation, so only this chain's own slot is cleared.
+      // After an invalidation a newer resolution may own `inflight`, so only this chain's clears.
       if (inflight === resolution) {
         inflight = null;
       }
@@ -104,7 +89,7 @@ async function resolveBaseFromSrv(): Promise<string> {
       return RADIO_BROWSER_FALLBACK_BASE;
     }
 
-    // Radio Browser documents every mirror as equivalent, so RFC 2782 priority and weight are ignored.
+    // Radio Browser documents every mirror as equal, so RFC 2782 priority and weight are ignored.
     const picked = records[Math.floor(Math.random() * records.length)];
     if (picked === undefined) {
       return RADIO_BROWSER_FALLBACK_BASE;

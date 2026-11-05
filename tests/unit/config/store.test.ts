@@ -1,12 +1,8 @@
-/**
- * Unit tests for the settings store reader/writer (read / atomic write).
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readSettings, writeSettings, type SettingsFile } from '../../../src/config/store.js';
+import { readSettings, readSettingsForStartup, writeSettings, type SettingsFile } from '../../../src/config/store.js';
 import { logger } from '../../../src/utils/logger.js';
 
 describe('settings store read/write', () => {
@@ -36,7 +32,6 @@ describe('settings store read/write', () => {
     });
 
     it('returns null when the schema is violated', () => {
-      // webui.port must be a number, so a string fails validation.
       writeFileSync(process.env['NAVIDROME_CONFIG_PATH']!, JSON.stringify({ webui: { port: 'nope' } }));
       expect(readSettings()).toBeNull();
     });
@@ -89,6 +84,46 @@ describe('settings store read/write', () => {
     });
   });
 
+  describe('readSettingsForStartup', () => {
+    const path = (): string => process.env['NAVIDROME_CONFIG_PATH']!;
+
+    it('reports no auth request and no problem for an absent file', () => {
+      expect(readSettingsForStartup()).toEqual({ settings: null, requestsWebuiAuth: false, problem: null });
+    });
+
+    // A file that cannot be parsed cannot prove it names no auth mode, so the open env config must not replace it.
+    it('fails closed on a present file with a JSON syntax error', () => {
+      writeFileSync(path(), '{"webui": {"auth": {"mode": "jukebox"}},}');
+      const startup = readSettingsForStartup();
+      expect(startup.requestsWebuiAuth).toBe(true);
+      expect(startup.problem).toMatch(/settings\.json is not valid JSON/);
+    });
+
+    it('fails closed on a present file whose read fails', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      mkdirSync(path());
+      try {
+        const startup = readSettingsForStartup();
+        expect(startup.requestsWebuiAuth).toBe(true);
+        expect(startup.problem).toMatch(/is unreadable \(EISDIR\)/);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('names the failing field of a schema-invalid file and keeps its parsed mode', () => {
+      writeFileSync(path(), JSON.stringify({ webui: { port: 'nope', auth: { mode: 'none' } } }));
+      const startup = readSettingsForStartup();
+      expect(startup.requestsWebuiAuth).toBe(false);
+      expect(startup.problem).toMatch(/failed validation .*webui\.port/);
+    });
+
+    it('reports no problem for a usable file', () => {
+      writeFileSync(path(), JSON.stringify({ navidrome: { url: 'http://x:4533' }, webui: { auth: { mode: 'password' } } }));
+      expect(readSettingsForStartup()).toMatchObject({ requestsWebuiAuth: true, problem: null });
+    });
+  });
+
   describe('writeSettings', () => {
     const sample: SettingsFile = {
       navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
@@ -111,7 +146,7 @@ describe('settings store read/write', () => {
     });
 
     it('writes owner-only (0600) permissions on POSIX', () => {
-      if (process.platform === 'win32') return; // mode bits are a no-op on Windows
+      if (process.platform === 'win32') return; // Windows ignores POSIX mode bits.
       writeSettings(sample);
       const mode = statSync(process.env['NAVIDROME_CONFIG_PATH']!).mode & 0o777;
       expect(mode).toBe(0o600);
@@ -121,12 +156,12 @@ describe('settings store read/write', () => {
       writeSettings(sample);
       writeSettings({ ...sample, navidrome: { ...sample.navidrome, username: 'updated' } });
       expect(readSettings()?.navidrome?.username).toBe('updated');
-      // No leftover *.tmp siblings from the temp-then-rename.
       const leftovers = readdirSync(dir).filter((f) => f.endsWith('.tmp'));
       expect(leftovers).toEqual([]);
     });
 
-    // renameSync onto a directory throws (EISDIR on POSIX, EPERM on Windows) after the temp file holds the credentials.
+    // renameSync onto a directory throws (EISDIR on POSIX, EPERM on Windows) after the temp file
+    // already holds the credentials.
     it('removes the temp file when the final rename fails', () => {
       const occupied = join(dir, 'occupied');
       mkdirSync(occupied);

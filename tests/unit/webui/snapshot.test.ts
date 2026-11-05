@@ -1,7 +1,5 @@
-/**
- * Pins the "has a current track" predicate that the transport clock, the now-playing
- * card and the lyrics overlay share, so an idle mpv never reads as playing.
- */
+// The queue, transport controls, now-playing card and lyrics overlay share this current-track rule,
+// so an idle mpv must never read as playing.
 
 import { describe, expect, it } from 'vitest';
 import { playingIndex } from '../../../src/webui/public/snapshot.js';

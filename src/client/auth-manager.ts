@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Authentication Manager
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { setTimeout as delay } from 'node:timers/promises';
@@ -28,7 +16,7 @@ import {
   getNavidromeAuthTimeoutMs,
 } from '../utils/fetch-with-timeout.js';
 
-/** Navidrome answered the login with an outage status, so the URL and credentials were never judged. */
+/** Navidrome answered the login with 429 or 5xx, so the URL and credentials were never judged. */
 class NavidromeUnavailableError extends Error {}
 
 const UNREACHABLE_ERROR_CODES = new Set([
@@ -45,16 +33,16 @@ const UNREACHABLE_ERROR_CODES = new Set([
 
 const MAX_CAUSE_DEPTH = 5;
 
-/**
- * True when a startup failure means Navidrome could not be reached, as opposed to rejecting the
- * configured URL or credentials. An unrecognized failure counts as a configuration problem.
- */
+/** An unrecognized failure counts as a configuration problem, so the settings page still opens. */
 export function isNavidromeUnreachable(error: unknown): boolean {
   if (error instanceof FetchTimeoutError || error instanceof NavidromeUnavailableError) return true;
   return hasUnreachableCode(error, 0);
 }
 
-/** undici nests the socket error under `cause`, and a dual-stack connect wraps one per address in an AggregateError. */
+/**
+ * undici nests the socket error under `cause`, and a dual-stack connect wraps one error per address
+ * in an AggregateError.
+ */
 function hasUnreachableCode(error: unknown, depth: number): boolean {
   if (depth > MAX_CAUSE_DEPTH || typeof error !== 'object' || error === null) return false;
   const code = (error as { code?: unknown }).code;
@@ -67,9 +55,8 @@ export class AuthManager {
   private token: string | null = null;
   private tokenExpiry: Date | null = null;
   private readonly config: Config;
-  // Single-flight refresh: if N concurrent callers all hit getToken() with
-  // an expired/invalidated token, only ONE actually POSTs /auth/login; the
-  // rest await the same promise. Cleared on settle so failure can be retried.
+  // Concurrent callers with a stale token share one /auth/login POST. Cleared on settle, so a
+  // failed login can be retried.
   private refreshPromise: Promise<void> | null = null;
 
   constructor(config: Config) {
@@ -85,10 +72,7 @@ export class AuthManager {
     }
   }
 
-  /**
-   * Discard the cached token so the next getToken() call re-authenticates. A late 401
-   * for a token already replaced by a refresh leaves the fresh token in place.
-   */
+  /** A late 401 for a token that a refresh already replaced leaves the fresh token in place. */
   invalidate(staleToken: string): void {
     if (this.token !== staleToken) return;
     this.token = null;
@@ -144,14 +128,9 @@ export class AuthManager {
     try {
       data = await response.json();
     } catch {
-      // 200 OK but body wasn't valid JSON (empty body, HTML error page from a
-      // proxy, etc.) — surface with auth context instead of a bare SyntaxError.
       throw new Error(ErrorFormatter.authentication('invalid JSON in /auth/login response'));
     }
     if (data === null || typeof data !== 'object') {
-      // 200 OK but the body was a non-object (literal `null`, string, number)
-      // from a misbehaving proxy/cache — guard before reading `.token` so the
-      // failure carries auth context instead of a native TypeError.
       throw new Error(ErrorFormatter.authentication('unexpected /auth/login response shape'));
     }
     const token = (data as { token?: unknown }).token;
@@ -159,14 +138,11 @@ export class AuthManager {
       throw new Error(ErrorFormatter.authentication('server returned no token'));
     }
     this.token = token;
-    this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000); // Convert seconds to milliseconds
+    this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000);
     logger.debug('Authentication successful');
   }
 
-  /**
-   * A timed-out login is not retried, since a retry could trip an account
-   * lockout. The caller retries the tool call through the single-flight path.
-   */
+  /** A timed-out login is not retried, since every attempt counts against a login rate limit. */
   private postLogin(): Promise<Response> {
     return fetchWithTimeout(
       `${this.config.navidromeUrl}/auth/login`,

@@ -1,24 +1,7 @@
 /**
  * Navidrome MCP Server - Lyrics Resolver Tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-
-/**
- * Covers the source-selectable lyrics resolver: the deduplicated LRCLIB retry
- * ladder, the local file source, line end times, and source precedence.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -57,10 +40,6 @@ function localEntry(overrides: Record<string, unknown> = {}): Record<string, unk
     ...overrides,
   };
 }
-
-// ============================================================================
-// LRCLIB retry ladder
-// ============================================================================
 
 describe('LRCLIB retry ladder', () => {
   beforeEach(() => {
@@ -208,10 +187,6 @@ describe('LRCLIB retry ladder', () => {
   });
 });
 
-// ============================================================================
-// Line end times
-// ============================================================================
-
 describe('LyricsLine endMs', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -273,10 +248,6 @@ describe('LyricsLine endMs', () => {
     expect(result.synced?.[1]).toMatchObject({ timeMs: 5000, endMs: 5000 + LAST_LINE_FALLBACK_MS });
   });
 });
-
-// ============================================================================
-// Local file source
-// ============================================================================
 
 describe('local file lyrics source', () => {
   beforeEach(() => {
@@ -445,10 +416,6 @@ describe('local file lyrics source', () => {
     expect(result.hasSynced).toBe(true);
   });
 });
-
-// ============================================================================
-// parseLocalLyrics
-// ============================================================================
 
 describe('parseLocalLyrics', () => {
   it('returns null for an empty lyrics array', () => {

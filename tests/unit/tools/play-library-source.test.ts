@@ -1,15 +1,15 @@
 /**
  * Navidrome MCP Server - playLibrarySource tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * The playbackEngine is mocked so no real mpv is touched. End-to-end mpv
- * behavior is covered by the playback integration suite.
+ * The playback engine is mocked here, since the playback integration suite covers live mpv.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -58,7 +58,7 @@ describe('playLibrarySource', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    enqueueMock.mockResolvedValue({ demoted: false });
+    enqueueMock.mockResolvedValue({ demoted: false, outputMissing: null });
     client = createMockClient();
   });
 
@@ -73,6 +73,17 @@ describe('playLibrarySource', () => {
       expect(endpoint).toContain('id=so1');
       expect(result).toEqual({ success: true, count: 1 });
       expect(enqueueMock).toHaveBeenCalledWith(['so1'], 'append', expect.any(Array));
+    });
+
+    it('hands the loaded songs and their mpv ids to onQueued, and keeps them out of the result', async () => {
+      client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [songRow('so1'), songRow('so2')], total: 2 });
+      enqueueMock.mockResolvedValueOnce({ demoted: false, outputMissing: null, entryIds: [41, 42] });
+      const onQueued = vi.fn();
+
+      const result = await playLibrarySource(client as never, { type: 'album', id: 'al1', mode: 'replace' }, onQueued);
+
+      expect(onQueued).toHaveBeenCalledWith([41, 42], [expect.objectContaining({ songId: 'so1' }), expect.objectContaining({ songId: 'so2' })]);
+      expect(result).toEqual({ success: true, count: 2 });
     });
 
     it('reads an album in album order', async () => {
@@ -284,7 +295,7 @@ describe('playLibrarySource', () => {
 
     it('reports a demoted append', async () => {
       client.requestWithLibraryFilterAndMeta.mockResolvedValueOnce({ data: [songRow('s1')], total: 1 });
-      enqueueMock.mockResolvedValueOnce({ demoted: true });
+      enqueueMock.mockResolvedValueOnce({ demoted: true, outputMissing: null });
 
       const result = await playLibrarySource(client as never, { type: 'song', id: 's1', mode: 'append' });
 

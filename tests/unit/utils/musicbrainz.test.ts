@@ -1,13 +1,7 @@
 /**
  * Navidrome MCP Server - MusicBrainz client unit tests
  * Copyright (C) 2025
- *
- * Covers the MB utility behind get_artist_albums and get_album_info: the
- * 1 req/s throttle queue, release-group browse paging, genre mapping,
- * artist-search pick logic, User-Agent sourcing, release-group lookup/search
- * (exact-title vs. score fallback), and release-browse tracklist selection
- * (Official-preferred/earliest-date, multi-disc renumbering). All fetches are
- * mocked (never hit musicbrainz.org).
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -67,16 +61,13 @@ describe('throttle', () => {
     const first = searchMbArtist('GUNSHIP', config);
     const second = searchMbArtist('Waveshaper', config);
 
-    // First dispatches immediately (lastDispatchAt starts at 0, far in the past
-    // relative to fake-timer now? — guard: flush microtasks).
+    // Advancing by 0 flushes the microtasks that dispatch the first request.
     await vi.advanceTimersByTimeAsync(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Just before the interval elapses the second call is still queued.
     await vi.advanceTimersByTimeAsync(1000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Past the interval it goes out.
     await vi.advanceTimersByTimeAsync(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
@@ -135,7 +126,7 @@ describe('throttle', () => {
 
 describe('searchMbArtist', () => {
   beforeEach(() => {
-    // Real timers; the single call dispatches immediately on a cold throttle.
+    // Real timers suffice, since a cold throttle dispatches a single call at once.
   });
 
   it('prefers the case-insensitive exact name match (score order)', async () => {
@@ -184,7 +175,7 @@ describe('searchMbArtist', () => {
       return init.headers['User-Agent'];
     };
     expect(uaOf(fetchMock.mock.calls[0] ?? [])).toBe('MyApp/1.0 (me@example.com)');
-    // Default must be meaningful per MB policy: name + contact URL.
+    // MusicBrainz policy asks for an application name and a contact URL in the User-Agent.
     expect(uaOf(fetchMock.mock.calls[1] ?? [])).toMatch(/Navidrome-MCP \(https:\/\//);
   });
 
@@ -194,7 +185,7 @@ describe('searchMbArtist', () => {
 
     await searchMbArtist('The "Quoted" Band', makeTestConfig());
     const url = String(fetchMock.mock.calls[0]?.[0]);
-    // URLSearchParams encodes spaces as '+'; normalize before asserting.
+    // URLSearchParams encodes a space as '+'.
     expect(decodeURIComponent(url).replaceAll('+', ' ')).toContain('artist:"The \\"Quoted\\" Band"');
   });
 });
@@ -377,7 +368,7 @@ describe('lookupMbReleaseGroup', () => {
 
     await lookupMbReleaseGroup('rg', makeTestConfig());
     const url = String(fetchMock.mock.calls[0]?.[0]);
-    // URLSearchParams serializes the space in the inc list as '+'; normalize it.
+    // URLSearchParams encodes the space in the inc list as '+'.
     expect(decodeURIComponent(url).replaceAll('+', ' ')).toContain('inc=genres artist-credits');
     expect(url).toContain('/release-group/rg');
   });
@@ -449,8 +440,7 @@ describe('searchMbReleaseGroup', () => {
       ],
     })) as unknown as typeof fetch;
 
-    // normTitle strips the "(Deluxe Edition)" noise group, so the lower-scored
-    // hit is the exact-title match and must win despite the decoy's score 100.
+    // normTitle strips the "(Deluxe Edition)" group, so the lower-scored hit is the exact match.
     const detail = await searchMbReleaseGroup('GUNSHIP', 'Dark All Day', makeTestConfig());
     expect(detail?.mbid).toBe('exact');
   });
@@ -500,7 +490,7 @@ describe('browseMbReleaseTracklist', () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({
       releases: [release('r1', {
         media: [
-          // Disc 2 listed first and tracks out of order — both must be sorted.
+          // Both the discs and each disc's tracks arrive out of order.
           medium(2, [track('B2', 2), track('B1', 1)]),
           medium(1, [track('A2', 2), track('A1', 1)]),
         ],
@@ -516,9 +506,9 @@ describe('browseMbReleaseTracklist', () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({
       releases: [release('r1', {
         media: [medium(1, [
-          track('exact', 1, 240000),   // 240s
-          track('rounded', 2, 90500),  // 90.5s → 91
-          track('unknown', 3),         // no length → null
+          track('exact', 1, 240000),
+          track('rounded', 2, 90500),
+          track('unknown', 3),
         ])],
       })],
     })) as unknown as typeof fetch;
@@ -544,7 +534,7 @@ describe('browseMbReleaseTracklist', () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({
       releases: [
         release('full', { date: '2019-06-01' }),
-        release('partial', { date: '2018' }),   // partial date sorts before full 2018-xx / 2019
+        release('partial', { date: '2018' }),
         release('undated', { date: null }),
       ],
     })) as unknown as typeof fetch;
@@ -582,7 +572,7 @@ describe('browseMbReleaseTracklist', () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({
       releases: [
         { id: 'no-tracks', status: 'Official', date: '2020-01-01', media: [] },
-        // A medium whose only track lacks a title → dropped → release has 0 tracks.
+        // The only track lacks a title, so the parser drops it and the release has no tracks.
         { id: 'titleless', status: 'Official', date: '2020-01-01', media: [medium(1, [{ position: 1 }])] },
       ],
     })) as unknown as typeof fetch;

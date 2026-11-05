@@ -1,10 +1,10 @@
 /**
  * Navidrome MCP Server - playlist track transformer tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Pins the playlist track projection to the song transformer's rules: an
- * unknown year (0) is omitted, the genre comes from the `genres` array, and
- * malformed batch rows are dropped instead of failing the whole page.
+ * Playlist tracks follow the song transformer's rules, so an unknown year (0) is omitted and a
+ * malformed row is dropped instead of failing the entire page.
  */
 
 import { describe, expect, it } from 'vitest';

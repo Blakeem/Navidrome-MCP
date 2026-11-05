@@ -2,24 +2,12 @@
 /**
  * Navidrome MCP Server - Standalone web player entry (`navidrome-web`)
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * The standalone web player: the `navidrome-web` binary and the IPC child the MCP server spawns.
- * It owns mpv, so every shutdown path quits mpv.
+ * Entry for the `navidrome-web` binary and for the IPC child the MCP server spawns. The port owner
+ * is responsible for mpv's lifetime, so every owner shutdown path quits mpv.
  */
 
 // First, because ESM evaluates every import before this body and some imported modules log at load.
@@ -28,69 +16,83 @@ import { logPath } from './file-logging.js';
 import type { Server } from 'node:http';
 
 import { createRuntime } from '../bootstrap.js';
-import { resolveConfigState } from '../config.js';
+import { resolveConfigState, type Config, type StartupFailure } from '../config.js';
+import { readEnvAdminPassword } from '../config/env-settings.js';
 import { startConfigServer } from '../config-app/server.js';
 import { WEB_OWNER_ATTACH_INTERVAL_MS } from '../constants/timeouts.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
+import { errorMessage } from '../utils/error-formatter.js';
 import { logger } from '../utils/logger.js';
 import { openBrowser } from '../utils/open-browser.js';
+import { assertArgon2Available } from '../utils/secrets.js';
+import { AuthService } from '../webui/auth/auth-service.js';
 import { SseBroadcaster } from '../webui/broadcaster.js';
-import { isLanReachable, listLanInterfaces } from '../webui/network.js';
+import { GuestQueue } from '../webui/jukebox/guest-queue.js';
+import { adminPageUrl } from '../webui/page-paths.js';
 import type { McpLeaseCounter } from '../webui/routes/player.js';
 import { createServer } from '../webui/server.js';
+import { isAddressRewritingHost } from '../webui/source-address.js';
 import { VisualizerHub } from '../webui/visualizer-hub.js';
-import { acquireOrAttach, loopbackUrl } from './acquire.js';
-import { getPersist, getVisualizer, setPersist, setTheme, setVisualizer, shouldStopForMcpExit } from './player-runtime.js';
+import { isTlsEnabled } from '../webui/tls.js';
+import { acquireOrAttach } from './acquire.js';
+import { buildBannerLines, buildSetupHeadline, TLS_LOCAL_ADDRESS_WARNING } from './banner.js';
+import {
+  getPersist,
+  getVisualizer,
+  setGuestQueueLimit,
+  setJukeboxShareLink,
+  setPersist,
+  setTheme,
+  setVisualizer,
+  shouldStopForMcpExit,
+} from './player-runtime.js';
 
-// Node 20+ exits on an unhandled rejection, and an MCP-spawned child's stderr is ignored, so it goes to the file sink.
+// Node exits on an unhandled rejection by default, and an MCP-spawned child's stderr is ignored, so
+// the reason goes to the log file instead.
 process.on('unhandledRejection', (reason) => {
   logger.error('unhandledRejection:', reason);
 });
 
-/** Hard ceiling on owner shutdown: if the mpv `quit` IPC wedges, exit anyway. */
+/** Bounds owner shutdown, so a wedged mpv `quit` IPC cannot keep the process alive. */
 const SHUTDOWN_HARD_EXIT_MS = 3000;
 
 // Only an MCP spawn opens an IPC channel, so process.send marks who launched this process.
 const launchedByMcp = process.send !== undefined;
 
 /**
- * Opened here, not in the parent, because only this process knows the bind succeeded. A direct run always
- * opens, since the user launched it to use it. NAVIDROME_WEB_AUTO_OPEN=0 keeps test runs from opening one.
+ * Only this process knows the bind succeeded, so the MCP parent never opens the browser. A direct
+ * run always opens, since the user launched it to use it. Tests set NAVIDROME_WEB_AUTO_OPEN=0.
  */
-function maybeOpenBrowser(port: number, autoOpenBrowser: boolean): void {
+function maybeOpenBrowser(url: string, autoOpenBrowser: boolean): void {
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] === '0') return;
   const shouldOpen = launchedByMcp ? autoOpenBrowser : true;
-  if (shouldOpen) openBrowser(loopbackUrl(port));
+  if (shouldOpen) openBrowser(url);
 }
 
 /** Also printed to stdout, since a direct terminal run sees nothing the file logger writes. */
-function logBanner(port: number, host: string): void {
-  const lines = [`navidrome-web listening on ${loopbackUrl(port)}`];
-  if (isLanReachable(host)) {
-    for (const iface of listLanInterfaces(port)) {
-      lines.push(`  LAN: ${iface.url} (${iface.iface})`);
-    }
-  }
+function logBanner(webui: Config['webui']): void {
+  const lines = buildBannerLines(webui);
   for (const line of lines) logger.info(line);
   process.stdout.write(`\n  ${lines.join('\n  ')}\n\n`);
 }
 
-// Set once this process owns the port, so the one shutdown path can tear them down whatever triggered it.
+// Set once this process owns the port, so the one shutdown path tears them down for every trigger.
 let serverRef: Server | null = null;
 let broadcasterRef: SseBroadcaster | null = null;
 let visualizerHubRef: VisualizerHub | null = null;
+let authRef: AuthService | null = null;
 let shuttingDown = false;
-// MCP processes other than the spawner that use this player, each through a kept-open lease.
+// Every MCP whose probe finds this player running holds one lease, the spawner included.
 let openMcpLeases = 0;
 
-/** The owner quits mpv on every shutdown, and a hard exit backstops a wedged mpv `quit` IPC. */
 function shutdownPlayer(reason: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info(`navidrome-web shutting down (${reason})`);
   broadcasterRef?.stop();
   visualizerHubRef?.stop();
+  authRef?.flush();
   serverRef?.close();
   const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_HARD_EXIT_MS);
   hardExit.unref();
@@ -124,7 +126,7 @@ function installShutdownTriggers(): void {
   if (launchedByMcp && !process.connected) onMcpDisconnect();
 }
 
-/** Runs on the spawner's exit and on every lease close, so the player stops with the last MCP using it. */
+/** Runs on the spawner's exit and on every lease close, so the player stops with its last MCP. */
 function stopIfNoMcpRemains(): void {
   const stop = shouldStopForMcpExit({
     launchedByMcp,
@@ -166,10 +168,11 @@ function keepPlaybackAttached(): void {
 const SETUP_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * Hosts the settings UI so a user who launched the player first, even from the terminal-less desktop
- * shortcut, has a visible path to configure. No power button exists yet, so the server reaps itself when idle.
+ * A user who launched the player first, even from the terminal-less desktop shortcut, needs a
+ * visible path to configure. The settings page has no power button, so the server exits when idle.
  */
-async function runSetupMode(): Promise<void> {
+async function runSetupMode(failure?: StartupFailure): Promise<void> {
+  const headline = buildSetupHeadline(failure);
   const settings = await startConfigServer({
     idleTimeoutMs: SETUP_IDLE_TIMEOUT_MS,
     onIdleTimeout: () => {
@@ -180,10 +183,11 @@ async function runSetupMode(): Promise<void> {
     },
   });
 
-  logger.warn(`navidrome-web is not configured. Opening the settings page: ${settings.url}`);
-  // The logger writes to a file, so stdout carries the URL for a terminal run and for a host where no browser opens.
+  logger.warn(`${headline} Opening the settings page: ${settings.url}`);
+  // The logger writes to a file, so stdout carries the URL for a terminal run and for a host where
+  // no browser opens.
   process.stdout.write(
-    `\n  navidrome-web is not configured yet.\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, re-launch navidrome-web.\n\n`,
+    `\n  ${headline}\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, re-launch navidrome-web.\n\n`,
   );
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] !== '0') openBrowser(settings.url);
 
@@ -193,7 +197,8 @@ async function runSetupMode(): Promise<void> {
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 
-  // The listening config server keeps the process alive. Serving waits for the next launch to read the saved config.
+  // The listening config server keeps the process alive. Serving waits for the next launch to read
+  // the saved config.
 }
 
 async function main(): Promise<void> {
@@ -201,53 +206,65 @@ async function main(): Promise<void> {
 
   const state = await resolveConfigState();
   if (!state.configured) {
-    await runSetupMode();
+    await runSetupMode(state.failure);
     return;
   }
   logger.setDebug(state.config.debug);
+  // Only a mode with a login hashes or verifies a password, so mode none runs on a Node.js without Argon2.
+  if (state.config.webui.auth.mode !== 'none') await assertArgon2Available();
 
-  // A bare createRuntime() re-reads the store, which throws on the env-var fallback path and opens a TOCTOU window.
   const { config, client } = await createRuntime(state.config);
-  // Seed the live flags, which the settings modal may toggle.
   setPersist(config.webui.persistAfterMcpExit);
   setTheme(config.webui.theme);
   setVisualizer(config.webui.visualizer);
-  // The snapshot and the settings dialog read the same live flag, so the card shows only while this engine keeps the filter.
+  setGuestQueueLimit(config.jukebox.guestQueueLimit);
+  setJukeboxShareLink(config.jukebox.shareLink);
+  // The owner alone keeps mpv's filter in sync, since the snapshot and the settings dialog read its
+  // live flag.
   playbackEngine.setVisualizerSource(getVisualizer, { keepInSync: true });
 
-  // Startup can outlast the MCP that spawned this process, and binding then would only open a doomed player.
+  // Startup can outlast the spawning MCP, and a player bound then would stop at once.
   if (launchedByMcp && !process.connected && !getPersist()) {
     logger.info('navidrome-web: the spawning MCP exited during startup. Standing down.');
     return;
   }
 
-  const broadcaster = new SseBroadcaster(client);
+  const auth = await AuthService.load(config, state.source, state.source === 'env' ? readEnvAdminPassword() : null);
+  const guests = new GuestQueue();
+  const broadcaster = new SseBroadcaster(client, guests);
   const visualizer = new VisualizerHub();
   const makeServer = (): Server =>
-    createServer({ config, client, broadcaster, visualizer, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases });
+    createServer({ config, client, broadcaster, visualizer, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases, auth, guests });
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
     // A user who launched a second copy still expects the player, so point them at the running one.
     // An MCP-spawned copy lost a start race, and the owner already handled auto-open.
-    const runningMessage = `navidrome-web already running at ${result.url}`;
+    const adminUrl = adminPageUrl(result.url);
+    const runningMessage = `navidrome-web already running at ${adminUrl}`;
+    const tlsNote = result.url.startsWith('https:') ? `\n  ${TLS_LOCAL_ADDRESS_WARNING}` : '';
     logger.info(`${runningMessage}. Standing down.`);
-    process.stdout.write(`\n  ${runningMessage}\n\n`);
-    if (!launchedByMcp) maybeOpenBrowser(config.webui.port, config.webui.autoOpenBrowser);
+    process.stdout.write(`\n  ${runningMessage}${tlsNote}\n\n`);
+    if (!launchedByMcp) maybeOpenBrowser(adminUrl, config.webui.autoOpenBrowser);
     return;
   }
 
   serverRef = result.server;
   broadcasterRef = broadcaster;
   visualizerHubRef = visualizer;
+  authRef = auth;
+  auth.claimStore();
+  broadcaster.addHeartbeatTask(() => auth.sweep());
+  broadcaster.addHeartbeatTask(() => guests.prune());
+  guests.watch(() => broadcaster.broadcastNow());
   broadcaster.start();
 
   // The owner claims plays through mpv like every attached MCP, and the first claim submits.
-  // Subscribe BEFORE adopting mpv so the tracker hydrates from the initial emit without re-scrobbling.
+  // Subscribing before adopting mpv lets the tracker hydrate from the initial emit unscrobbled.
   if (config.features.playback) {
     new ScrobbleTracker(client, playbackEngine).attach();
-    // Adopt an already-playing mpv left by a since-closed session, so the
-    // player controls it at once. Best-effort, and ensureAttached never spawns mpv.
+    // Adopts an mpv a closed session left playing, so the player controls it at once.
+    // ensureAttached never spawns mpv.
     try {
       await playbackEngine.ensureAttached();
     } catch (err) {
@@ -256,19 +273,23 @@ async function main(): Promise<void> {
     keepPlaybackAttached();
   }
 
-  logBanner(config.webui.port, config.webui.host);
-  maybeOpenBrowser(config.webui.port, config.webui.autoOpenBrowser);
+  if (config.webui.auth.mode !== 'none' && config.webui.auth.adminAccess === 'anywhere' && !isTlsEnabled(config.webui.tls)) {
+    logger.warn('navidrome-web admits admin logins from anywhere over plain HTTP, so the admin password crosses the network in clear text. Turn on HTTPS on the settings page.');
+  }
+  if (isAddressRewritingHost()) {
+    logger.warn('navidrome-web runs in a container or WSL, where port forwarding may rewrite source addresses. LAN checks may then treat internet clients as local.');
+  }
+  logBanner(config.webui);
+  maybeOpenBrowser(adminPageUrl(result.url), config.webui.autoOpenBrowser);
   installShutdownTriggers();
 
   logger.info('navidrome-web started successfully (port owner)');
 }
 
 main().catch((error: unknown) => {
-  // The file sink is installed at module load, so this reaches the logfile even
-  // when MCP spawned us with stdio ignored (stderr → /dev/null).
   logger.error('navidrome-web failed to start:', error);
   // A direct terminal run would otherwise exit with no visible reason.
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   try {
     process.stderr.write(`navidrome-web failed to start: ${message} (log: ${logPath})\n`);
   } catch {

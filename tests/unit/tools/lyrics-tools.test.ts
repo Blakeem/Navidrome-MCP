@@ -1,24 +1,7 @@
 /**
  * Navidrome MCP Server - Lyrics Tool Surface Tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-
-/**
- * Covers the split lyrics tool surface: get_lyrics by identity, search_lyrics
- * against LRCLIB, and the shape both take when LRCLIB is disabled.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -102,10 +85,6 @@ function makeCategory(config = lrclibConfig): {
   };
 }
 
-// ============================================================================
-// get_lyrics — identity inputs
-// ============================================================================
-
 describe('get_lyrics identity inputs', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -120,7 +99,7 @@ describe('get_lyrics identity inputs', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('rejects the old metadata inputs', async () => {
+  it('rejects title and artist inputs', async () => {
     const { category, client } = makeCategory();
 
     await expect(
@@ -251,10 +230,6 @@ describe('get_lyrics identity inputs', () => {
     expect(requestedUrls()[0]).not.toContain('duration=');
   });
 });
-
-// ============================================================================
-// search_lyrics — LRCLIB candidates plus the library match
-// ============================================================================
 
 describe('search_lyrics candidates', () => {
   beforeEach(() => {
@@ -449,10 +424,6 @@ describe('search_lyrics candidates', () => {
     ).rejects.toThrow(/429/);
   });
 });
-
-// ============================================================================
-// LRCLIB disabled — local file lyrics only
-// ============================================================================
 
 describe('lyrics category with LRCLIB disabled', () => {
   beforeEach(() => {

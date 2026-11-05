@@ -4,5 +4,6 @@
     "noEmit": true
   },
   "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "dist", "build", "coverage"]
+  // The Playwright output folders hold bundled report JS, which tsconfig.tests.json's allowJs would check.
+  "exclude": ["node_modules", "dist", "build", "coverage", "tests/e2e/test-results", "tests/e2e/playwright-report"]
 }

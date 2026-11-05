@@ -1,6 +1,5 @@
-// The color theme. The server holds a forced light or dark theme for every device, and with none set
-// each device follows its own setting. This device keeps the last forced theme as a hint,
-// so it is painted at load before the server answers.
+// The server forces one theme on every device, or none so each device follows its own setting.
+// The last forced theme is stored here, so a load paints it before the server answers.
 
 import { prefRead, prefRemove, prefWrite } from './prefs.js';
 

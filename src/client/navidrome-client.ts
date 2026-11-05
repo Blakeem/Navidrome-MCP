@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - API Client
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Config } from '../config.js';
@@ -28,7 +16,8 @@ import {
   type RetryPolicy,
 } from '../utils/fetch-with-timeout.js';
 
-// Only these resources take an item ID as their second path segment, so only they can name the missing item.
+// The tool-facing resources whose second path segment is an item ID, so a not-found error can
+// name the item.
 const ITEM_RESOURCE_NAMES: Readonly<Record<string, string>> = {
   song: 'Song',
   album: 'Album',
@@ -52,7 +41,8 @@ export class NavidromeNotFoundError extends Error {
   }
 }
 
-// Navidrome answers a missing item with 404, or with 400 or 500 and this body, which reads as a server outage.
+// Navidrome answers a missing item with 404, or with 400 or 500 and this body, which would
+// otherwise read as a server outage.
 const MISSING_ITEM_ERROR_BODY = 'data not found';
 
 function isMissingItemResponse(status: number, errorText: string): boolean {
@@ -89,37 +79,19 @@ export class NavidromeClient {
     logger.info('Navidrome client initialized');
   }
 
-  /**
-   * Public accessor for the current (cached or freshly-authenticated) JWT.
-   *
-   * Exposed so services like `LibraryManager` can decode user-scoped claims
-   * (`uid`, etc.) without reaching into the private `authManager` field via
-   * an `as unknown as` cast — that pattern silently breaks when fields are
-   * renamed. Single-flight refresh + retry-on-401 still funnel through
-   * AuthManager, so callers don't need to think about token freshness.
-   */
+  /** LibraryManager decodes user-scoped claims such as `uid` from this JWT. */
   async getCurrentToken(): Promise<string> {
     return this.authManager.getToken();
   }
 
-  /**
-   * Body-only request — thin wrapper over `requestWithMeta` that discards
-   * the X-Total-Count value. Use this for single-resource fetches and any
-   * endpoint where the caller doesn't need the total.
-   */
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const { data } = await this.requestWithMeta<T>(endpoint, options);
     return data;
   }
 
   /**
-   * Like `request<T>()` but also surfaces the parsed `X-Total-Count` header
-   * (Navidrome's listing endpoints expose this in `Access-Control-Expose-Headers`
-   * and use it to communicate the full match count vs. the page-sized body).
-   *
-   * Returns `total: null` when the header is absent or unparseable — the caller
-   * is responsible for choosing a fallback (typically `items.length`). Subsonic
-   * endpoints don't emit this header at all; use `subsonicRequest` for those.
+   * `total` is Navidrome's X-Total-Count, the full match count across pages. It is null when the
+   * header is absent or unparseable, so the caller picks the fallback.
    */
   async requestWithMeta<T>(
     endpoint: string,
@@ -129,22 +101,13 @@ export class NavidromeClient {
     let token = await this.authManager.getToken();
     let response = await this.doFetch(endpoint, options, token);
     if (response.status === 401) {
-      // Token rejected, so invalidate the cache and retry exactly once with a
-      // fresh authenticate(). If the second attempt also returns 401, fall
-      // through to parseResponse which throws the standard HTTP error.
       logger.debug('Got 401 from Navidrome; invalidating token and retrying once');
       this.authManager.invalidate(token);
-      // Drain the discarded 401 body so undici can return the socket to the
-      // keep-alive pool immediately instead of holding it until GC.
+      // An unread body holds its socket until GC, so the discarded 401 body is cancelled.
       await response.body?.cancel().catch(() => undefined);
       token = await this.authManager.getToken();
       response = await this.doFetch(endpoint, options, token);
     }
-    // Read X-Total-Count alongside the body. Header / body streams are
-    // independent so order doesn't matter, but reading first matches the
-    // data flow. Number.parseInt loses precision above 2^53 — not a real
-    // concern for music libraries (largest known Navidrome instance is in
-    // the low millions).
     const totalHeader = response.headers.get('x-total-count');
     const parsed = totalHeader !== null ? Number.parseInt(totalHeader, 10) : NaN;
     const total = Number.isFinite(parsed) ? parsed : null;
@@ -153,41 +116,25 @@ export class NavidromeClient {
     return { data, total };
   }
 
-  /**
-   * Make a request with automatic library filtering applied. Body-only —
-   * thin wrapper over `requestWithLibraryFilterAndMeta` that discards the
-   * X-Total-Count value.
-   */
   async requestWithLibraryFilter<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const { data } = await this.requestWithLibraryFilterAndMeta<T>(endpoint, options);
     return data;
   }
 
-  /**
-   * Like `requestWithLibraryFilter<T>()` but also surfaces X-Total-Count.
-   * Use this for any tool that paginates and needs to report the real total
-   * (vs. the page size) back to the LLM.
-   */
   async requestWithLibraryFilterAndMeta<T>(
     endpoint: string,
     options: RequestInit = {},
   ): Promise<{ data: T; total: number | null }> {
-    // Validate the RAW endpoint before buildLibraryFilteredEndpoint runs it
-    // through `new URL()`, which collapses `..`/`%2e%2e` dot-segments and would
-    // otherwise hide traversal from requestWithMeta's downstream guard.
+    // `new URL()` in buildLibraryFilteredEndpoint collapses `..` and `%2e%2e` segments, which
+    // would hide traversal from requestWithMeta's check, so the raw endpoint is checked first.
     this.assertSafeEndpoint(endpoint);
     const filteredEndpoint = this.buildLibraryFilteredEndpoint(endpoint);
     logger.debug(`Request with library filter: ${filteredEndpoint}`);
     return this.requestWithMeta<T>(filteredEndpoint, options);
   }
 
-  /**
-   * Append `library_id` query params for each active library (the frontend
-   * convention is to repeat the param rather than send a comma-joined list).
-   * Returns the path verbatim if no libraries are active.
-   */
   private buildLibraryFilteredEndpoint(endpoint: string): string {
-    // Base doesn't matter — only parsing the path + query.
+    // The base is a placeholder, since only the path and query are kept.
     const url = new URL(endpoint, 'http://localhost');
     const path = url.pathname;
     const existingParams = url.searchParams;
@@ -202,11 +149,7 @@ export class NavidromeClient {
     return existingParams.toString() ? `${path}?${existingParams.toString()}` : path;
   }
 
-  /**
-   * Send a Subsonic API request as a POST with auth in the body, which keeps
-   * the salted-MD5 secret out of URL query strings (where reverse proxies and
-   * access logs would capture it).
-   */
+  /** POST keeps the salted-MD5 auth params out of the URL, which proxies and access logs record. */
   async subsonicRequest(
     endpoint: string,
     params: Record<string, string> = {},
@@ -219,8 +162,8 @@ export class NavidromeClient {
       params,
     );
 
-    // Most Subsonic calls (star, setRating, now-playing scrobble) are idempotent, so 'safe' is the default.
-    // Station create and delete and scrobble submission pass 'never', since a resend would double-apply.
+    // star, setRating, and the now-playing scrobble are idempotent, so 'safe' is the default.
+    // Station create and delete and scrobble submission pass 'never', since a resend repeats them.
     const retryPolicy = options.retryPolicy ?? 'safe';
     const response = await fetchWithTimeout(
       `${this.baseUrl}/rest${endpoint}`,
@@ -249,9 +192,6 @@ export class NavidromeClient {
     }
 
     if (data === null || typeof data !== 'object') {
-      // 200 OK but the body was a non-object (literal `null`, etc.) from a
-      // misbehaving proxy — guard before indexing so the failure carries
-      // Subsonic context instead of a native TypeError.
       throw new Error(ErrorFormatter.subsonicResponse('unexpected Subsonic response shape'));
     }
 
@@ -264,12 +204,8 @@ export class NavidromeClient {
   }
 
   /**
-   * Reject endpoints that could escape the `/api` path or hit a different
-   * host. Tools build endpoints from constants + interpolated IDs, so an
-   * endpoint with `..` segments or an absolute URL is always a bug, either a
-   * loose schema or a hand-built string that bypassed validation. The
-   * traversal check covers the path component only, since a query string
-   * cannot traverse and legitimately carries text such as an ellipsis.
+   * Tools build endpoints from constants and validated IDs, so `..` or an absolute URL means a
+   * validation gap. Only the path is checked, since a query string cannot traverse.
    */
   private assertSafeEndpoint(endpoint: string): void {
     const queryStart = endpoint.indexOf('?');
@@ -277,8 +213,7 @@ export class NavidromeClient {
     if (path.includes('..')) {
       throw new Error('Endpoint must not contain path-traversal segments');
     }
-    // Node normalizes URL-encoded traversal (`%2e%2e`) back to `..`, so decode
-    // and re-check. A malformed escape sequence is itself suspect.
+    // The URL parser treats `%2e%2e` as `..`, so the decoded path is checked too.
     let decoded: string;
     try {
       decoded = decodeURIComponent(path);
@@ -298,25 +233,17 @@ export class NavidromeClient {
       'X-ND-Authorization': `Bearer ${token}`,
     };
 
-    // Only set Content-Type for non-GET requests
     if (options.method !== undefined && options.method !== 'GET') {
       defaultHeaders['Content-Type'] = 'application/json';
     }
 
-    // Only retry idempotent methods. POST/PUT/DELETE may have side effects
-    // even on timeout (the server might have applied the mutation just before
-    // the connection dropped) — surfacing the timeout to the LLM is safer
-    // than risking a double-apply (e.g. adding the same tracks to a playlist
-    // twice). GET and HEAD are spec-idempotent; an undefined method defaults
-    // to GET in fetch().
+    // A timed-out write may already have applied, and a resend could add the same tracks to a
+    // playlist twice, so only GET and HEAD are retried.
     const method = options.method ?? 'GET';
     const isIdempotent = method === 'GET' || method === 'HEAD';
 
-    // RequestInit.headers is HeadersInit, which can be a Headers instance, a
-    // [k, v][] tuple array, or a plain object. Object-spreading a Headers
-    // instance yields `{}` and silently drops the caller's headers, so merge
-    // via the Headers API to preserve every form. Caller headers win on
-    // collision (last write).
+    // Object-spreading a Headers instance yields `{}`, so the Headers API merges every HeadersInit
+    // form. Caller headers win.
     const merged = new Headers(defaultHeaders);
     if (options.headers !== undefined) {
       new Headers(options.headers).forEach((value, key) => {
@@ -342,11 +269,10 @@ export class NavidromeClient {
   private async parseResponse<T>(response: Response, method: string, endpoint: string): Promise<T> {
     const label = `Navidrome ${method} ${endpoint}`;
     if (!response.ok) {
-      // Cap the raw error body before it flows to the LLM via toolExecution: a
-      // proxy's large HTML 5xx page (server version/OS/path info) or a 4xx body
-      // referencing internal paths would otherwise reach the context unbounded.
+      // The error body reaches the LLM, and a proxy's HTML error page can be large.
       const errorText = (await response.text()).slice(0, 512);
-      // A write to a path that names no item, such as POST /playlist, answers 404 for a wrong route, not a wrong ID.
+      // A write to a path that names no item, such as POST /playlist, answers 404 for a wrong
+      // route, not a wrong ID.
       const namesItem = method === 'GET' || itemFromEndpoint(endpoint) !== null;
       if (namesItem && isMissingItemResponse(response.status, errorText)) {
         throw new NavidromeNotFoundError(label, endpoint);
@@ -364,21 +290,18 @@ export class NavidromeClient {
       }
     }
 
-    // Navidrome's POST /playlist/{id}/tracks (and /song/{id}/playlists) return
-    // JSON bodies with `Content-Type: text/plain`. Sniff the body and parse as
-    // JSON if it looks like one — otherwise fall back to text (legitimately
-    // used by M3U export, etc.).
+    // Navidrome sends some JSON bodies, such as POST /playlist/{id}/tracks and
+    // GET /song/{id}/playlists, as text/plain.
     const text = await response.text();
     const trimmed = text.trimStart();
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       try {
         return JSON.parse(text) as T;
       } catch {
-        // The body looked like JSON but didn't parse, so fall through to text.
+        // A body that only looks like JSON is returned as text.
       }
     }
-    // The cast is sound only when T is string or unknown, for callers that want
-    // a raw text/plain body such as M3U export.
+    // The cast is sound only when T is string or unknown, as for the M3U export.
     return text as T;
   }
 }

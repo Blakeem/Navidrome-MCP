@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Playlist Data Transformers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { PlaylistDTO, PlaylistTrackDTO } from '../types/index.js';
@@ -26,10 +14,7 @@ import {
   type TransformOptions,
 } from './shared-transformers.js';
 
-/**
- * Raw playlist data from Navidrome API. Older Navidrome releases emit the owner
- * as `owner`, and `ownerName` wins when both are present.
- */
+/** Older Navidrome releases emit the owner as `owner` instead of `ownerName`. */
 export interface RawPlaylist {
   id: string;
   name: string;
@@ -45,9 +30,6 @@ export interface RawPlaylist {
   [key: string]: unknown;
 }
 
-/**
- * Raw playlist track data from Navidrome API
- */
 interface RawPlaylistTrack {
   id: string;
   mediaFileId?: string;
@@ -66,12 +48,6 @@ interface RawPlaylistTrack {
   [key: string]: unknown;
 }
 
-/**
- * Transform a raw playlist from Navidrome API to a clean DTO
- * @param rawPlaylist Raw playlist data from API
- * @param options `keep: ['duration']` adds the numeric total duration
- * @returns Clean playlist DTO for LLM consumption
- */
 export function transformToPlaylistDTO(rawPlaylist: RawPlaylist, options?: TransformOptions): PlaylistDTO {
   const owner = rawPlaylist.ownerName ?? rawPlaylist.owner ?? '';
 
@@ -107,27 +83,21 @@ export function transformToPlaylistDTO(rawPlaylist: RawPlaylist, options?: Trans
   return dto;
 }
 
-/**
- * Transform an array of raw playlists to DTOs
- * @param rawPlaylists Array of raw playlist data
- * @param options Forwarded to each item (see {@link transformToPlaylistDTO})
- * @returns Array of clean playlist DTOs
- */
 export function transformPlaylistsToDTO(rawPlaylists: unknown, options?: TransformOptions): PlaylistDTO[] {
   return transformObjectRows(rawPlaylists, (playlist: RawPlaylist) => transformToPlaylistDTO(playlist, options));
 }
 
 /**
- * Compact output keeps only what identifies and acts on a track (`position` for reorder and remove,
- * `songId` for playback), so large playlists stay under the token cap.
+ * Compact output keeps only what identifies and acts on a track (`position` for reorder and
+ * remove, `songId` for playback), so large playlists stay under the token cap.
  */
 export function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, options?: TransformOptions): PlaylistTrackDTO {
   const mediaFileId = rawTrack.mediaFileId ?? '';
   const hasMediaFileId = mediaFileId !== '';
   const songId = hasMediaFileId ? mediaFileId : rawTrack.id;
 
-  // The fallback is a playlist position, not a song id, so a later lookup by it resolves
-  // the wrong song. Warn so the substitution never corrupts downstream lookups silently.
+  // The fallback is a playlist position, not a song id, so a later lookup by it names no song.
+  // The warning keeps that substitution visible in the logs.
   if (!hasMediaFileId) {
     logger.warn(
       `Playlist track missing mediaFileId (playlistId=${rawTrack.playlistId}, position=${rawTrack.id}); ` +
@@ -182,12 +152,6 @@ export function transformToPlaylistTrackDTO(rawTrack: RawPlaylistTrack, options?
   return dto;
 }
 
-/**
- * Transform an array of raw playlist tracks to DTOs
- * @param rawTracks Array of raw playlist track data
- * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
- * @returns Array of clean playlist track DTOs
- */
 export function transformPlaylistTracksToDTO(rawTracks: unknown, options?: TransformOptions): PlaylistTrackDTO[] {
   return transformObjectRows(rawTracks, (track: RawPlaylistTrack) => transformToPlaylistTrackDTO(track, options));
 }

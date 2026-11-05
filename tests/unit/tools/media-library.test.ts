@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - media library tool tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';

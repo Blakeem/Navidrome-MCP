@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Web UI Library Browse Routes
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -27,6 +15,7 @@ import {
   transformSongsToDTO,
 } from '../../transformers/index.js';
 import { readValidBody, runAction, writeError, writeJson } from '../http-helpers.js';
+import type { GuestQueue } from '../jukebox/guest-queue.js';
 
 const LIBRARY_RECENT_LIMIT = 5;
 const LIBRARY_SEARCH_LIMIT = 10;
@@ -67,7 +56,7 @@ export function handleLibraryRecent(res: ServerResponse, client: NavidromeClient
   });
 }
 
-// One-row reads, since only X-Total-Count is used. A missing header counts as zero.
+// One-row reads, since only X-Total-Count is used.
 export function handleLibraryFavorites(res: ServerResponse, client: NavidromeClient): Promise<void> {
   const countWindow = 'starred=true&_start=0&_end=1';
   return runAction(res, async () => {
@@ -79,7 +68,6 @@ export function handleLibraryFavorites(res: ServerResponse, client: NavidromeCli
   });
 }
 
-// Sorting by play count ranks the matches the user plays most first.
 export async function handleLibrarySearch(
   res: ServerResponse,
   client: NavidromeClient,
@@ -149,17 +137,21 @@ export async function handleLibraryAlbumSongs(
   });
 }
 
+/** `hostLabels` is the jukebox that labels the loaded songs as the host's, or null when no label applies. */
 export async function handleLibraryPlay(
   req: IncomingMessage,
   res: ServerResponse,
   client: NavidromeClient,
+  hostLabels: Pick<GuestQueue, 'labelAdminPageSongs'> | null,
 ): Promise<void> {
   const body = await readValidBody(req, res, LibraryPlayRequestSchema);
   if (body === null) return;
 
-  // An empty source is 409 with a code, so the remote branches on the code instead of the message text.
+  // An empty source is 409 with a code, so the remote branches on the code, not the message text.
   try {
-    const result = await playLibrarySource(client, body);
+    const result = await playLibrarySource(client, body, hostLabels === null ? undefined : (entryIds, songs): void => {
+      hostLabels.labelAdminPageSongs(entryIds, songs);
+    });
     writeJson(res, 200, result);
   } catch (err) {
     if (err instanceof EmptyLibrarySourceError) {

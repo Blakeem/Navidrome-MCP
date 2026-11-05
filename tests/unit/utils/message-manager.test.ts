@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - Message Manager Tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -10,7 +11,6 @@ describe('MessageManager', () => {
   let messageManager: MessageManager;
 
   beforeEach(() => {
-    // Get a fresh instance and reset it
     messageManager = MessageManager.getInstance();
     messageManager.reset();
   });

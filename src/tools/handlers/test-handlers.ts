@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Test Tool Handlers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -26,7 +14,11 @@ import { ErrorFormatter } from '../../utils/error-formatter.js';
 const tools: Tool[] = [
   {
     name: 'test_connection',
-    description: 'Test the connection to the Navidrome server',
+    description:
+      'Check that Navidrome is reachable and accepts this server\'s credentials on both its REST and Subsonic APIs. ' +
+      'Returns the Navidrome version, library scan state, and song, album and artist counts for the active libraries. ' +
+      'Use it to confirm the server is up or to diagnose failing tools. Returns an error result when Navidrome is unreachable or rejects the credentials. ' +
+      'For the account and per-library details, use get_user_details.',
     inputSchema: {
       type: 'object',
       properties: {

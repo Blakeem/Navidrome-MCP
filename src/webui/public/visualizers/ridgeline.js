@@ -1,6 +1,6 @@
 import { average, detectBeat, hslOf, resample } from '../visualizer-kit.js';
 
-// The ridges hold this much music. The oldest leaves the back well inside the 3 s release.
+// The oldest row leaves the back well inside the contract test's 3 s release.
 const HISTORY_SECONDS = 2.4;
 // Rows over the history at full density, about 14 a second.
 const HISTORY_ROWS = 34;
@@ -9,20 +9,20 @@ const POINT_SPACING_PX = 4;
 const MIN_POINTS = 40;
 const MAX_POINTS = 200;
 const CURVE_POINTS = 24;
-// A ridge at depth d is drawn at 1 / (1 + PERSPECTIVE * d) of its near size. Mild, so the stack keeps the album cover's density.
+// Mild perspective, so the stack keeps the album cover's density.
 const PERSPECTIVE = 0.65;
 // Taller than half the area, so near peaks rise over the far rows and hide them.
 const NEAR_AMPLITUDE = 0.62;
 // Closer ridges merge into a gray band, so a short strip captures fewer and longer rows.
 const MIN_ROW_GAP_PX = 2.4;
-// The spectrum spans this central share of each ridge with bass in the middle, and the rest stays flat like the pulsar plot.
+// The spectrum spans this central share of each ridge. The flanks stay flat as in the pulsar plot.
 const ACTIVE_WIDTH = 0.82;
-// The treble end eases into the flat flank from here, so a ridge has no kink where the spectrum stops.
+// The treble end eases into the flat flank from here, so no kink shows where the spectrum stops.
 const TAPER_START = 0.7;
-// Grain scales with the level, so peaks look like jagged pulsar traces and silence stays a straight line.
+// Grain scales with the level, so peaks look like jagged pulsar traces and silence stays straight.
 const JITTER = 0.1;
 const FLANK_NOISE = 0.035;
-// The share of each ridge's length that fades in at either end, so the flanks melt into the card.
+// The share of each ridge's length that fades in at either end, so the flanks blend into the card.
 const EDGE_FADE = 0.14;
 // Far ridges dim by this much before they vanish, so depth reads as haze.
 const FOG = 0.55;
@@ -31,11 +31,12 @@ const PRESENCE_GAIN = 4;
 // The fraction of the landscape's brightness left one second after the music stops.
 const RELEASE_PER_SECOND = 0.12;
 const MIN_GLOW = 0.01;
-// An 8-bit channel rounds a fainter alpha to nothing, so such paints are skipped.
+// A fainter alpha changes a pixel by at most one 8-bit step, so such paints are skipped.
 const MIN_ALPHA = 0.004;
 // A beat lights a few rows that then travel back through the landscape as a band.
 const KICK_DECAY_PER_SECOND = 7;
-// Hue added at full flash. The rows pass through magenta on the way, so a beat band cools as it recedes.
+// Hue added at full flash. Rows captured as the kick decays take smaller shifts, so the rows after
+// a beat step back toward the base hue.
 const FLASH_HUE_SHIFT = 165;
 const FAR_HUE_SHIFT = 25;
 const FLASH_WIDTH = 0.3;
@@ -51,7 +52,8 @@ const GLOW_WIDTH_RATIO = 3;
 const MAX_WIDTH_RATIO = LIVE_WIDTH * (1 + FLASH_WIDTH) * GLOW_WIDTH_RATIO;
 const SKY_WIDTH = 0.85;
 
-// Pale lines on the dark card like the album cover. Deep ink on the light card, where glow would wash out.
+// Pale lines on the dark card like the album cover. Deep ink on the light card, where glow would
+// wash out.
 const INKS = {
   dark: {
     near: { saturation: 45, lightness: 93 },
@@ -76,14 +78,12 @@ const INKS = {
 };
 
 /**
- * A ridgeline landscape in the style of the Unknown Pleasures cover. Each row is the spectrum from a moment in
- * the last few seconds, mirrored out from the bass at the center, and the rows recede in depth so nearer peaks
- * hide the ridges behind them. Beats light rows that travel back into the haze.
+ * A ridgeline landscape after the Unknown Pleasures cover. Each row is the spectrum from a moment
+ * in the last few seconds. Nearer peaks hide the ridges behind, and beat rows recede into the haze.
  */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
-  // Silence fades the landscape out with the music, so a paused player shows nothing.
   const presence = Math.min(1, frame.energy * PRESENCE_GAIN);
   state.glow = Math.max((state.glow ?? 0) * RELEASE_PER_SECOND ** frame.dtSeconds, presence);
   if (state.glow < MIN_GLOW) {
@@ -105,7 +105,7 @@ function draw(ctx, frame) {
 function layoutScene(frame) {
   const { width, height, pad } = frame;
   const lineWidth = clamp(Math.min(width, height) * LINE_WIDTH_RATIO, MIN_LINE_WIDTH, MAX_LINE_WIDTH);
-  // Every stroke is centered on its ridge, so the ridges keep half the widest stroke and a pixel clear of the pad.
+  // Half the widest stroke reaches past the ridge, so the inset adds it plus a pixel to the pad.
   const inset = pad + (lineWidth * MAX_WIDTH_RATIO) / 2 + 1;
   const top = inset;
   const bottom = height - inset;
@@ -148,7 +148,7 @@ function newHistory(bandCount) {
   return { rows: [], seq: 0, time: 0, lastBorn: 0, sinceCapture: 0, pending: new Float32Array(bandCount), pendingFlash: 0, kick: 0, sway: 0 };
 }
 
-// Each row keeps the loudest level of every band over its interval, so a kick between captures still shows.
+// A row keeps each band's loudest level over its interval, so a kick between captures still shows.
 function captureRows(history, interval) {
   if (history.sinceCapture < interval) return;
   const curve = resample(history.pending, CURVE_POINTS);
@@ -174,12 +174,12 @@ function rowDepth(history, row, reducedMotion) {
   return (now - row.born) / HISTORY_SECONDS;
 }
 
-// The nearest ridge follows the levels every frame and carries the seed of the row it becomes, so the hand-off keeps its grain.
+// The live ridge takes the seed of the row it becomes, so the hand-off keeps its grain.
 function liveRow(history, frame) {
   return { seed: history.seq + 1, born: history.time, curve: resample(frame.values, CURVE_POINTS), energy: frame.energy, flash: history.kick, live: true };
 }
 
-// A dome of light behind the far ridges that swells on beats. The ridges erase its lower half, so it shows only as sky.
+// A dome of light behind the far ridges. The ridges erase its lower half, so it shows only as sky.
 function drawSky(ctx, scene, look, history, frame, swayX) {
   const farScale = scaleAt(1);
   const centerY = baseAt(scene, 1);
@@ -198,7 +198,7 @@ function drawSky(ctx, scene, look, history, frame, swayX) {
   ctx.restore();
 }
 
-// Back to front, each ridge erases everything under its line down to the next ridge's ground, so nearer peaks hide the rows behind.
+// Each ridge erases below its line to the next ridge's ground, so nearer peaks hide rows behind.
 function drawLandscape(ctx, scene, look, history, frame, swayX) {
   const ridges = history.rows.map((row) => ({ row, depth: rowDepth(history, row, frame.reducedMotion) }));
   ridges.push({ row: liveRow(history, frame), depth: 0 });
@@ -240,13 +240,12 @@ function baseAt(scene, depth) {
   return scene.horizon + (scene.bottom - scene.horizon) * scaleAt(depth);
 }
 
-// Far ridges dim into haze and vanish at the back. The ridge's own loudness and the release set the rest.
 function ridgeAlpha(row, depth, fade) {
   const haze = (1 - FOG * depth) * (1 - smoothstep(VANISH_START, 1, depth));
   return Math.min(1, row.energy * PRESENCE_GAIN) * haze * fade;
 }
 
-// The spectrum mirrors out from the bass at the center, so peaks crowd the middle like the pulsar plot.
+// Bass sits at the center and the spectrum mirrors outward, so peaks crowd the middle.
 function traceRidge(placement, row, xs, ys) {
   const last = xs.length - 1;
   const loudness = Math.min(1, row.energy * PRESENCE_GAIN);
@@ -278,7 +277,7 @@ function eraseBehind(ctx) {
   ctx.fill();
 }
 
-// The haze is strongest at the ridge's full height, so loud crests glow and quiet stretches stay clear.
+// The haze peaks at the ridge's full height, so loud crests glow and quiet stretches stay clear.
 function shadeGround(ctx, placement, tone, alpha, ink) {
   const haze = ctx.createLinearGradient(0, placement.base - placement.amplitude, 0, placement.base);
   haze.addColorStop(0, hsla(tone, ink.tint));

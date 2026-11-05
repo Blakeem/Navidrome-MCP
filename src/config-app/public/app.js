@@ -1,9 +1,6 @@
 /*
- * Navidrome MCP Settings form logic (vanilla, no build step).
- *
- * Symmetric mapping between the nested settings.json shape and the flat form:
- * each field declares its dotted path, DOM id, and value kind, so seed→form and
- * form→payload use the same table. Password is masked (sentinel) by the server.
+ * Served as-is with no build step. Each FIELDS row maps a settings.json path to a form element, so
+ * populate() and collect() share one table.
  */
 'use strict';
 
@@ -28,15 +25,24 @@ const FIELDS = [
   ['features.lrclibUserAgent', 'lrclibUserAgent', 'stringOrNull'],
   ['features.lrclibBase', 'lrclibBase', 'stringOrNull'],
   ['playback.mpvPath', 'mpvPath', 'pathOrNull'],
+  ['playback.audioDevice', 'audioDevice', 'audioDevice'],
   ['playback.transcodeFormat', 'transcodeFormat', 'string'],
   ['playback.transcodeBitrate', 'transcodeBitrate', 'string'],
   ['webui.enabled', 'webuiEnabled', 'bool', true],
   ['webui.port', 'webuiPort', 'int', 8808],
   ['webui.host', 'webuiHost', 'stringOrNull'],
+  ['webui.allowedHosts', 'webuiAllowedHosts', 'csvStringArray'],
+  ['webui.publicUrl', 'webuiPublicUrl', 'stringOrNull'],
   ['webui.expose', 'webuiExpose', 'bool', false],
   ['webui.autoOpenBrowser', 'webuiAutoOpen', 'bool', false],
   ['webui.persistAfterMcpExit', 'webuiPersist', 'bool', false],
   ['webui.visualizer', 'webuiVisualizer', 'bool', true],
+  ['webui.tls.certPath', 'webuiTlsCert', 'pathOrNull'],
+  ['webui.tls.keyPath', 'webuiTlsKey', 'pathOrNull'],
+  ['webui.auth.mode', 'webuiAuthMode', 'string', 'none'],
+  ['webui.auth.adminAccess', 'webuiAdminAccess', 'string', 'localhost'],
+  ['webui.auth.adminPassword', 'webuiAdminPassword', 'writeOnlySecret'],
+  ['jukebox.guestQueueLimit', 'jukeboxGuestQueueLimit', 'int', 3],
   ['advanced.debug', 'debug', 'bool', false],
   ['advanced.tokenExpiry', 'tokenExpiry', 'int', 86400],
 ];
@@ -73,10 +79,15 @@ function populate(seed) {
       case 'int':
         el.value = raw == null ? '' : String(raw);
         break;
-      default: // string | stringOrNull | pathOrNull
-        // Fall back to the declared default when the seed has no value, so a
-        // <select> (e.g. transport.type) lands on a valid option instead of an
-        // empty/-1 selection. Text inputs without a default just stay blank.
+      case 'audioDevice':
+        selectAudioDevice(el, raw);
+        break;
+      case 'writeOnlySecret':
+        // The seed never carries this value, so the field always starts blank.
+        el.value = '';
+        break;
+      default:
+        // A <select> such as transport.type needs its default, or it shows no selected option.
         el.value = raw == null ? (dflt == null ? '' : String(dflt)) : String(raw);
     }
   }
@@ -96,9 +107,8 @@ function collect() {
         value = el.value.trim();
         break;
       case 'secret':
-        // Secrets (e.g. password) are persisted verbatim. Trimming could
-        // silently corrupt a credential that legitimately carries leading or
-        // trailing whitespace, producing hard-to-diagnose auth failures.
+      case 'writeOnlySecret':
+        // Not trimmed, since a credential may start or end with whitespace.
         value = el.value;
         break;
       case 'stringOrNull': {
@@ -129,6 +139,12 @@ function collect() {
           .map((t) => t.trim())
           .filter((t) => t !== '');
         break;
+      case 'audioDevice': {
+        // The label may carry a "(not connected)" suffix, so the name comes from data-name.
+        const name = el.selectedOptions[0]?.dataset.name ?? '';
+        value = el.value === '' ? null : { id: el.value, name: name === '' ? null : name };
+        break;
+      }
       default:
         value = el.value;
     }
@@ -137,18 +153,194 @@ function collect() {
   return out;
 }
 
+// The empty option already stands for mpv's `auto` device.
+const AUTO_DEVICE_ID = 'auto';
+
+// A failed probe leaves only System default, so the form still loads and saves.
+async function loadAudioDevices() {
+  try {
+    const res = await fetch('/api/settings/audio-devices');
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.devices) ? data.devices : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function fillAudioDevices(devices) {
+  const select = document.getElementById('audioDevice');
+  for (const device of devices) {
+    if (device.id === AUTO_DEVICE_ID) continue;
+    select.appendChild(buildAudioDeviceOption(device.id, device.name, device.name || device.id));
+  }
+}
+
+// A saved device missing from the probe gets its own option, so a save keeps it.
+function selectAudioDevice(select, device) {
+  const id = device != null && typeof device.id === 'string' ? device.id : '';
+  if (id === '' || id === AUTO_DEVICE_ID) {
+    select.value = '';
+    return;
+  }
+  const listed = Array.from(select.options).some((option) => option.value === id);
+  if (!listed) {
+    const name = typeof device.name === 'string' ? device.name : '';
+    select.appendChild(buildAudioDeviceOption(id, name, `${name || id} (not connected)`));
+  }
+  select.value = id;
+}
+
+function buildAudioDeviceOption(id, name, label) {
+  const option = document.createElement('option');
+  option.value = id;
+  option.dataset.name = name;
+  option.textContent = label;
+  return option;
+}
+
 // Mirrors the server's webui.host rule, so a bad value is flagged before a round trip.
 const WEBUI_BIND_HOSTS = ['127.0.0.1', '0.0.0.0', '::'];
 
-// Returns null after showing the problem, so the caller skips the request.
-function collectChecked() {
+const ADMIN_PASSWORD_MIN_LENGTH = 12;
+const ADMIN_PASSWORD_MAX_LENGTH = 128;
+const GUEST_QUEUE_LIMIT_MIN = 1;
+const GUEST_QUEUE_LIMIT_MAX = 20;
+// The seed reports only whether a hash is stored, never the hash.
+let adminPasswordSet = false;
+
+const ADMIN_ACCESS_WARNINGS = {
+  localhost: '',
+  lan: 'Anyone on your network who learns the admin password gets full control of the player.',
+  anywhere:
+    'The admin login is open to the internet. Without HTTPS the password crosses the internet in clear text, ' +
+    'so set the HTTPS certificate and key files. Anyone who learns the password gets full control of the player.',
+};
+
+function renderAdminAccessWarning() {
+  const warning = ADMIN_ACCESS_WARNINGS[document.getElementById('webuiAdminAccess').value] || '';
+  const el = document.getElementById('webuiAdminAccessWarn');
+  el.textContent = warning;
+  el.hidden = warning === '';
+}
+
+function renderAdminPasswordState() {
+  document.getElementById('webuiAdminPasswordState').textContent = adminPasswordSet
+    ? 'A password is set. Leave blank to keep it.'
+    : `${ADMIN_PASSWORD_MIN_LENGTH} to ${ADMIN_PASSWORD_MAX_LENGTH} characters.`;
+}
+
+// The confirm field follows the password field, since a blank password keeps the stored one.
+function renderAdminPasswordConfirm() {
+  const hasLogin = document.getElementById('webuiAuthMode').value !== 'none';
+  const typed = document.getElementById('webuiAdminPassword').value !== '';
+  document.getElementById('webuiAdminPasswordConfirmRow').hidden = !(hasLogin && typed);
+}
+
+const LOOPBACK_BIND = '127.0.0.1';
+const EXPOSE_WARNINGS = {
+  exposeOff: 'Guests cannot reach the jukebox until Expose on LAN is on.',
+  loopbackHost: 'Guests cannot reach the jukebox while Bind host is 127.0.0.1. Clear Bind host or set it to 0.0.0.0.',
+};
+
+// The jukebox link needs a LAN-reachable bind. A blank Bind host follows Expose on LAN, and an explicit one overrides it.
+function renderExposeWarning() {
+  const jukebox = document.getElementById('webuiAuthMode').value === 'jukebox';
+  const exposed = document.getElementById('webuiExpose').checked;
+  const host = document.getElementById('webuiHost').value.trim();
+  const el = document.getElementById('webuiExposeWarn');
+  const loopback = host === '' ? !exposed : host === LOOPBACK_BIND;
+  el.textContent = host === '' ? EXPOSE_WARNINGS.exposeOff : EXPOSE_WARNINGS.loopbackHost;
+  el.hidden = !(jukebox && loopback);
+}
+
+function bindRevealButton(button) {
+  const input = document.getElementById(button.dataset.reveal);
+  const iconShow = button.querySelector('.icon-show');
+  const iconHide = button.querySelector('.icon-hide');
+  button.addEventListener('click', () => {
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    button.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+    // An SVG element has no `hidden` property, so the attribute is toggled directly.
+    iconShow.toggleAttribute('hidden', reveal);
+    iconHide.toggleAttribute('hidden', !reveal);
+  });
+}
+
+const AUTH_MODE_HINTS = {
+  none: 'No login. Every device that reaches the player controls it. Internet addresses are refused.',
+  password: 'Every browser needs the admin password, this computer included.',
+  jukebox: 'Every browser needs the admin password. Guests scan a QR code from the player and can only add songs.',
+};
+// The mode the form loaded with, so leaving `jukebox` warns that the restart ends the jukebox.
+let loadedAuthMode = 'none';
+
+function isGuestQueueLimitInRange(value) {
+  const text = value.trim();
+  if (text === '') return true;
+  if (!/^\d+$/.test(text)) return false;
+  const limit = Number(text);
+  return limit >= GUEST_QUEUE_LIMIT_MIN && limit <= GUEST_QUEUE_LIMIT_MAX;
+}
+
+function renderAuthMode() {
+  const mode = document.getElementById('webuiAuthMode').value;
+  const hasLogin = mode === 'password' || mode === 'jukebox';
+  document.getElementById('webuiAuthModeHint').textContent = AUTH_MODE_HINTS[mode] || '';
+  document.getElementById('webuiAuthModeWarn').hidden = !(loadedAuthMode === 'jukebox' && mode !== 'jukebox');
+  document.getElementById('webuiAdminPasswordRow').hidden = !hasLogin;
+  document.getElementById('webuiAdminAccessRow').hidden = !hasLogin;
+  // The browser blocks Save without a message on an invalid control it cannot show, so only a valid
+  // limit hides, and its disabled input skips the constraint check.
+  const limitInput = document.getElementById('jukeboxGuestQueueLimit');
+  const hideLimit = mode !== 'jukebox' && isGuestQueueLimitInRange(limitInput.value);
+  document.getElementById('jukeboxGuestQueueLimitRow').hidden = hideLimit;
+  limitInput.disabled = hideLimit;
+  renderAdminPasswordConfirm();
+  renderExposeWarning();
+}
+
+// Only a save stores the admin password, so only a save needs it confirmed.
+function collectChecked(confirmPassword = false) {
   const payload = collect();
   const host = payload.webui ? payload.webui.host : null;
   if (host != null && !WEBUI_BIND_HOSTS.includes(host)) {
-    showStatus(`Web UI bind host "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`, 'err');
+    showStatus(`Bind host "${host}" is not supported. Leave it blank or use one of ${WEBUI_BIND_HOSTS.join(', ')}.`, 'err');
     return null;
   }
-  // collect() drops non-numeric tokens, and an empty list means all libraries, so a typo would silently lift the restriction.
+  // Mirrors the server's rule that HTTPS needs both files.
+  const tls = payload.webui ? payload.webui.tls : null;
+  if (tls && (tls.certPath === null) !== (tls.keyPath === null)) {
+    showStatus('HTTPS needs both the certificate file and the key file. Set both, or clear both to serve HTTP.', 'err');
+    return null;
+  }
+  // Mirrors the server's admin password rules, so a bad value is flagged before a round trip.
+  const auth = payload.webui ? payload.webui.auth : null;
+  if (auth) {
+    // A hidden row keeps its stored value, so a value typed there before a mode switch is neither saved nor checked.
+    if (auth.mode === 'none') {
+      auth.adminPassword = '';
+      delete auth.adminAccess;
+    }
+    if (document.getElementById('jukeboxGuestQueueLimit').disabled && payload.jukebox) delete payload.jukebox.guestQueueLimit;
+    const confirmation = document.getElementById('webuiAdminPasswordConfirm').value;
+    if (confirmPassword && auth.adminPassword !== '' && auth.adminPassword !== confirmation) {
+      showStatus('The passwords do not match.', 'err');
+      return null;
+    }
+    const length = auth.adminPassword.length;
+    if (length > 0 && (length < ADMIN_PASSWORD_MIN_LENGTH || length > ADMIN_PASSWORD_MAX_LENGTH)) {
+      showStatus(`The admin password must be ${ADMIN_PASSWORD_MIN_LENGTH} to ${ADMIN_PASSWORD_MAX_LENGTH} characters.`, 'err');
+      return null;
+    }
+    if (auth.mode !== 'none' && length === 0 && !adminPasswordSet) {
+      showStatus('Access with the admin password needs an admin password. Enter one, or set Access to Open.', 'err');
+      return null;
+    }
+  }
+  // collect() drops non-numeric tokens, and an empty list means all libraries, so a typo would
+  // lift the restriction without notice.
   const bad = document.getElementById('defaultLibraries').value
     .split(',')
     .map((t) => t.trim())
@@ -165,18 +357,12 @@ function isEmptyField(el) {
   return el.value == null || String(el.value).trim() === '';
 }
 
-/*
- * Surface recommended values beside any blank field that has one, WITHOUT
- * touching the field. On first run the seed already pre-fills these (so the
- * fields aren't empty and nothing shows); on later runs an existing config is
- * left verbatim, so a deliberately-blank field just gets a gentle suggestion.
- */
 function renderSuggestions(suggestions) {
   for (const [path, id] of FIELDS) {
     const value = suggestions[path];
     if (value == null || value === '') continue;
     const el = document.getElementById(id);
-    if (!el || !isEmptyField(el)) continue; // pre-filled / user value always wins
+    if (!el || !isEmptyField(el)) continue;
     addSuggestion(el, value);
   }
 }
@@ -196,10 +382,8 @@ function addSuggestion(el, value) {
   });
   wrap.appendChild(use);
 
-  // Outside the field: appended to the end of the field's <label>.
   (el.closest('label') || el.parentNode).appendChild(wrap);
 
-  // If the user fills the field themselves, the suggestion is no longer useful.
   el.addEventListener('input', () => { if (!isEmptyField(el)) wrap.remove(); });
 }
 
@@ -224,7 +408,7 @@ async function postJson(path, body) {
   try {
     data = await res.json();
   } catch (_) {
-    /* non-JSON error */
+    // A non-JSON error body leaves data empty.
   }
   return { ok: res.ok, data };
 }
@@ -247,14 +431,25 @@ async function onTest() {
 
 async function onSave(event) {
   event.preventDefault();
-  const payload = collectChecked();
+  const payload = collectChecked(true);
   if (payload === null) return;
   setBusy(true);
   showStatus('Saving…', 'info');
   try {
     const { ok, data } = await postJson('/api/settings', payload);
-    if (ok && data.ok) showStatus(data.message || 'Saved.', 'ok');
-    else showStatus(data.error || 'Save failed.', 'err');
+    if (ok && data.ok) {
+      showStatus(data.message || 'Saved.', 'ok');
+      // The stored hash now holds the typed password, so the field clears and the next save keeps it.
+      if (payload.webui.auth.adminPassword !== '') {
+        adminPasswordSet = true;
+        document.getElementById('webuiAdminPassword').value = '';
+        document.getElementById('webuiAdminPasswordConfirm').value = '';
+        renderAdminPasswordState();
+        renderAdminPasswordConfirm();
+      }
+    } else {
+      showStatus(data.error || 'Save failed.', 'err');
+    }
   } catch (err) {
     showStatus(`Save failed: ${err.message}`, 'err');
   } finally {
@@ -262,20 +457,56 @@ async function onSave(event) {
   }
 }
 
-async function init() {
+const SEED_FAILED_MESSAGE = 'Could not load existing settings; starting blank.';
+
+// A save over an unusable store replaces it, so the user must learn before Save that its values did not load.
+// A file the server cannot read cannot be backed up either, so Save fails until the file is fixed.
+function storeProblemMessage(problem, unreadable) {
+  const remedy = unreadable
+    ? "Save fails until the server can read the file. Fix the file's permissions or move it away, then reload this page."
+    : 'A save keeps the old file as settings.json.bak.';
+  return `${problem}. This form shows default and environment values instead of the file's values. ${remedy}`;
+}
+
+// The options go in before populate() picks one, so a slow probe cannot reset the field.
+async function loadForm() {
+  const devicesRequest = loadAudioDevices();
   try {
     const res = await fetch('/api/settings/seed');
-    if (res.ok) populate(await res.json());
+    const seed = res.ok ? await res.json() : null;
+    fillAudioDevices(await devicesRequest);
+    if (seed === null) {
+      showStatus(SEED_FAILED_MESSAGE, 'err');
+      return;
+    }
+    populate(seed);
+    adminPasswordSet = getPath(seed, 'webui.auth.adminPasswordSet') === true;
+    loadedAuthMode = document.getElementById('webuiAuthMode').value;
+    if (typeof seed.storeProblem === 'string') {
+      showStatus(storeProblemMessage(seed.storeProblem, seed.storeUnreadable === true), 'err');
+    }
   } catch (_) {
-    showStatus('Could not load existing settings; starting blank.', 'err');
+    showStatus(SEED_FAILED_MESSAGE, 'err');
   }
-  // Suggestions are optional polish: fetch after populate so we only annotate
-  // fields that ended up blank. A failure here must not break the form.
+}
+
+async function init() {
+  await loadForm();
+  renderAdminPasswordState();
+  renderAdminAccessWarning();
+  renderAuthMode();
+  document.getElementById('webuiAdminAccess').addEventListener('change', renderAdminAccessWarning);
+  document.getElementById('webuiAuthMode').addEventListener('change', renderAuthMode);
+  document.getElementById('webuiAdminPassword').addEventListener('input', renderAdminPasswordConfirm);
+  document.getElementById('webuiExpose').addEventListener('change', renderExposeWarning);
+  document.getElementById('webuiHost').addEventListener('input', renderExposeWarning);
+  document.querySelectorAll('button[data-reveal]').forEach(bindRevealButton);
+  // Fetched after populate(), so only fields left blank get a hint.
   try {
     const res = await fetch('/api/settings/suggestions');
     if (res.ok) renderSuggestions(await res.json());
   } catch (_) {
-    /* No suggestions. The form still works. */
+    // Hints are optional, so the form works without them.
   }
   document.getElementById('test-btn').addEventListener('click', onTest);
   document.getElementById('settings-form').addEventListener('submit', onSave);
@@ -283,8 +514,7 @@ async function init() {
   if (genBtn) genBtn.addEventListener('click', generateAuthToken);
 }
 
-/* Fill the auth-token field with a fresh 256-bit random token (hex). Shown as
- * plaintext on generation so the user can copy it for their client config. */
+// Shown as plain text so the user can copy it into the client config.
 function generateAuthToken() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);

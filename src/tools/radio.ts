@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Radio Station Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { z } from 'zod';
@@ -32,11 +20,12 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { nullIfGoZeroTime } from '../utils/go-time.js';
 import { hasControlChars, isHttpUrlScheme } from '../utils/network-safety.js';
+import { missingOutputFields, type MissingOutputFields } from './missing-audio-output.js';
 import { validateRadioStream } from './radio-validation.js';
 
 /**
- * Completes "Stream URL for station X ...", or null when the URL is fine. A control character gets its own message,
- * since the URL still starts with http:// and the user cannot see the failing character.
+ * Returns the end of a "<field> for station X" sentence. A control character gets its own
+ * message, since the URL still starts with http:// and the user cannot see the character.
  */
 function describeUrlProblem(url: string): string | null {
   if (hasControlChars(url)) return 'must not contain line breaks or control characters';
@@ -44,7 +33,7 @@ function describeUrlProblem(url: string): string | null {
   return null;
 }
 
-// create_radio_station refuses these schemes, but the Navidrome web UI can add a station that uses one.
+// create_radio_station refuses these schemes, but the Navidrome web UI can add a station with one.
 const WEB_UI_ONLY_STREAM_SCHEMES = ['mms:', 'mmsh:', 'rtsp:', 'rtmp:'];
 
 function isWebUiOnlyStreamUrl(url: string): boolean {
@@ -58,7 +47,7 @@ function isWebUiOnlyStreamUrl(url: string): boolean {
 type StationInput = z.infer<typeof CreateRadioStationSchema>['stations'][number];
 
 /**
- * REST /api/radio is used over Subsonic getInternetRadioStations, because Subsonic drops homePageUrl and
+ * REST /api/radio is used over Subsonic getInternetRadioStations, because Subsonic omits the
  * per-station timestamps. Navidrome emits an empty homePageUrl for an unset one.
  */
 interface RestRadioStationRow {
@@ -87,7 +76,10 @@ function toRadioStationDTO(row: RestRadioStationRow): RadioStationDTO {
   return stationDto;
 }
 
-/** Read fresh on every call, since a station added, edited or deleted in the Navidrome web UI must show at once. */
+/**
+ * Read fresh on every call, since a station added, edited or deleted in the Navidrome web UI must
+ * show at once.
+ */
 export async function fetchRadioStations(client: NavidromeClient): Promise<RadioStationDTO[]> {
   // `_end=10000` fetches every station in one round trip. Instances hold hundreds at most.
   const rows = await client.request<RestRadioStationRow[]>('/radio?_start=0&_end=10000');
@@ -120,9 +112,6 @@ export async function listRadioStations(
   }
 }
 
-/**
- * The input problem that rejects a station before any network call, or null when it may be created.
- */
 function describeStationInputProblem(station: StationInput): string | null {
   if (!station.name || station.name.trim() === '') {
     return 'Station name is required and cannot be empty';
@@ -142,9 +131,8 @@ function describeStationInputProblem(station: StationInput): string | null {
     return `Stream URL for station "${station.name}" ${streamProblem}${webUiRoute}`;
   }
 
-  // homePageUrl reaches Navidrome and comes back out in the station DTO,
-  // so an unchecked `javascript:`/`file:` value would be stored and handed
-  // to whatever renders it. Same rule as the stream URL.
+  // homePageUrl comes back out in the station DTO, so an unchecked `javascript:` or `file:` value
+  // would reach whatever renders it.
   const homePageProblem = station.homePageUrl !== undefined && station.homePageUrl.trim() !== ''
     ? describeUrlProblem(station.homePageUrl)
     : null;
@@ -157,16 +145,16 @@ function describeStationInputProblem(station: StationInput): string | null {
 
 type CreatedStationResult = CreateRadioStationResponse & { station: RadioStationDTO };
 
-// Navidrome radio ids are random, so createdAt orders duplicates. An unknown createdAt counts as the epoch and sorts last.
+// Navidrome radio ids are random, so createdAt orders duplicates. An unknown createdAt counts as
+// the epoch and sorts last.
 function createdAtMs(station: RadioStationDTO): number {
   const ms = station.createdAt === null ? Number.NaN : Date.parse(station.createdAt);
   return Number.isNaN(ms) ? 0 : ms;
 }
 
 /**
- * Subsonic's create does not echo the id, so one list call resolves the batch by (name, streamUrl), newest
- * createdAt first, assigning each id once since Navidrome allows duplicates. The same listing flags a stream URL
- * that another saved station already uses.
+ * Subsonic's create does not echo the id, so one listing resolves the batch by name and streamUrl.
+ * Each id is assigned once, since Navidrome allows duplicate stations.
  */
 async function resolveCreatedStationIds(
   client: NavidromeClient,
@@ -199,7 +187,7 @@ async function resolveCreatedStationIds(
       }
     }
   } catch (lookupError) {
-    // Every pending result is annotated so the LLM does not round-trip an empty id into delete or get.
+    // Every pending result is annotated, so the LLM does not pass an empty id to delete or get.
     for (const result of pendingLookups) {
       result.note = `Created "${result.station.name}" but failed to look up its id. Call list_radio_stations to find it.`;
     }
@@ -246,7 +234,7 @@ export async function createRadioStation(
           }
         }
 
-        // The Subsonic parameter is `homepageUrl`. Navidrome drops the camelCase `homePageUrl` form.
+        // The Subsonic parameter is `homepageUrl`. Navidrome ignores the camelCase `homePageUrl`.
         const subsonicParams: Record<string, string> = {
           streamUrl: station.streamUrl,
           name: station.name,
@@ -256,7 +244,8 @@ export async function createRadioStation(
         }
         await client.subsonicRequest('/createInternetRadioStation', subsonicParams, { retryPolicy: 'never' });
 
-        // The empty id and null timestamps are sentinels that resolveCreatedStationIds fills in after the batch.
+        // The empty id and null timestamps are sentinels that resolveCreatedStationIds fills in
+        // after the batch.
         const createdStation: RadioStationDTO = {
           id: '',
           name: station.name,
@@ -276,7 +265,7 @@ export async function createRadioStation(
 
       } catch (error) {
         logger.error(`Error creating radio station "${station.name}":`, error);
-        // The batch summary already names the operation, so the raw message is not wrapped by ErrorFormatter.
+        // The batch summary names the operation, so the raw message skips ErrorFormatter.
         results.push({
           success: false,
           error: `Failed to add "${station.name}": ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -364,9 +353,9 @@ export async function getRadioStation(
   }
 }
 
-// `station.id` is not echoed because the LLM just sent it. `name` and
-// `streamUrl` are server-resolved (the LLM only knew the id) so they stay.
-interface PlayRadioStationResult {
+// `station.id` is not echoed, since the LLM just sent it. `name` and `streamUrl` stay, since the
+// LLM knew only the id.
+interface PlayRadioStationResult extends MissingOutputFields {
   success: true;
   station: {
     name: string;
@@ -375,8 +364,8 @@ interface PlayRadioStationResult {
 }
 
 /**
- * Radio replaces the whole play queue, because mpv playlists that mix infinite streams with finite tracks
- * behave unpredictably.
+ * Radio replaces the entire play queue, because mpv playlists that mix infinite streams with
+ * finite tracks behave unpredictably.
  */
 export async function playRadioStation(
   client: NavidromeClient,
@@ -393,7 +382,7 @@ export async function playRadioStation(
       throw new Error(`Radio station "${station.name}" has no stream URL`);
     }
 
-    await playbackEngine.enqueueRadio(station.streamUrl, station.id);
+    const { outputMissing } = await playbackEngine.enqueueRadio(station.streamUrl, station.id);
 
     return {
       success: true,
@@ -401,6 +390,7 @@ export async function playRadioStation(
         name: station.name,
         streamUrl: station.streamUrl,
       },
+      ...missingOutputFields(outputMissing),
     };
   } catch (error) {
     logger.error('Error playing radio station:', error);

@@ -1,26 +1,15 @@
 /**
  * Navidrome MCP Server - Last.fm Music Discovery Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { safeNumber } from '../utils/safe-number.js';
 import {
+  asLastFmArray,
   callLastFmApi,
   requireLastFmApiKey,
   stripWikiHtml,
@@ -63,7 +52,6 @@ interface SimilarTracksResult {
 interface ArtistInfoResult {
   name: string;
   mbid: string | null;
-  // Only with verbose, like the other Last.fm tools.
   url?: string;
   listeners: number;
   playcount: number;
@@ -143,13 +131,14 @@ function readBiography(artistInfo: Record<string, unknown>): string | null {
   return typeof bioSummary === 'string' ? stripWikiHtml(bioSummary) : null;
 }
 
-// Last.fm answers a language with no wiki by an anchor-only summary. A failed fallback keeps the primary result.
+// Last.fm answers a language with no wiki by an anchor-only summary. A failed English fallback
+// leaves the biography null instead of failing the tool.
 async function fetchEnglishBiography(artist: string, apiKey: string): Promise<string | null> {
   try {
     const data = await callLastFmApi('artist.getInfo', { artist, lang: 'en', autocorrect: '1' }, apiKey);
     return readBiography(readArtistInfo(data));
   } catch (error) {
-    logger.warn(`English biography fallback for "${artist}" failed: ${error instanceof Error ? error.message : String(error)}`);
+    logger.warn(`English biography fallback for "${artist}" failed: ${errorMessage(error)}`);
     return null;
   }
 }
@@ -174,20 +163,17 @@ export async function getSimilarArtists(config: Config, args: unknown): Promise<
     if (typeof similarArtistsRaw !== 'object' || similarArtistsRaw === null) {
       throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing similarartists'));
     }
-    const similarArtistsContainer = similarArtistsRaw as { artist?: unknown[] };
-    const similarArtists = similarArtistsContainer.artist ?? [];
+    const similarArtistsContainer = similarArtistsRaw as Record<string, unknown>;
+    const similarArtists = asLastFmArray(similarArtistsContainer['artist']);
 
     return {
       count: similarArtists.length,
-      similarArtists: similarArtists.map((a: unknown) => {
-        const artist = a as Record<string, unknown>;
-        return {
-          name: typeof artist['name'] === 'string' ? artist['name'] : '',
-          match: safeNumber(artist['match']),
-          ...verboseUrl(artist, verbose),
-          mbid: typeof artist['mbid'] === 'string' ? artist['mbid'] : null,
-        };
-      }),
+      similarArtists: similarArtists.map((artist: Record<string, unknown>) => ({
+        name: typeof artist['name'] === 'string' ? artist['name'] : '',
+        match: safeNumber(artist['match']),
+        ...verboseUrl(artist, verbose),
+        mbid: typeof artist['mbid'] === 'string' ? artist['mbid'] : null,
+      })),
     };
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_similar_artists', error));
@@ -215,13 +201,12 @@ export async function getSimilarTracks(config: Config, args: unknown): Promise<S
     if (typeof similarTracksRaw !== 'object' || similarTracksRaw === null) {
       throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing similartracks'));
     }
-    const similarTracksContainer = similarTracksRaw as { track?: unknown[] };
-    const similarTracks = similarTracksContainer.track ?? [];
+    const similarTracksContainer = similarTracksRaw as Record<string, unknown>;
+    const similarTracks = asLastFmArray(similarTracksContainer['track']);
 
     return {
       count: similarTracks.length,
-      similarTracks: similarTracks.map((t: unknown) => {
-        const track = t as Record<string, unknown>;
+      similarTracks: similarTracks.map((track: Record<string, unknown>) => {
         const trackArtist = track['artist'] as Record<string, unknown> | undefined;
         const artistName = trackArtist?.['name'];
         return {
@@ -269,10 +254,10 @@ export async function getArtistInfo(config: Config, args: unknown): Promise<Arti
       listeners: safeNumber(stats?.['listeners']),
       playcount: safeNumber(stats?.['playcount']),
       biography,
-      tags: ((tags?.['tag'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>) =>
+      tags: asLastFmArray(tags?.['tag']).map((t: Record<string, unknown>) =>
         typeof t['name'] === 'string' ? t['name'] : '',
       ),
-      similar: ((similar?.['artist'] as Record<string, unknown>[] | undefined) ?? []).slice(0, 5).map((a: Record<string, unknown>) => typeof a['name'] === 'string' ? a['name'] : ''),
+      similar: asLastFmArray(similar?.['artist']).slice(0, 5).map((a: Record<string, unknown>) => typeof a['name'] === 'string' ? a['name'] : ''),
     };
     if (verbose) {
       result.url = typeof artistInfo['url'] === 'string' ? artistInfo['url'] : '';
@@ -304,7 +289,7 @@ export async function getTopTracksByArtist(config: Config, args: unknown): Promi
       throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing toptracks'));
     }
     const topTracksContainer = topTracksRaw as Record<string, unknown>;
-    const topTracks = (topTracksContainer['track'] as Record<string, unknown>[] | undefined) ?? [];
+    const topTracks = asLastFmArray(topTracksContainer['track']);
 
     return {
       count: topTracks.length,
@@ -341,7 +326,8 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
                    type === 'tracks' ? 'chart.getTopTracks' :
                    'chart.getTopTags';
 
-    // chart.getTopTags ignores `page`, so the tags chart is read from row one and sliced to the page.
+    // chart.getTopTags ignores `page`, so the tags chart is read from row one and sliced to the
+    // page.
     const params: Record<string, string> = type === 'tags'
       ? { limit: String(Math.min(page * limit, LASTFM_CHART_MAX_LIMIT)) }
       : { limit: limit.toString(), page: page.toString() };
@@ -354,7 +340,7 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing artists'));
       }
       const artistsContainer = artistsRaw as Record<string, unknown>;
-      const artists = ((artistsContainer['artist'] as Record<string, unknown>[] | undefined) ?? []).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
+      const artists = asLastFmArray(artistsContainer['artist']).map((a: Record<string, unknown>, index: number): TrendingArtistItem => ({
         rank: pageStart + index + 1,
         name: typeof a['name'] === 'string' ? a['name'] : '',
         playcount: safeNumber(a['playcount']),
@@ -374,7 +360,7 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tracks'));
       }
       const tracksContainer = tracksRaw as Record<string, unknown>;
-      const tracks = ((tracksContainer['track'] as Record<string, unknown>[] | undefined) ?? []).map((t: Record<string, unknown>, index: number): TrendingTrackItem => {
+      const tracks = asLastFmArray(tracksContainer['track']).map((t: Record<string, unknown>, index: number): TrendingTrackItem => {
         const artistObj = t['artist'] as Record<string, unknown> | undefined;
         const artistName = artistObj?.['name'];
         return {
@@ -394,14 +380,14 @@ export async function getTrendingMusic(config: Config, args: unknown): Promise<T
         hasMore: tracks.length === limit,
       };
     } else {
-      // chart.getTopTags has no count field. `taggings` (total applications) is the
-      // closest analogue to popularity, and `reach` (distinct users) rides along.
+      // chart.getTopTags has no count field, so `taggings`, the total tag applications, stands in
+      // for popularity.
       const tagsRaw = data['tags'];
       if (typeof tagsRaw !== 'object' || tagsRaw === null) {
         throw new Error(ErrorFormatter.lastfmResponse('unexpected response shape: missing tags'));
       }
       const tagsContainer = tagsRaw as Record<string, unknown>;
-      const tagRows = (tagsContainer['tag'] as Record<string, unknown>[] | undefined) ?? [];
+      const tagRows = asLastFmArray(tagsContainer['tag']);
       const tags = tagRows.slice(pageStart, pageStart + limit).map((t: Record<string, unknown>, index: number): TrendingTagItem => ({
         rank: pageStart + index + 1,
         name: typeof t['name'] === 'string' ? t['name'] : '',

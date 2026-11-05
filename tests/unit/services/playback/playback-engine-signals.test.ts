@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - playback-engine signal ownership tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * The entry points own process shutdown, so starting the engine must add no
  * SIGINT or SIGTERM listener that could swallow a second Ctrl+C.
@@ -26,7 +27,7 @@ vi.mock('../../../../src/services/playback/mpv-process.js', () => ({
 }));
 
 vi.mock('node:fs', () => ({
-  existsSync: () => true, // hit tryAttachExisting
+  existsSync: () => true, // Lets the engine attach to the fake IPC instead of spawning.
 }));
 
 vi.mock('node:fs/promises', () => ({

@@ -1,39 +1,20 @@
 /**
  * Navidrome MCP Server - Tags Data Transfer Objects
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-/** One tag value with its usage counts. Rows sit under the tagName of the response that holds them. */
+/** Carries no tagName, since each row sits under the tagName of its response. */
 export interface TagDTO {
-  /** Tag value */
   tagValue: string;
-  /** Number of albums with this tag */
   albumCount: number;
-  /** Number of songs with this tag */
   songCount: number;
 }
 
 
-/**
- * Tag distribution analysis for a specific tag name
- */
 export interface TagDistribution {
-  /** Tag name being analyzed */
   tagName: string;
-  /** Library-wide count of distinct values for this tag name */
+  /** Distinct values across the active libraries, not only the `distribution` slice. */
   uniqueValues: number;
   /** Total songs across the `distribution` slice */
   totalSongs: number;
@@ -50,12 +31,9 @@ export interface TagDistribution {
   countsIncomplete?: boolean;
 }
 
-/**
- * Response format for tag distribution analysis
- */
 export interface TagDistributionResponse {
-  /** Array of tag distributions by name */
   distributions: TagDistribution[];
-  /** Requested tag names with no values in the active libraries. Omitted when every name has values. */
+  /** Requested tag names with no values in the active libraries. Omitted when every name has
+   *  values. */
   emptyTagNames?: string[];
 }

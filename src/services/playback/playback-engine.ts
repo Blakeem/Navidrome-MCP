@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Playback Engine
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { ChildProcess } from 'node:child_process';
@@ -22,8 +10,9 @@ import { unlink } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import type { Config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
-import { ErrorFormatter } from '../../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../../utils/error-formatter.js';
 import {
+  AUDIO_OUTPUT_RESUME_WINDOW_MS,
   MPV_ATTACH_CONNECT_DELAY_MS,
   MPV_ATTACH_CONNECT_RETRIES,
   MPV_QUIT_SOCKET_TIMEOUT_MS,
@@ -32,6 +21,15 @@ import {
 } from '../../constants/timeouts.js';
 import { MAX_QUEUE_READ_PAGES, QUEUE_READ_PAGE_SIZE } from '../../constants/defaults.js';
 import { buildSubsonicAuthParams } from '../../utils/subsonic-auth.js';
+import {
+  AUTO_DEVICE_ID,
+  findReplacementDevice,
+  NULL_AUDIO_OUTPUT,
+  parseAudioDeviceList,
+  probeAudioDevices,
+  resolveSavedDevice,
+  type AudioDevice,
+} from './audio-devices.js';
 import { MpvIpc } from './mpv-ipc.js';
 import { getDefaultIpcPath, spawnMpv } from './mpv-process.js';
 import {
@@ -46,18 +44,14 @@ import {
 } from './visualizer-filter.js';
 
 /**
- * Sized to the largest batch one enqueue can carry. Both caches grow past it for a
- * longer live queue, since evicting a live entry forces a refetch on every queue read.
+ * The row cap of one paged queue read. An enqueue can carry more, such as an album set. Both caches
+ * grow past it for a longer live queue, since evicting a live entry forces a refetch on every read.
  */
 const FILENAME_CACHE_LIMIT = MAX_QUEUE_READ_PAGES * QUEUE_READ_PAGE_SIZE;
 
-/** Path of the Subsonic stream endpoint that `buildStreamUrl` targets. */
 const SUBSONIC_STREAM_PATH = '/rest/stream';
 
-/**
- * Properties we observe on the engine and cache locally so consumers can
- * read state without round-tripping IPC. Each entry is `[observeId, name]`.
- */
+/** Cached locally, so consumers read state without an IPC round trip. */
 const OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [1, 'playlist-pos'],
   [2, 'playlist-count'],
@@ -71,47 +65,70 @@ const OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [10, 'eof-reached'],
   [11, 'path'],
   [12, 'playlist-path'],
+  [14, 'audio-device'],
+  [15, 'audio-device-list'],
+  [16, 'current-ao'],
 ];
 
-// Names the saved station a radio stream was played from, since saved stations can share a stream URL.
-// Observed so every process sharing mpv sees a change, but optional because mpv before 0.36 has no user-data.
+const AUDIO_OUTPUT_PROPERTIES: ReadonlySet<string> = new Set(['audio-device', 'audio-device-list', 'current-ao']);
+
+// Names the saved station a radio stream was played from, since saved stations can share a URL.
+// Observed so every process sharing mpv sees a change. Optional, since mpv before 0.36 lacks it.
 const RADIO_STATION_TAG_PROPERTY = 'user-data/navidrome-mcp/radio-station-id';
+// A song replace sets the pending mark before it clears the queue and raises the generation once
+// it completes, so the web player process tells songs a replace removed from songs a clear removed.
+export const REPLACE_PENDING_PROPERTY = 'user-data/navidrome-mcp/replace-pending';
+export const REPLACE_GENERATION_PROPERTY = 'user-data/navidrome-mcp/replace-generation';
 const OPTIONAL_OBSERVED_PROPERTIES: ReadonlyArray<readonly [number, string]> = [
   [13, RADIO_STATION_TAG_PROPERTY],
+  [17, REPLACE_PENDING_PROPERTY],
+  [18, REPLACE_GENERATION_PROPERTY],
 ];
 
-// On a transcoded stream mpv can briefly reject a valid seek while its cache
-// settles. Retrying the same command clears it without touching mpv's clock.
+// On a transcoded stream mpv can briefly reject a valid seek while its cache settles, and a retry
+// of the same command clears it.
 const SEEK_MAX_ATTEMPTS = 4;
 const SEEK_RETRY_DELAY_MS = 250;
 
-/**
- * Snapshot of engine status, returned by tools.
- */
+interface SelectedAudioDevice {
+  id: string;
+  name: string | null;
+  connected: boolean;
+}
+
+export interface MissingAudioOutput {
+  id: string;
+  name: string | null;
+}
+
+export interface AudioDeviceReport {
+  selected: SelectedAudioDevice;
+  output: string | null;
+  devices: AudioDevice[];
+  source: 'player' | 'probe';
+}
+
+interface AudioOutputValues {
+  audioDevice: unknown;
+  devices: AudioDevice[];
+  currentAo: unknown;
+}
+
 export interface PlaybackStatus {
   engineRunning: boolean;
   mpvPath: string | null;
   mpvVersion: string | null;
   volume: number | null;
   idle: boolean | null;
+  audioDevice: SelectedAudioDevice | null;
+  audioOutputLost: boolean | null;
 }
 
-/**
- * One entry in the live mpv playlist, normalized for tool consumers.
- *
- * `songId` is the `id` query parameter of an http(s) URL whose path ends in
- * `/rest/stream`. Any other filename, such as a radio stream, yields `null`.
- *
- * `entryId` is mpv's per-entry id. It survives a move, so it tells a shifted
- * entry from a new one where the index cannot.
- *
- * `title` prefers mpv's playlist title and falls back to the metadata cache.
- * `artist`, `album` and `duration` come only from the metadata cache, which
- * `enqueue` and `ingestQueueMetadata` fill.
- */
 export interface QueueEntry {
   index: number;
+  /** Null for any filename the engine did not build, such as a radio stream. */
   songId: string | null;
+  /** mpv's per-entry id survives a move, so it tells a shifted entry from a new one. */
   entryId?: number;
   title?: string;
   artist?: string;
@@ -121,45 +138,64 @@ export interface QueueEntry {
   isPlaying: boolean;
 }
 
-/**
- * Track metadata the tool layer passes at enqueue time. mpv loads metadata
- * only for tracks it touches, so without it future entries are bare IDs.
- */
+/** mpv loads metadata only for tracks it touches, so without this, future entries are bare IDs. */
 export interface QueueTrackMetadata {
   songId: string;
   title?: string;
   artist?: string;
   album?: string;
-  /** Duration in seconds, matching mpv's own `duration` units. */
+  /** Seconds, matching mpv's `duration`. */
   duration?: number;
 }
 
-/**
- * Engine state-change event delivered to subscribers of `onStateChange`.
- *
- * `kind === 'property'` is forwarded from mpv's own observe-property stream.
- * `name` is the mpv property (`pause`, `volume`, `time-pos`, `playlist-pos`,
- * `playlist-count`, `duration`, `media-title`, `metadata`, `idle-active`,
- * `eof-reached`, `path`, `playlist-path`) and `data` is the new value (unknown JSON shape).
- *
- * `kind === 'queue'` fires after a queue-mutating IPC sequence completes
- * (enqueue/clear/shuffle/move/remove/enqueueRadio), since mpv's property events
- * do not cover every change a mutation produces. It carries no payload, so
- * subscribers re-read state from the public getters.
- *
- * `kind === 'attach'` fires when the engine connects to an mpv instance, before
- * that instance's observe-emitted snapshot, so subscribers can drop state from a previous instance.
- *
- * `kind === 'message'` forwards mpv's `client-message`, which mpv delivers to every IPC client
- * (the sender included) in one order. Processes sharing mpv use it as a broadcast channel.
- *
- * `kind === 'visualizer'` fires when `isVisualizerUnsupported()` changes, which no mpv event announces.
- */
+/** A caller that must never replace the queue, such as a guest add, gets this instead of a demotion. */
+export class RadioQueueRefusedError extends Error {
+  constructor() {
+    super('The queue holds a radio stream, so the append was refused instead of replacing the queue.');
+    this.name = 'RadioQueueRefusedError';
+  }
+}
+
+/** A guarded removal found its entry playing, and only the host may skip a playing song. */
+export class QueueEntryStartedError extends Error {
+  constructor(entryId: number) {
+    super(`Queue entry ${String(entryId)} is playing, so the removal was refused instead of skipping it.`);
+    this.name = 'QueueEntryStartedError';
+  }
+}
+
+/** An mpv without user-data, or a replace from a release that never marks one, reads as no replace. */
+export interface ReplaceMarks {
+  generation: number;
+  pending: boolean;
+}
+
+/** Any entry without a song id counts as radio. */
+export function holdsRadioStream(entries: readonly QueueEntry[]): boolean {
+  return entries.some((entry) => entry.songId === null);
+}
+
+interface LoadedEntry {
+  url: string;
+  entryId: number | null;
+}
+
+// mpv answers `loadfile` with `{ playlist_entry_id }`.
+function entryIdFromLoadReply(reply: unknown): number | null {
+  if (typeof reply !== 'object' || reply === null) return null;
+  const entryId = (reply as Record<string, unknown>)['playlist_entry_id'];
+  return typeof entryId === 'number' ? entryId : null;
+}
+
 export type StateChangeEvent =
   | { kind: 'property'; name: string; data: unknown }
+  // Follows a queue mutation, since mpv's property events miss some of the changes it makes.
   | { kind: 'queue' }
+  // Precedes a new mpv instance's observe snapshot, so subscribers drop the old instance's state.
   | { kind: 'attach' }
+  // mpv delivers a client-message to every IPC client, the sender included, in one order.
   | { kind: 'message'; args: string[] }
+  // No mpv event announces a change in isVisualizerUnsupported().
   | { kind: 'visualizer' };
 
 type StateChangeHandler = (event: StateChangeEvent) => void;
@@ -171,59 +207,44 @@ interface VisualizerSyncRequest {
   checkWaitMs?: number;
 }
 
-/**
- * Singleton playback engine wrapping mpv.
- *
- * Lifecycle:
- *   - The engine is constructed in `not-running` state at module load time.
- *   - `ensureRunning()` lazy-spawns mpv on first call, connects IPC, observes
- *     the standard property set, and fetches the mpv version.
- *   - Subsequent `ensureRunning()` calls are no-ops while the engine is alive.
- *   - The engine installs no signal handlers. The entry points own process
- *     shutdown and call quitMpv() to stop mpv.
- *
- * Concurrent `ensureRunning()` calls are coalesced via a stored start promise.
- */
 class PlaybackEngine {
   private static instance: PlaybackEngine | null = null;
 
   private config: Config | null = null;
   private mpvBinary: string | null = null;
   private ipcPath: string = getDefaultIpcPath();
-  // mpv runs detached so playback survives a restart. Once a spawn connects, the
-  // engine keeps no child handle and the IPC connection is the only one.
+  // mpv runs detached so playback survives a restart. Once a spawn connects, the engine keeps no
+  // child handle, and the IPC connection is its only link to mpv.
   private ipc: MpvIpc | null = null;
   private startPromise: Promise<void> | null = null;
-  // Coalesces concurrent attaches so they share one connection.
   private attachPromise: Promise<boolean> | null = null;
   private mpvVersion: string | null = null;
   // Set by quitMpv. It silences the child's exit handler and refuses any later spawn.
   private shuttingDown = false;
   private readonly propertyCache = new Map<string, unknown>();
-  // Bumped by every load that can land a new track at position 0, so
-  // per-position caches in consumers (e.g. now_playing's duration repair)
-  // never match the previous track at the same index.
+  // Bumped whenever a new track can next land at index 0, so a per-position cache in a consumer,
+  // such as now_playing's duration repair, never matches the previous track at that index.
   private queueGeneration = 0;
-  // Serializes this process's mutating queue operations, since interleaved IPC sequences can leave a hybrid
-  // queue. It does not span processes, so loads from the MCP and the web remote at once can still interleave.
+  // Interleaved IPC sequences can leave a hybrid queue. The lock does not span processes, so loads
+  // from the MCP and the web remote at once can still interleave.
   private mutationLock: Promise<unknown> = Promise.resolve();
-  // Set by every control path and never cleared. Reads and the startup adoption leave it unset,
-  // so an MCP that only observed mpv does not quit another MCP's playback on exit.
+  // Set by every control path and never cleared. Reads and the startup attach leave it unset, so
+  // an MCP that only observed mpv does not quit another MCP's playback on exit.
   private controlledMpv = false;
-  // The spawned child until its connect commits. It runs detached and has no socket to receive quit yet.
+  // The spawned child until its connect commits. It runs detached, with no socket to receive quit.
   private pendingSpawn: ChildProcess | null = null;
-  // getQueue() is polled often with 100+ entries, and mpv filenames are
-  // stable for the queue's lifetime, so parsed song IDs are cached.
+  // getQueue() is polled often with 100+ entries, and mpv filenames are stable for the queue's
+  // lifetime, so parsed song IDs are cached.
   private readonly filenameCache = new Map<string, string | null>();
-  // Lets getQueue() report titles for entries mpv has not loaded. Removed
-  // entries are not evicted, since a stale entry costs only bytes.
+  // Lets getQueue() report titles for entries mpv has not loaded. A removed entry stays until the
+  // cache passes its cap, since a stale entry costs only bytes.
   private readonly metadataCache = new Map<string, QueueTrackMetadata>();
   // Song IDs in the playlist the last getQueue() read, which metadata eviction never drops.
   private liveSongIds: ReadonlySet<string> = new Set();
   private readonly stateChangeHandlers: Array<StateChangeHandler> = [];
-  // Each entry point says how it reads the visualizer setting. Off until one does, so a bare engine adds no filter.
+  // Each entry point says how it reads the visualizer setting. Off until one does, so a bare engine
+  // adds no filter.
   private visualizerWanted: () => boolean = () => false;
-  // Only the web player's engine follows the setting after spawn, since an MCP process in env mode reads another value.
   private visualizerKeepsInSync = false;
   private visualizerPending = false;
   // Why the filter cannot run on the current mpv, or null when it can.
@@ -232,6 +253,17 @@ class PlaybackEngine {
   private playbackRestarts = 0;
   // A pause and a track start can land together, and each reads the af list before it writes.
   private visualizerSyncChain: Promise<void> = Promise.resolve();
+  // None until an entry point names the saved device, so a bare engine opens mpv's default output.
+  private audioDeviceSource: () => Config['playbackAudioDevice'] = () => null;
+  private saveAudioDevice: (device: AudioDevice) => boolean = () => false;
+  private audioOutputWasLost = false;
+  // A device's return is the change from unlisted to listed, so the previous state is kept.
+  private selectedDeviceWasConnected = true;
+  // Every id ever listed beside the selected device, since none of them can be its re-registered id.
+  private lastListedSelection: { device: AudioDevice; listedBeside: ReadonlySet<string> } | null = null;
+  private replacingDeviceId: string | null = null;
+  // Kept per engine, so only an engine that wrote a loss pause resumes it.
+  private lostOutputPause: { at: number; deviceId: string } | null = null;
 
   private constructor() {}
 
@@ -240,26 +272,21 @@ class PlaybackEngine {
     return PlaybackEngine.instance;
   }
 
-  /**
-   * Configure the engine with the loaded application config. Must be called
-   * once at startup before any tool invocation. Later calls overwrite the
-   * config reference.
-   */
   configure(config: Config): void {
     this.config = config;
     this.mpvBinary = config.mpvPath ?? null;
   }
 
   /**
-   * Every engine adds the filter to an mpv it spawns, so the first track plays through it. Only an engine with
-   * `keepInSync` changes it later, so two processes that read the setting differently never undo each other.
+   * Every engine adds the filter to an mpv it spawns, so the first track plays through it. Only an
+   * engine with `keepInSync` changes it later, so two processes that read the setting differently
+   * never undo each other.
    */
   setVisualizerSource(source: () => boolean, options: { keepInSync?: boolean } = {}): void {
     this.visualizerWanted = source;
     this.visualizerKeepsInSync = options.keepInSync === true;
   }
 
-  /** Applies the visualizer setting now if mpv is idle or paused, otherwise at the next track start, pause or stop. */
   syncVisualizerFilter(): Promise<void> {
     const ipc = this.ipc;
     return ipc === null || !this.visualizerKeepsInSync ? Promise.resolve() : this.queueVisualizerSync(ipc, {});
@@ -269,23 +296,30 @@ class PlaybackEngine {
     return this.visualizerRefusal !== null;
   }
 
-  /** Whether the engine has a live IPC connection to mpv. */
+  /**
+   * Read at each spawn, so a device saved after this process started applies. `save` stores the new
+   * id when Windows re-registers the saved device.
+   */
+  setAudioDeviceSource(
+    source: () => Config['playbackAudioDevice'],
+    options: { save?: (device: AudioDevice) => boolean } = {},
+  ): void {
+    this.audioDeviceSource = source;
+    this.saveAudioDevice = options.save ?? ((): boolean => false);
+  }
+
   isRunning(): boolean {
     return this.ipc?.isConnected() === true;
   }
 
-  /** A spawn still connecting counts, since its detached child outlives an exit that skips quitMpv. */
+  /** A spawn still connecting counts, since its detached child outlives an exit without quitMpv. */
   hasControlledMpv(): boolean {
     return this.controlledMpv || this.pendingSpawn !== null;
   }
 
   /**
-   * Try to attach to an already-running mpv via the well-known IPC socket,
-   * but do NOT spawn a new one if attach fails. Used by read-only tools
-   * (`now_playing`, `playback_status`) so they can recover after an MCP
-   * restart without taking on the cost of spawning mpv themselves.
-   *
-   * Resolves silently in all cases. The caller checks `isRunning()` afterwards.
+   * Never spawns, so a read after an MCP restart re-attaches to a running mpv without starting an
+   * empty one. It never rejects, and the caller checks isRunning() after.
    */
   async ensureAttached(): Promise<void> {
     if (this.isRunning()) return;
@@ -298,13 +332,6 @@ class PlaybackEngine {
     await this.attachExistingShared();
   }
 
-  /**
-   * Lazy-connect to mpv: first try to attach to an already-running mpv via
-   * the well-known IPC socket (e.g. one spawned by a previous MCP server
-   * that has since exited), then fall back to spawning a fresh mpv if
-   * nothing's there. Returns once IPC is connected and baseline property
-   * observation is in place. Concurrent callers share the same start promise.
-   */
   async ensureRunning(): Promise<void> {
     if (!this.isRunning()) {
       this.startPromise ??= this.startOrAttach();
@@ -318,28 +345,19 @@ class PlaybackEngine {
     this.controlledMpv = true;
   }
 
-  /**
-   * Pause playback. Lazy-spawns mpv if necessary.
-   */
   async pause(): Promise<void> {
     await this.ensureRunning();
     await this.requireIpc().command('set_property', 'pause', true);
   }
 
-  /**
-   * Resume playback. Lazy-spawns mpv if necessary.
-   */
-  async resume(): Promise<void> {
+  async resume(): Promise<{ outputMissing: MissingAudioOutput | null }> {
     await this.ensureRunning();
-    await this.requireIpc().command('set_property', 'pause', false);
+    const ipc = this.requireIpc();
+    const outputMissing = await this.checkAudioOutput(ipc);
+    if (outputMissing === null) await ipc.command('set_property', 'pause', false);
+    return { outputMissing };
   }
 
-  /**
-   * Set mpv's internal volume. Input is clamped to [0, 100].
-   * Lazy-spawns mpv if necessary.
-   *
-   * @returns the clamped value that was applied
-   */
   async setVolume(level: number): Promise<number> {
     const clamped = Math.max(0, Math.min(100, level));
     await this.ensureRunning();
@@ -347,26 +365,13 @@ class PlaybackEngine {
     return clamped;
   }
 
-  /**
-   * Load the given ordered list of song stream URLs into mpv's playlist.
-   *
-   * - `mode='replace'`: clear the existing playlist, replace with the new
-   *   tracks (first via `loadfile <url> replace`, remaining via `append`),
-   *   and unpause so playback starts immediately.
-   * - `mode='append'`: append each new track to the existing playlist via
-   *   `loadfile <url> append`. Does NOT clear the queue and does NOT unpause,
-   *   so existing playback state (including pause) is preserved. When no entry is
-   *   current (an empty or finished queue), the first appended track becomes
-   *   current, paused.
-   *
-   * Caller is responsible for ordering / shuffle of `songIds`. Lazy-spawns
-   * mpv on first call.
-   */
+  /** `entryIds` lists the mpv ids of the loaded entries in load order, leaving out any id mpv never reported. */
   async enqueue(
     songIds: readonly string[],
     mode: 'replace' | 'append',
     metadata?: ReadonlyArray<QueueTrackMetadata>,
-  ): Promise<{ demoted: boolean }> {
+    options: { refuseRadioQueue?: boolean } = {},
+  ): Promise<{ demoted: boolean; outputMissing: MissingAudioOutput | null; entryIds: number[] }> {
     if (songIds.length === 0) {
       throw new Error('enqueue requires at least one song ID');
     }
@@ -374,11 +379,15 @@ class PlaybackEngine {
     const result = await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
 
-      // An infinite radio stream breaks queue semantics, so an append onto radio
-      // becomes a replace. `demoted` tells the LLM its requested mode was not honored.
+      // An infinite radio stream breaks queue semantics, so an append onto radio becomes a replace.
+      // `demoted` tells the LLM its requested mode was not honored.
       let effectiveMode = mode;
       let demoted = false;
+      // An append never unpauses, so only a replace checks the output.
+      let outputMissing: MissingAudioOutput | null = null;
+      const loaded: LoadedEntry[] = [];
       if (effectiveMode === 'append' && await this.hasRadioStream()) {
+        if (options.refuseRadioQueue === true) throw new RadioQueueRefusedError();
         logger.warn('enqueue: append demoted to replace because queue contains a radio stream');
         effectiveMode = 'replace';
         demoted = true;
@@ -386,53 +395,59 @@ class PlaybackEngine {
 
       if (effectiveMode === 'replace') {
         this.queueGeneration++;
-        // Replace is not atomic on mpv's side. A mid-sequence failure stops and
-        // clears, so the queue never shows a half-load that contradicts the error.
+        // Replace is not atomic on mpv's side. A mid-sequence failure stops and clears, so the
+        // queue never shows a half-load that contradicts the error.
         const [first, ...rest] = songIds;
         if (first === undefined) {
           throw new Error('enqueue requires at least one song ID');
         }
-        // The previous queue's titles must not bleed into the new queue's view.
+        outputMissing = await this.checkAudioOutput(ipc);
         this.metadataCache.clear();
         this.ingestMetadata(metadata);
+        // Paused before the load, so the first track never plays on the null output.
+        if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
+        await this.writeUserData(ipc, REPLACE_PENDING_PROPERTY, true);
         // Clear up front so the prior queue is gone even if the first loadfile fails.
         await ipc.command('playlist-clear');
         try {
-          await ipc.command('loadfile', this.buildStreamUrl(first), 'replace');
+          await this.loadEntry(ipc, first, 'replace', loaded);
           for (const id of rest) {
-            await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+            await this.loadEntry(ipc, id, 'append', loaded);
           }
-          await ipc.command('set_property', 'pause', false);
+          if (outputMissing === null) await ipc.command('set_property', 'pause', false);
         } catch (err) {
-          // `stop` alone keeps the playlist, so clear first to make the error
-          // message true. Both are best effort, since a dead connection re-attaches.
+          // Both are best effort, since a dead connection re-attaches on the next call.
           try {
             await ipc.command('playlist-clear');
           } catch {
-            // The connection is gone. The cache-zero below and the next attach handle it.
+            // The cache reset below and the next attach cover a dead connection.
           }
           try {
             await ipc.command('stop');
           } catch {
-            // The connection is gone. Further teardown is the IPC layer's job.
+            // The IPC layer tears down a dead connection.
           }
+          // Cleared with no generation rise, so the web player drops the guest songs as on a clear.
+          await this.writeUserData(ipc, REPLACE_PENDING_PROPERTY, false);
           // A read before mpv's async change event must see the empty queue.
           this.propertyCache.set('playlist-count', 0);
           this.propertyCache.set('playlist-pos', null);
           // The rethrow skips the success-path emit, so broadcast the cleared queue here.
           this.emitStateChange({ kind: 'queue' });
-          const reason = err instanceof Error ? err.message : String(err);
+          const reason = errorMessage(err);
           throw new Error(`enqueue failed mid-sequence; queue was cleared and is now empty: ${reason}`);
         }
+        // The generation rises before the pending mark clears, so no reader sees neither mark.
+        await this.raiseReplaceGeneration(ipc);
+        await this.writeUserData(ipc, REPLACE_PENDING_PROPERTY, false);
       } else {
-        // An append keeps the existing pause state, so a paused queue stays paused.
         this.ingestMetadata(metadata);
-        // Read fresh because the observed cache can lag. mpv selects nothing for
-        // tracks appended while no entry is current, which leaves a dead position.
+        // mpv selects nothing for tracks appended with no current entry. The first one is selected
+        // paused, since an append never starts playback. Reads are fresh, since the cache lags.
         const posBeforeAppend = await ipc.command('get_property', 'playlist-pos');
         const countBeforeAppend = await ipc.command('get_property', 'playlist-count');
         for (const id of songIds) {
-          await ipc.command('loadfile', this.buildStreamUrl(id), 'append');
+          await this.loadEntry(ipc, id, 'append', loaded);
         }
         const hadNoCurrentEntry = typeof posBeforeAppend === 'number' && posBeforeAppend < 0;
         if (hadNoCurrentEntry && typeof countBeforeAppend === 'number') {
@@ -441,21 +456,44 @@ class PlaybackEngine {
         }
       }
 
-      return { demoted };
+      const entryIds = await this.resolveEntryIds(ipc, loaded);
+      return { demoted, outputMissing, entryIds };
     });
     this.emitStateChange({ kind: 'queue' });
     return result;
   }
 
+  private async loadEntry(ipc: MpvIpc, songId: string, mode: 'replace' | 'append', loaded: LoadedEntry[]): Promise<void> {
+    const url = this.buildStreamUrl(songId);
+    const reply = await ipc.command('loadfile', url, mode);
+    loaded.push({ url, entryId: entryIdFromLoadReply(reply) });
+  }
+
   /**
-   * Read the live mpv playlist as a normalized array of `QueueEntry`.
-   *
-   * Read-method semantics: uses `ensureAttached()` (does NOT spawn mpv).
-   * If no mpv is running/attachable, returns `[]` so callers see an empty
-   * queue rather than spawning a fresh, empty mpv. A filename the engine did
-   * not build yields `songId: null` rather than throwing, since another
-   * client can load anything through the shared IPC socket.
+   * An older mpv answers a loadfile without the entry id. Each stream URL carries a fresh
+   * auth salt, so its filename names one entry in the playlist. The songs already loaded, so a
+   * failed read leaves those ids out instead of failing the enqueue.
    */
+  private async resolveEntryIds(ipc: MpvIpc, loaded: readonly LoadedEntry[]): Promise<number[]> {
+    const reported = loaded.map((entry) => entry.entryId);
+    if (reported.every((id): id is number => id !== null)) return reported;
+    let playlist: unknown = null;
+    try {
+      playlist = await ipc.command('get_property', 'playlist');
+    } catch (err) {
+      logger.debug(`enqueue: playlist read for entry ids failed: ${errorMessage(err)}`);
+    }
+    const idByFilename = new Map<string, number>();
+    for (const item of Array.isArray(playlist) ? (playlist as unknown[]) : []) {
+      const record = typeof item === 'object' && item !== null ? item as Record<string, unknown> : {};
+      if (typeof record['filename'] === 'string' && typeof record['id'] === 'number') idByFilename.set(record['filename'], record['id']);
+    }
+    return loaded
+      .map((entry) => entry.entryId ?? idByFilename.get(entry.url))
+      .filter((id): id is number => id !== undefined);
+  }
+
+  /** A foreign filename yields a null songId, not an error, since any client can load anything. */
   async getQueue(): Promise<QueueEntry[]> {
     await this.ensureAttached();
     if (!this.isRunning()) return [];
@@ -480,8 +518,8 @@ class PlaybackEngine {
       const songId = filename === '' ? null : this.parseSongIdCached(filename, raw.length);
       if (songId !== null) liveSongIds.add(songId);
 
-      // mpv's title wins, since it sees ICY and dynamic title updates. The cache
-      // fills the tracks mpv has not loaded.
+      // mpv's title wins, since it sees ICY and dynamic title updates. The cache fills the tracks
+      // mpv has not loaded.
       const cached = songId !== null ? this.metadataCache.get(songId) : undefined;
 
       const entry: QueueEntry = {
@@ -502,25 +540,17 @@ class PlaybackEngine {
     return entries;
   }
 
-  /**
-   * Back-fill the metadata cache for entries the engine never saw, such as
-   * after an attach. Shares the cap and overwrite rules of `enqueue`.
-   */
+  /** Back-fills metadata for entries the engine never saw, such as after an attach. */
   ingestQueueMetadata(metadata: ReadonlyArray<QueueTrackMetadata>): void {
     this.ingestMetadata(metadata);
   }
 
-  /**
-   * Merge a batch of caller-supplied track metadata into the per-session cache.
-   * Entries missing `songId` are skipped (no key to index by). Existing keys
-   * are overwritten with the freshest values.
-   */
   private ingestMetadata(metadata: ReadonlyArray<QueueTrackMetadata> | undefined): void {
     if (metadata === undefined || metadata.length === 0) return;
     const batchSongIds = new Set<string>();
     for (const m of metadata) {
       if (typeof m.songId !== 'string' || m.songId === '') continue;
-      // Map.set keeps an existing key's insertion slot, so a delete first makes the re-ingested key newest.
+      // Map.set keeps an existing key's slot, so a delete first makes the re-ingested key newest.
       this.metadataCache.delete(m.songId);
       this.metadataCache.set(m.songId, m);
       batchSongIds.add(m.songId);
@@ -531,17 +561,10 @@ class PlaybackEngine {
     }
   }
 
-  /**
-   * Clear the live queue AND halt playback. Uses mpv `stop`, not
-   * `playlist-clear`: `playlist-clear` removes everything *except* the
-   * currently-playing track, so audio keeps coming out of the speakers.
-   * `stop` empties the queue and silences output, which is what users
-   * expect from a "clear" verb. Idempotent and safe when idle.
-   */
+  /** Uses mpv `stop`, since `playlist-clear` keeps the playing entry and its audio. */
   async clearQueue(): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
-      // An append after a clear lands a new track at index 0, so per-position caches must not match it.
       this.queueGeneration++;
       await this.requireIpc().command('stop');
       this.metadataCache.clear();
@@ -550,71 +573,112 @@ class PlaybackEngine {
   }
 
   /**
-   * Replace the live queue with a single radio stream and start playback.
-   *
-   * An infinite radio stream mixed with finite tracks breaks skip, queue
-   * position, and scrobbling, so this always replaces the whole queue, as
-   * Navidrome's web UI does. `loadfile <url> replace` clears the prior queue.
+   * Always replaces the entire queue, as Navidrome's web UI does, since an infinite stream among
+   * finite tracks breaks skip, queue position and scrobbling.
    */
-  async enqueueRadio(streamUrl: string, stationId: string): Promise<void> {
+  async enqueueRadio(streamUrl: string, stationId: string): Promise<{ outputMissing: MissingAudioOutput | null }> {
     if (streamUrl.trim() === '') {
       throw new Error('enqueueRadio requires a non-empty stream URL');
     }
     await this.ensureRunning();
-    await this.withMutationLock(async () => {
+    const result = await this.withMutationLock(async () => {
       const ipc = this.requireIpc();
       this.queueGeneration++;
-      // Tagged before the load, so a poll never pairs the new stream with the previous station's tag.
-      await this.writeRadioStationTag(ipc, stationId);
+      const outputMissing = await this.checkAudioOutput(ipc);
+      // Tagged before the load, so a poll never pairs the new stream with the prior station's tag.
+      // Without the tag, the name falls back to the first saved station on the stream URL.
+      await this.writeUserData(ipc, RADIO_STATION_TAG_PROPERTY, stationId);
+      // Paused before the load, so the stream never plays on the null output.
+      if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
       await ipc.command('loadfile', streamUrl, 'replace');
-      await ipc.command('set_property', 'pause', false);
+      if (outputMissing === null) await ipc.command('set_property', 'pause', false);
+      return { outputMissing };
     });
     this.emitStateChange({ kind: 'queue' });
+    return result;
   }
 
-  /** The saved-station ID the last radio play tagged. Null when none is set or mpv has no user-data. */
   getRadioStationTag(): string | null {
     const tag = this.propertyCache.get(RADIO_STATION_TAG_PROPERTY);
     return typeof tag === 'string' && tag !== '' ? tag : null;
   }
 
-  // Best effort. Without the tag, the station name falls back to the first saved station with the stream URL.
-  private async writeRadioStationTag(ipc: MpvIpc, stationId: string): Promise<void> {
+  // Best effort, since mpv before 0.36 has no user-data property.
+  private async writeUserData(ipc: MpvIpc, name: string, value: string | number | boolean): Promise<void> {
     try {
-      await ipc.command('set_property', RADIO_STATION_TAG_PROPERTY, stationId);
+      await ipc.command('set_property', name, value);
     } catch (error) {
-      logger.debug(`radio station tag not written: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`mpv ${name} not written: ${errorMessage(error)}`);
     }
   }
 
-  /**
-   * Whether the live queue holds a radio stream, meaning any entry with no
-   * Navidrome song id. `enqueue` uses it to keep radio and songs apart.
-   *
-   * Reads the live playlist, since the observed `playlist-count` can lag a load
-   * that just finished. Returns false when the engine isn't running.
-   */
-  async hasRadioStream(): Promise<boolean> {
-    if (!this.isRunning()) return false;
-    const playlist = await this.getQueue();
-    return playlist.some(entry => entry.songId === null);
+  // mpv answers an unset user-data key, and an mpv before 0.36 any user-data key, with a command
+  // error. A dropped connection still rejects, so a reader never takes it for an unset key.
+  private async readUserData(ipc: MpvIpc, name: string): Promise<unknown> {
+    try {
+      return await ipc.command('get_property', name);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('mpv command error')) return null;
+      throw error;
+    }
   }
 
-  /** Lets per-position caches tell a new load at the same index from the previous one. */
+  // Best effort, so a failed raise never fails a replace that already loaded. Read live, since the
+  // observed value can lag another process's raise.
+  private async raiseReplaceGeneration(ipc: MpvIpc): Promise<void> {
+    let generation = 0;
+    try {
+      generation = await this.readGeneration(ipc);
+    } catch (error) {
+      logger.debug(`mpv ${REPLACE_GENERATION_PROPERTY} not read: ${errorMessage(error)}`);
+      return;
+    }
+    await this.writeUserData(ipc, REPLACE_GENERATION_PROPERTY, generation + 1);
+  }
+
+  private async readGeneration(ipc: MpvIpc): Promise<number> {
+    const generation = await this.readUserData(ipc, REPLACE_GENERATION_PROPERTY);
+    return typeof generation === 'number' ? generation : 0;
+  }
+
+  /**
+   * Live reads, since the observed values can lag a mark another process just wrote. The pending
+   * mark is read first, since a replace raises the generation before it clears the pending mark.
+   */
+  async readReplaceMarks(): Promise<ReplaceMarks> {
+    if (!this.isRunning()) return { generation: 0, pending: false };
+    const ipc = this.requireIpc();
+    const pending = await this.readUserData(ipc, REPLACE_PENDING_PROPERTY);
+    const generation = await this.readGeneration(ipc);
+    return { generation, pending: pending === true };
+  }
+
+  /** A live read of the generation alone. Zero when unset or when mpv is not attached. */
+  async readReplaceGeneration(): Promise<number> {
+    if (!this.isRunning()) return 0;
+    return this.readGeneration(this.requireIpc());
+  }
+
+  /** Reads the live playlist, since the observed `playlist-count` can lag a load that just finished. */
+  async hasRadioStream(): Promise<boolean> {
+    if (!this.isRunning()) return false;
+    return holdsRadioStream(await this.getQueue());
+  }
+
+  /** A live read, since the observed `pause` can lag a set_property sent just before. Null when unknown. */
+  async readPaused(): Promise<boolean | null> {
+    if (!this.isRunning()) return null;
+    const paused = await this.requireIpc().command('get_property', 'pause');
+    return typeof paused === 'boolean' ? paused : null;
+  }
+
   getQueueGeneration(): number {
     return this.queueGeneration;
   }
 
   /**
-   * Randomize the order of items in the live queue via mpv's native
-   * `playlist-shuffle` command. Atomic on mpv's side. Lazy-spawns mpv.
-   *
-   * The playing track keeps playing, since a shuffle must never restart on a
-   * random track. `playlist-move` lifts it back to index 0 so the queue top
-   * still shows what is audible. Pause state is preserved.
-   *
-   * The post-shuffle position is read fresh via IPC because the observed
-   * `playlist-pos` cache may not have caught up to the shuffle yet.
+   * The playing track keeps playing and moves to index 0, so the queue top shows what is audible.
+   * The position is read fresh, since the observed `playlist-pos` can lag the shuffle.
    */
   async shuffleQueue(): Promise<void> {
     await this.ensureRunning();
@@ -630,9 +694,8 @@ class PlaybackEngine {
   }
 
   /**
-   * Shuffle the whole queue and make the new top track current, keeping the
-   * play or pause state. The web remote's shuffle restarts from the top, while
-   * `shuffleQueue` keeps the playing track on top for `shuffle_play_queue`.
+   * The web remote's shuffle restarts from the top, while shuffleQueue keeps the playing track for
+   * shuffle_play_queue.
    */
   async shuffleQueueFromTop(): Promise<void> {
     await this.ensureRunning();
@@ -655,14 +718,7 @@ class PlaybackEngine {
     this.emitStateChange({ kind: 'queue' });
   }
 
-  /**
-   * Move the queue entry at `from` so it takes the place of `to`.
-   * Index bounds are not pre-validated, which avoids a race with concurrent
-   * queue mutations. The tool layer turns mpv's out-of-range error into one that names the index.
-   *
-   * Reordering never changes what is playing, since mpv tracks the play head
-   * by entry, not by index. This matches Navidrome's own web UI.
-   */
+  /** mpv tracks the play head by entry, not by index, so a move never changes what is playing. */
   async moveQueueEntry(from: number, to: number): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
@@ -671,10 +727,7 @@ class PlaybackEngine {
     this.emitStateChange({ kind: 'queue' });
   }
 
-  /**
-   * Remove the queue entry at the given index. mpv advances to the next
-   * track when the current one is removed.
-   */
+  /** mpv starts the next entry when the current one is removed. */
   async removeQueueEntry(index: number): Promise<void> {
     await this.ensureRunning();
     await this.withMutationLock(async () => {
@@ -684,17 +737,44 @@ class PlaybackEngine {
   }
 
   /**
-   * Skip to the next track in mpv's playlist. Uses the `force` flag so it
-   * advances even if we are on the last entry (per mpv docs, `weak` does
-   * nothing at the end). Lazy-spawns mpv if necessary.
+   * The entry is checked and resolved inside the lock, since a track change or a move before it would
+   * start or shift the entry. Returns false when the entry is gone or now names another song.
+   * `refuseStarted` throws QueueEntryStartedError while the entry is current and not paused.
+   * It never spawns, since a new mpv instance cannot hold the entry.
    */
+  async removeQueueEntryById(entryId: number, options: { songId?: string; refuseStarted?: boolean } = {}): Promise<boolean> {
+    await this.ensureAttached();
+    if (!this.isRunning()) return false;
+    const removed = await this.withMutationLock(async () => {
+      const ipc = this.requireIpc();
+      const playlist = await ipc.command('get_property', 'playlist');
+      const items: unknown[] = Array.isArray(playlist) ? playlist : [];
+      const index = items.findIndex((item) => typeof item === 'object' && item !== null && (item as Record<string, unknown>)['id'] === entryId);
+      if (index < 0) return false;
+      const record = items[index] as Record<string, unknown>;
+      const filename = typeof record['filename'] === 'string' ? record['filename'] : '';
+      // A new mpv instance numbers its entries from 1 again, so the id can name another song.
+      if (options.songId !== undefined && this.parseSongIdCached(filename, items.length) !== options.songId) return false;
+      if (options.refuseStarted === true && record['current'] === true) {
+        // An unknown pause state refuses, since removing a playing entry skips it.
+        if (await ipc.command('get_property', 'pause') !== true) throw new QueueEntryStartedError(entryId);
+      }
+      await ipc.command('playlist-remove', index);
+      return true;
+    });
+    if (removed) this.emitStateChange({ kind: 'queue' });
+    return removed;
+  }
+
+  /** `force` stops playback on the last entry, where the default `weak` does nothing. */
   async next(): Promise<void> {
     await this.ensureRunning();
     await this.requireIpc().command('playlist-next', 'force');
   }
 
   /**
-   * Restarts the track on the first entry, since `playlist-prev force` there terminates playback.
+   * Restarts the track on the first entry, where `playlist-prev` does nothing and
+   * `playlist-prev force` stops playback.
    */
   async previous(): Promise<void> {
     await this.ensureRunning();
@@ -708,11 +788,6 @@ class PlaybackEngine {
     }
   }
 
-  /**
-   * Seek within the current track. `mode` selects between absolute (jump to
-   * given second within the track) and relative (offset from current
-   * position, negative seeks backwards). Lazy-spawns mpv if necessary.
-   */
   async seek(seconds: number, mode: 'absolute' | 'relative'): Promise<void> {
     await this.ensureRunning();
     const ipc = this.requireIpc();
@@ -724,8 +799,8 @@ class PlaybackEngine {
         }
         return;
       } catch (err) {
-        // Only the transient transcode rejection clears on retry. Any other
-        // failure is deterministic, so rethrow at once.
+        // Only the transient transcode rejection clears on retry. Any other failure is
+        // deterministic, so it rethrows at once.
         const retryable = err instanceof Error && /error running command/i.test(err.message);
         if (!retryable || attempt === SEEK_MAX_ATTEMPTS) throw err;
         logger.debug(`seek ${seconds} ${mode} attempt ${attempt}/${SEEK_MAX_ATTEMPTS} failed, retrying: ${err.message}`);
@@ -735,23 +810,24 @@ class PlaybackEngine {
   }
 
   /**
-   * Jump the play head to the play-queue entry at `index`, like clicking a
-   * row in a media player's queue. Queue contents are not mutated.
-   *
-   * Unpauses, because a jump means play this now. Mirrors the unpause in enqueue(replace).
-   *
-   * mpv accepts an index past the end and stops playback, so the tool layer checks the bound first.
-   * No `emitStateChange` is needed, since mpv's
-   * `playlist-pos` change event reaches subscribers.
+   * mpv stops playback on an index past the end, so the tool layer checks the bound first. No queue
+   * event is emitted, since mpv's `playlist-pos` event reaches subscribers.
    */
-  async jumpToQueueEntry(index: number): Promise<void> {
+  async jumpToQueueEntry(index: number): Promise<{ outputMissing: MissingAudioOutput | null }> {
     await this.ensureRunning();
     const ipc = this.requireIpc();
+    const outputMissing = await this.checkAudioOutput(ipc);
+    // An idle mpv can hold pause=false, so the jump would start the track on the null output.
+    if (outputMissing !== null) await ipc.command('set_property', 'pause', true);
     await ipc.command('set_property', 'playlist-pos', index);
-    await ipc.command('set_property', 'pause', false);
+    if (outputMissing === null) await ipc.command('set_property', 'pause', false);
+    return { outputMissing };
   }
 
-  /** Live reads, since a cached property event can lag a loadfile sent just before. mpv reports -1 with no current entry. */
+  /**
+   * Live reads, since a cached property event can lag a loadfile sent just before. mpv reports -1
+   * with no current entry.
+   */
   async readQueueState(): Promise<{ position: number; count: number }> {
     const ipc = this.requireIpc();
     const position = await ipc.command('get_property', 'playlist-pos');
@@ -762,22 +838,13 @@ class PlaybackEngine {
     };
   }
 
-  /**
-   * Read a property from the engine's local observed-property cache. Returns
-   * `undefined` if the property has never been observed.
-   */
   getCachedProperty(name: string): unknown {
     return this.propertyCache.get(name);
   }
 
   /**
-   * Register a subscriber for engine state-change events (mpv property
-   * updates + queue mutations). Returns an unsubscribe function, which
-   * long-lived callers (e.g. SSE clients) must call to avoid a handler leak.
-   *
-   * Handlers run synchronously in registration order. A throwing handler is
-   * logged and skipped so it cannot deny notifications to others. Events are
-   * not buffered, so a caller needing a baseline reads the getters after subscribing.
+   * Events are not buffered, so a subscriber reads the getters for a baseline. A long-lived
+   * subscriber, such as an SSE client, must call the returned unsubscribe to avoid a leak.
    */
   onStateChange(handler: StateChangeHandler): () => void {
     this.stateChangeHandlers.push(handler);
@@ -787,10 +854,6 @@ class PlaybackEngine {
     };
   }
 
-  /**
-   * Read engine status. Does NOT trigger lazy spawn. If the engine has not
-   * been started yet, returns `{ engineRunning: false, ... }`.
-   */
   getStatus(): PlaybackStatus {
     if (!this.isRunning()) {
       return {
@@ -799,31 +862,71 @@ class PlaybackEngine {
         mpvVersion: null,
         volume: null,
         idle: null,
+        audioDevice: null,
+        audioOutputLost: null,
       };
     }
     const volume = this.propertyCache.get('volume');
     const idle = this.propertyCache.get('idle-active');
+    const audioOutput = this.readCachedAudioOutput();
     return {
       engineRunning: true,
       mpvPath: this.mpvBinary,
       mpvVersion: this.mpvVersion,
       volume: typeof volume === 'number' ? volume : null,
       idle: typeof idle === 'boolean' ? idle : null,
+      audioDevice: audioOutput.device,
+      audioOutputLost: audioOutput.lost,
     };
+  }
+
+  /** Never spawns mpv. Without a running mpv the devices come from a headless probe of the binary. */
+  async describeAudioDevices(): Promise<AudioDeviceReport> {
+    await this.ensureAttached();
+    if (this.isRunning()) {
+      const live = await this.readLiveAudioOutput(this.requireIpc());
+      return {
+        selected: this.describeSelectedDevice(live.audioDevice, live.devices),
+        output: typeof live.currentAo === 'string' ? live.currentAo : null,
+        devices: live.devices,
+        source: 'player',
+      };
+    }
+    if (this.mpvBinary === null) {
+      throw new Error(ErrorFormatter.configMissing('Playback', 'mpv binary'));
+    }
+    const devices = await probeAudioDevices(this.mpvBinary);
+    const saved = this.readAudioDeviceSource();
+    const target = saved === null ? null : resolveSavedDevice(saved, devices);
+    const id = target?.id ?? AUTO_DEVICE_ID;
+    const listedName = devices.find((device) => device.id === id)?.name;
+    return {
+      selected: { id, name: listedName ?? target?.name ?? null, connected: isDeviceConnected(id, devices) },
+      output: null,
+      devices,
+      source: 'probe',
+    };
+  }
+
+  /** Never spawns mpv, and returns false when none runs. The pause state stays as it is. */
+  async selectAudioDevice(id: string): Promise<boolean> {
+    await this.ensureAttached();
+    if (!this.isRunning()) return false;
+    const ipc = this.requireIpc();
+    const live = await this.readLiveAudioOutput(ipc);
+    if (live.audioDevice === id && live.currentAo === NULL_AUDIO_OUTPUT) {
+      await this.reopenAudioOutput(ipc, id, live.devices);
+      return true;
+    }
+    await ipc.command('set_property', 'audio-device', id);
+    return true;
   }
 
   songIdForPath(path: string): string | null {
     return this.parseSongIdCached(path, 0);
   }
 
-  // ---------- internals ----------
-
-  /**
-   * Parse the Navidrome song id out of a stream URL, with per-session caching.
-   * Only an http(s) URL whose path ends in `/rest/stream` yields an id. The
-   * path is matched, not the configured origin, so songs loaded before a
-   * Navidrome URL change still parse.
-   */
+  /** Matches the path, not the configured origin, so songs loaded before a URL change parse. */
   private parseSongIdCached(filename: string, queueLength: number): string | null {
     const cached = this.filenameCache.get(filename);
     if (cached !== undefined) return cached;
@@ -849,10 +952,7 @@ class PlaybackEngine {
     return songId;
   }
 
-  /**
-   * Best effort. Builds without `mpv-version` fall back to the client API
-   * version, and null means neither source answered.
-   */
+  /** Without `mpv-version`, it falls back to the client API version, or null if neither answers. */
   private async readMpvVersion(ipc: MpvIpc): Promise<string | null> {
     try {
       const property = await ipc.command('get_property', 'mpv-version');
@@ -860,7 +960,7 @@ class PlaybackEngine {
         return property;
       }
     } catch {
-      // Older mpv builds may lack the property. Fall through to the fallback.
+      // Older mpv builds may lack the property.
     }
     try {
       const fallback = await ipc.command('get_version');
@@ -879,7 +979,6 @@ class PlaybackEngine {
     return null;
   }
 
-  /** Sends a `script-message` that every client attached to this mpv receives. Never spawns mpv. */
   async broadcastMessage(args: string[]): Promise<void> {
     await this.requireIpc().command('script-message', ...args);
   }
@@ -891,35 +990,24 @@ class PlaybackEngine {
     return this.ipc;
   }
 
-  /**
-   * Dispatch a state-change event to every registered subscriber. A handler
-   * that throws is logged and skipped, so one dead SSE client cannot deny
-   * notifications to the others.
-   */
+  /** A throwing handler is skipped, so one dead SSE client cannot deny notifications to others. */
   private emitStateChange(event: StateChangeEvent): void {
     if (this.stateChangeHandlers.length === 0) return;
     for (const handler of this.stateChangeHandlers) {
       try {
         handler(event);
       } catch (err) {
-        logger.debug(`state-change handler threw: ${err instanceof Error ? err.message : String(err)}`);
+        logger.debug(`state-change handler threw: ${errorMessage(err)}`);
       }
     }
   }
 
-  /**
-   * Build a Subsonic-compatible stream URL for the given song ID using the
-   * configured Navidrome credentials and transcode settings. Credentials
-   * travel localhost → mpv → Navidrome (LAN), so query-param auth is fine
-   * for this path.
-   */
+  /** mpv cannot compute auth, so salted-MD5 params ride in the URL, which omits the password. */
   private buildStreamUrl(songId: string): string {
     if (this.config === null) {
       throw new Error('PlaybackEngine has not been configured. Call configure(config) first.');
     }
-    // mpv cannot compute auth, so salted-MD5 params ride in the URL and a leaked
-    // URL cannot recover the password. `format=raw` is fully byte-range
-    // seekable, and `maxBitRate` applies only when transcoding.
+    // `format=raw` serves the file with byte-range seeking. `maxBitRate` applies to a transcode.
     const isRaw = this.config.playbackTranscodeFormat === 'raw';
     const streamParams: Record<string, string> = isRaw
       ? { id: songId, format: 'raw' }
@@ -936,11 +1024,7 @@ class PlaybackEngine {
     return `${this.config.navidromeUrl}${SUBSONIC_STREAM_PATH}?${params.toString()}`;
   }
 
-  /**
-   * Run a mutating queue operation under the engine-wide mutation lock so
-   * concurrent callers serialize. The stored lock swallows rejections, so one
-   * failed task does not poison the chain.
-   */
+  /** The stored lock swallows rejections, so one failed task does not poison the chain. */
   private withMutationLock<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.mutationLock.then(() => fn());
     this.mutationLock = next.catch(() => undefined);
@@ -970,10 +1054,7 @@ class PlaybackEngine {
     logger.info(`Playback engine started (mpv ${this.mpvVersion ?? '?'}, ipc=${this.ipcPath})`);
   }
 
-  /**
-   * Share one in-flight attach between concurrent callers, so they never open
-   * two connections that each relay every property change.
-   */
+  /** Concurrent callers share one attach, so no two connections each relay every event. */
   private attachExistingShared(): Promise<boolean> {
     this.attachPromise ??= this.tryAttachExisting().finally(() => {
       this.attachPromise = null;
@@ -981,11 +1062,6 @@ class PlaybackEngine {
     return this.attachPromise;
   }
 
-  /**
-   * Try to connect to an mpv that's already listening on the well-known IPC
-   * socket. Returns true if successful (engine state is fully populated),
-   * false if no usable mpv was found.
-   */
   private async tryAttachExisting(): Promise<boolean> {
     if (process.platform !== 'win32' && !existsSync(this.ipcPath)) {
       return false;
@@ -1001,15 +1077,13 @@ class PlaybackEngine {
       if (this.visualizerKeepsInSync) void this.queueVisualizerSync(ipc, {});
       return true;
     } catch (err) {
-      logger.debug(`Could not attach to existing mpv at ${this.ipcPath}: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`Could not attach to existing mpv at ${this.ipcPath}: ${errorMessage(err)}`);
       try { ipc.close(); } catch { /* noop */ }
       return false;
     }
   }
 
-  /**
-   * Spawn, connect and install observers. On failure, roll back state and kill the child so a failed spawn never leaves an orphan mpv holding the audio device.
-   */
+  /** A failed spawn kills its child, since a detached orphan mpv would hold the audio device. */
   private async spawnAndConnect(): Promise<void> {
     if (this.mpvBinary === null) {
       throw new Error(ErrorFormatter.configMissing('Playback', 'mpv binary'));
@@ -1026,7 +1100,6 @@ class PlaybackEngine {
     const child: ChildProcess = spawnMpv(this.mpvBinary, this.ipcPath);
     this.pendingSpawn = child;
 
-    // A deliberate rollback kill or quit is expected, so it logs no warning.
     child.on('exit', (code, signal) => {
       if (!this.shuttingDown && !expectedExit) {
         logger.warn(`mpv exited unexpectedly: code=${code ?? 'null'} signal=${signal ?? 'null'}`);
@@ -1040,6 +1113,7 @@ class PlaybackEngine {
       this.mpvVersion = await this.readMpvVersion(ipc);
 
       await this.installObservers(ipc);
+      await this.applySavedAudioDevice(ipc);
       // Before the caller's first load, so the first track already plays through the filter.
       await this.queueVisualizerSync(ipc, { checkWaitMs: MPV_VISUALIZER_SPAWN_WAIT_MS });
 
@@ -1061,10 +1135,8 @@ class PlaybackEngine {
   }
 
   /**
-   * Install property observers, event handlers, and disconnect recovery.
-   * Prime so the cache is filled when this resolves, since observe's initial emits
-   * can arrive after its replies. The handler is registered before observe_property,
-   * so mpv's initial emit is the freshest write.
+   * Primes the cache, since observe's initial emits can arrive after its replies. The change
+   * handler registers before observe_property, so mpv's initial emit is the latest write.
    */
   private async installObservers(ipc: MpvIpc): Promise<void> {
     // Registered first so no event during the prime and observe sequence is missed.
@@ -1075,7 +1147,7 @@ class PlaybackEngine {
         return;
       }
       if (evt.event === 'playback-restart') this.playbackRestarts++;
-      // Every track start, not only a pending one, since mpv disables a filter that fails for one track.
+      // Every track start, not only a pending one, since mpv disables a filter that fails a track.
       if (evt.event === 'start-file' && this.visualizerKeepsInSync) {
         const restarts = this.playbackRestarts;
         void this.queueVisualizerSync(ipc, { stillSafe: () => this.playbackRestarts === restarts });
@@ -1084,8 +1156,7 @@ class PlaybackEngine {
       logger.debug(`mpv event: ${evt.event}${reason}`);
     });
     ipc.onDisconnect(() => {
-      // mpv may still be alive, so the next call re-attaches. An orphaned
-      // connection must not detach the engine from the live one.
+      // An orphaned connection must not detach the engine from the live one.
       logger.debug('mpv IPC disconnected. The engine will re-attach on the next call.');
       if (this.ipc === ipc) this.ipc = null;
     });
@@ -1095,18 +1166,22 @@ class PlaybackEngine {
         const value = await ipc.command('get_property', name);
         this.propertyCache.set(name, value);
       } catch {
-        // Some properties (e.g. duration with no file loaded) error out. Leave them unset.
+        // Some properties, such as duration with no file loaded, error out and stay unset.
       }
     }
 
     ipc.onPropertyChange((evt) => {
       this.propertyCache.set(evt.name, evt.data);
       this.emitStateChange({ kind: 'property', name: evt.name, data: evt.data });
-      const quietNow = (evt.name === 'pause' || evt.name === 'idle-active') && evt.data === true;
+      const playStateEvent = evt.name === 'pause' || evt.name === 'idle-active';
+      const quietNow = playStateEvent && evt.data === true;
       if (quietNow && this.visualizerPending && this.visualizerKeepsInSync) void this.queueVisualizerSync(ipc, {});
+      if (AUDIO_OUTPUT_PROPERTIES.has(evt.name)) this.onAudioOutputChange(ipc);
+      if (evt.name === 'pause' && evt.data === false) this.lostOutputPause = null;
+      if (playStateEvent && evt.data === false) void this.pauseOnStartOverLostOutput(ipc);
     });
 
-    // mpv sends no property events before observe_property, so this precedes the new instance's snapshot.
+    // mpv sends no property events before observe_property, so this precedes the new snapshot.
     this.emitStateChange({ kind: 'attach' });
     for (const [id, name] of OBSERVED_PROPERTIES) {
       await ipc.observeProperty(id, name);
@@ -1115,7 +1190,7 @@ class PlaybackEngine {
       try {
         await ipc.observeProperty(id, name);
       } catch (error) {
-        logger.debug(`mpv cannot observe ${name}: ${error instanceof Error ? error.message : String(error)}`);
+        logger.debug(`mpv cannot observe ${name}: ${errorMessage(error)}`);
       }
     }
   }
@@ -1125,12 +1200,12 @@ class PlaybackEngine {
     this.visualizerSyncChain = this.visualizerSyncChain
       .then(() => this.applyVisualizerFilter(ipc, request))
       .catch((err: unknown) => {
-        logger.debug(`visualizer filter sync failed: ${err instanceof Error ? err.message : String(err)}`);
+        logger.debug(`visualizer filter sync failed: ${errorMessage(err)}`);
       });
     return this.visualizerSyncChain;
   }
 
-  // Safety is read when the sync runs, since a sync can wait in the chain past the moment that queued it.
+  // Safety is read when the sync runs, since the sync can wait in the chain after it is queued.
   private async applyVisualizerFilter(ipc: MpvIpc, request: VisualizerSyncRequest): Promise<void> {
     const wanted = this.readVisualizerWanted();
     const installed = hasVisualizerFilter(await ipc.command('get_property', 'af'));
@@ -1153,7 +1228,7 @@ class PlaybackEngine {
     const refusal = validation.ok ? await this.checkLiveBuild(ipc, validation.build) : validation.reason;
     this.setVisualizerRefusal(refusal);
     if (refusal !== null) return;
-    // The check can outlast the safe moment, so a track playing by now gets the filter at the next one.
+    // A track that started playing during the check gets the filter at the next track start.
     if (!this.isSafeForFilterChange(request)) {
       this.visualizerPending = true;
       return;
@@ -1176,7 +1251,7 @@ class PlaybackEngine {
     }
   }
 
-  // The check ran the configured binary, and an mpv started from another one may lack what the filter needs.
+  // The check ran the configured binary, and an mpv from another binary may lack filter support.
   private async checkLiveBuild(ipc: MpvIpc, checkedBuild: string): Promise<string | null> {
     const ffmpegVersion: unknown = await ipc.command('get_property', 'ffmpeg-version').catch(() => null);
     const liveBuild = mpvBuildId(this.mpvVersion, ffmpegVersion);
@@ -1199,7 +1274,7 @@ class PlaybackEngine {
     try {
       return this.visualizerWanted();
     } catch (err) {
-      logger.debug(`visualizer setting unreadable, treating it as off: ${err instanceof Error ? err.message : String(err)}`);
+      logger.debug(`visualizer setting unreadable, treating it as off: ${errorMessage(err)}`);
       return false;
     }
   }
@@ -1209,14 +1284,211 @@ class PlaybackEngine {
   }
 
   /**
-   * Quit the mpv process, then tear down our IPC state. The entry points
-   * (src/index.ts and src/web/main.ts) own process shutdown and call this to
-   * stop mpv. Contrast with `shutdown()`, which leaves mpv running.
-   *
-   * A one-shot connection delivers `quit` even when our own connection is
-   * gone. Bounded and best effort, so it is a no-op when nothing is listening.
-   * A spawn still connecting is killed directly, since waiting for it can outlast
-   * the caller's exit and leave its detached child running.
+   * Written even for a device mpv does not list, so mpv opens the null output and never a different
+   * speaker. A device re-registered under a new id is matched by name. An attach skips this, since
+   * the spawning process applied it.
+   */
+  private async applySavedAudioDevice(ipc: MpvIpc): Promise<void> {
+    const saved = this.readAudioDeviceSource();
+    if (saved === null) return;
+    try {
+      const deviceList: unknown = await ipc.command('get_property', 'audio-device-list').catch(() => null);
+      const target = resolveSavedDevice(saved, parseAudioDeviceList(deviceList));
+      await ipc.command('set_property', 'audio-device', target.id);
+      if (target.id !== saved.id) this.storeReplacementDevice(saved.id, { id: target.id, name: target.name ?? saved.id });
+    } catch (err) {
+      logger.warn(`audio device ${saved.id} not applied: ${errorMessage(err)}`);
+    }
+  }
+
+  // Every attached engine runs this. Each write it makes repeats harmlessly from a second engine.
+  private onAudioOutputChange(ipc: MpvIpc): void {
+    const values = this.readCachedAudioOutputValues();
+    const id = selectedDeviceId(values.audioDevice);
+    const connected = isDeviceConnected(id, values.devices);
+    const returned = connected && !this.selectedDeviceWasConnected;
+    this.selectedDeviceWasConnected = connected;
+    if (connected) this.rememberListedSelection(id, values.devices);
+
+    const replacement = connected ? null : this.findReplacement(id, values.devices);
+    if (replacement !== null) {
+      void this.adoptReplacementDevice(ipc, id, replacement);
+      return;
+    }
+    this.pauseOnLostOutput(ipc, values);
+    if (returned) void this.recoverReturnedOutput(ipc, id);
+  }
+
+  private pauseOnLostOutput(ipc: MpvIpc, values: AudioOutputValues): void {
+    const lost = isAudioOutputLost(values);
+    const newlyLost = lost && !this.audioOutputWasLost;
+    this.audioOutputWasLost = lost;
+    if (newlyLost) {
+      const device = this.describeSelectedDevice(values.audioDevice, values.devices);
+      logger.info(`Audio output lost on device ${device.name ?? device.id}`);
+    }
+    if (!lost || this.isIdleOrPaused()) return;
+    this.lostOutputPause = { at: Date.now(), deviceId: selectedDeviceId(values.audioDevice) };
+    void ipc.command('set_property', 'pause', true).catch((err: unknown) => {
+      logger.debug(`pause on lost audio output failed: ${errorMessage(err)}`);
+    });
+  }
+
+  /** A twin that left the list before the selected device did is still a different output. */
+  private rememberListedSelection(id: string, devices: readonly AudioDevice[]): void {
+    const device = devices.find((candidate) => candidate.id === id);
+    if (id === AUTO_DEVICE_ID || device === undefined) return;
+    const earlier = this.lastListedSelection?.device.id === id ? this.lastListedSelection.listedBeside : [];
+    const listedBeside = new Set([...earlier, ...devices.map((candidate) => candidate.id)]);
+    this.lastListedSelection = { device, listedBeside };
+  }
+
+  private findReplacement(id: string, devices: readonly AudioDevice[]): AudioDevice | null {
+    if (id === AUTO_DEVICE_ID) return null;
+    const last = this.lastListedSelection?.device.id === id ? this.lastListedSelection : null;
+    const name = last?.device.name ?? this.savedDeviceName(id);
+    if (name === null) return null;
+    return findReplacementDevice({ id, name }, devices, last?.listedBeside ?? new Set());
+  }
+
+  /**
+   * The pause moves to the new id before the write, so the write's own event can resume it. A failed
+   * write leaves the lost device selected, so it gets the pause a plain loss gets.
+   */
+  private async adoptReplacementDevice(ipc: MpvIpc, lostId: string, replacement: AudioDevice): Promise<void> {
+    if (this.replacingDeviceId === replacement.id) return;
+    this.replacingDeviceId = replacement.id;
+    logger.info(`Audio device ${replacement.name} moved from ${lostId} to ${replacement.id}`);
+    if (this.lostOutputPause?.deviceId === lostId) this.lostOutputPause.deviceId = replacement.id;
+    try {
+      await ipc.command('set_property', 'audio-device', replacement.id);
+      this.storeReplacementDevice(lostId, replacement);
+    } catch (err) {
+      logger.warn(`audio device ${replacement.id} not adopted: ${errorMessage(err)}`);
+      if (this.lostOutputPause?.deviceId === replacement.id) this.lostOutputPause.deviceId = lostId;
+      this.pauseOnLostOutput(ipc, this.readCachedAudioOutputValues());
+    } finally {
+      this.replacingDeviceId = null;
+    }
+  }
+
+  /** Only a saved choice is updated, so a device picked while no store exists stays unsaved. */
+  private storeReplacementDevice(lostId: string, replacement: AudioDevice): void {
+    if (this.readAudioDeviceSource()?.id !== lostId) return;
+    if (!this.saveAudioDevice(replacement)) {
+      logger.warn(`audio device ${replacement.name} moved to ${replacement.id}, but the new id was not saved`);
+    }
+  }
+
+  /**
+   * mpv keeps a returned device on its null output until the output is re-opened. Playback resumes
+   * only when this engine paused for that device moments ago, since a longer outage may be on purpose.
+   */
+  private async recoverReturnedOutput(ipc: MpvIpc, id: string): Promise<void> {
+    const pause = this.lostOutputPause;
+    this.lostOutputPause = null;
+    const resume = pause !== null && pause.deviceId === id && Date.now() - pause.at <= AUDIO_OUTPUT_RESUME_WINDOW_MS;
+    try {
+      const missing = await this.checkAudioOutput(ipc);
+      if (missing === null && resume) await ipc.command('set_property', 'pause', false);
+    } catch (err) {
+      logger.debug(`returned audio output not recovered: ${errorMessage(err)}`);
+    }
+  }
+
+  /**
+   * A loss while paused raised no pause, and mpv sends no new output event when playback starts.
+   * The live read keeps a stale cached `null` output from pausing an output a re-open restored.
+   */
+  private async pauseOnStartOverLostOutput(ipc: MpvIpc): Promise<void> {
+    if (this.isIdleOrPaused() || !isAudioOutputLost(this.readCachedAudioOutputValues())) return;
+    try {
+      const live = await this.readLiveAudioOutput(ipc);
+      if (!isAudioOutputLost(live)) return;
+      await ipc.command('set_property', 'pause', true);
+    } catch (err) {
+      logger.debug(`pause on a start over a lost audio output failed: ${errorMessage(err)}`);
+    }
+  }
+
+  private readCachedAudioOutput(): { device: SelectedAudioDevice; lost: boolean } {
+    const cached = this.readCachedAudioOutputValues();
+    return { device: this.describeSelectedDevice(cached.audioDevice, cached.devices), lost: isAudioOutputLost(cached) };
+  }
+
+  private readCachedAudioOutputValues(): AudioOutputValues {
+    return {
+      audioDevice: this.propertyCache.get('audio-device'),
+      devices: parseAudioDeviceList(this.propertyCache.get('audio-device-list')),
+      currentAo: this.propertyCache.get('current-ao'),
+    };
+  }
+
+  /** A rejected `current-ao` read means no output is open, which is not a loss. */
+  private async readLiveAudioOutput(ipc: MpvIpc): Promise<AudioOutputValues> {
+    const audioDevice = await ipc.command('get_property', 'audio-device');
+    const deviceList = await ipc.command('get_property', 'audio-device-list');
+    const currentAo = await ipc.command('get_property', 'current-ao').catch(() => null);
+    return { audioDevice, devices: parseAudioDeviceList(deviceList), currentAo };
+  }
+
+  /** Reads live values, since the cache can lag a device change. */
+  private async checkAudioOutput(ipc: MpvIpc): Promise<MissingAudioOutput | null> {
+    const live = await this.readLiveAudioOutput(ipc);
+    const id = selectedDeviceId(live.audioDevice);
+    if (!isDeviceConnected(id, live.devices)) return { id, name: this.savedDeviceName(id) };
+    if (live.currentAo !== NULL_AUDIO_OUTPUT) return null;
+    const reopened = await this.reopenAudioOutput(ipc, id, live.devices);
+    return reopened ? null : { id, name: this.savedDeviceName(id) };
+  }
+
+  /**
+   * mpv ignores a write of the value it holds, so a named device is re-opened through `auto`. No
+   * documented write re-opens `auto` itself, so it takes `ao-reload`.
+   */
+  private async reopenAudioOutput(ipc: MpvIpc, id: string, devices: readonly AudioDevice[]): Promise<boolean> {
+    const isAuto = id === AUTO_DEVICE_ID;
+    if (isAuto && !devices.some((device) => device.id !== AUTO_DEVICE_ID)) return false;
+    try {
+      if (isAuto) {
+        await ipc.command('ao-reload');
+      } else {
+        await ipc.command('set_property', 'audio-device', AUTO_DEVICE_ID);
+        await ipc.command('set_property', 'audio-device', id);
+      }
+      return true;
+    } catch (err) {
+      logger.debug(`audio output ${id} not re-opened: ${errorMessage(err)}`);
+      return false;
+    }
+  }
+
+  // The source is read only for an unlisted device, since it can read the settings file and
+  // getStatus runs on every status poll.
+  private describeSelectedDevice(audioDevice: unknown, devices: readonly AudioDevice[]): SelectedAudioDevice {
+    const id = selectedDeviceId(audioDevice);
+    const listed = devices.find((device) => device.id === id);
+    const name = listed !== undefined ? listed.name : this.savedDeviceName(id);
+    return { id, name, connected: isDeviceConnected(id, devices) };
+  }
+
+  private savedDeviceName(id: string): string | null {
+    const saved = this.readAudioDeviceSource();
+    return saved !== null && saved.id === id ? saved.name : null;
+  }
+
+  private readAudioDeviceSource(): Config['playbackAudioDevice'] {
+    try {
+      return this.audioDeviceSource();
+    } catch (err) {
+      logger.debug(`audio device setting unreadable, treating it as none: ${errorMessage(err)}`);
+      return null;
+    }
+  }
+
+  /**
+   * A spawn still connecting is killed directly, since waiting for it can outlast the caller's exit
+   * and leave its detached child running.
    */
   async quitMpv(): Promise<void> {
     this.shuttingDown = true;
@@ -1226,11 +1498,8 @@ class PlaybackEngine {
   }
 
   /**
-   * Disconnect our IPC from mpv and reset all engine session state (cache,
-   * subscribers, version). Does NOT kill the mpv process, so playback persists
-   * across restarts. Contrast with {@link quitMpv}, which stops the audio.
-   *
-   * Idempotent. The engine can start again afterward, but subscribers are dropped and must re-subscribe.
+   * Leaves mpv running, so playback persists across restarts. Subscribers are dropped and must
+   * subscribe again.
    */
   shutdown(): void {
     const ipc = this.ipc;
@@ -1247,15 +1516,31 @@ class PlaybackEngine {
     this.startPromise = null;
     this.visualizerPending = false;
     this.visualizerRefusal = null;
-    // Subscribers belong to the prior session.
+    this.audioOutputWasLost = false;
+    this.selectedDeviceWasConnected = true;
+    this.lastListedSelection = null;
+    this.replacingDeviceId = null;
+    this.lostOutputPause = null;
     this.stateChangeHandlers.length = 0;
   }
 }
 
+function selectedDeviceId(audioDevice: unknown): string {
+  return typeof audioDevice === 'string' ? audioDevice : AUTO_DEVICE_ID;
+}
+
+/** `auto` counts as connected, since mpv then opens whatever output the OS offers. */
+function isDeviceConnected(id: string, devices: readonly AudioDevice[]): boolean {
+  return id === AUTO_DEVICE_ID || devices.some((device) => device.id === id);
+}
+
+function isAudioOutputLost(values: AudioOutputValues): boolean {
+  return values.currentAo === NULL_AUDIO_OUTPUT || !isDeviceConnected(selectedDeviceId(values.audioDevice), values.devices);
+}
+
 /**
- * Send mpv `quit` over a one-shot connection to its IPC socket. mpv accepts
- * concurrent IPC clients, so this works beside a live engine connection or
- * after it closed. Resolves quietly when nothing is listening.
+ * mpv accepts concurrent IPC clients, so this one-shot connection works beside a live engine
+ * connection or after it closed.
  */
 function quitMpvViaSocket(path: string): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -1287,8 +1572,8 @@ function quitMpvViaSocket(path: string): Promise<void> {
 }
 
 /**
- * Resolves true when a listener holds the path. A live listener fails the start, since unlinking its
- * socket orphans that mpv while it holds the audio device and a spawn beside it starts a second player.
+ * Resolves true when a live listener holds the path. Unlinking that socket would orphan its mpv on
+ * the audio device while a new spawn starts a second player.
  */
 async function cleanupStaleSocket(path: string): Promise<boolean> {
   const isWindows = process.platform === 'win32';

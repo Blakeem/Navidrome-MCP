@@ -1,5 +1,5 @@
-// Interpolated playback position. Snapshots report it about once a second, so the
-// progress bar and the lyrics overlay read a clock that keeps running between them.
+// Snapshots report the position about once a second, so the progress bar and the lyrics overlay
+// read a clock that keeps running between them.
 
 import { playingIndex } from './snapshot.js';
 
@@ -31,7 +31,6 @@ export function positionSeconds(nowMs = Date.now()) {
   return duration > 0 && shown > duration ? duration : shown;
 }
 
-// A seek moves the clock at once, so the bar does not wait a second for the next snapshot.
 export function setPosition(seconds) {
   baseSeconds = seconds;
   baseWallMs = Date.now();

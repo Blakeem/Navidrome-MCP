@@ -1,28 +1,26 @@
 /**
  * Navidrome MCP Server - Web UI SSE Route
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { ServerResponse } from 'node:http';
+import type { GuestJukebox } from '../auth/auth-service.js';
 import type { SseBroadcaster } from '../broadcaster.js';
 
-// GET /api/events. The SSE response stays open after this returns, until the client disconnects.
 export async function handleEvents(
   res: ServerResponse,
   broadcaster: SseBroadcaster,
 ): Promise<void> {
   await broadcaster.addClient(res);
+}
+
+/** The guest stream carries the reduced snapshot, with the requester's own `jukebox` field and songs. */
+export async function handleGuestEvents(
+  res: ServerResponse,
+  broadcaster: SseBroadcaster,
+  sessionId: string,
+  jukebox: () => GuestJukebox | null,
+): Promise<void> {
+  await broadcaster.addGuestClient(res, sessionId, jukebox);
 }

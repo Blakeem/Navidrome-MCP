@@ -1,11 +1,4 @@
-/**
- * Tests for the Streamable HTTP transport.
- *
- * Spins up the real `startHttpTransport` server on an ephemeral loopback port,
- * then drives it with the official MCP SDK client over Streamable HTTP so we
- * exercise the genuine session handshake, tool invocation, routing, and
- * teardown — not a mock of any of them. No mpv or Navidrome needed.
- */
+// The SDK client drives the real startHttpTransport, so no part of the session flow is mocked.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -18,12 +11,7 @@ import {
 import { request as httpRequest } from 'node:http';
 import { resolveAllowedHosts, startHttpTransport, type HttpTransport } from '../../../src/transport/http.js';
 
-/**
- * Build a tiny MCP server exposing a single `ping` tool, fresh per session.
- * Uses the low-level `Server` + manual JSON-schema handlers exactly like the
- * real app's `registerTools` does — deliberately avoiding the high-level
- * `McpServer` zod integration, which is incompatible with this project's Zod 4.
- */
+/** Uses the low-level Server like registerTools, since McpServer expects Zod 3 schemas. */
 function makeServer(): Server {
   const server = new Server({ name: 'test', version: '0.0.0' }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, () => ({
@@ -53,16 +41,11 @@ const INITIALIZE_BODY = JSON.stringify({
   params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'c', version: '0' } },
 });
 
-/** Parse `http://host:port/mcp` back into a URL for the client transport. */
 function endpoint(handle: HttpTransport): URL {
   return new URL(handle.url);
 }
 
-/**
- * POST an MCP `initialize` to `/mcp` with an explicit `Host` header — `fetch`
- * forbids overriding Host, so we go through the low-level http client to exercise
- * DNS-rebinding protection. Resolves with the response status.
- */
+/** fetch forbids overriding Host, so the DNS-rebinding cases send through node:http. */
 function postInitWithHost(
   handle: HttpTransport,
   hostHeader: string,
@@ -106,7 +89,6 @@ describe('Streamable HTTP transport', () => {
   beforeEach(async () => {
     handle = await startHttpTransport({
       host: '127.0.0.1',
-      // Port 0 → OS assigns a free ephemeral port, avoiding collisions.
       port: 0,
       createMcpServer: () => makeServer(),
     });
@@ -298,9 +280,8 @@ describe('Streamable HTTP transport — DNS-rebinding protection', () => {
   });
 
   it('skips Host filtering when a bearer token gates the endpoint', async () => {
-    // The bearer gate runs before the transport and already defeats rebinding
-    // (a lured browser cannot attach the token), so a token-gated deployment
-    // must accept whatever Host name clients reach it by.
+    // A lured browser cannot attach the bearer token, so the token already defeats rebinding
+    // and a token-gated deployment accepts any Host name.
     const handle = await startHttpTransport({
       host: '127.0.0.1',
       port: 0,
@@ -317,9 +298,8 @@ describe('Streamable HTTP transport — DNS-rebinding protection', () => {
   });
 
   it('skips Host filtering on a non-loopback bind (container/remote deployment)', async () => {
-    // A deliberately exposed bind is reached via names the server cannot know
-    // (compose service names, host.docker.internal, a VPS IP) — the old
-    // loopback auto-list 403'd every one of them.
+    // An exposed bind is reached by names the server cannot know, such as compose service names,
+    // host.docker.internal or a VPS IP.
     const handle = await startHttpTransport({
       host: '0.0.0.0',
       port: 0,

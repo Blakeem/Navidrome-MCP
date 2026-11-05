@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Local Lyrics Tag Parser
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 // A leaf module, so the song transformer reads the lyrics tag without importing the LRCLIB tool.
@@ -29,13 +17,13 @@ export const LAST_LINE_FALLBACK_MS = 5000;
 /** A lone short line in a file's lyrics tag is a tagger watermark, not lyrics. */
 const WATERMARK_MAX_LENGTH = 40;
 
-/** A timestamp with its text. Empty text marks a boundary rather than a line. */
+/** Empty text marks an end boundary rather than a line. */
 export interface TimedMarker {
   readonly timeMs: number;
   readonly text: string;
 }
 
-/** One line of a Navidrome file lyrics entry. `start` is absent on unsynced entries. */
+/** Navidrome omits `start` on the lines of an unsynced entry. */
 interface LocalLyricsLine {
   readonly start?: number;
   readonly value: string;
@@ -48,18 +36,12 @@ interface LocalLyricsEntry {
   readonly lines: readonly LocalLyricsLine[];
 }
 
-/** Normalized lyrics read from the audio file's own tag. */
 export interface LocalLyricsResult {
   readonly hasSynced: boolean;
   readonly synced?: LyricsLine[];
   readonly unsynced?: string;
 }
 
-/**
- * Turn ordered markers into lines, consuming empty-text markers as end
- * boundaries. The final line falls back to the track duration and then to a
- * fixed hold, because `endMs` is required.
- */
 export function buildTimedLines(markers: readonly TimedMarker[], durationMs?: number): LyricsLine[] {
   const ordered = [...markers].sort((a, b) => a.timeMs - b.timeMs);
   const lines: LyricsLine[] = [];
@@ -73,8 +55,7 @@ export function buildTimedLines(markers: readonly TimedMarker[], durationMs?: nu
     if (next !== undefined) {
       endMs = next.timeMs;
     } else if (durationMs !== undefined && durationMs > marker.timeMs) {
-      // A duration at or before the line start would produce an end before its
-      // own start, which no consumer can display.
+      // A duration at or before the line start would give the line no positive length to display.
       endMs = durationMs;
     } else {
       endMs = marker.timeMs + LAST_LINE_FALLBACK_MS;
@@ -96,8 +77,8 @@ function parseJsonPayload(raw: unknown): unknown {
     const parsed: unknown = JSON.parse(trimmed);
     return parsed;
   } catch {
-    // The tag is copied through from the file verbatim, so anything unparseable
-    // has to read as "no lyrics" rather than fail the whole lookup.
+    // Navidrome copies the tag from the file verbatim, so unparseable text reads as no lyrics
+    // instead of failing the entire lookup.
     return null;
   }
 }
@@ -164,16 +145,11 @@ function selectLyricsEntry(raw: unknown): LocalLyricsEntry | null {
   return best;
 }
 
-/**
- * Normalize a Navidrome song row's `lyrics` tag. Every malformed shape yields
- * null so a bad tag on one row can never fail a listing or a lookup.
- */
+/** Every malformed shape yields null, so a bad tag on one row never fails a listing or a lookup. */
 export function parseLocalLyrics(raw: unknown, durationMs?: number): LocalLyricsResult | null {
-  // INPUT
   const entry = selectLyricsEntry(raw);
   if (entry === null) return null;
 
-  // PROCESS
   const markers: TimedMarker[] = [];
   for (const line of entry.lines) {
     if (line.start !== undefined) markers.push({ timeMs: line.start, text: line.value });
@@ -182,7 +158,6 @@ export function parseLocalLyrics(raw: unknown, durationMs?: number): LocalLyrics
   const synced = entry.synced ? buildTimedLines(markers, durationMs) : [];
   const unsynced = entry.lines.map((line) => line.value).join('\n').trim();
 
-  // OUTPUT
   if (synced.length === 0 && unsynced === '') return null;
 
   return {

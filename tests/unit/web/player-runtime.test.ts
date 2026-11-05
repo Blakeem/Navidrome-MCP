@@ -1,8 +1,7 @@
 /**
  * Navidrome MCP Server - Player runtime unit tests
  * Copyright (C) 2025
- *
- * Covers the live persist flag and theme accessors.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it } from 'vitest';

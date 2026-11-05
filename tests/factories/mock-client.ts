@@ -1,9 +1,4 @@
-/**
- * Mock Client Factory for Navidrome MCP Server Tests
- * 
- * Provides mock implementations of NavidromeClient for testing write operations
- * without making actual API calls to the server.
- */
+/** Write-path tests use this mock so no test modifies data on the live Navidrome server. */
 
 import { vi, type MockedFunction } from 'vitest';
 import type { NavidromeClient } from '../../src/client/navidrome-client.js';
@@ -23,10 +18,6 @@ interface MockClientMethods {
 /** Tools take a NavidromeClient, so the mock carries that type and tests pass it without a cast. */
 export type MockNavidromeClient = MockClientMethods & NavidromeClient;
 
-/**
- * Creates a mock Navidrome client for testing write operations
- * Following UNIT-TEST-STRATEGY.md guidelines for mocked write operations
- */
 export function createMockClient(): MockNavidromeClient {
   const mock: MockClientMethods = {
     request: vi.fn(),
@@ -42,5 +33,4 @@ export function createMockClient(): MockNavidromeClient {
   return mock as MockNavidromeClient;
 }
 
-// Re-export shared client utilities for convenience
 export { getSharedLiveClient } from './shared-client.js';

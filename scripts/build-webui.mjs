@@ -1,15 +1,6 @@
 #!/usr/bin/env node
-/**
- * Copies static frontend assets into the compiled tsc output. tsc itself only
- * ever moves .ts/.js files, so without this hop the production servers would
- * not be able to find their HTML/CSS/JS after `pnpm build`.
- *
- * Covers both the player web UI (src/webui/public) and the settings app
- * (src/config-app/public).
- *
- * Idempotent. Each destination is cleared first, so a file removed from a source
- * folder, such as a visualizer mode, also leaves the build.
- */
+// tsc emits only compiled .ts output, so the static web assets need this copy into dist/.
+// Each destination is cleared first, so a file removed from its source also leaves dist/.
 import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';

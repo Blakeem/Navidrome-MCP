@@ -1,11 +1,4 @@
-/**
- * Unit Tests for Playlist Operations
- * 
- * Following UNIT-TEST-STRATEGY.md - Tier 1 Critical Tests
- * Combines live read operations with mocked write operations for comprehensive coverage.
- * 
- * HIGHEST RISK: Playlist operations modify server data - extensive mocking required for safety.
- */
+/** Reads run against the live server. Writes are mocked, since a write changes server data. */
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
@@ -13,7 +6,6 @@ import { getSharedLiveClient, createMockClient, type MockNavidromeClient } from 
 import { mockPlaylist } from '../../factories/mock-data.js';
 import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
-// Import playlist management functions
 import {
   listPlaylists,
   getPlaylist,
@@ -34,39 +26,33 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
-    // Use shared client for read operations testing (avoids rate limiting)
+    // The shared client authenticates once, since Navidrome rate-limits concurrent logins.
     liveClient = await getSharedLiveClient();
   });
 
   describeLive('Live Read Operations - API Compatibility', () => {
     describe('listPlaylists', () => {
       it('should return valid playlist structure from live server', async () => {
-        // Test with minimal parameters to avoid large responses
         const result = await listPlaylists(liveClient, { limit: 1 });
 
-        // Validate response structure (not specific content). `offset`/
-        // `limit` are no longer echoed — they are LLM input echoes.
+        // `offset` and `limit` are not echoed, since the LLM sent them.
         expect(result).toHaveProperty('playlists');
         expect(result).toHaveProperty('total');
         expect(result).not.toHaveProperty('offset');
         expect(result).not.toHaveProperty('limit');
 
-        // Ensure correct types
         expect(Array.isArray(result.playlists)).toBe(true);
         expect(typeof result.total).toBe('number');
 
-        // If playlists exist, verify structure
         if (result.playlists.length > 0) {
           const playlist = result.playlists[0];
-          
-          // Required fields from PlaylistDTO
+
           expect(playlist).toHaveProperty('id');
           expect(playlist).toHaveProperty('name');
           expect(playlist).toHaveProperty('owner');
           expect(playlist).toHaveProperty('public');
           expect(playlist).toHaveProperty('songCount');
 
-          // Verify field types
           expect(typeof playlist.id).toBe('string');
           expect(typeof playlist.name).toBe('string');
           expect(typeof playlist.owner).toBe('string');
@@ -83,27 +69,21 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           order: 'ASC'
         });
 
-        // offset/limit are no longer echoed — assert just on the items count
-        // and the server-derived total.
         expect(result.playlists.length).toBeLessThanOrEqual(5);
 
-        // Pagination correctness: `total` is the server's full match count
-        // (from X-Total-Count), never the page size. So total must be at
-        // least as large as the items we got back.
+        // `total` is the server X-Total-Count, not the page size.
         expect(result.total).toBeGreaterThanOrEqual(result.playlists.length);
       });
     });
 
     describe('getPlaylist', () => {
       it('should return detailed playlist info when playlist exists', async () => {
-        // First get a playlist ID from list
         const listResult = await listPlaylists(liveClient, { limit: 1 });
-        
+
         if (listResult.playlists.length > 0) {
           const playlistId = listResult.playlists[0].id;
           const result = await getPlaylist(liveClient, { playlistId });
 
-          // Validate detailed playlist structure
           expect(result).toHaveProperty('id');
           expect(result).toHaveProperty('name');
           expect(result).toHaveProperty('owner');
@@ -118,12 +98,10 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
 
     describe('getPlaylistTracks', () => {
       it('should return a compact track structure by default', async () => {
-        // Get a playlist with tracks
         const listResult = await listPlaylists(liveClient, { limit: 10 });
         const playlistWithTracks = listResult.playlists.find(p => p.songCount > 0);
 
         if (playlistWithTracks) {
-          // Default call — compact mode.
           const result = await getPlaylistTracks(liveClient, {
             playlistId: playlistWithTracks.id,
             limit: 1
@@ -137,7 +115,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           if (result.tracks.length > 0) {
             const track = result.tracks[0];
 
-            // Compact identity fields are always present.
             expect(track).toHaveProperty('position');
             expect(track).toHaveProperty('songId');
             expect(track).toHaveProperty('title');
@@ -145,7 +122,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
             expect(track).toHaveProperty('album');
             expect(track).toHaveProperty('durationFormatted');
 
-            // Verbose-only fields are omitted in compact mode to save context.
+            // Compact mode omits the verbose-only fields to save LLM context.
             expect(track).not.toHaveProperty('playlistId');
             expect(track).not.toHaveProperty('path');
             expect(track).not.toHaveProperty('duration');
@@ -171,7 +148,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           if (result.tracks.length > 0) {
             const track = result.tracks[0];
 
-            // Identity fields plus the verbose-only fields are present.
             expect(track).toHaveProperty('position');
             expect(track).toHaveProperty('songId');
             expect(track).toHaveProperty('title');
@@ -216,7 +192,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           public: false 
         });
 
-        // Verify correct API call was made
         expect(mockClient.request).toHaveBeenCalledWith(
           '/playlist',
           expect.objectContaining({
@@ -341,7 +316,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
     });
 
     describe('addTracksToPlaylist', () => {
-      /** Answers the song-ID check with a row per known ID, and the add POST with `addResponse`. */
+      /** addTracksToPlaylist checks song IDs through /song first, so the mock answers both. */
       function answerAdd(addResponse: unknown, unknownIds: readonly string[] = []): void {
         mockClient.request.mockImplementation((endpoint: string) => {
           if (!endpoint.startsWith('/song?')) return Promise.resolve(addResponse);
@@ -386,8 +361,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
         });
 
         expect(result.added).toBe(2);
-        // Acknowledged HTTP call → success true regardless of count; count > 0
-        // gets the "Added N tracks" message.
         expect(result.success).toBe(true);
         expect(result.message).toBe('Added 2 tracks to playlist');
       });
@@ -407,8 +380,7 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should default a missing `added` field to 0 (nothing-matched message)', async () => {
-        // The response type says `{ added: number }` but Navidrome may omit
-        // it; the guard must not produce NaN or undefined.
+        // Navidrome may omit `added`, so the response type marks it optional.
         answerAdd({});
 
         const result = await addTracksToPlaylist(mockClient, {
@@ -556,7 +528,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           artistIds: ['artist-1']
         });
 
-        // One song-ID check, then a single POST to /tracks with no before/after pagination.
         expect(mockClient.request).toHaveBeenCalledTimes(2);
         expect(mockClient.request).toHaveBeenCalledWith(
           '/playlist/playlist-123/tracks',
@@ -574,7 +545,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           artistIds: ['artist-1'],
         });
 
-        // Verify return structure matches enhanced capability
         expect(result).toHaveProperty('added');
         expect(result).toHaveProperty('message');
         expect(result).toHaveProperty('success');
@@ -658,7 +628,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
           }),
         ).rejects.toThrow(/500 tracks per call/);
 
-        // Rejected at the schema before any DELETE is issued.
         expect(mockClient.request).not.toHaveBeenCalled();
       });
 
@@ -687,8 +656,6 @@ describe('Playlist Operations - Tier 1 Critical Tests', () => {
       });
 
       it('should throw (not report an empty export) when the server returns JSON for an M3U request', async () => {
-        // Accept-header negotiation failed: the server ignored audio/x-mpegurl and
-        // sent the JSON track array, which the client parses to a non-string body.
         mockClient.requestWithMeta.mockResolvedValue({ data: [{ id: '1' }], total: 1 });
 
         await expect(

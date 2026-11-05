@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Library Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -37,8 +25,8 @@ interface LibraryTotals {
 }
 
 /**
- * Get user details including library information with active status.
- * The library list reloads on every call, so a long-lived server reports current scans and new libraries.
+ * The library list reloads on every call, so a long-lived server reports current scans and new
+ * libraries.
  */
 export async function getUserDetails(client: NavidromeClient): Promise<UserDetailsDTO> {
   try {
@@ -118,28 +106,34 @@ export async function getUserDetails(client: NavidromeClient): Promise<UserDetai
 
 /**
  * X-Total-Count counts an artist shared by two libraries once and is readable by non-admins,
- * unlike the per-library stats, which serve only as the fallback for a missing header.
+ * unlike the per-library stats. A count is null when Navidrome omits the header.
  */
-async function fetchActiveLibraryTotals(
+export async function fetchActiveLibraryCounts(
   client: NavidromeClient,
-  activeLibraries: readonly LibraryTotals[],
-): Promise<LibraryTotals> {
+): Promise<{ [K in keyof LibraryTotals]: number | null }> {
   const [songs, albums, artists] = await Promise.all([
     client.requestWithLibraryFilterAndMeta<unknown>('/song?_start=0&_end=1'),
     client.requestWithLibraryFilterAndMeta<unknown>('/album?_start=0&_end=1'),
     client.requestWithLibraryFilterAndMeta<unknown>('/artist?_start=0&_end=1'),
   ]);
 
+  return { totalSongs: songs.total, totalAlbums: albums.total, totalArtists: artists.total };
+}
+
+/** The per-library stats serve only as the fallback for a missing X-Total-Count header. */
+async function fetchActiveLibraryTotals(
+  client: NavidromeClient,
+  activeLibraries: readonly LibraryTotals[],
+): Promise<LibraryTotals> {
+  const counts = await fetchActiveLibraryCounts(client);
+
   return {
-    totalSongs: songs.total ?? activeLibraries.reduce((sum, lib) => sum + lib.totalSongs, 0),
-    totalAlbums: albums.total ?? activeLibraries.reduce((sum, lib) => sum + lib.totalAlbums, 0),
-    totalArtists: artists.total ?? activeLibraries.reduce((sum, lib) => sum + lib.totalArtists, 0),
+    totalSongs: counts.totalSongs ?? activeLibraries.reduce((sum, lib) => sum + lib.totalSongs, 0),
+    totalAlbums: counts.totalAlbums ?? activeLibraries.reduce((sum, lib) => sum + lib.totalAlbums, 0),
+    totalArtists: counts.totalArtists ?? activeLibraries.reduce((sum, lib) => sum + lib.totalArtists, 0),
   };
 }
 
-/**
- * Set active libraries for the user session
- */
 export async function setActiveLibraries(client: NavidromeClient, args: unknown): Promise<LibraryManagementResponse> {
   try {
     if (!libraryManager.isInitialized()) {
@@ -175,7 +169,8 @@ export async function setActiveLibraries(client: NavidromeClient, args: unknown)
 
     return result;
   } catch (error) {
-    // A success:false payload in an MCP 200 body reads as a successful call to the LLM, so the failure is thrown.
+    // A success:false payload in an MCP 200 body reads as a successful call to the LLM, so the
+    // failure is thrown.
     throw new Error(ErrorFormatter.toolExecution('set_active_libraries', error));
   }
 }

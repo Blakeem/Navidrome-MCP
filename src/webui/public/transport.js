@@ -1,5 +1,3 @@
-// The main transport: play/pause, previous, next and the seek slider with its time labels.
-
 import { controlAvailability, nextTrack, previousTrack, renderPlayButtons, seekTo, togglePlayPause } from './controls.js';
 import { byId, setProgressVar } from './dom.js';
 import { durationSeconds, positionSeconds } from './playback-clock.js';
@@ -29,7 +27,7 @@ export function bindTransport() {
   btnPrev.addEventListener('click', previousTrack);
   btnNext.addEventListener('click', nextTrack);
 
-  // Seek on release only, since `input` fires on every drag step and would flood mpv with seeks.
+  // Seek on release only, since `input` fires on every drag step and each would reach mpv.
   seek.addEventListener('pointerdown', () => { seekDragging = true; });
   // A cancelled drag or a release outside the slider may never fire `change`.
   seek.addEventListener('pointercancel', () => { seekDragging = false; });

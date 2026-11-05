@@ -1,33 +1,12 @@
 /**
  * Navidrome MCP Server - now_playing per-position cache keying tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * Regression for the duration-repair / not-radio caches in `now_playing`.
- *
- *  - src-tools-playback-ts-1: the VBR duration-repair cache was keyed only by
- *    queue index (`idx:0`). A `mode:'replace'` reload always lands the new track
- *    at index 0, so the incoming track collided with the previous track's cached
- *    repair state and its VBR duration was never reconciled. Folding the engine's
- *    queue-generation counter into the key fixes the collision.
- *  - src-tools-playback-ts-2: `needsRadioFallback` was unconditionally true for
- *    all non-radio playback, forcing a getQueue() IPC on every poll even once
- *    duration + metadata were fully resolved. Confirming "not radio" once per
- *    (generation, position) lets the poll skip the IPC.
+ * The now_playing repair cache keys on queue generation, index, loaded path and station tag, so a
+ * file loaded at a reused index never inherits the previous file's facts.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -41,7 +20,7 @@ const getQueueGenerationMock = vi.hoisted(() => vi.fn());
 const getQueueMock = vi.hoisted(() => vi.fn());
 const ingestQueueMetadataMock = vi.hoisted(() => vi.fn());
 const getRadioStationTagMock = vi.hoisted(() => vi.fn().mockReturnValue(null));
-// Mirrors the engine's parse: only a Subsonic stream URL names a song.
+// Mirrors the engine's parse, where only a Subsonic stream URL names a song.
 const songIdForPathMock = vi.hoisted(() =>
   vi.fn((path: string): string | null => {
     try {
@@ -66,7 +45,6 @@ vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   },
 }));
 
-/** Cached-property map for a clean, non-radio track under VBR duration report. */
 function cachedProps(props: Record<string, unknown>): (name: string) => unknown {
   return (name: string) => props[name];
 }
@@ -79,9 +57,7 @@ describe('now_playing per-position cache keying', () => {
   });
 
   it('re-repairs duration after a replace reload lands a new track at index 0, and skips getQueue once resolved', async () => {
-    // ---- Poll 1: generation 10, index 0. mpv under-reports VBR duration (100),
-    // Navidrome's authoritative value is 300. Title/artist are already present
-    // so the only reason to call getQueue is the duration repair.
+    // Poll 1: mpv under-reports the VBR duration as 100 against Navidrome's 300.
     getQueueGenerationMock.mockReturnValue(10);
     getCachedPropertyMock.mockImplementation(
       cachedProps({
@@ -103,18 +79,14 @@ describe('now_playing per-position cache keying', () => {
     expect(poll1.duration).toBe(300);
     expect(getQueueMock).toHaveBeenCalledTimes(1);
 
-    // ---- Poll 2: same generation + index. Duration already repaired and the
-    // position is confirmed not-radio, so getQueue must NOT fire again
-    // (pins src-tools-playback-ts-2 — needsRadioFallback no longer forces it).
+    // Poll 2: the cache holds the duration and the not-radio fact, so getQueue must not fire.
     const poll2 = await nowPlaying({});
     expect(getQueueMock).toHaveBeenCalledTimes(1);
     expect(poll2.isRadio).toBeUndefined();
     expect(poll2.duration).toBe(300);
 
-    // ---- Poll 3: a mode:'replace' reload bumps the generation to 11. Track B
-    // now occupies index 0 and mpv again under-reports its VBR duration (100).
-    // Because the key folds the generation, B does NOT inherit A's cached repair
-    // state, so getQueue fires and B's duration is reconciled to 280.
+    // Poll 3: a replace reload bumps the generation and puts track B at index 0, so track B must
+    // not inherit track A's cached duration.
     getQueueGenerationMock.mockReturnValue(11);
     getCachedPropertyMock.mockImplementation(
       cachedProps({

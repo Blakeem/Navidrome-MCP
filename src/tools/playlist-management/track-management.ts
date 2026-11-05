@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Playlist Track Management Operations
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../../client/navidrome-client.js';
@@ -35,12 +23,13 @@ import { assertKnownSongIds } from '../queue-sources.js';
 
 type DiscEntry = NonNullable<AddTracksToPlaylistRequest['discs']>[number];
 
-// One song read per album. An album with more songs than this resolves only the discs among its first rows.
+// One song read per album. An album with more songs than this resolves only the discs among its
+// first rows.
 const DISC_LOOKUP_SONG_CAP = 1000;
 
 /**
- * Navidrome matches a disc on album, release date and disc number, so each requested disc expands to one
- * entry per release date its songs carry. A disc with no songs is omitted.
+ * Navidrome matches a disc on album, release date and disc number, so each requested disc expands
+ * to one entry per release date its songs carry.
  */
 async function resolveDiscReleaseDates(
   client: NavidromeClient,
@@ -125,7 +114,8 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
     const params = RemoveTracksFromPlaylistSchema.parse(args);
     logger.debug('Tool removeTracksFromPlaylist called with args:', params);
 
-    // Navidrome answers a stale or repeated position with HTTP 200 and echoes it, so range and duplicates are checked here.
+    // Navidrome answers a stale or repeated position with HTTP 200 and echoes it, so range and
+    // duplicates are checked here.
     const positions = [...new Set(params.positions)];
     const tracksPath = `/playlist/${encodeURIComponent(params.playlistId)}/tracks`;
 
@@ -152,8 +142,8 @@ export async function removeTracksFromPlaylist(client: NavidromeClient, args: un
 }
 
 /**
- * Reorder a track in the playlist. `insertBefore` names the slot the track lands before, while Navidrome
- * moves the row to a final position and does not bounds-check it, so this converts and validates first.
+ * `insertBefore` names the slot the track lands before. Navidrome moves the row to a final
+ * position and does not bounds-check it, so this converts and validates first.
  */
 export async function reorderPlaylistTrack(client: NavidromeClient, args: unknown): Promise<ReorderPlaylistTrackResponse> {
   try {

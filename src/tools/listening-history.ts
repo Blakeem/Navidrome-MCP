@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Listening History Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -49,7 +37,7 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
     logger.debug('Tool listRecentlyPlayed called with args:', { limit, offset, timeRange, verbose });
     logger.info(`Getting recently played songs (${timeRange})`);
 
-    // `today` starts at local midnight so morning sessions count. week and month are 7 and 30 days back.
+    // `today` is the local calendar day, while week and month are rolling windows.
     const now = new Date();
     let cutoff: Date | null = null;
     if (timeRange === 'today') {
@@ -66,7 +54,7 @@ export async function listRecentlyPlayed(client: NavidromeClient, args: unknown)
       `/song?_sort=playDate&_order=DESC&_start=${offset}&_end=${offset + limit}`
     );
 
-    // Compact by default. playDate is force-kept because it is the filter and sort key.
+    // Compact mode keeps playDate because it is the filter and sort key.
     const tracks = transformSongsToDTO(response, { verbose, keep: ['playDate'] })
       .filter((song) => {
         // Never-played songs have no playDate and sort to the end.
@@ -101,7 +89,7 @@ export async function listMostPlayed(client: NavidromeClient, args: unknown): Pr
       `${endpoint}?_sort=playCount&_order=DESC&_start=${offset}&_end=${offset + limit}`
     );
 
-    // Compact by default. playCount is force-kept because it is the filter and sort key.
+    // Compact mode keeps playCount because it is the filter and sort key.
     const transformOptions = { verbose, keep: ['playCount'] as const };
     let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
     if (type === 'songs') {

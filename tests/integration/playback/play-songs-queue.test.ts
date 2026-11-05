@@ -1,14 +1,7 @@
 /**
  * Navidrome MCP Server - play_songs + queue manipulation integration tests
  * Copyright (C) 2025
- *
- * Live integration tests covering play_songs in conjunction with the
- * queue-management family (get_play_queue, clear_play_queue, shuffle,
- * move, remove). Each test starts with a known 5-track replace-loaded
- * queue so assertions are deterministic.
- *
- * IMPORTANT: these tests touch the local mpv process. They are skipped
- * when mpv isn't installed or Navidrome isn't reachable.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { beforeAll, beforeEach, expect } from 'vitest';
@@ -31,18 +24,10 @@ import {
 } from './helpers.js';
 
 describePlayback('play_songs + queue manipulation (live)', () => {
-  // Fixed pool of song IDs for the entire file run. Pulled once in
-  // beforeAll because re-fetching per-test would burn Navidrome calls
-  // unnecessarily (Subagent A spec: keep tests fast and read-light).
+  // Fetched once per file, since each fixture read is a live Navidrome call.
   let songIdsA: string[] = [];
   let songIdsB: string[] = [];
 
-  /**
-   * Replace the queue with songIdsA in shuffled mode and return the
-   * resulting queue snapshot. Closes over the suite-scoped `songIdsA` so
-   * the shuffle-retry pattern (allowed by SPEC for rare same-order
-   * coincidences on N=5) stays readable.
-   */
   async function runShuffledReplace(): Promise<Awaited<ReturnType<typeof getPlayQueue>>> {
     await playSongs({ songIds: songIdsA, mode: 'replace', shuffle: true });
     await waitFor(async () => {
@@ -54,48 +39,36 @@ describePlayback('play_songs + queue manipulation (live)', () => {
 
   beforeAll(async () => {
     await setupClientAndConfig();
-    // 5 + 3 distinct song IDs. We don't strictly need them disjoint, but
-    // pulling 8 random IDs means the append-vs-replace assertions are
-    // unambiguous (we can match by exact ID).
+    // One 8-song read keeps the replace and append batches disjoint, so assertions can match by ID.
     const all = await getTestSongIds(8);
     songIdsA = all.slice(0, 5);
     songIdsB = all.slice(5, 8);
   });
 
   beforeEach(async () => {
-    // Reset to a known 5-track queue before each test so cases don't bleed.
     await clearPlayQueue();
     await playSongs({ songIds: songIdsA, mode: 'replace' });
-    // Wait for mpv's playlist-count to actually update before tests start
-    // probing — without this, the first assertion can race the load.
+    // now_playing reads mpv's observed playlist-count, which lags the load.
     await waitFor(async () => {
       const np = await nowPlaying();
       return np.queueLength === 5 && np.queueIndex === 0;
     });
   });
 
-  // -------------------------------------------------------------------------
-  // play_songs basics
-  // -------------------------------------------------------------------------
-
   itPlayback('replace mode loads N tracks at idx 0 with currentIndex 0', async () => {
-    // beforeEach already did the replace; just assert the post-state.
     const queue = await getPlayQueue();
     expect(queue.length).toBe(5);
     expect(queue.currentIndex).toBe(0);
     expect(queue.items).toHaveLength(5);
 
-    // Each entry's index should match its position
     for (let i = 0; i < queue.items.length; i++) {
       expect(queue.items[i]?.index).toBe(i);
     }
 
-    // Exactly one item is current
     const currentItems = queue.items.filter((e) => e.isCurrent);
     expect(currentItems).toHaveLength(1);
     expect(currentItems[0]?.index).toBe(0);
 
-    // songId must be parsed out of the stream URL for every item we loaded
     const queueSongIds = queue.items.map((e) => e.songId);
     expect(queueSongIds).toEqual(songIdsA);
   });
@@ -116,26 +89,21 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(queue.length).toBe(5 + songIdsB.length);
     expect(queue.currentIndex).toBe(0);
 
-    // First 5 entries should still match songIdsA
     expect(queue.items.slice(0, 5).map((e) => e.songId)).toEqual(songIdsA);
-    // Last entries should match songIdsB in input order (append, no shuffle)
     expect(queue.items.slice(5).map((e) => e.songId)).toEqual(songIdsB);
   });
 
   itPlayback('replace + shuffle:true permutes input but preserves the multiset', async () => {
-    // Use a fresh batch so replace is meaningful here.
     const queue1 = await runShuffledReplace();
     const matchedExactOrder = queue1.items.map((e) => e.songId).join(',') === songIdsA.join(',');
 
     if (!matchedExactOrder) {
-      // Already proves the shuffle changed the order at least once.
       const ids = queue1.items.map((e) => e.songId).filter((id): id is string => id !== null);
       expect(new Set(ids)).toEqual(new Set(songIdsA));
       return;
     }
 
-    // Fisher-Yates can land on input order with probability 1/120 for N=5.
-    // Allow exactly one retry before failing.
+    // Fisher-Yates returns the input order with probability 1/120 at N=5, so one retry is allowed.
     const queue2 = await runShuffledReplace();
     const ids = queue2.items.map((e) => e.songId).filter((id): id is string => id !== null);
     expect(new Set(ids)).toEqual(new Set(songIdsA));
@@ -143,8 +111,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
   });
 
   itPlayback('append + shuffle:true only shuffles the appended batch', async () => {
-    // Append a 5-item shuffled batch; the original 5 should be intact at
-    // positions 0..4.
     const appendIds = await getTestSongIds(5);
 
     await playSongs({ songIds: appendIds, mode: 'append', shuffle: true });
@@ -157,20 +123,14 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(queue.length).toBe(10);
     expect(queue.currentIndex).toBe(0);
 
-    // First 5 untouched
     expect(queue.items.slice(0, 5).map((e) => e.songId)).toEqual(songIdsA);
 
-    // Last 5 are a permutation of appendIds (multiset equality)
     const tailIds = queue.items
       .slice(5)
       .map((e) => e.songId)
       .filter((id): id is string => id !== null);
     expect(new Set(tailIds)).toEqual(new Set(appendIds));
   });
-
-  // -------------------------------------------------------------------------
-  // get_play_queue structural assertions
-  // -------------------------------------------------------------------------
 
   itPlayback('get_play_queue length matches now_playing.queueLength', async () => {
     const queue = await getPlayQueue();
@@ -182,9 +142,7 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     const queue = await getPlayQueue();
     expect(queue.length).toBe(5);
 
-    // songId parsed out of the stream URL `id` query parameter. `filename`
-    // is intentionally NOT exposed on the LLM-facing shape — see the
-    // PlayQueueItem doc-comment for the security rationale.
+    // stripInternalFields keeps the stream URL, which discloses the LAN host, off every queue item.
     for (const item of queue.items) {
       expect(item.songId).toMatch(/^[A-Za-z0-9-]+$/);
       expect(item).not.toHaveProperty('filename');
@@ -195,13 +153,7 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(queue.currentIndex).toBe(currents[0]?.index);
   });
 
-  // -------------------------------------------------------------------------
-  // shuffle_play_queue
-  // -------------------------------------------------------------------------
-
   itPlayback('shuffle_play_queue keeps the current track playing and lifts it to index 0', async () => {
-    // Issue #5: shuffle must NOT restart playback on a random track. The current
-    // track keeps playing and is lifted to the top; the rest is shuffled.
     const before = await getPlayQueue();
     const beforeIds = before.items.map((e) => e.songId);
     const wasPlayingSongId = before.items.find((e) => e.isCurrent)?.songId;
@@ -209,7 +161,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
 
     await shufflePlayQueue();
 
-    // Wait for queueIndex to settle to 0 (active-queue contract)
     await waitFor(async () => {
       const np = await nowPlaying();
       return np.queueIndex === 0;
@@ -219,11 +170,9 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(after.length).toBe(before.length);
     expect(after.currentIndex).toBe(0);
 
-    // Membership (multiset) preserved...
     const afterIds = after.items.map((e) => e.songId);
     expect(new Set(afterIds)).toEqual(new Set(beforeIds));
 
-    // ...and the SAME track is still playing — not a random restart.
     const current = after.items.find((e) => e.isCurrent);
     expect(current?.songId).toBe(wasPlayingSongId);
     expect(after.items[0]?.songId).toBe(wasPlayingSongId);
@@ -238,7 +187,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
 
     await shufflePlayQueue();
 
-    // Per active-queue contract: head reset to 0, but pause survives.
     await waitFor(async () => {
       const np = await nowPlaying();
       return np.queueIndex === 0 && np.paused === true;
@@ -248,10 +196,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(np.paused).toBe(true);
     expect(np.queueIndex).toBe(0);
   });
-
-  // -------------------------------------------------------------------------
-  // move_in_play_queue
-  // -------------------------------------------------------------------------
 
   itPlayback('move_in_play_queue with from===to is a noop', async () => {
     const before = await getPlayQueue();
@@ -266,8 +210,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
   });
 
   itPlayback('move_in_play_queue with to:0 lifts source to top but keeps the current track playing', async () => {
-    // Issue #4: reordering the queue must NEVER change what is playing. Here we
-    // move a NON-current entry (index 3) to the top while index 0 is playing.
     const before = await getPlayQueue();
     const wasPlayingSongId = before.items.find((e) => e.isCurrent)?.songId;
     const movedSongId = before.items[3]?.songId;
@@ -277,13 +219,10 @@ describePlayback('play_songs + queue manipulation (live)', () => {
 
     await moveInPlayQueue({ from: 3, to: 0 });
 
-    // playlist-move is synchronous in mpv; get_play_queue reads live via IPC.
+    // mpv applies playlist-move before replying, and get_play_queue reads live, so nothing waits.
     const after = await getPlayQueue();
     expect(after.length).toBe(5);
-    // The moved track now sits at the top of the queue...
     expect(after.items[0]?.songId).toBe(movedSongId);
-    // ...but playback was NOT hijacked onto it. The play head followed the
-    // original current track to its new index (it slid from 0 to 1).
     const current = after.items.find((e) => e.isCurrent);
     expect(current?.songId).toBe(wasPlayingSongId);
     expect(current?.songId).not.toBe(movedSongId);
@@ -291,8 +230,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
   });
 
   itPlayback('move_in_play_queue with from:0 moves the current track and the play head follows it', async () => {
-    // Issue #4: moving the CURRENTLY-PLAYING entry (index 0) must keep that same
-    // track playing at its new index — not restart on whatever bubbles to 0.
     const before = await getPlayQueue();
     const wasPlayingSongId = before.items[0]?.songId;
     const wasIdx1SongId = before.items[1]?.songId;
@@ -304,19 +241,16 @@ describePlayback('play_songs + queue manipulation (live)', () => {
 
     const after = await getPlayQueue();
     expect(after.length).toBe(5);
-    // `to` is the final index, so from:0 to:4 in a 5-track queue lands the moved (current) track last.
+    // `to` is the final index, which the tool maps to mpv's insert-before target on a forward move.
     const current = after.items.find((e) => e.isCurrent);
-    // Same track still playing. The play head was never hijacked.
     expect(current?.songId).toBe(wasPlayingSongId);
     expect(after.currentIndex).toBe(4);
     expect(after.items[4]?.songId).toBe(wasPlayingSongId);
-    // The formerly-idx-1 track bubbled up to the top but is NOT playing.
     expect(after.items[0]?.songId).toBe(wasIdx1SongId);
     expect(after.items[0]?.isCurrent).toBe(false);
   });
 
   itPlayback('move_in_play_queue out of range throws via ErrorFormatter', async () => {
-    // mpv rejects out-of-range indices; we surface that as a thrown error.
     await expect(moveInPlayQueue({ from: 99, to: 0 })).rejects.toThrow();
   });
 
@@ -332,22 +266,12 @@ describePlayback('play_songs + queue manipulation (live)', () => {
 
     await moveInPlayQueue({ from: 2, to: 4 });
 
-    // No active-queue reset because neither index is 0 — no need to wait
-    // for queueIndex change. But mpv still needs a beat to update the
-    // playlist property; `getPlayQueue` reads via IPC so it observes the
-    // post-move state.
     const after = await getPlayQueue();
     expect(after.length).toBe(5);
-    // `to` is the final index, so from:2 to:4 lands the moved entry at index 4.
     const movedIndex = after.items.findIndex((e) => e.songId === movingId);
     expect(movedIndex).toBe(4);
-    // currentIndex unchanged (lazy is correct when neither index is 0)
     expect(after.currentIndex).toBe(0);
   });
-
-  // -------------------------------------------------------------------------
-  // remove_from_play_queue
-  // -------------------------------------------------------------------------
 
   itPlayback('remove_from_play_queue current track auto-advances mpv', async () => {
     const before = await getPlayQueue();
@@ -366,7 +290,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     const after = await getPlayQueue();
     expect(after.length).toBe(4);
 
-    // The previously-second track has bubbled up to index 0 and is current
     expect(after.items[0]?.songId).toBe(nextSongId);
     const current = after.items.find((e) => e.isCurrent);
     expect(current?.songId).toBe(nextSongId);
@@ -391,7 +314,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
   });
 
   itPlayback('remove_from_play_queue last item leaves queue empty/idle', async () => {
-    // Reduce to a single-item queue first
     await clearPlayQueue();
     await playSongs({ songIds: [songIdsA[0] as string], mode: 'replace' });
     await waitFor(async () => {
@@ -411,16 +333,12 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(queue.items).toHaveLength(0);
   });
 
-  // -------------------------------------------------------------------------
-  // clear_play_queue
-  // -------------------------------------------------------------------------
-
   itPlayback('clear_play_queue empties the queue and halts playback', async () => {
     await clearPlayQueue();
 
     await waitFor(async () => {
       const np = await nowPlaying();
-      // mpv `stop` zeroes the count and resets queueIndex to -1
+      // mpv `stop` empties the playlist and sets playlist-pos to -1.
       return np.queueLength === 0 && np.queueIndex === -1;
     });
 
@@ -429,7 +347,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(queue.currentIndex).toBeUndefined();
 
     const np = await nowPlaying();
-    // After `stop`, mpv is no longer playing audio; pause is also reset to false
     expect(np.queueLength).toBe(0);
     expect(np.queueIndex).toBe(-1);
   });
@@ -441,7 +358,6 @@ describePlayback('play_songs + queue manipulation (live)', () => {
       return np.queueLength === 0;
     });
 
-    // Second clear should succeed without throwing
     const result = await clearPlayQueue();
     expect(result).toEqual({ success: true });
 
@@ -449,12 +365,7 @@ describePlayback('play_songs + queue manipulation (live)', () => {
     expect(np.queueLength).toBe(0);
   });
 
-  // -------------------------------------------------------------------------
-  // Cross-tool integration test (per SPEC)
-  // -------------------------------------------------------------------------
-
   itPlayback('cross-tool flow: play 5 → next → pause → resume → clear', async () => {
-    // beforeEach sets up the 5-song queue at idx 0.
     let np = await nowPlaying();
     expect(np.queueIndex).toBe(0);
     expect(np.queueLength).toBe(5);

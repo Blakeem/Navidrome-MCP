@@ -2,6 +2,9 @@
 
 ## Core Testing Principles - CRITICAL
 
+These rules hold outside `tests/e2e/`. The e2e suite follows its own content rule and scrobble
+rule under End-to-End Tests.
+
 ### ✅ **ALWAYS DO**
 - **Live reads**: Test API compatibility against real server, validate structure not content
 - **Mock writes**: NEVER modify server data - mock all create/update/delete operations
@@ -54,13 +57,31 @@ Always mock external services:
 ### Directory Structure
 ```
 tests/
-├── unit/                        # Unit tests, one subdirectory per src/ area
+├── unit/                        # Unit tests, one subdirectory per src/ area, plus e2e-harness/ for the e2e harness logic
 ├── integration/playback/        # Live-mpv playback integration tests (run via `pnpm test:playback`)
 ├── integration/coordination/    # Multi-process tests against dist/ (run via `pnpm test:playback`)
+├── e2e/                         # Playwright web remote suite (run via `pnpm test:e2e`)
+│   ├── playwright.config.ts
+│   ├── fixtures.ts              # `test` and `expect` with the e2e fixtures
+│   ├── content.ts               # Songs of the two albums test code may name
+│   ├── harness/                 # Temp store, instance spawn, mpv probe, scrobble guard, globalSetup
+│   ├── pages/                   # Page objects HostPage and GuestPage, and the prompt and position helpers they share
+│   └── specs/                   # *.e2e.ts
 ├── helpers/                     # Test setup and config helpers (setup-config-store, test-config, env-detection)
 ├── factories/                   # Mock client & data factories
+├── fixtures/                    # Static test inputs (TLS key and certificate pairs)
 └── CLAUDE.md                    # This file
 ```
+
+### Test Layers
+
+| Layer | Folder | Config | Command | May touch | When to run |
+|---|---|---|---|---|---|
+| Mocked unit | `tests/unit/` | `vitest.config.ts` | `pnpm test:run` | Loopback sockets, temp files and short-lived child Node processes only. Every Navidrome write and external API is mocked. | After every change |
+| Live reads | `describeLive` and `skipIf(shouldSkipLiveTests())` blocks in the files `vitest.live.config.ts` lists | `vitest.live.config.ts` | `pnpm test:live` | Navidrome reads, one shared login | Before a release |
+| Playback integration | `tests/integration/playback/` | `vitest.playback.config.ts` | `pnpm test:playback` (user only) | The user's live mpv queue, which it clears, and Navidrome reads | After a playback change |
+| Coordination | `tests/integration/coordination/` | `vitest.playback.config.ts` | `pnpm test:playback` (user only) | Child `dist/web/main.js` processes on random ports, and mpv on the default pipe, which teardown quits | After a change to player startup, ports or leases |
+| End-to-end | `tests/e2e/` | `tests/e2e/playwright.config.ts` | `pnpm test:e2e` | One isolated `navidrome-web` instance with its own store, port and mpv, Navidrome reads, now-playing notices, and the machine's audio output at the test volume (`TEST_VOLUME` in `fixtures.ts`) | After a web remote or jukebox change |
 
 ### Playback Integration Tests (separate suite)
 
@@ -85,6 +106,111 @@ seeded store. An unreachable Navidrome fails the suite. It does not skip.
 Use `describePlayback` / `itPlayback` from `tests/integration/playback/helpers.ts` instead of
 raw `describe`/`it`. Use `waitFor` for async mpv state polling instead
 of fixed `setTimeout`.
+
+### End-to-End Tests (separate suite)
+
+The Playwright suite in `tests/e2e/` drives the web remote in jukebox mode through a host
+browser context and guest browser contexts. `vitest.config.ts` excludes it, and CI does not
+run it. Run it on demand:
+
+```bash
+pnpm test:e2e   # pnpm build, then playwright test -c tests/e2e/playwright.config.ts
+```
+
+Prerequisites:
+- Navidrome `url`, `username` and `password` in your `settings.json` store (`NAVIDROME_CONFIG_PATH` honored)
+- mpv on PATH or at `playback.mpvPath`, and a working audio output device
+- The Chromium browser, installed once with `pnpm exec playwright install chromium`
+- The albums The Slip and Ghosts I–IV by Nine Inch Nails in the library
+- On Linux, `XDG_RUNTIME_DIR` set to your runtime folder, where PipeWire and PulseAudio keep their sockets
+
+`harness/global-setup.ts` fails before any test with a message that names the missing
+prerequisite when the store has no usable Navidrome login, mpv is not found, `XDG_RUNTIME_DIR`
+is unset on Linux, `dist/web/main.js` is missing or the instance does not answer `/healthz`. A missing album fails each test that
+needs it with the album named. An audio output that does not open fails each test that waits
+for playback, naming the `null` output. A missing Chromium fails when Playwright launches
+the browser. Failure traces and screenshots land in `tests/e2e/test-results/`, and the HTML
+report in `tests/e2e/playwright-report/`. Both folders are gitignored.
+
+**Isolation.** `globalSetup` starts one `dist/web/main.js` for the entire run, on a free port,
+with a temp store and a private mpv pipe. The temp store copies only the Navidrome login and
+`playback.mpvPath` from your store, so no test reaches Last.fm or LRCLIB. It sets
+`webui.expose: true`, since a jukebox code needs a LAN-reachable bind, so the instance is
+reachable on the LAN while the suite runs. The child gets its own `USERNAME` (Windows) or
+`XDG_RUNTIME_DIR` (POSIX), which `getDefaultIpcPath()` turns into a private pipe, so it spawns
+its own mpv. When your `XDG_RUNTIME_DIR` is set, the child also gets `PIPEWIRE_RUNTIME_DIR` and
+`PULSE_RUNTIME_PATH` on that folder, so its mpv still finds the audio server. The suite never
+connects to the user's mpv, and setup fails when the private pipe equals the default one. Teardown runs after failed tests too. It shuts the instance down
+through `/api/shutdown`, kills a child that is still alive, quits mpv on the private pipe only
+and removes the temp folder.
+
+**Scrobble rule.** The instance submits a scrobble once a track passes
+`min(duration / 2, 240)` seconds, and Navidrome play counts must not change. The auto
+`scrobbleGuard` fixture pauses mpv and fails the test when a track reaches 80 percent of that
+point, and pauses mpv at each test end. A track shorter than 80 percent of the 30 seconds
+the instance counts never trips it. The margin covers an instance that keeps Navidrome's
+duration while mpv reports a shorter one. While mpv reports no duration, the guard trips at 80
+percent of the scrobble point of the shortest track the instance counts. So no test seeks
+forward, and each test keeps every track's playing time short. Now-playing notices to Navidrome are accepted.
+
+**Fixtures** (`fixtures.ts`). Import `test` and `expect` from `fixtures.ts`, never from
+`@playwright/test`.
+- `instance`: the port, loopback base URL, admin password and private pipe path.
+- `hostPage`: a `HostPage` in its own context with the run's admin session, open at `/admin`
+  and showing "Live". The admin logs in once per run in `globalSetup`, since the login throttle
+  counts every attempt. Only a test of the login form logs in again, in a fresh context.
+- `newGuestPage()`: opens a new context with no session and no base URL, and returns a
+  `GuestPage` that has loaded nothing, for a join that must fail before the page loads.
+- `openGuest(joinLink, { keepWelcome })`: opens a `newGuestPage()` per guest, joins through the
+  link, closes the welcome dialog unless `keepWelcome` is set, and returns the `GuestPage`.
+  Each guest context closes at test end. `joinGuest()` in `fixtures.ts` wraps it and also returns
+  the guest's label and session id from the guest list.
+- `jukebox`: an `AdminApi` that calls the API as the admin session, for setup and backend
+  checks (open, read or close a code, guests, bans, ban a guest, jukebox settings, queue, volume,
+  play or queue a song, the admin session's role). `postResponse()` returns the raw answer, for a test of a refusal.
+- Playwright's own `page`: a fresh context at the loopback base URL with no session, for the
+  login form, the root redirect, a join that must fail and a guest that joins over loopback
+  through `/guest#k=<key>`.
+- `mpv`: an `MpvProbe` on the private pipe. `waitUntilPlaying()` passes once mpv is unpaused,
+  not idle, on an audio output other than `null`, and `time-pos` rises. `queueSongIds()` reads
+  the song id of each mpv playlist entry, for a backend check of the queue.
+- Auto fixtures: `resetState` closes the jukebox, removes every ban, clears the queue, restores
+  the default guest song limit and share link, and sets the volume to `TEST_VOLUME` before each
+  test. `scrobbleGuard` is described above.
+
+**Page objects** (`pages/`). `HostPage` and `GuestPage` hold locators and actions only. Specs
+hold the assertions. Add a locator or action a test needs to its page object, not to the spec.
+
+**Adding a spec.** Create `tests/e2e/specs/<area>.e2e.ts`. Each test sets up its own state
+through fixtures and never depends on another test. Each test checks the UI and the backend
+effect, such as the page text and the `jukebox` API answer or an `mpv` property. Every guest
+that opens a join link joins from this machine's LAN address, and the instance allows one address
+60 join attempts an hour (`LOCAL_JOINS_PER_HOUR` in `src/webui/auth/auth-service.ts`), refused
+ones included. So the specs of one run make at most 60 join attempts through join links together.
+
+**Locator and assertion rules.**
+- Locate by role and accessible name first, then label, then text. Scope a locator to its
+  dialog by the dialog's accessible name where dialogs share a button name such as "Close".
+  A name matches as a substring, so pass `exact: true` where one dialog's name holds another's,
+  such as "Jukebox" and "Jukebox QR code".
+- A control with no accessible name gets one in `src/webui/public/` (an `aria-label` or a role)
+  when that adds no visible change. Otherwise locate it by its existing `id` scoped to its
+  dialog. Add a `data-testid` only when neither fits.
+- Use web-first assertions (`toBeVisible`, `toHaveText`, `toHaveCount`) and `expect.poll` for
+  backend state. No `waitForTimeout` and no fixed sleeps. Lint fails on `waitForTimeout` and on
+  a conditional in a test.
+- A native `confirm()` is dismissed unless a `page.once('dialog')` handler is registered before
+  the click. Register one before every click that opens a prompt, and assert the prompt text.
+  `HostPage.acceptNextPrompt()` and `GuestPage.acceptNextPrompt()` register one that accepts the
+  prompt and resolves its text. `HostPage.dismissNextPrompt()` dismisses it instead.
+
+**Content rule.** Test code names only the albums The Slip and Ghosts I–IV by Nine Inch Nails,
+which `README.md` names in its license section. `content.ts` finds their songs and fails with
+the missing album named. Every other song or album is picked without naming it.
+
+**Product defects.** A test that fails from a product defect gets the product fix, with a unit
+test where the unit suite covers that module. Never weaken a test to get green. A fix that
+would change documented user-visible behavior is escalated to the user first.
 
 ### Live Read Tests (separate suite)
 
@@ -114,12 +240,8 @@ files that also hold mocked tests. **A new file with a `describeLive` block must
 be added there**, or its live tests never run.
 
 ### Current Test Coverage
-1. **Playlist** (data modification safety)
-2. **Search** (high user impact)
-3. **User Preferences** (data integrity)
-4. **Radio Validation** (stream validation)
-5. **Tools Registry** (comprehensive tool validation)
-6. **Message Manager** (utility testing)
+Unit tests mirror `src/`, with one subdirectory per `src/` area under `tests/unit/`.
+`tests/unit/e2e-harness/` tests the e2e harness logic that needs no instance.
 
 ---
 
@@ -220,4 +342,4 @@ legacy `.env`. So:
 
 ## Summary
 
-**Test Philosophy**: Hybrid approach - live reads for API compatibility, mocked writes for safety. Always validate structure/behavior, never content/data. Use shared authentication and mock external services. Maintain 100% test pass rate with comprehensive coverage of critical operations.
+**Test Philosophy**: Hybrid approach - live reads for API compatibility, mocked writes for safety. Outside `tests/e2e/`, always validate structure/behavior, never content/data. Use shared authentication and mock external services. Maintain 100% test pass rate with comprehensive coverage of critical operations.

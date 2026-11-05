@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Web UI Network Helpers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { networkInterfaces } from 'node:os';
@@ -24,24 +12,53 @@ interface NetworkInterfaceDescriptor {
   url: string;
 }
 
+// These host-internal VM and container adapters (Windows, Linux and macOS names) carry addresses no phone
+// on the LAN reaches. Every name is anchored, since a Hyper-V external switch moves the host's LAN address
+// onto `vEthernet (<user-chosen switch name>)`, and that name may contain a word such as WSL or Docker.
+const VIRTUAL_ADAPTER_PATTERN = new RegExp(
+  [
+    String.raw`^vEthernet \((Default Switch|WSL|WSL \(Hyper-V firewall\)|DockerNAT|nat)\)$`,
+    String.raw`^WSL$`,
+    String.raw`^VirtualBox Host-Only Network( #\d+)?$`,
+    String.raw`^VMware Network Adapter VMnet\d+$`,
+    String.raw`^docker(\d+|_gwbridge)$`,
+    String.raw`^(cni-)?podman\d+$`,
+    String.raw`^veth[0-9a-f]+$`,
+    String.raw`^br-[0-9a-f]{12}$`,
+    String.raw`^(vboxnet|vmnet|lxcbr|lxdbr|incusbr)\d+$`,
+    String.raw`^virbr\d+(-nic)?$`,
+  ].join('|'),
+  'i',
+);
+
+function webScheme(secure: boolean): string {
+  return secure ? 'https' : 'http';
+}
+
 // The resolved bind host alone decides reachability, because an explicit host wins over expose.
 export function isLanReachable(host: string): boolean {
   return !(host === 'localhost' || host === '::1' || host.startsWith('127.'));
 }
 
-// IPv4 only, because phones on a home LAN reach the host over IPv4 and a bracketed IPv6 URL confuses users.
-export function listLanInterfaces(port: number): NetworkInterfaceDescriptor[] {
+/** A wildcard bind still serves loopback, so the player URL never needs the LAN IP. */
+export function loopbackUrl(port: number, secure: boolean): string {
+  return `${webScheme(secure)}://127.0.0.1:${port}`;
+}
+
+// IPv4 only, because phones on a home LAN reach the host over IPv4 and a bracketed IPv6 URL
+// confuses users.
+export function listLanInterfaces(port: number, secure: boolean): NetworkInterfaceDescriptor[] {
   const out: NetworkInterfaceDescriptor[] = [];
   const all = networkInterfaces();
   for (const [iface, addrs] of Object.entries(all)) {
-    if (addrs === undefined) continue;
+    if (addrs === undefined || VIRTUAL_ADAPTER_PATTERN.test(iface)) continue;
     for (const addr of addrs) {
       if (addr.family !== 'IPv4') continue;
       if (addr.internal) continue;
       out.push({
         iface,
         address: addr.address,
-        url: `http://${addr.address}:${port}`,
+        url: `${webScheme(secure)}://${addr.address}:${port}`,
       });
     }
   }

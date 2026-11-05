@@ -1,26 +1,26 @@
 import { average, detectBeat, hslOf } from '../visualizer-kit.js';
 
-// Lengths are CSS pixels at the desktop area's 196 pixel height, and they scale with the shorter side.
+// Lengths are CSS pixels at the desktop area's 196 pixel height, and scale with the shorter side.
 const REFERENCE_SIDE = 196;
-// The phone strip keeps stars large enough to read, and a wide window keeps them from swelling into blobs.
+// The phone strip keeps stars large enough to read, and a wide window keeps them from swelling.
 const MIN_UNIT = 0.6;
 const MAX_UNIT = 1.25;
-// One star per this many square pixels, so the web keeps one density at every size.
+// One star per this many square pixels, so the web keeps one density between the count limits.
 const AREA_PER_STAR = 1000;
 const MIN_STARS = 16;
-// The wide window stays about as light as the default size, so the count stops here.
+// The count stops here, so a wide window costs about as much to draw as the default size.
 const MAX_STARS = 64;
 const DUST_PER_STAR = 1.2;
 // Bass, low mids, high mids and treble each take one color family.
 const GROUPS = 4;
 // Hue offsets from the theme accent per family, so the map follows the theme's own color.
 const GROUP_HUE_OFFSETS = [110, 60, 5, -40];
-// The plastic number's R2 sequence and the golden angle spread the first stars evenly over the field.
+// The plastic number's R2 sequence and the golden angle spread the first stars evenly.
 const R2_X = 0.7548776662;
 const R2_Y = 0.569840291;
 const GOLDEN_ANGLE = 2.399963;
 
-// A lit star's halo and spikes reach this far, which sets the margin every star center keeps from the pad.
+// A lit star's halo and spikes reach this far, which sets each star center's margin from the pad.
 const HALO_MAX = 13;
 const HALO_MIN = 3;
 const HALO_FROM = 0.08;
@@ -28,7 +28,7 @@ const HALO_FROM = 0.08;
 const HALO_PROFILE = [[0, 1], [0.12, 0.65], [0.4, 0.18], [1, 0]];
 const SPRITE_SIZE = 32;
 const SPIKE_FROM = 0.62;
-// The spikes' inner corners as a fraction of their length, which keeps them thin like telescope diffraction.
+// Spike inner corners as a fraction of length, which keeps spikes thin like telescope diffraction.
 const SPIKE_WAIST = 0.18;
 const SPIKE_SHORTEST = 1.5;
 const CORE_BASE = 0.8;
@@ -37,11 +37,11 @@ const CORE_GROW = 1.8;
 const CORE_DIM = 0.4;
 const DUST_RADIUS = 0.7;
 
-// Link reach as a multiple of the mean star spacing. Loud passages and kicks reach further, so the web thickens.
+// Link reach in mean star spacings. Loud passages and kicks reach further, so the web thickens.
 const LINK_BASE = 1;
 const LINK_ENERGY = 0.6;
 const LINK_KICK = 0.35;
-// An unlit link keeps this fraction of its light, so the whole map reads as one structure.
+// An unlit link keeps this fraction of its light, so the entire map reads as one structure.
 const LINK_FLOOR = 0.2;
 // The brighter star of a link leads its light, so a lit star shines along every link it has.
 const LINK_LEAD = 0.65;
@@ -54,10 +54,10 @@ const FACET_BUCKETS = 3;
 const MAX_FACETS = 160;
 const CORE_BUCKETS = 3;
 const DUST_BUCKETS = 3;
-// A bucketed paint below this light would round to nothing, so it is skipped.
+// Lights under this are skipped, since bucketing would paint them at the first bucket's level.
 const MIN_LIGHT = 0.04;
 
-// Drift in pixels per second at unit scale. Heavy bass stars drift slowly and light treble stars quickly.
+// Drift in pixels per second at unit scale. Bass stars drift slowly and treble stars quickly.
 const DRIFT_SLOW = 5;
 const DRIFT_FAST = 14;
 const DRIFT_CALM = 0.6;
@@ -68,17 +68,18 @@ const TURN_RATE = 0.9;
 // Stars closer than this fraction of the spacing steer apart, so the web never clumps.
 const SEPARATION = 0.85;
 const SEPARATION_PUSH = 2.5;
-// The field swells this much with the bass and kicks. The star margin leaves room for it.
+// The field swells this much with the bass and kicks. The spans shrink by it to leave room.
 const BREATH_MAX = 0.04;
 const BREATH_BASS = 0.5;
 const BREATH_KICK = 0.6;
 const DUST_DRIFT = 3;
 const DUST_FLOOR = 0.25;
-// Motes fade over this inverse fraction of the field near the side they wrap around, so none pops in or out.
+// Motes fade near the sides they wrap at, over 1 / DUST_EDGE_FADE of the half field, so none
+// appears or vanishes abruptly.
 const DUST_EDGE_FADE = 6;
 const TREBLE_BANDS = 5;
 
-// A band level maps to a star's activation over this range, so quiet bands sit dim and loud ones blaze.
+// A band level maps to activation over this range, so quiet bands sit dim and loud ones blaze.
 const ACTIVE_FLOOR = 0.12;
 const ACTIVE_SPAN = 0.72;
 const ACTIVE_GAMMA = 1.4;
@@ -108,8 +109,8 @@ const PRESENCE_GAIN = 4;
 const RETAIN_PER_SECOND = 0.08;
 const MIN_VISIBLE = 0.01;
 
-// Saturation and lightness per element. Additive light blooms on the dark card but washes out on white,
-// so the light theme draws deeper ink over the card instead.
+// Saturation and lightness per element. Additive light blooms on the dark card but washes out on
+// white, so the light theme draws deeper ink over the card instead.
 const THEMES = {
   dark: {
     composite: 'lighter',
@@ -136,8 +137,8 @@ const THEMES = {
 };
 
 /**
- * A plexus star map. Drifting stars, each tuned to one band, link up when they come close, and the links and
- * the faces between them light with their stars. A beat fires a star whose signal races outward along the links.
+ * A plexus star map. Drifting stars, each tuned to one band, link up when close, and the links and
+ * faces between them light with their stars. Beats fire stars whose signals race along the links.
  */
 function draw(ctx, frame) {
   const { state } = frame;
@@ -184,7 +185,6 @@ function draw(ctx, frame) {
 function layoutOf(frame) {
   const { width, height, pad } = frame;
   const unit = Math.min(MAX_UNIT, Math.max(MIN_UNIT, Math.min(width, height) / REFERENCE_SIDE));
-  // A star's halo and spikes reach past its center, so centers stay this far inside the pad.
   const margin = HALO_MAX * unit + 1;
   const spanX = (width / 2 - pad - margin) / (1 + BREATH_MAX);
   const spanY = (height / 2 - pad - margin) / (1 + BREATH_MAX);
@@ -210,7 +210,7 @@ function groupHues(accent) {
   return GROUP_HUE_OFFSETS.map((offset) => (base + offset + 360) % 360);
 }
 
-// One soft glow per color family, painted once and stamped under every lit star, so no star builds a gradient.
+// Each color family paints one glow sprite once, so no star builds its own gradient.
 function haloSprites(state, frame, style, hues) {
   const { r, g, b } = frame.palette.accent;
   const key = `${frame.theme} ${r} ${g} ${b}`;
@@ -240,7 +240,7 @@ function ensureStars(state, count, bandCount) {
   return stars;
 }
 
-// Stars cycle through the bands, so every band has stars scattered across the whole map.
+// Stars cycle through the bands, so every band has stars scattered across the entire map.
 function makeStar(index, bandCount) {
   const band = index % bandCount;
   const heading = index * GOLDEN_ANGLE;
@@ -318,7 +318,6 @@ function turn(star, angle) {
   star.dirX = dirX;
 }
 
-// A star that crosses the field's edge comes back by the distance it overshot.
 function reflect(position) {
   let bounced = position;
   if (position > 1) bounced = 2 - position;
@@ -411,13 +410,14 @@ function fireCascade(state, stars, neighbors, reduced) {
   const signals = (state.signals ??= []);
   stars[seed].flash = 1;
   for (const next of neighbors[seed].slice(0, SIGNAL_FANOUT)) {
-    // A travelling signal is motion the levels do not make, so reduced motion lights the neighbors at once.
+    // Reduced motion lights the neighbors at once, since a travelling signal is motion the levels
+    // do not make.
     if (reduced) stars[next].flash = Math.max(stars[next].flash, SIGNAL_FIRST);
     else if (signals.length < MAX_SIGNALS) signals.push({ from: seed, to: next, progress: 0, strength: SIGNAL_FIRST, hops: 1 });
   }
 }
 
-// A linked bass star fires first, with jitter so successive cascades start in different places.
+// A linked low-band star is favored, with jitter so successive cascades start in different places.
 function pickSeed(stars, neighbors, serial) {
   let seed = -1;
   let best = -Infinity;
@@ -453,7 +453,7 @@ function advanceSignals(state, stars, neighbors, motion) {
   state.signals = moving;
 }
 
-// A star that fired a moment ago stays quiet, the way a neuron rests after firing, so the wave runs outward.
+// A star that just fired stays quiet, as a neuron rests after firing, so the wave runs outward.
 function branch(signal, around, stars, moving) {
   const strength = signal.strength * SIGNAL_FADE;
   let sent = 0;
@@ -577,7 +577,7 @@ function drawHalos(paint, stars, sprites) {
   ctx.globalAlpha = visibility;
 }
 
-// The brightest stars carry four tapered diffraction spikes, the look of a star through a telescope.
+// The brightest stars carry four tapered diffraction spikes, as stars do through a telescope.
 function drawSpikes(paint, stars) {
   const { ctx, style, hues, unit } = paint;
   const bins = emptyBins(GROUPS);

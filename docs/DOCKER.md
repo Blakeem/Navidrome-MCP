@@ -7,10 +7,10 @@ endpoint you can run next to Navidrome.
 ## What each deployment shape gives you
 
 The transport decides who can reach the MCP protocol. It does not move where the
-audio comes out, since the MPV Remote is a control panel, not an audio stream. The
+audio comes out, since the Jukebox Remote is a control panel, not an audio stream. The
 machine that runs the server is always the machine that makes the sound.
 
-| Deployment | MCP reachable from | Local audio (mpv) | MPV Remote web UI |
+| Deployment | MCP reachable from | Local audio (mpv) | Jukebox Remote web UI |
 |---|---|---|---|
 | **stdio** (default) | the client that spawned it, same machine | ✅ plays on your machine | ✅ `localhost:8808`, LAN with **Expose on LAN** |
 | **HTTP on your machine** | any host that can reach `host:3000` | ✅ plays on your machine | ✅ same as stdio |
@@ -55,9 +55,9 @@ slack. The image's `HEALTHCHECK` sets `--start-period=10s`. In Kubernetes, use a
 
 ## No audio in the image, by design
 
-mpv is not installed, so the container registers the library toolset only: the 20
+mpv is not installed, so the container registers the library toolset only: the 22
 playback tools (`play_songs`, `pause`, `seek`, `set_volume`, the mpv play-queue
-tools, ...) are absent from `tools/list`, and the MPV Remote web UI never starts.
+tools, ...) are absent from `tools/list`, and the Jukebox Remote web UI never starts.
 Everything else (search, playlists, ratings, listening history, radio, Last.fm,
 lyrics) works as it does over stdio. Radio discovery and LRCLIB lyrics stay off
 until their env vars are set, as listed in
@@ -71,20 +71,31 @@ but audio still has to reach a real sound device:
 - **Linux host:** pass one through with `--device /dev/snd` (ALSA), or mount the
   PulseAudio / PipeWire socket and set `PULSE_SERVER`. Publish `8808` and set
   `WEBUI_EXPOSE=true` (the env form of **Expose on LAN** / `webui.expose`) for the
-  remote.
+  remote. Open the remote by the host's IP address. To open it by a host name, list
+  that name in `WEBUI_ALLOWED_HOSTS`, since the container's own name is not the host's.
 - **Docker Desktop (Windows/macOS):** not possible. The engine runs in a Linux VM
   with no audio device. `--device /dev/snd` fails with *no such file or
   directory*, even `--privileged`.
+- **Radio station names:** the `node:24-bookworm-slim` base installs mpv 0.35.1,
+  which lacks the `user-data` property. A radio station that shares its stream URL
+  with another saved station is then named after the first matching station. The
+  correct name needs mpv 0.36 or later.
 
-Without a device, the failure is silent to the assistant: `play_songs` still returns
-`{"success": true}` and mpv accepts the queue, while mpv's ALSA/PipeWire/JACK
-backends all fail in the log and playback goes straight to idle. Nothing plays and
-the LLM is not told. Prefer running the server on the host when you want audio.
+Without a device, mpv's ALSA, PipeWire and JACK backends fail, and mpv falls back to
+its null output. The engine pauses playback, and the play tools return `paused: true`
+with a message that no audio output device is available. Prefer running the server on
+the host when you want audio.
 
 ## Mounting a settings.json
 
 Prefer a file over env vars? Mount a `settings.json` at `/config/settings.json` (the
 image points `NAVIDROME_CONFIG_PATH` there). A usable mounted file is used instead of env.
+Some unusable files block the env fallback, as
+[Headless Machines and Containers](../README.md#headless-machines-and-containers) lists.
+Setup mode cannot run under `MCP_TRANSPORT=http`, so the container then logs the
+reason and exits with code 1. The image runs as the `node` user (UID 1000), which
+must be able to read the mounted file. An unreadable file stops the container the
+same way.
 The file holds your Navidrome credentials in plaintext, so in an orchestrator mount
 it from a secret store (a Kubernetes `Secret`, compose secrets), not a plain config
 object:

@@ -2,7 +2,7 @@ import { resample, rgba } from '../visualizer-kit.js';
 
 const SPOKES_PER_SIDE = 24;
 
-/** Spokes around a circle that swells with the bass, low bands at the top, mirrored left and right. */
+/** Spokes around a turning circle that swells with the bass, mirrored about the low bands. */
 function draw(ctx, frame) {
   const { width, height, pad, palette, state } = frame;
   const size = Math.min(width, height);

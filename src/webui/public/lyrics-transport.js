@@ -1,5 +1,3 @@
-// The lyrics overlay's compact copy of the transport: seek line, times and the three buttons.
-
 import { nextTrack, previousTrack, renderPlayButtons, togglePlayPause } from './controls.js';
 import { byId, setProgressVar } from './dom.js';
 import { durationSeconds, positionSeconds } from './playback-clock.js';

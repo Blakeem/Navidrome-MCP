@@ -1,5 +1,3 @@
-// The Playlists tab.
-
 import { getJson } from './api.js';
 import { byId } from './dom.js';
 import { buildLibraryNode } from './library-tree.js';
@@ -11,7 +9,6 @@ export async function loadPlaylistsPane() {
   status.textContent = 'Loading playlists…';
   list.replaceChildren();
   const data = await getJson('/api/playlists');
-  // A failed read says so, instead of the "No playlists found" an empty list would show.
   if (data === null) {
     status.textContent = 'Could not load playlists.';
     return;

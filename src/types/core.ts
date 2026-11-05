@@ -1,134 +1,76 @@
 /**
  * Navidrome MCP Server - Core Library Data Transfer Objects
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-/**
- * Clean DTO for songs, optimized for LLM consumption
- */
 export interface SongDTO {
-  /** Unique song ID */
   id: string;
-  /** Song title */
   title: string;
-  /** Artist name */
   artist: string;
-  /** Artist ID for lookups */
   artistId: string;
-  /** Album artist (may differ from track artists) */
   albumArtist?: string;
-  /** Album artist ID */
   albumArtistId?: string;
-  /** Album name */
   album: string;
-  /** Album ID for lookups */
   albumId: string;
-  /** Primary genre */
   genre?: string;
-  /** All genres associated with the song */
   genres?: string[];
-  /** Release year */
   year?: number;
-  /** Duration in human-readable format (MM:SS) */
   durationFormatted: string;
-  /** Duration in seconds. Verbose or `keep` only, since `durationFormatted` carries the same information. */
+  /** Seconds. Verbose or `keep` only, since `durationFormatted` carries the same information. */
   duration?: number;
-  /** ISO 8601 time the song was added to the library. Absent means unknown. */
+  /** ISO 8601 time the song was added to the library, from Navidrome's `createdAt`. */
   addedDate?: string;
-  /** Full file path relative to library root */
+  /** Relative to the library root. */
   path?: string;
-  /** Track number on album */
   trackNumber?: number;
-  /** Number of times played */
   playCount?: number;
-  /** User rating (1-5) */
+  /** 1 to 5. Navidrome's 0, which means unrated, is omitted. */
   rating?: number;
-  /** Whether the song is starred/favorited */
   starred?: boolean;
-  /** ISO 8601 timestamp when the user starred this song, if any */
+  /** ISO 8601. Present only with `starred: true`. */
   starredAt?: string;
-  /** ISO 8601 timestamp when the user last played this song, if any */
+  /** ISO 8601 time of the user's last play. */
   playDate?: string;
-  /** Lyrics carried by the audio file's own tag, synced (timed) or unsynced. Omitted when
-   *  the file has none. Says nothing about LRCLIB availability. */
+  /** Lyrics in the audio file's own tag. Omitted when the file has none. Says nothing about
+   *  LRCLIB availability. */
   lyrics?: 'synced' | 'unsynced';
 }
 
 
-/**
- * Clean DTO for albums, optimized for LLM consumption
- */
 export interface AlbumDTO {
-  /** Unique album ID */
   id: string;
-  /** Album name */
   name: string;
-  /** Artist name */
   artist: string;
-  /** Artist ID for lookups */
   artistId: string;
-  /** Album artist (may differ from track artists) */
   albumArtist?: string;
-  /** Album artist ID */
   albumArtistId?: string;
-  /** Release year */
   releaseYear?: number;
-  /** Primary genre */
   genre?: string;
-  /** All genres */
   genres?: string[];
-  /** Number of songs in album */
   songCount: number;
-  /** Total duration in human-readable format */
   durationFormatted: string;
-  /** Whether this is a compilation */
   compilation?: boolean;
-  /** Number of times played */
   playCount?: number;
-  /** User rating (1-5) */
+  /** 1 to 5. Navidrome's 0, which means unrated, is omitted. */
   rating?: number;
-  /** Whether starred */
   starred?: boolean;
-  /** ISO 8601 timestamp when the user starred this album, if any */
+  /** ISO 8601. Present only with `starred: true`. */
   starredAt?: string;
 }
 
-/**
- * Clean DTO for artists, optimized for LLM consumption
- */
 export interface ArtistDTO {
-  /** Unique artist ID */
   id: string;
-  /** Artist name */
   name: string;
-  /** Number of albums */
   albumCount: number;
-  /** Number of songs */
   songCount: number;
-  /** All genres associated with artist */
   genres?: string[];
-  /** Artist biography */
   biography?: string;
-  /** Number of times played */
   playCount?: number;
-  /** User rating (1-5) */
+  /** 1 to 5. Navidrome's 0, which means unrated, is omitted. */
   rating?: number;
-  /** Whether starred */
   starred?: boolean;
-  /** ISO 8601 timestamp when the user starred this artist, if any */
+  /** ISO 8601. Present only with `starred: true`. */
   starredAt?: string;
 }
 

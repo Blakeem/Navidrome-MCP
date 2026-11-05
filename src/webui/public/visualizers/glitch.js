@@ -1,7 +1,7 @@
 import { average, detectBeat, resample, rgba } from '../visualizer-kit.js';
 
-// Additive primaries sum to white on the dark card and multiplied process inks sum to black on the white one,
-// so each theme keeps a solid core with colored misregistration along its edges.
+// Additive primaries sum to white on the dark card, and multiplied process inks sum to black on the
+// white one, so each theme keeps a solid core with colored misregistration along its edges.
 const INKS = {
   dark: {
     blend: 'lighter',
@@ -26,7 +26,7 @@ const MAX_ROW_PX = 4;
 const TARGET_COLUMNS = 56;
 const MIN_COLUMN_PX = 5;
 const MAX_COLUMN_PX = 12;
-// The ends of the spectrum shrink, so the shape floats instead of stopping at a wall.
+// The ends of the spectrum taper, so the shape does not stop at a wall.
 const TAPER_POWER = 0.4;
 // A soft margin inside the pad, where torn rows and smears fade instead of meeting a hard edge.
 const FADE_X_RATIO = 0.08;
@@ -35,13 +35,13 @@ const FADE_Y_PADS = 0.8;
 const MAX_FADE_SHARE = 0.45;
 // The shape reaches this far into the side margin, so its tapered ends dissolve.
 const SHAPE_INSET_IN_FADE = 0.3;
-// Counts grow with the span but stop here, so the wide desktop costs about the same as the default.
+// Counts scale with the span, capped so the wide desktop costs at most 1.5 times the default.
 const BASE_SPAN = 365;
 const MIN_SPAN_SCALE = 0.6;
 const MAX_SPAN_SCALE = 1.5;
 
 const PRESENCE_GAIN = 4;
-// The share of the picture left after one second of silence, so it clears well inside the 3 second limit.
+// The share of the picture left one second after silence, so it clears inside the contract's 3 s.
 const GLOW_RETAIN_PER_SECOND = 0.02;
 const MIN_GLOW = 0.01;
 
@@ -49,20 +49,21 @@ const KICK_DECAY_PER_SECOND = 5;
 const TREBLE_BANDS = 5;
 const GLITCH_FLOOR = 0.08;
 const GLITCH_TREBLE = 0.25;
-// The stutter clock re-rolls every corruption pattern, faster as the glitch grows, and a beat re-rolls it at once.
+// The stutter clock re-rolls every corruption pattern, faster as the glitch grows.
+// A beat re-rolls it at once.
 const TICK_HZ_CALM = 5;
 const TICK_HZ_LOUD = 15;
 const SNOW_HZ = 30;
 
-// The second and third channels chase the levels at these rates, so a rising column leads in the first
-// channel and a falling one trails in the third.
+// The second and third channels chase the levels at these rates, so a rising column leads in the
+// first channel and a falling one trails in the third.
 const CHROMA_LAG_PER_SECOND = [18, 8];
 const SPLIT_BASE_PX = 1.5;
 const SPLIT_TREBLE_PX = 3;
 const SPLIT_KICK_RATIO = 0.03;
 const SPLIT_KICK_MAX_COLUMNS = 4;
 const LIFT_KICK = 0.5;
-// A beat drops the resolution, so neighboring columns merge and the steps grow coarser for a moment.
+// A beat drops the resolution, so neighboring columns merge and the steps coarsen for a moment.
 const MAX_CRUSH = 3;
 
 const MOSH_DECAY_PER_SECOND = 2.2;
@@ -72,7 +73,7 @@ const MOSH_HALF_LIFE_MELT_S = 0.35;
 const MOSH_MIN = 0.02;
 const MOSH_STRIP_PX = 14;
 const MIN_MOSH_STRIPS = 3;
-// Motion vectors per second at full melt, as shares of the area. Most point down, so the melt drips.
+// Motion vectors per second at full melt, as shares of width and height. Most point down.
 const MOSH_PUSH_X = 0.22;
 const MOSH_PUSH_Y = 0.15;
 const MOSH_RISE_SHARE = 0.25;
@@ -95,10 +96,10 @@ const TRACK_SHIFT_KICK = 0.06;
 const TRACK_JITTER = 0.3;
 
 const MAX_BLOCKS = 10;
-// Blocks span whole rows and columns, so corruption lands on the staircase's own grid.
+// Blocks span entire rows and columns, so corruption lands on the staircase's own grid.
 const BLOCK_ROWS = 3;
 const MAX_BLOCK_COLUMNS = 4;
-// A stale block from the wrong place, a stretched streak, a blown-up corner and an inverted tint, with their shares.
+// Kinds: a block from the wrong place, a stretched streak, a blown-up corner and an inverted tint.
 const BLOCK_KINDS = [['stale', 0.4], ['streak', 0.25], ['pixelate', 0.15], ['tint', 0.2]];
 const STALE_REACH_COLUMNS = 3;
 const STREAK_STRETCH = 3;
@@ -113,18 +114,17 @@ const DROPOUTS = 8;
 const DROPOUT_COLUMNS = 6;
 const SCANLINE_SHARE = 0.34;
 
-// Each random stream mixes its own salt into the seed, so tears, blocks, melt and snow re-roll independently.
+// Each random stream mixes its own salt into the seed, so each stream re-rolls independently.
 const SALT = { tear: 0x51ed27, block: 0x2c1b3c, mosh: 0x6d2b79, snow: 0x3c6ef3, track: 0x7f4a7c };
 const SEED_MIX = 0x9e3779b1;
 
 /**
- * A blocky spectrum decoded from a damaged tape. Its color channels slip out of register, rows tear sideways,
- * stale macroblocks land in the wrong place and a tracking band rolls through, and every beat makes it worse.
+ * A blocky spectrum decoded from a damaged tape. Color channels slip, rows tear, macroblocks land
+ * in the wrong place and a tracking band rolls through, and every beat makes it worse.
  */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
-  // Silence fades the picture out with the music, so a paused player shows nothing.
   const presence = Math.min(1, frame.energy * PRESENCE_GAIN);
   state.glow = Math.max((state.glow ?? 0) * GLOW_RETAIN_PER_SECOND ** frame.dtSeconds, presence);
   if (state.glow < MIN_GLOW) {
@@ -185,13 +185,13 @@ function gridOf(frame) {
   };
 }
 
-// Two layers take turns as the last frame and the next, since a canvas is not drawn onto itself.
+// Two layers take turns as the last frame and the next, so no canvas is drawn onto itself.
 function moshLayers(state, frame) {
   const current = state.layers;
   if (current !== undefined && current.width === frame.width && current.height === frame.height) return current;
   const front = frame.createLayer(frame.width, frame.height);
   const back = frame.createLayer(frame.width, frame.height);
-  // Nearest-neighbor copies keep stretched and blown-up blocks hard-edged, the way a broken decoder shows them.
+  // Nearest-neighbor copies keep stretched and blown-up blocks hard-edged, as in a broken decoder.
   front.ctx.imageSmoothingEnabled = false;
   back.ctx.imageSmoothingEnabled = false;
   return {
@@ -232,7 +232,6 @@ function advance(state, frame, beat) {
   };
 }
 
-// The three channels follow the levels at their own lags, each snapped to the row grid.
 function channelHeights(state, frame, grid, pulse) {
   const lead = resample(frame.values, grid.columns);
   if (state.chroma?.[0].length !== grid.columns) state.chroma = CHROMA_LAG_PER_SECOND.map(() => Float32Array.from(lead));
@@ -259,7 +258,8 @@ function snapHeights(levels, grid, crush) {
   return heights;
 }
 
-// The last frame carries forward along motion vectors, so a beat melts the picture until a clean keyframe returns.
+// The last frame carries forward along motion vectors, so a beat melts the picture until a clean
+// keyframe returns.
 function moshPrevious(state, layers, frame, pulse) {
   const { width, height } = frame;
   const c = layers.back.ctx;
@@ -282,7 +282,7 @@ function moshPrevious(state, layers, frame, pulse) {
   c.restore();
 }
 
-// Strips move by whole device pixels and carry the remainder, so the melt stays crisp at any speed.
+// Strips move by integer device pixels and carry the remainder, so the melt stays crisp.
 function moshShifts(state, strips, frame, pulse, density) {
   if (state.moshCarry?.length !== strips * 2) state.moshCarry = new Float32Array(strips * 2);
   const carry = state.moshCarry;
@@ -302,7 +302,6 @@ function moshShifts(state, strips, frame, pulse, density) {
   return shifts;
 }
 
-// Each channel lands off register by the split, and a hard beat lifts the outer two a row apart.
 function paintChannels(c, channels, grid, pulse, ink) {
   const split = SPLIT_BASE_PX + SPLIT_TREBLE_PX * pulse.treble +
     pulse.kick * Math.min(grid.span * SPLIT_KICK_RATIO, grid.columnWidth * SPLIT_KICK_MAX_COLUMNS);
@@ -319,7 +318,6 @@ function paintChannels(c, channels, grid, pulse, ink) {
   c.restore();
 }
 
-// One closed outline of square steps, the top edge left to right and its mirror back underneath.
 function traceStaircase(c, heights, grid, offsetX, offsetY) {
   const { left, columnWidth, middle } = grid;
   c.moveTo(left + offsetX, middle + offsetY);
@@ -338,7 +336,6 @@ function traceStaircase(c, heights, grid, offsetX, offsetY) {
   c.closePath();
 }
 
-// Macroblocks decode from the wrong place, smear or blow up, the way a damaged stream breaks.
 function corruptBlocks(layers, grid, pulse, ink) {
   const count = Math.round(pulse.intensity ** 1.5 * MAX_BLOCKS * grid.spanScale);
   if (count === 0) return;
@@ -353,7 +350,7 @@ function corruptBlocks(layers, grid, pulse, ink) {
       continue;
     }
     const { from, to } = blockCopy(kind, block, random, grid, layers.density);
-    // Clearing first replaces the block, so an empty source punches a hole the way a lost block does.
+    // Clearing first replaces the block, so an empty source leaves a hole, as a lost block does.
     c.clearRect(to.x, to.y, to.width, to.height);
     copyRegion(c, layers.front, layers.density, from, to);
   }
@@ -394,10 +391,9 @@ function pickKind(roll) {
   return BLOCK_KINDS[BLOCK_KINDS.length - 1][0];
 }
 
-// Where each corrupt block reads the last frame from and where it lands.
 function blockCopy(kind, block, random, grid, density) {
   if (kind === 'streak') {
-    // One device pixel column stretched sideways, like a sort run across the block.
+    // One device pixel column stretched sideways, as a pixel sort smears a run.
     return { from: { ...block, width: 1 / density.x }, to: { ...block, width: block.width * (1 + random() * STREAK_STRETCH) } };
   }
   if (kind === 'pixelate') return { from: { ...block, width: block.width / PIXELATE, height: block.height / PIXELATE }, to: block };
@@ -406,7 +402,8 @@ function blockCopy(kind, block, random, grid, density) {
   return { from: { ...block, x: block.x + shiftX, y: block.y + shiftY }, to: block };
 }
 
-// drawImage reads its source in device pixels, so a CSS rectangle scales by the layer density and stays on the canvas.
+// drawImage reads its source in device pixels, so a CSS rectangle scales by the layer density.
+// The clamp keeps the source rectangle on the canvas.
 function copyRegion(c, layer, density, from, to) {
   const { canvas } = layer;
   const x = clamp(Math.round(from.x * density.x), 0, canvas.width - 1);
@@ -416,7 +413,7 @@ function copyRegion(c, layer, density, from, to) {
   c.drawImage(canvas, x, y, width, height, to.x, to.y, to.width, to.height);
 }
 
-// The band rolls down through the picture and wraps, like a head that cannot hold the track.
+// The band rolls down through the picture and wraps, as when a tape head cannot hold the track.
 function trackingBand(grid, pulse) {
   const rows = Math.max(2, Math.round(grid.rows * TRACK_BAND_SHARE));
   return {
@@ -426,7 +423,6 @@ function trackingBand(grid, pulse) {
   };
 }
 
-// The sideways shift of every row, from torn runs that re-roll on the stutter clock and the tracking band's skew.
 function rowOffsets(grid, pulse, band) {
   const offsets = new Float32Array(grid.rows);
   const random = generator(Math.imul(pulse.tick, SEED_MIX) ^ SALT.tear);
@@ -463,7 +459,7 @@ function tearOnto(ctx, layers, grid, pulse, band, glow) {
   ctx.restore();
 }
 
-// Tape snow fills the tracking band over a bright head-switch seam, and a beat throws dropouts across the picture.
+// Snow fills the tracking band over a bright head-switch seam. A beat scatters dropouts.
 function scatterSnow(ctx, grid, pulse, band, ink, glow) {
   const random = generator(Math.imul(pulse.snowSeed, SEED_MIX) ^ SALT.snow);
   const flakes = Math.round((SNOW_CALM + SNOW_LOUD * pulse.intensity) * grid.spanScale);
@@ -504,7 +500,7 @@ function cutScanlines(ctx, grid, ink) {
   ctx.restore();
 }
 
-// Torn rows and smears slide past the shape, so the picture fades to nothing at the pad on every side.
+// Torn rows and smears slide past the shape, so the picture fades to nothing at the pad.
 function fadeEdges(ctx, grid) {
   const { width, height, pad } = grid;
   ctx.save();
@@ -525,7 +521,7 @@ function edgeRamp(gradient, share) {
   return gradient;
 }
 
-// A small seeded generator, so a glitch pattern holds still for its whole tick and re-rolls on the next.
+// Mulberry32, so a glitch pattern holds for its entire tick and re-rolls on the next.
 function generator(seed) {
   let s = seed >>> 0;
   return () => {

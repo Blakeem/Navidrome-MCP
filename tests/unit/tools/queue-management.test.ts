@@ -1,10 +1,9 @@
 /**
  * Navidrome MCP Server - queue-management tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers getSavedQueue, saveQueue, clearSavedQueue.
- * All three touch the Navidrome /queue endpoint (server-side state) so
- * every test uses createMockClient() — no live calls.
+ * The /queue endpoint holds server-side state, so every test mocks the client.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -96,9 +95,7 @@ describe('getSavedQueue', () => {
   });
 
   it('emits updatedAt: null when server returns empty/null updatedAt', async () => {
-    // Issue #33: the prior shape `omitted` updatedAt in this case, which
-    // forced the LLM to infer "field exists but is empty" — null is the
-    // clearer signal for a never-saved/just-cleared queue.
+    // An explicit null tells the LLM the queue was never saved or was cleared.
     mockClient.request.mockResolvedValue({
       current: 0,
       position: 0,
@@ -111,12 +108,11 @@ describe('getSavedQueue', () => {
     expect(result.updatedAt).toBeNull();
   });
 
-  it('maps Go zero-time updatedAt to null (issue #33)', async () => {
+  it('maps Go zero-time updatedAt to null', async () => {
     mockClient.request.mockResolvedValue({
       current: 0,
       position: 0,
-      // The exact sentinel Navidrome returns when the queue was cleared or
-      // never saved (Go's time.Time zero value in RFC 3339 form).
+      // Navidrome sends Go's zero time.Time for a cleared or never-saved queue.
       updatedAt: '0001-01-01T00:00:00Z',
       items: [],
     });
@@ -135,7 +131,7 @@ describe('getSavedQueue', () => {
   });
 });
 
-/** Answers the song-ID check with a row per known ID, and every other request with undefined. */
+/** saveQueue checks song IDs through /song before the POST, so the mock answers both. */
 function answerSongLookups(mockClient: MockNavidromeClient, unknownIds: readonly string[] = []): void {
   mockClient.request.mockImplementation((endpoint: string) => {
     if (!endpoint.startsWith('/song?')) return Promise.resolve(undefined);

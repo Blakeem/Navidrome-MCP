@@ -1,10 +1,3 @@
-/**
- * Unit Tests for Test Connection Tool - Live Connection Testing
- * 
- * Following UNIT-TEST-STRATEGY.md - tests live connection to validate
- * server connectivity and feature detection capabilities.
- */
-
 import { describe, it, expect, beforeAll } from 'vitest';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
@@ -23,7 +16,7 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
-    // Use shared client and config for connection testing (avoids rate limiting)
+    // The shared client authenticates once, since Navidrome rate-limits concurrent logins.
     config = await loadConfig();
     liveClient = await getSharedLiveClient();
   });
@@ -32,55 +25,47 @@ describe('Test Connection Tool - Live Connection Testing', () => {
     it.skipIf(shouldSkipLiveTests())('should successfully connect to live Navidrome server', async () => {
       const result = await testConnection(liveClient, config, { includeServerInfo: false });
 
-      // Validate basic connection response structure
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('message');
-      
-      // Connection should be successful
+
       expect(result.success).toBe(true);
       expect(typeof result.message).toBe('string');
-      expect(result.message).toMatch(/successfully connected/i);
+      expect(result.message).toMatch(/^Connected to Navidrome /);
+      expect(result.navidrome.serverVersion).toEqual(expect.any(String));
+      expect(result.library.totalSongs).toEqual(expect.any(Number));
     });
 
     it.skipIf(shouldSkipLiveTests())('should return detailed server info when requested', async () => {
       const result = await testConnection(liveClient, config, { includeServerInfo: true });
 
-      // Validate detailed response structure
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('message');
       expect(result).toHaveProperty('serverInfo');
-      
-      // Connection should be successful
+
       expect(result.success).toBe(true);
       expect(typeof result.message).toBe('string');
 
-      // Validate server info structure
       const serverInfo = result.serverInfo!;
       expect(serverInfo).toHaveProperty('url');
       expect(serverInfo).toHaveProperty('authenticated');
       expect(serverInfo).toHaveProperty('timestamp');
       expect(serverInfo).toHaveProperty('mcpServerVersion');
       expect(serverInfo).toHaveProperty('features');
-      
-      // URL should be a string
+
       expect(typeof serverInfo.url).toBe('string');
       expect(serverInfo.url.length).toBeGreaterThan(0);
-      
-      // Authenticated should be boolean
+
       expect(typeof serverInfo.authenticated).toBe('boolean');
       expect(serverInfo.authenticated).toBe(true);
 
-      // Version should be a string with proper format
       expect(typeof serverInfo.mcpServerVersion).toBe('string');
       expect(serverInfo.mcpServerVersion.length).toBeGreaterThan(0);
-      expect(serverInfo.mcpServerVersion).toMatch(/^\d+\.\d+\.\d+$/); // Should match semantic versioning pattern
+      expect(serverInfo.mcpServerVersion).toMatch(/^\d+\.\d+\.\d+$/);
 
-      // Features should be an object with detailed information
       const features = serverInfo.features!;
       expect(typeof features).toBe('object');
       expect(features).not.toBeNull();
-      
-      // Feature detection - these should have enabled flags
+
       expect(features.lastfm).toHaveProperty('enabled');
       expect(features.lastfm).toHaveProperty('description');
       expect(features.lastfm).toHaveProperty('tools');
@@ -96,11 +81,9 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       expect(features.lyrics).toHaveProperty('tools');
       expect(typeof features.lyrics.enabled).toBe('boolean');
 
-      // Timestamp should be valid ISO string
       expect(typeof serverInfo.timestamp).toBe('string');
       expect(() => new Date(serverInfo.timestamp)).not.toThrow();
-      
-      // Tools arrays should exist and be arrays
+
       expect(Array.isArray(features.lastfm.tools)).toBe(true);
       expect(Array.isArray(features.radioBrowser.tools)).toBe(true);
       expect(Array.isArray(features.lyrics.tools)).toBe(true);
@@ -114,8 +97,6 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       
       const features = result.serverInfo!.features!;
 
-      // Verify feature detection matches the resolved config (settings.json is
-      // the source of truth — no longer process.env).
       if (config.features.lastfm) {
         expect(features.lastfm.enabled).toBe(true);
         expect(features.lastfm.tools.length).toBeGreaterThan(0);
@@ -142,14 +123,12 @@ describe('Test Connection Tool - Live Connection Testing', () => {
     });
 
     it.skipIf(shouldSkipLiveTests())('should handle connection with default parameters', async () => {
-      // Test without explicit parameters (should default to includeServerInfo: false)
       const result = await testConnection(liveClient, config, {});
 
       expect(result).toHaveProperty('success');
       expect(result).toHaveProperty('message');
       expect(result.success).toBe(true);
-      
-      // Should not include server info by default
+
       expect(result.serverInfo).toBeUndefined();
     });
 
@@ -157,27 +136,90 @@ describe('Test Connection Tool - Live Connection Testing', () => {
       const basicResult = await testConnection(liveClient, config, { includeServerInfo: false });
       const detailedResult = await testConnection(liveClient, config, { includeServerInfo: true });
 
-      // Both should have same basic structure
       expect(basicResult).toHaveProperty('success');
       expect(basicResult).toHaveProperty('message');
       expect(detailedResult).toHaveProperty('success');
       expect(detailedResult).toHaveProperty('message');
 
-      // Both should report success
       expect(basicResult.success).toBe(true);
       expect(detailedResult.success).toBe(true);
 
-      // Only detailed should have serverInfo
       expect(basicResult.serverInfo).toBeUndefined();
       expect(detailedResult.serverInfo).toBeDefined();
     });
   });
 });
 
+function createConnectedClient(
+  scanStatusBody: unknown = { status: 'ok' },
+  total: number | null = 0,
+): ReturnType<typeof createMockClient> {
+  const client = createMockClient();
+  client.requestWithLibraryFilterAndMeta.mockResolvedValue({ data: [], total });
+  client.subsonicRequest.mockResolvedValue(scanStatusBody);
+  return client;
+}
+
+describe('Test Connection Tool - Navidrome status', () => {
+  it('reports the server version, scan state, and active-library counts', async () => {
+    const client = createConnectedClient({
+      status: 'ok',
+      version: '1.16.1',
+      type: 'navidrome',
+      serverVersion: '0.62.0 (1b46b977)',
+      openSubsonic: true,
+      scanStatus: { scanning: false, count: 16731, lastScan: '2026-10-16T19:26:41-07:00' },
+    });
+    client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
+      const totals: Record<string, number> = { '/song': 16731, '/album': 2303, '/artist': 5082 };
+      return Promise.resolve({ data: [], total: totals[endpoint.split('?')[0] ?? ''] ?? null });
+    });
+
+    const result = await testConnection(client as unknown as NavidromeClient, makeTestConfig(), {});
+
+    expect(client.subsonicRequest).toHaveBeenCalledWith('/getScanStatus');
+    expect(result.message).toBe(
+      'Connected to Navidrome 0.62.0 (1b46b977). REST and Subsonic authentication both succeeded.',
+    );
+    expect(result.navidrome).toEqual({
+      serverVersion: '0.62.0 (1b46b977)',
+      subsonicApiVersion: '1.16.1',
+      openSubsonic: true,
+      scanning: false,
+      lastScan: '2026-10-16T19:26:41-07:00',
+    });
+    expect(result.library).toEqual({ totalSongs: 16731, totalAlbums: 2303, totalArtists: 5082 });
+  });
+
+  it('reports nulls when an older Navidrome omits the version, scan fields, and count headers', async () => {
+    const client = createConnectedClient({ status: 'ok', scanStatus: { lastScan: '0001-01-01T00:00:00Z' } }, null);
+
+    const result = await testConnection(client as unknown as NavidromeClient, makeTestConfig(), {});
+
+    expect(result.message).toMatch(/^Connected to Navidrome \(version not reported\)\./);
+    expect(result.navidrome).toEqual({
+      serverVersion: null,
+      subsonicApiVersion: null,
+      openSubsonic: false,
+      scanning: null,
+      lastScan: null,
+    });
+    expect(result.library).toEqual({ totalSongs: null, totalAlbums: null, totalArtists: null });
+  });
+
+  it('fails the check when the Subsonic credentials are rejected', async () => {
+    const client = createConnectedClient();
+    client.subsonicRequest.mockRejectedValue(new Error('Wrong username or password'));
+
+    await expect(
+      testConnection(client as unknown as NavidromeClient, makeTestConfig(), {}),
+    ).rejects.toThrow(/test_connection.*Wrong username or password/);
+  });
+});
+
 describe('Test Connection Tool - feature inventory', () => {
   it('lists every tool each enabled feature registers', async () => {
-    const client = createMockClient();
-    client.request.mockResolvedValue([]);
+    const client = createConnectedClient();
     const config = makeTestConfig({ features: { lastfm: true, radioBrowser: true, lyrics: true, playback: true } });
 
     const result = await testConnection(client as unknown as NavidromeClient, config, { includeServerInfo: true });
@@ -191,8 +233,7 @@ describe('Test Connection Tool - feature inventory', () => {
   });
 
   it('reports playback disabled with no tools when mpv is absent', async () => {
-    const client = createMockClient();
-    client.request.mockResolvedValue([]);
+    const client = createConnectedClient();
 
     const result = await testConnection(client as unknown as NavidromeClient, makeTestConfig(), { includeServerInfo: true });
 

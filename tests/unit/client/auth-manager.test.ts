@@ -1,10 +1,7 @@
 /**
  * Navidrome MCP Server - AuthManager unit tests
  * Copyright (C) 2025
- *
- * Covers the B1 production-hardening changes: single-flight refresh dedup +
- * invalidate(). Mocks `global.fetch` so the auth flow is exercised without a
- * live Navidrome server.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
@@ -54,7 +51,7 @@ describe('AuthManager', () => {
     const auth = new AuthManager(makeConfig());
 
     expect(await auth.getToken()).toBe('abc');
-    expect(await auth.getToken()).toBe('abc'); // cached, no fetch
+    expect(await auth.getToken()).toBe('abc');
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
@@ -65,8 +62,7 @@ describe('AuthManager', () => {
     const auth = new AuthManager(makeConfig());
 
     expect(await auth.getToken()).toBe('first');
-    // Backdate the cached expiry so the next check sees an expired token
-    // without depending on real time advancement (avoids fake-timer flake).
+    // Backdating the expiry keeps the test independent of real or fake clock advancement.
     (auth as unknown as { tokenExpiry: Date }).tokenExpiry = new Date(0);
     expect(await auth.getToken()).toBe('second');
     expect(mockFetch).toHaveBeenCalledTimes(2);
@@ -85,8 +81,6 @@ describe('AuthManager', () => {
       auth.authenticate(),
     ]);
 
-    // Let the microtask queue settle so all five callers reached the
-    // refreshPromise dedup point.
     await Promise.resolve();
     resolveLogin(jsonResponse({ token: 'singleflight' }));
     await concurrent;
@@ -127,17 +121,12 @@ describe('AuthManager', () => {
     const auth = new AuthManager(makeConfig());
 
     await expect(auth.authenticate()).rejects.toThrow();
-    // Second call must NOT see a stale rejected promise — should make a
-    // brand-new POST and succeed.
     await auth.authenticate();
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(await auth.getToken()).toBe('recovered');
   });
 
   it('throws an auth-context error (not a native TypeError) on a literal null JSON body', async () => {
-    // A 200 OK body of literal `null` parses successfully but is not an object.
-    // The shape guard must reject with auth context instead of letting the next
-    // `.token` read throw a native "Cannot read properties of null" TypeError.
     mockFetch.mockResolvedValueOnce(jsonResponse(null));
     const auth = new AuthManager(makeConfig());
 
@@ -215,10 +204,6 @@ describe('AuthManager', () => {
   });
 
   describe('authenticate() timeout', () => {
-    // Auth uses retryPolicy: 'never' — see auth-manager.ts comment for why.
-    // A timed-out /auth/login throws a FetchTimeoutError immediately;
-    // re-running the original tool call will single-flight-dedup retry it.
-
     afterEach(() => {
       delete process.env['NAVIDROME_AUTH_TIMEOUT_MS'];
       vi.useRealTimers();
@@ -246,7 +231,6 @@ describe('AuthManager', () => {
 
       const result = await settled;
       expect(result).toBeInstanceOf(FetchTimeoutError);
-      // No retry on auth — single attempt only.
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });

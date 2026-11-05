@@ -2,21 +2,18 @@ import { average, detectBeat, hslOf, resample } from '../visualizer-kit.js';
 
 const TAU = Math.PI * 2;
 
-// The symmetry orders the kaleidoscope turns through, one step every few beats.
 const FOLDS = [6, 8, 12, 5, 10, 7, 9];
 const FOLD_BEATS = 8;
-// A quiet track with few beats still turns the kaleidoscope now and then.
+// A quiet track with few beats still changes symmetry now and then.
 const FOLD_HOLD_MAX_S = 14;
 const FOLD_FADE_S = 0.8;
-// The outgoing symmetry shrinks and turns away while the incoming one blooms out from this scale.
 const FOLD_SHRINK = 0.3;
 const FOLD_BLOOM_FROM = 0.55;
 const FOLD_TWIST_RAD = 0.6;
-// Each new symmetry moves the hue a golden angle on, so no two in a row share a color.
+// Each new symmetry shifts the hue by the golden angle, so no two in a row share a color.
 const GOLDEN_ANGLE_DEG = 137.508;
 const HUE_DRIFT_DEG_PER_SECOND = 4;
 
-// The layers that turn, as indexes into the angle arrays.
 const ROSETTE = 0;
 const LOTUS_OUTER = 1;
 const LOTUS_INNER = 2;
@@ -24,24 +21,23 @@ const STAR = 3;
 const POLYGON = 4;
 const SEED = 5;
 const TURNING_LAYERS = 6;
-// Neighboring layers turn opposite ways at different speeds, so their alignment never holds for long.
+// Neighboring layers turn opposite ways at different speeds, so no alignment holds for long.
 const DRIFT_RAD_PER_SECOND = [0.08, -0.13, 0.19, -0.24, 0.31, -0.1];
 const DRIFT_FLOOR = 0.35;
-// Beat clicks in half sectors. Unequal steps change how the layers line up, which one shared step would not.
+// Beat click steps in half sectors. Unequal steps change how the layers line up.
 const CLICK_HALF_SECTORS = [1, -0.5, 0.5, -1, 1.5, 0.5];
 const CLICK_RATE_PER_SECOND = 14;
 const PULSE_DECAY_PER_SECOND = 5;
 
-// Four groups of four bands from bass to treble, each scaled by its own recent peak so every layer blooms fully.
+// Each band group scales by its own recent peak, so every layer blooms fully.
 const GROUPS = 4;
 const AGC_SECONDS = 8;
 // Keeps a quiet group from swelling to full size on noise.
 const AGC_FLOOR = 0.3;
-// Points per half wedge of the rosette, bass on the mirror line and treble mid wedge.
 const ROSETTE_POINTS = 9;
 
 const PRESENCE_GAIN = 4;
-// The fraction of the afterglow left after one second, so the mandala dissolves after the music stops.
+// The afterglow fraction left after one second, so the mandala dissolves once the music stops.
 const RETAIN_PER_SECOND = 0.04;
 const GLOW_MIN = 0.01;
 
@@ -51,13 +47,13 @@ const MAX_REFLECTIONS = 5;
 const IDEAL_SHRINK = 0.72;
 const SHRINK_MIN = 0.45;
 const SHRINK_MAX = 0.95;
-// Neighbors overlap by a fifth of their radii, so their rims cross in vesica shapes.
+// Neighbors overlap by a fifth of their summed radii, so their rims cross in vesica shapes.
 const LINK = 0.8;
 const MIN_REFLECTION_RADIUS = 6;
-// Each bounce off a mirror loses light and bends the color a little.
+// Each mirror bounce loses some light and shifts the hue a little.
 const REFLECTION_DIM = 0.7;
 const REFLECTION_HUE_DEG = 18;
-// Each reflection shows the music a little later, so beats and symmetry changes ripple out through the mirrors.
+// Each reflection shows the music a little later, so beats and symmetry changes travel outward.
 const ECHO_S = 0.06;
 const HISTORY_MAX = 256;
 const HALO_DEPTH = 1;
@@ -69,7 +65,8 @@ const LINE_PER_RADIUS = 0.014;
 const LINE_MIN = 0.7;
 const LINE_MAX = 1.8;
 
-// Fractions of a mandala's radius. Each stays at or under 1 at full level and a full pulse, so the rim bounds it.
+// Fractions of a mandala's radius. Each stays at or under 1 at full level and a full pulse, so the
+// rim bounds it.
 const EYEPIECE = 0.985;
 const PHI_RING = 0.618;
 const ROSETTE_SHAPE = { base: 0.3, reach: 0.62, pulse: 0.05 };
@@ -80,19 +77,21 @@ const POLYGON_SHAPE = { base: 0.16, reach: 0.3, pulse: 0 };
 const SEED_SHAPE = { base: 0.08, reach: 0.17, pulse: 0 };
 const JEWEL_SHAPE = { base: 0.012, reach: 0.045, pulse: 0.02 };
 const BINDU_SHAPE = { base: 0.025, reach: 0.035, pulse: 0.015 };
-// Petals nearly touch at their widest, yet stay narrow enough that each curve's control point sits inside the tip.
+// Petals nearly touch at their widest, and the width cap keeps each control point inside the tip.
 const PETAL_FILL = 1.6;
 const PETAL_MAX_WIDTH = 0.45;
 
-// Gem hues around the base: sapphire rosette, emerald and amethyst lotus rows, ruby star, gold jewels.
+// Hue offsets from the base. A sapphire base gives emerald and amethyst lotus rows, a ruby star and
+// gold jewels.
 const HUE = { ring: 0, halo: 0, seed: -30, lotusOuter: -76, lotusInner: 54, polygon: 180, rosette: 0, star: 124, jewel: 180 };
-// Additive light through glass on the dark card, multiplied ink like stained glass on the light one.
+// Additive light shows on the dark card. The light card multiplies color instead, since added light
+// on near-white saturates to white.
 const DARK_TONE = { blend: 'lighter', saturation: 92, lightness: 62, lift: 1, alphaGain: 1, halo: 0.16 };
 const LIGHT_TONE = { blend: 'multiply', saturation: 86, lightness: 42, lift: -0.4, alphaGain: 1.15, halo: 0.06 };
 
 /**
- * A kaleidoscope mandala of mirrored wedges that blooms with the bands, clicks and changes symmetry on beats,
- * and repeats in a chain of dimming mirror reflections that carry the music outward a moment later.
+ * A kaleidoscope mandala that blooms with the bands, clicks on beats and changes symmetry every few
+ * beats. Dimming mirror reflections repeat it and carry the music outward a moment later.
  */
 function draw(ctx, frame) {
   const { state } = frame;
@@ -157,7 +156,7 @@ function advanceFold(state, frame, beat, presence) {
   if (state.foldMix >= 1) state.fading = null;
 }
 
-// Each layer drifts, and a beat clicks it a share of a sector toward a new target like a turned kaleidoscope tube.
+// A beat clicks each layer to a new angle, which imitates turning a kaleidoscope tube.
 function advanceTurns(state, frame, beat) {
   const dt = frame.reducedMotion ? 0 : frame.dtSeconds;
   const click = beat && !frame.reducedMotion;
@@ -169,7 +168,7 @@ function advanceTurns(state, frame, beat) {
     state.drift[layer] = (state.drift[layer] + DRIFT_RAD_PER_SECOND[layer] * speed * dt) % TAU;
     if (click) state.clickTarget[layer] += CLICK_HALF_SECTORS[layer] * halfSector;
     state.click[layer] += (state.clickTarget[layer] - state.click[layer]) * easing;
-    // Both angles drop whole turns together, so the click still to come survives the wrap.
+    // Both angles drop full turns together, so the click still to come survives the wrap.
     const turns = Math.trunc(state.click[layer] / TAU) * TAU;
     state.click[layer] -= turns;
     state.clickTarget[layer] -= turns;
@@ -204,7 +203,7 @@ function groupBlooms(state, frame) {
   return blooms;
 }
 
-// The outgoing symmetry shrinks and turns away as the incoming one blooms out from the center.
+// The outgoing symmetry shrinks and twists away while the incoming one grows to full size.
 function foldBlends(state, reducedMotion) {
   if (state.fading === null) return [{ fold: state.fold, weight: 1, scale: 1, twist: 0 }];
   const mix = state.foldMix;
@@ -228,7 +227,6 @@ function recordPose(state, pose, keepSeconds) {
   while (history.length > HISTORY_MAX || (history.length > 1 && history[1].time <= pose.time - keepSeconds)) history.shift();
 }
 
-// The newest pose at or before the time, or null before the history reaches back that far.
 function poseAt(history, time) {
   for (let i = history.length - 1; i >= 0; i--) {
     if (history[i].time <= time) return history[i];
@@ -258,7 +256,6 @@ function placeOf(x, y, radius, depth) {
   return { x, y, radius, depth, mirror: depth % 2 === 0 ? 1 : -1, dim: REFLECTION_DIM ** depth };
 }
 
-// The reflection count whose fitted taper sits closest to the ideal ratio.
 function chooseChain(radius, reach) {
   let best = { count: 0, shrink: 0 };
   for (let count = 1; count <= MAX_REFLECTIONS && radius >= 1; count++) {
@@ -269,7 +266,6 @@ function chooseChain(radius, reach) {
   return chainOf(radius, best.count, best.shrink);
 }
 
-// Each reflection shrinks by the same ratio and overlaps its neighbor by the same share.
 function chainOf(radius, count, shrink) {
   const radii = [radius];
   const offsets = [0];
@@ -280,7 +276,7 @@ function chainOf(radius, count, shrink) {
   return { radii, offsets };
 }
 
-// The ratio whose chain ends at the reach, found by bisection since the chain's span grows with the ratio.
+// The ratio whose chain ends at the reach. Bisection works since the span grows with the ratio.
 function fitShrink(radius, reach, count) {
   const span = (shrink) => {
     const chain = chainOf(radius, count, shrink);
@@ -298,7 +294,7 @@ function fitShrink(radius, reach, count) {
   return low;
 }
 
-// One mandala from the rim in. Small reflections drop the fine layers, which would only blur at their size.
+// Small reflections drop the fine layers, which would only blur at their size.
 function drawMandala(c, place, pose, look, blend) {
   const alpha = pose.glow * place.dim * blend.weight;
   if (alpha < GLOW_MIN) return false;
@@ -365,7 +361,7 @@ function reachOf(shape, level, pulse) {
   return shape.base + shape.reach * level + shape.pulse * pulse;
 }
 
-// The glow of light through the eyepiece. It ends transparent at the rim, so it adds no edge of its own.
+// The halo ends transparent at the rim, so it adds no edge of its own.
 function fillHalo(pen, place, size, energy) {
   const { c, look } = pen;
   const strength = pen.alpha * look.tone.halo * (0.4 + 0.6 * Math.min(1, energy * 2));
@@ -390,7 +386,7 @@ function fillPath(pen, hueOffset, strength, lift = 0) {
   pen.c.fill();
 }
 
-// Lift raises lightness on the dark theme and deepens it on the light one, so gems stand out on both.
+// Lift lightens on the dark theme and darkens on the light one, so gems stand out on both.
 function tint(look, hue, alpha, lift = 0) {
   const { tone } = look;
   const wrapped = ((hue % 360) + 360) % 360;
@@ -423,7 +419,7 @@ function circleAt(c, place, angle, distance, radius) {
   c.arc(x, y, radius, 0, TAU);
 }
 
-// The spectrum runs bass to treble across half a wedge and back across the mirrored half, in every wedge.
+// Each wedge runs the spectrum bass to treble across one half and back across the mirrored half.
 function traceRosette(c, place, spectrum, angle, fold, size, pulse, step) {
   const sector = TAU / fold;
   const half = sector / 2;
@@ -437,7 +433,7 @@ function traceRosette(c, place, spectrum, angle, fold, size, pulse, step) {
   c.closePath();
 }
 
-// Vesica petals from two quadratic curves. The control point lies inside the tip, so the tip bounds the petal.
+// A quadratic curve stays inside the hull of its points, so the tip bounds each vesica petal.
 function tracePetals(c, place, angle, fold, from, to) {
   const middle = (from + to) / 2;
   const width = Math.min(middle * Math.tan(Math.PI / fold) * PETAL_FILL, (to - from) * PETAL_MAX_WIDTH);
@@ -451,7 +447,7 @@ function tracePetals(c, place, angle, fold, from, to) {
   }
 }
 
-// The seed of life: a ring of circles that each pass through the center, around one more at the center.
+// The seed of life pattern. Each ring circle passes through the center.
 function traceSeed(c, place, angle, fold, radius) {
   circleAt(c, place, 0, 0, radius);
   for (let i = 0; i < fold; i++) circleAt(c, place, angle + (i * TAU) / fold, radius, radius);

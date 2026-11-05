@@ -1,10 +1,9 @@
 /**
  * Navidrome MCP Server - normalize-title unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the title normalizer + junk filter used to join album titles across
- * MusicBrainz, Last.fm, and Navidrome (get_artist_albums). Table-driven over
- * the in-the-wild variants the spec calls out (docs/ARTIST-ALBUMS-SPEC.md §5).
+ * The cases are the real-world title variants that docs/ARTIST-ALBUMS-SPEC.md section 5 names.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -12,21 +11,16 @@ import { normTitle, isJunkAlbumName } from '../../../src/utils/normalize-title.j
 
 describe('normTitle', () => {
   const cases: Array<[input: string, expected: string]> = [
-    // Plain
     ['Dark All Day', 'dark all day'],
-    // Case + leading "the"
     ['The Midnight', 'midnight'],
-    // Diacritics
     ['Café del Mar', 'cafe del mar'],
     ['Röyksopp', 'royksopp'],
-    // Bracketed noise
     ['Dark All Day [Explicit]', 'dark all day'],
     ['Unicorn (Deluxe Edition)', 'unicorn'],
     ['GUNSHIP (Instrumentals)', 'gunship'],
     ['Tech Noir (Carpenter Brut Remix)', 'tech noir'],
     ['Sunset (2020 Remaster)', 'sunset'],
     ['Early Summer (Bonus Track Version)', 'early summer'],
-    // Trailing format suffixes
     ['66 MHz - Single', '66 mhz'],
     ['Accelerated - EP', 'accelerated'],
     // A dashless format word is part of the title.
@@ -41,11 +35,9 @@ describe('normTitle', () => {
     ['+', '+'],
     ['÷ (Deluxe)', '÷'],
     ['', ''],
-    // Punctuation collapse
     ["Miami Nights '84", 'miami nights 84'],
     ['Art3mis & Parzival', 'art3mis parzival'],
     ['GUNSHIP: Instrumentals', 'gunship instrumentals'],
-    // Whitespace
     ['  Turbulence  ', 'turbulence'],
   ];
 
@@ -102,8 +94,7 @@ describe('isJunkAlbumName', () => {
     'GUNSHIP WEB',
     // Contains "com" but not as a domain suffix.
     'Coming Home',
-    // Contain "tribute"/"mixtape" only as a word fragment — must NOT be dropped
-    // (regression: substring match silently discarded real albums).
+    // "tribute" and "mixtape" appear here only inside a longer word, so these are real albums.
     'Attribute',
     'Contribute',
     'The Attributes of God',

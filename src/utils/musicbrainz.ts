@@ -1,32 +1,12 @@
 /**
  * Navidrome MCP Server - MusicBrainz Web Service v2 client
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * Minimal MusicBrainz client for the discography surface (get_artist_albums,
- * get_album_info): artist search/lookup, release-group search/lookup/browse,
- * and release-browse tracklists. Two operational rules from
- * https://musicbrainz.org/doc/MusicBrainz_API are enforced here so call sites
- * cannot get them wrong:
- *
- *   - ≤ 1 request/second: every call is serialized through a module-level
- *     queue that spaces dispatches by MIN_INTERVAL_MS, across concurrent tool
- *     invocations. Exceeding the limit gets the client IP blocked.
- *   - Meaningful User-Agent: required. Generic agents may be blocked.
+ * MusicBrainz blocks a client that exceeds 1 request per second or sends a generic User-Agent, so
+ * every call goes through one module-level throttle with a descriptive User-Agent.
  */
 
 import type { Config } from '../config.js';
@@ -45,20 +25,17 @@ const MB_API_BASE = 'https://musicbrainz.org/ws/2';
 // 1 req/s plus margin so clock jitter can't put two requests in one second.
 const MIN_INTERVAL_MS = 1100;
 
-// Browse paging: 100 is the MB max page size. 10 pages = 1000 release groups,
-// far beyond any real single-artist discography at type=album|ep.
+// 100 is the MB maximum page size. Ten pages hold 1000 release groups, more than any real
+// single-artist album and EP discography.
 const BROWSE_PAGE_SIZE = 100;
 const BROWSE_MAX_PAGES = 10;
 
-// Accept index-0 fuzzy search hits only at/above this MB relevance score
-// (0-100). Verified live: exact matches score 100. Same-name different-artist
-// decoys score ≤ 89. Applies to both artist and release-group searches.
+// MB relevance runs 0 to 100. Exact matches scored 100, and same-name decoys by other artists
+// scored at most 89.
 const SEARCH_MIN_SCORE = 85;
 
-// A popular group's light release browse stops here (300 releases), bounding the added throttled requests.
+// A popular group's light release browse stops at 300 releases, bounding the throttled requests.
 const TRACKLIST_LIGHT_MAX_PAGES = 3;
-
-// --- Throttle: module-level promise-chain queue --------------------------
 
 let queueTail: Promise<void> = Promise.resolve();
 let lastDispatchAt = 0;
@@ -73,8 +50,7 @@ function throttled<T>(task: () => Promise<T>): Promise<T> {
     lastDispatchAt = Date.now();
     return task();
   });
-  // The next task waits for this one to settle. Swallow rejections so one
-  // failed request never poisons the chain for subsequent callers.
+  // Rejections are swallowed so one failed request does not reject every later task in the chain.
   queueTail = run.then(
     () => undefined,
     () => undefined,
@@ -82,15 +58,12 @@ function throttled<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-/** Test-only: reset throttle state so fake-timer tests start cold. */
 export function resetMusicBrainzThrottleForTests(): void {
   queueTail = Promise.resolve();
   lastDispatchAt = 0;
 }
 
-// --- Fetch ----------------------------------------------------------------
-
-// MB answers an unknown MBID with 404, which lookups report as "not found" rather than "unreachable".
+// MB answers an unknown MBID with 404, which lookups report as "not found", not "unreachable".
 class MbNotFoundError extends Error {}
 
 async function mbFetch(
@@ -145,8 +118,6 @@ async function mbFetch(
   }
 }
 
-// --- Narrowing helpers (codebase style: hand-rolled, zod is for inputs) ---
-
 function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -164,12 +135,10 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
 }
 
-/** MB search parses the query as Lucene, so a quote or backslash in a name must be escaped to stay one phrase. */
+/** MB parses a search query as Lucene, so a quote or backslash is escaped to keep one phrase. */
 function luceneQuote(s: string): string {
   return `"${s.replace(/[\\"]/g, '\\$&')}"`;
 }
-
-// --- Artist resolution -----------------------------------------------------
 
 export interface MbArtistMatch {
   mbid: string;
@@ -185,12 +154,7 @@ function parseArtistRow(row: Record<string, unknown>, score: number): MbArtistMa
   return { mbid, name, score, disambiguation: asNonEmptyString(row['disambiguation']) };
 }
 
-/**
- * Resolve an artist name to a MusicBrainz artist. Picks, in score order:
- * the first case-insensitive exact name match, else the top hit when its
- * relevance score clears SEARCH_MIN_SCORE (shared with searchMbReleaseGroup),
- * else `null` (the caller degrades rather than guessing at a wrong artist's discography).
- */
+/** A low-score guess returns null, so the caller degrades instead of using a wrong artist. */
 export async function searchMbArtist(name: string, config: Config): Promise<MbArtistMatch | null> {
   const data = await mbFetch('/artist', { query: `artist:${luceneQuote(name)}`, limit: '5' }, config);
 
@@ -218,9 +182,8 @@ export async function searchMbArtist(name: string, config: Config): Promise<MbAr
 }
 
 /**
- * Look up an artist by MBID. Used when the caller supplies only an MBID, to
- * recover the canonical name for the Last.fm and Navidrome branches (Last.fm's
- * own mbid= lookup is unreliable: stale index, verified live).
+ * The canonical name feeds the Last.fm and Navidrome lookups, since Last.fm's own mbid lookup
+ * misses on a stale index.
  */
 export async function lookupMbArtist(mbid: string, config: Config): Promise<MbArtistMatch | null> {
   try {
@@ -232,18 +195,16 @@ export async function lookupMbArtist(mbid: string, config: Config): Promise<MbAr
   }
 }
 
-// --- Release-group browse ---------------------------------------------------
-
 export interface MbReleaseGroup {
   mbid: string;
   title: string;
-  /** First release year, or null when MB has no date. */
+  /** First release year. */
   year: number | null;
-  /** e.g. "Album", "EP", "Single", capitalized as MB returns it. */
+  /** Capitalized as MB returns it, such as "Album". */
   primaryType: string | null;
-  /** Lowercased. MB returns "Remix"/"Live", and the exclude filter compares lowercase. */
+  /** Lowercased. MB returns "Remix" and "Live", and the exclude filter compares lowercase. */
   secondaryTypes: string[];
-  /** Genre names, lowercased, highest vote-count first. [] when MB has none. */
+  /** Highest vote count first. */
   genres: string[];
   disambiguation: string | null;
 }
@@ -265,8 +226,7 @@ function parseReleaseGroup(raw: unknown): MbReleaseGroup | null {
     }))
     .filter((g): g is { name: string; count: number } => g.name !== null)
     .sort((a, b) => b.count - a.count)
-    // Lowercase so `genres` is uniform with the Last.fm tag fallback. MB does
-    // not guarantee casing on genre submissions.
+    // MB does not guarantee genre casing, and lowercase matches the Last.fm tag fallback.
     .map(g => g.name.toLowerCase());
 
   return {
@@ -283,11 +243,7 @@ function parseReleaseGroup(raw: unknown): MbReleaseGroup | null {
   };
 }
 
-/**
- * Browse all release groups for an artist, filtered server-side by primary
- * type(s), with per-group genres riding the same request (`inc=genres`).
- * This is what makes per-album Last.fm getInfo calls unnecessary.
- */
+/** `inc=genres` returns genres in the browse, so no per-album Last.fm getInfo call is needed. */
 export async function browseMbReleaseGroups(
   artistMbid: string,
   includeTypes: string[],
@@ -315,8 +271,8 @@ export async function browseMbReleaseGroups(
       ? data['release-group-count']
       : groups.length;
 
-    // Advance by rows actually returned (per MB paging guidance). An empty
-    // page means the server has nothing more regardless of the claimed total.
+    // MB paging guidance says to advance by the rows returned. An empty page ends the browse
+    // whatever the claimed total.
     offset += rows.length;
     if (rows.length === 0 || offset >= total) break;
   }
@@ -325,11 +281,9 @@ export async function browseMbReleaseGroups(
   return groups;
 }
 
-// --- Release-group detail (get_album_info) -----------------------------------
-
 /** Search hits carry no genres and may omit secondary types, so both can be []. */
 export interface MbReleaseGroupDetail extends MbReleaseGroup {
-  /** First credited artist name, or null when MB returns no artist-credit. */
+  /** First credited artist. */
   artistName: string | null;
 }
 
@@ -343,11 +297,7 @@ function parseReleaseGroupDetail(raw: unknown): MbReleaseGroupDetail | null {
   return { ...base, artistName };
 }
 
-/**
- * Look up a release group by MBID with genres and artist credits. Used when
- * get_album_info receives an mbid (as emitted by get_artist_albums) and must
- * recover the canonical title/artist for the Last.fm and Navidrome branches.
- */
+/** The canonical title and artist from an mbid feed the Last.fm and Navidrome lookups. */
 export async function lookupMbReleaseGroup(
   mbid: string,
   config: Config,
@@ -379,11 +329,6 @@ function outranksReleaseGroup(candidate: MbReleaseGroupDetail, current: MbReleas
   return candidate.secondaryTypes.length < current.secondaryTypes.length;
 }
 
-/**
- * Resolve artist + album names to a release group. Among hits whose normalized title matches, prefers
- * Album, then EP, then fewest secondary types, keeping MB score order on ties. Else the top hit at/above
- * SEARCH_MIN_SCORE, else null.
- */
 export async function searchMbReleaseGroup(
   artistName: string,
   albumTitle: string,
@@ -419,8 +364,6 @@ export async function searchMbReleaseGroup(
   return picked.detail;
 }
 
-// --- Release-browse tracklist -------------------------------------------------
-
 export interface MbTrack {
   /** Sequential across all media (1-based), so multi-disc albums read linearly. */
   position: number;
@@ -429,10 +372,6 @@ export interface MbTrack {
 }
 
 export interface MbTracklist {
-  /**
-   * The release whose tracklist was chosen: Official preferred, then earliest, across the group's
-   * releases up to TRACKLIST_LIGHT_MAX_PAGES browse pages.
-   */
   releaseMbid: string;
   status: string | null;
   date: string | null;
@@ -478,8 +417,8 @@ function parseReleaseTracks(row: Record<string, unknown>): MbTrack[] {
 }
 
 /**
- * Official releases first, then the earliest date, the canonical original that matches
- * first-release-date semantics. Partial dates ("2023") sort before full ones, which is acceptable.
+ * The earliest Official release best matches the group's first-release-date. A partial date such as
+ * "2023" sorts before the full dates of that year.
  */
 function pickPreferredRelease<T extends MbReleaseSummary>(releases: T[]): T | null {
   const officials = releases.filter(r => r.status === 'Official');
@@ -493,8 +432,8 @@ function pickPreferredRelease<T extends MbReleaseSummary>(releases: T[]): T | nu
 }
 
 /**
- * Chooses across a light browse (no recordings) of up to TRACKLIST_LIGHT_MAX_PAGES pages, then
- * fetches only the chosen release's tracks. Returns null when the chosen release has no tracklist.
+ * A browse without recordings avoids the track cap of a recordings browse. Tracks are then fetched
+ * for the chosen release only.
  */
 async function lookupPreferredRelease(releaseGroupMbid: string, config: Config): Promise<MbTracklist | null> {
   const summaries: MbReleaseSummary[] = [];
@@ -531,11 +470,8 @@ async function lookupPreferredRelease(releaseGroupMbid: string, config: Config):
 }
 
 /**
- * Fetch the tracklist for a release group by browsing its releases with
- * recordings + media riding the same request (verified live: `inc=recordings`
- * works on a browse). MB is the PRIMARY tracklist source. Last.fm durations
- * are mostly null and its titles carry feat-suffix noise (spec §9.1).
- * Returns null when the release group has no usable release.
+ * MB is the primary tracklist source, since Last.fm durations are mostly null and its titles carry
+ * feat suffixes (docs/ARTIST-ALBUMS-SPEC.md §9.1).
  */
 export async function browseMbReleaseTracklist(
   releaseGroupMbid: string,
@@ -560,7 +496,8 @@ export async function browseMbReleaseTracklist(
   }
   const firstPageChoice = pickPreferredRelease(firstPage);
 
-  // MB caps a recordings browse near 500 tracks, so a popular group's first page is an arbitrary subset.
+  // MB caps a recordings browse near 500 tracks, so a popular group's first page is an arbitrary
+  // subset.
   const chosen = releaseCount > rows.length
     ? (await lookupPreferredRelease(releaseGroupMbid, config)) ?? firstPageChoice
     : firstPageChoice;

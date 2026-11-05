@@ -1,25 +1,21 @@
 /**
  * Navidrome MCP Server - Configuration Management
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { ErrorFormatter } from './utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from './utils/error-formatter.js';
 import { logger } from './utils/logger.js';
 import { ConfigSchema, type Config } from './config/schema.js';
-import { readSettings, type SettingsFile } from './config/store.js';
+import {
+  mergeOntoStored,
+  readRawSettings,
+  readSettings,
+  readSettingsForStartup,
+  SettingsFileSchema,
+  writeSettings,
+  type SettingsFile,
+} from './config/store.js';
 import { mapStoreToConfig } from './config/map-config.js';
 import { getSettingsStorePath } from './config/store-path.js';
 import { buildEnvRuntimeSettings } from './config/env-settings.js';
@@ -27,10 +23,7 @@ import { resolveMpvBinary } from './services/playback/mpv-process.js';
 
 export type { Config } from './config/schema.js';
 
-/**
- * Validate a store snapshot against the runtime schema. Shared by startup and the settings
- * Save and Test routes, so each reports the same `path: message` issue list.
- */
+/** Shared by startup and the settings Save and Test routes, so each reports the same issue list. */
 export function validateMappedSettings(
   settings: SettingsFile,
   mpvPath: string | null,
@@ -42,10 +35,10 @@ export function validateMappedSettings(
 }
 
 /**
- * Validate a settings snapshot into the runtime config. A caller that already read the store
- * passes that snapshot, so its guard and this parse see the same file.
+ * A caller that already read the store passes that snapshot, so its guard and this parse see the
+ * same file.
  */
-// eslint-disable-next-line @typescript-eslint/require-await -- async kept for callers that await this public function. The body is synchronous.
+// eslint-disable-next-line @typescript-eslint/require-await -- kept async since callers await it
 export async function loadConfig(settings?: SettingsFile): Promise<Config> {
   settings ??= readSettings() ?? undefined;
   if (settings === undefined) {
@@ -65,41 +58,72 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
   return result.config;
 }
 
+/** Tells the web player whether env-only values, such as WEBUI_ADMIN_PASSWORD, apply. */
+export type ConfigSource = 'store' | 'env';
+
+export interface StartupFailure {
+  reason: string;
+  /** Navidrome could not be reached, so the configuration was never judged. */
+  unreachable: boolean;
+  /** Picks the remedy, since env vars cannot fix a store and a settings save replaces env. */
+  source: ConfigSource;
+}
+
 /**
  * Lets the entry point branch into setup mode without turning `Config` into a union,
- * so every `Config` field stays non-optional.
+ * so every `Config` field stays non-optional. An absent failure means a first run.
  */
 type ConfigState =
-  | { configured: true; config: Config }
-  | { configured: false };
+  | { configured: true; config: Config; source: ConfigSource }
+  | { configured: false; failure?: StartupFailure };
+
+function rejected(source: ConfigSource, reason: string): ConfigState {
+  return { configured: false, failure: { reason, unreachable: false, source } };
+}
 
 export async function resolveConfigState(): Promise<ConfigState> {
-  const settings = readSettings();
-  const url = settings?.navidrome?.url;
-  if (settings === null || url === undefined || url.trim() === '') {
-    return await resolveEnvFallbackState();
+  const store = readSettingsForStartup();
+  const url = store.settings?.navidrome?.url;
+  if (store.settings === null || url === undefined || url.trim() === '') {
+    return await resolveEnvFallbackState(store);
   }
 
   try {
     // Reuse the snapshot the URL guard read, since a second read could see a concurrent save.
-    return { configured: true, config: await loadConfig(settings) };
+    return { configured: true, config: await loadConfig(store.settings), source: 'store' };
   } catch (err) {
     // An invalid store opens the settings GUI instead of crashing. The logged reason
     // keeps a malformed hand-edited store from looking like a fresh first run.
     logger.warn('settings.json is present but invalid; entering setup mode:', err);
-    return { configured: false };
+    return rejected('store', errorMessage(err));
   }
 }
 
+/** The env config defaults the web remote to open, so it must not replace a store that asked for auth. */
+function envSkipReason(problem: string | null): string {
+  const cause = problem ?? `settings.json at ${getSettingsStorePath()} has no Navidrome URL`;
+  return (
+    `${cause}. The environment fallback is skipped, since the file names, or may name, a web remote ` +
+    'auth mode other than none. Fix the store, or remove it to run from the environment variables.'
+  );
+}
+
 /**
- * Env fallback for a missing or unusable store, configured only when `NAVIDROME_URL` is set and validates.
- * A broken env config logs its rejection reason before setup mode, so set env vars are never silently ignored.
+ * Applies only when settings.json is absent, fails the settings schema, or has no Navidrome URL, and
+ * names no web remote auth mode other than none. A rejected env config logs its reason, so set env
+ * vars never fail without a trace.
  */
-async function resolveEnvFallbackState(): Promise<ConfigState> {
+async function resolveEnvFallbackState(store: ReturnType<typeof readSettingsForStartup>): Promise<ConfigState> {
+  if (store.requestsWebuiAuth) {
+    const reason = envSkipReason(store.problem);
+    logger.warn(`${reason} Setup mode starts.`);
+    return rejected('store', reason);
+  }
   const envSettings = buildEnvRuntimeSettings();
   const envUrl = envSettings.navidrome?.url;
   if (envUrl === undefined || envUrl.trim() === '') {
-    return { configured: false };
+    // A present store that failed to load is a rejected config, not a first run.
+    return store.problem === null ? { configured: false } : rejected('store', store.problem);
   }
 
   try {
@@ -108,19 +132,21 @@ async function resolveEnvFallbackState(): Promise<ConfigState> {
       `No usable settings.json at ${getSettingsStorePath()}. Running from environment variables ` +
       '(NAVIDROME_URL et al.). A usable settings.json takes precedence.'
     );
-    return { configured: true, config };
+    return { configured: true, config, source: 'env' };
   } catch (err) {
     logger.warn(
       'NAVIDROME_URL is set but the environment-derived config is invalid; entering setup mode:',
       err
     );
-    return { configured: false };
+    // A schema-invalid store also reaches the env path, so the reason says the file was ignored.
+    const ignoredStore = store.problem === null ? '' : `${store.problem}. Its values are ignored. `;
+    return rejected('env', `${ignoredStore}The environment-derived config is invalid: ${errorMessage(err)}`);
   }
 }
 
 /**
- * The webui settings settings.json holds now, so a running process sees what the web player or the
- * config app saved after it started. Null when the store is absent or invalid.
+ * Reads the store on each call, so a running process sees what the web player or the settings app
+ * saved after it started.
  */
 export function readSavedWebuiSettings(): Config['webui'] | null {
   const settings = readSettings();
@@ -129,8 +155,54 @@ export function readSavedWebuiSettings(): Config['webui'] | null {
   return result.ok ? result.config.webui : null;
 }
 
-/** A spawned or re-run web player binds the saved endpoint, not the one this process started with. */
-export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host'> | null {
+/** A spawned or re-run web player binds the saved endpoint, not this process's startup one. */
+export function readSavedWebuiEndpoint(): Pick<Config['webui'], 'port' | 'host' | 'tls'> | null {
   const webui = readSavedWebuiSettings();
-  return webui === null ? null : { port: webui.port, host: webui.host };
+  return webui === null ? null : { port: webui.port, host: webui.host, tls: webui.tls };
+}
+
+/**
+ * Reads the store on each call, so a running process sees a device another process saved. Undefined
+ * means no usable store, and the caller keeps its startup config.
+ */
+export function readSavedAudioDevice(): Config['playbackAudioDevice'] | undefined {
+  const settings = readSettings();
+  if (settings === null) return undefined;
+  const result = validateMappedSettings(settings, null);
+  return result.ok ? result.config.playbackAudioDevice : undefined;
+}
+
+export function saveAudioDevice(device: Config['playbackAudioDevice']): boolean {
+  return saveStorePatch({ playback: { audioDevice: device } }, 'audio device');
+}
+
+/** An undefined field keeps its stored value. */
+export function saveJukeboxSettings(patch: { [K in keyof Config['jukebox']]?: Config['jukebox'][K] | undefined }): boolean {
+  return saveStorePatch({ jukebox: patch }, 'jukebox settings');
+}
+
+/**
+ * Without a store holding a Navidrome URL the process runs from env. A usable store wins over env, so
+ * writing a near-empty file then would replace that config.
+ */
+function saveStorePatch(patch: Record<string, unknown>, label: string): boolean {
+  const stored = readRawSettings();
+  if (stored === null) return false;
+  const storedUrl = SettingsFileSchema.safeParse(stored).data?.navidrome?.url;
+  if (storedUrl === undefined || storedUrl.trim() === '') return false;
+
+  const merged = mergeOntoStored(stored, patch);
+  // A file that does not parse back would leave the store unusable.
+  if (!SettingsFileSchema.safeParse(merged).success) {
+    logger.warn(`${label}: merged settings failed validation, so the choice was not saved`);
+    return false;
+  }
+
+  try {
+    writeSettings(merged as SettingsFile);
+    return true;
+  } catch (err) {
+    logger.warn(`${label}: failed to write settings.json:`, err);
+    return false;
+  }
 }

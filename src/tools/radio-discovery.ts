@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Radio Discovery Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { z } from 'zod';
@@ -40,9 +28,6 @@ import {
 import { getRadioBrowserBase, invalidateRadioBrowserBase } from '../utils/radio-browser-resolver.js';
 import { hasRecentlyVoted, getClickedStreamUrl, markVoted, markClicked } from '../utils/radio-browser-rate-limit.js';
 
-/**
- * Radio Browser API station response
- */
 interface RadioBrowserStation {
   stationuuid: string | null | undefined;
   name: string | null | undefined;
@@ -80,33 +65,25 @@ interface RadioBrowserStation {
   has_extended_info?: boolean;
 }
 
-/**
- * Radio Browser API tag, language or codec response
- */
 interface RadioBrowserNamedCount {
   name: string;
   stationcount: number;
 }
 
-/**
- * Radio Browser API country response
- */
 interface RadioBrowserCountry {
   name: string;
   iso_3166_1: string;
   stationcount: number;
 }
 
-/**
- * Radio Browser API click/vote response
- */
 interface RadioBrowserActionResponse {
   ok: boolean;
   message?: string;
   url?: string;
 }
 
-// Radio Browser's rejection of a vote inside its 10-minute window, which another process on this IP may have cast.
+// Radio Browser's rejection of a repeat vote inside its 10-minute window. Another process on this
+// IP may have cast the first vote.
 const REPEAT_VOTE_REJECTION = 'voting for the same station too often';
 
 const ALREADY_VOTED_RESULT: VoteRadioStationResponse = {
@@ -122,8 +99,8 @@ interface RadioBrowserRequest {
 }
 
 /**
- * GET a Radio Browser JSON endpoint. Only a network error, a timeout or a 5xx
- * suggests an unhealthy mirror, so only those drop the cached mirror.
+ * Only a network error, a timeout or a 5xx suggests an unhealthy mirror, so only those drop the
+ * cached mirror.
  */
 async function radioBrowserGetJson<T>(
   config: Config,
@@ -146,7 +123,7 @@ async function radioBrowserGetJson<T>(
         retryPolicy: request.retryPolicy,
         operationLabel: `Radio Browser ${request.label}`,
         respectProxy: true,
-        // Only click and vote skip the retry, because each records an event server-side.
+        // A 'never' request records an event server-side, so a timeout leaves its outcome unknown.
         nonIdempotent: request.retryPolicy === 'never',
       },
     );
@@ -171,14 +148,11 @@ function splitList(value: string | undefined): string[] {
   return value.split(',').map(item => item.trim()).filter(item => item !== '');
 }
 
-/**
- * Convert a Radio Browser row to our DTO. Returns null for a row missing its
- * uuid, name or url, since the station could not be identified or played.
- */
+/** A row missing its uuid, name or url maps to null, since it cannot be identified or played. */
 function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO | null {
-  // An empty url_resolved falls back to url. `??` would keep the empty string.
   const stationUuid = station.stationuuid;
   const name = station.name?.trim() ?? '';
+  // `??` would keep an empty url_resolved, so an empty one falls back to url explicitly.
   const streamUrl = (station.url_resolved !== undefined && station.url_resolved !== '')
     ? station.url_resolved
     : station.url ?? '';
@@ -220,10 +194,7 @@ function mapStationToDTO(station: RadioBrowserStation): ExternalRadioStationDTO 
   return dto;
 }
 
-/**
- * Probe one discovered station. A failed probe becomes an `isValid:false`
- * result, so one bad host cannot sink the batch.
- */
+/** A thrown probe becomes an `isValid:false` result, so one bad station cannot reject the batch. */
 async function probeStation(
   station: ExternalRadioStationDTO,
 ): Promise<ExternalRadioStationDTO> {
@@ -251,11 +222,6 @@ async function probeStation(
   }
 }
 
-/**
- * Probe lane key for a station: its `host:port`. Some icecast hosts rate-limit
- * concurrent connections per IP, which false-FAILs real streams (Issue #7). An
- * unparseable URL gets its own lane.
- */
 function stationHostKey(playUrl: string, index: number): string {
   try {
     return new URL(playUrl).host.toLowerCase();
@@ -265,10 +231,8 @@ function stationHostKey(playUrl: string, index: number): string {
 }
 
 /**
- * Probe the first RADIO_DISCOVERY_PROBE_COUNT stations. Different hosts run in parallel and same-host
- * stations run one at a time, so no rate-limiting host sees concurrent probes.
- *
- * Results are written back by original index, so the discovery order is kept.
+ * Same-host stations probe one at a time, since some Icecast hosts rate-limit concurrent
+ * connections per IP and a throttled probe fails a working stream.
  */
 async function validateDiscoveredStations(
   stations: ExternalRadioStationDTO[]
@@ -300,16 +264,13 @@ async function validateDiscoveredStations(
   return [...results, ...remainingStations];
 }
 
-/**
- * Discover radio stations via Radio Browser API
- */
 export async function discoverRadioStations(
   config: Config,
   args: unknown
 ): Promise<DiscoverRadioStationsResponse> {
   try {
     const params = DiscoverRadioStationsSchema.parse(args);
-    // Popularity sorts read best first. A name sort reads A to Z.
+    // A numeric sort such as votes or bitrate reads highest first. A name sort reads A to Z.
     const order = params.order ?? (params.sort === 'name' ? 'ASC' : 'DESC');
 
     logger.debug('Tool discoverRadioStations called with args:', params);
@@ -393,7 +354,8 @@ interface RadioFilterSpec {
   map: (rows: unknown[]) => RadioFiltersResponse;
 }
 
-// Radio Browser sorts these lists by name by default, which puts junk rows first and pushes out rock, english and US.
+// Radio Browser sorts these lists by name by default, which puts junk rows first and pushes rock,
+// english and US past the limit.
 const POPULAR_FIRST = 'order=stationcount&reverse=true&hidebroken=true';
 
 const RADIO_FILTER_SPECS: readonly RadioFilterSpec[] = [
@@ -448,9 +410,6 @@ type RadioFilterOutcome =
   | { kind: RadioFilterKind; entries: RadioFiltersResponse }
   | { kind: RadioFilterKind; reason: unknown };
 
-/**
- * Get available filter options for radio station discovery
- */
 export async function getRadioFilters(config: Config, args: unknown): Promise<RadioFiltersResponse> {
   try {
     const params = RadioFiltersSchema.parse(args);
@@ -495,9 +454,6 @@ export async function getRadioFilters(config: Config, args: unknown): Promise<Ra
   }
 }
 
-/**
- * Get a specific radio station by UUID
- */
 export async function getStationByUuid(config: Config, args: unknown): Promise<ExternalRadioStationDTO> {
   try {
     const { stationUuid } = StationUuidSchema.parse(args);
@@ -524,10 +480,8 @@ export async function getStationByUuid(config: Config, args: unknown): Promise<E
 }
 
 /**
- * Register a play click for a station (helps with popularity metrics).
- *
- * A second click for the same UUID within a day returns the first click's stream URL
- * instead of calling Radio Browser, which counts one click per IP per day.
+ * A repeat click within a day returns the first click's stream URL without calling Radio Browser,
+ * which counts one click per IP per station per day.
  */
 export async function clickStation(config: Config, args: unknown): Promise<ClickRadioStationResponse> {
   try {
@@ -546,7 +500,6 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
     }
 
     const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
-    // No retry: a retried click could be counted twice if the first one landed.
     const data = await radioBrowserGetJson<RadioBrowserActionResponse>(
       config,
       radioBrowserBase,
@@ -559,7 +512,8 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
     }
     markClicked(stationUuid, data.url ?? '');
 
-    // Upstream's success text "retrieved station url" reads as an implementation leak, so success gets our own message.
+    // Radio Browser's success text "retrieved station url" reads as an implementation leak, so
+    // success gets its own message.
     return {
       success: true,
       streamUrl: data.url ?? '',
@@ -571,10 +525,8 @@ export async function clickStation(config: Config, args: unknown): Promise<Click
 }
 
 /**
- * Vote for a radio station.
- *
- * A second vote for the same UUID within 10 minutes reports the first vote instead of
- * calling Radio Browser, which accepts one vote per IP per station every 10 minutes.
+ * A repeat vote within 10 minutes reports the first vote without calling Radio Browser, which
+ * accepts one vote per IP per station every 10 minutes.
  */
 export async function voteStation(config: Config, args: unknown): Promise<VoteRadioStationResponse> {
   try {
@@ -588,7 +540,6 @@ export async function voteStation(config: Config, args: unknown): Promise<VoteRa
     }
 
     const radioBrowserBase = await getRadioBrowserBase(config.radioBrowserBaseOverride);
-    // No retry: a retried vote could be recorded twice if the first one landed.
     const data = await radioBrowserGetJson<RadioBrowserActionResponse>(
       config,
       radioBrowserBase,

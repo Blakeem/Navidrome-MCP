@@ -1,5 +1,5 @@
-// Per-device preferences in localStorage. Storage throws where site data is blocked,
-// so a failed read returns null and a failed write keeps the choice for this page only.
+// localStorage throws where site data is blocked, so a failed read returns null
+// and a failed write keeps the choice for this page only.
 
 export function prefRead(key) {
   try {

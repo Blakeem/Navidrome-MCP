@@ -1,10 +1,10 @@
 /**
  * Navidrome MCP Server - createRadioStation tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Verifies the v2.0.0 fix to createRadioStation: the response now carries the
- * REAL station id (resolved by listing stations after the create batch and
- * matching on name+streamUrl), instead of the placeholder string 'created'.
+ * Subsonic createInternetRadioStation does not echo the new id, so one REST listing after the batch
+ * resolves it.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,11 +20,7 @@ import { validateRadioStream } from '../../../src/tools/radio-validation.js';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
-/**
- * Build a synthetic Navidrome REST `/radio` response (array of rows). Defaults
- * are sufficient for createRadioStation's post-create id-resolution path —
- * it matches on (name, streamUrl) and reads id/createdAt/updatedAt.
- */
+/** The id lookup matches on name and streamUrl, so the other fields take fixed defaults. */
 function makeRestList(stations: Array<{ id: string; name: string; streamUrl: string; createdAt?: string }>) {
   return stations.map(s => ({
     id: s.id,
@@ -44,8 +40,6 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('looks up the real station id via REST /radio after create', async () => {
-    // subsonicRequest = createInternetRadioStation (returns nothing useful)
-    // request = REST GET /radio for post-create id resolution
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
     mockClient.request.mockResolvedValueOnce(
       makeRestList([{ id: 'real-uuid-001', name: 'Test Station', streamUrl: 'http://stream.test/audio' }])
@@ -72,11 +66,10 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('only issues ONE REST list call regardless of batch size', async () => {
-    // 3 creates (Subsonic) + 1 REST list = 4 total network calls.
     mockClient.subsonicRequest
-      .mockResolvedValueOnce({ status: 'ok' }) // create #1
-      .mockResolvedValueOnce({ status: 'ok' }) // create #2
-      .mockResolvedValueOnce({ status: 'ok' }); // create #3
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockResolvedValueOnce({ status: 'ok' });
     mockClient.request.mockResolvedValueOnce(
       makeRestList([
         { id: 'id-1', name: 'A', streamUrl: 'http://a.test/' },
@@ -93,7 +86,6 @@ describe('createRadioStation real-id resolution', () => {
       ],
     });
 
-    // 3 createInternetRadioStation (Subsonic) + 1 REST listRadioStations
     expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(3);
     expect(mockClient.request).toHaveBeenCalledTimes(1);
     expect(result.results).toHaveLength(3);
@@ -101,16 +93,14 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('falls back to empty id with a note when the lookup fails', async () => {
-    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' }); // create succeeded
-    mockClient.request.mockRejectedValueOnce(new Error('list failed'));  // REST list failed
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
+    mockClient.request.mockRejectedValueOnce(new Error('list failed'));
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Orphan', streamUrl: 'http://orphan.test/' }],
     });
 
-    // Create still reports success — only id resolution failed. The `note`
-    // field tells the LLM to call list_radio_stations rather than
-    // delete_radio_station('') which would fail opaquely.
+    // The note keeps the LLM from passing the empty id to delete_radio_station.
     expect(result.results[0]?.success).toBe(true);
     expect(result.results[0]?.station?.id).toBe('');
     expect(result.results[0]?.note).toMatch(/list_radio_stations/);
@@ -144,8 +134,8 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('annotates with a note when create succeeded but station vanished from the listing', async () => {
-    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });        // create succeeded
-    mockClient.request.mockResolvedValueOnce(makeRestList([]));                // listing returned empty
+    mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
+    mockClient.request.mockResolvedValueOnce(makeRestList([]));
 
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Phantom', streamUrl: 'http://phantom.test/' }],
@@ -157,12 +147,11 @@ describe('createRadioStation real-id resolution', () => {
   });
 
   it('assigns DISTINCT ids to two same-batch stations with identical (name, streamUrl)', async () => {
-    // User creates two "WBEZ" stations pointing at the same stream. Navidrome
-    // accepts both as separate rows. Without per-batch tracking, both lookups
-    // would land on the same newest row and one create would be unreachable.
+    // Navidrome stores both duplicates as separate rows. Without per-batch tracking,
+    // both lookups would resolve to the same newest row.
     mockClient.subsonicRequest
-      .mockResolvedValueOnce({ status: 'ok' })  // create #1
-      .mockResolvedValueOnce({ status: 'ok' }); // create #2
+      .mockResolvedValueOnce({ status: 'ok' })
+      .mockResolvedValueOnce({ status: 'ok' });
     mockClient.request.mockResolvedValueOnce(
       makeRestList([
         { id: 'aaa', name: 'WBEZ', streamUrl: 'http://wbez.test/', createdAt: '2025-09-03T22:07:50Z' },
@@ -178,9 +167,8 @@ describe('createRadioStation real-id resolution', () => {
     });
 
     const ids = result.results.map(r => r.station?.id);
-    // First lookup gets the newest ('zzz'), second gets the next unused ('aaa').
+    // Each lookup takes the newest row not yet assigned.
     expect(ids).toEqual(['zzz', 'aaa']);
-    // Both must be distinct, non-empty.
     expect(new Set(ids).size).toBe(2);
     expect(ids.every(id => id !== '' && id !== undefined)).toBe(true);
   });
@@ -223,13 +211,10 @@ describe('createRadioStation real-id resolution', () => {
     });
 
     expect(result.results[0]?.success).toBe(false);
-    // Only the failed create. No follow-up list call (nothing to look up).
     expect(mockClient.subsonicRequest).toHaveBeenCalledTimes(1);
     expect(mockClient.request).not.toHaveBeenCalled();
   });
 });
-
-// ---- createRadioStation Zod input validation --------------------------------
 
 describe('createRadioStation Zod input validation', () => {
   let mockClient: MockNavidromeClient;
@@ -263,16 +248,14 @@ describe('createRadioStation Zod input validation', () => {
   });
 
   it('returns per-item failure (not a throw) for empty name within valid batch', async () => {
-    // Per-item validation stays in the loop so a batch with one bad entry
-    // still processes the rest — Zod validates array structure but not min(1)
-    // on individual name/url (those are checked per-item in the loop).
+    // The schema leaves empty names and URLs to the per-station loop, so one bad entry
+    // fails alone and the rest of the batch proceeds.
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: '', streamUrl: 'http://stream.test/' }],
     });
 
     expect(result.results[0]?.success).toBe(false);
     expect(result.results[0]?.error).toMatch(/name.*required|required.*name/i);
-    // No Subsonic call — validation failed before network
     expect(mockClient.subsonicRequest).not.toHaveBeenCalled();
   });
 });
@@ -284,8 +267,8 @@ describe('createRadioStation URL validation', () => {
     mockClient = createMockClient();
   });
 
-  // The WHATWG URL parser strips tab/LF/CR, so these parse to a clean http:
-  // URL while the RAW string is what gets stored and later handed to mpv.
+  // The WHATWG URL parser strips tab, LF and CR, so such a URL parses as clean http
+  // while the raw string gets stored and later handed to mpv.
   it('rejects a stream URL carrying a newline, before any network call', async () => {
     const result = await createRadioStation(mockClient as unknown as NavidromeClient, {
       stations: [{ name: 'Injected', streamUrl: 'http://stream.test/live\nHost: internal.local' }],
@@ -358,8 +341,6 @@ describe('createRadioStation URL validation', () => {
     );
   });
 
-  // The per-station checks live in the loop precisely so one bad entry does not
-  // take the batch down with it.
   it('fails only the bad entry in a mixed batch', async () => {
     mockClient.subsonicRequest.mockResolvedValueOnce({ status: 'ok' });
     mockClient.request.mockResolvedValueOnce(

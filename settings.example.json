@@ -29,16 +29,32 @@
   "playback": {
     "mpvPath": null,
     "transcodeFormat": "raw",
-    "transcodeBitrate": "192"
+    "transcodeBitrate": "192",
+    "audioDevice": null
   },
   "webui": {
     "enabled": true,
     "port": 8808,
     "host": null,
     "expose": false,
+    "allowedHosts": [],
+    "publicUrl": null,
     "autoOpenBrowser": false,
     "persistAfterMcpExit": false,
-    "visualizer": true
+    "visualizer": true,
+    "tls": {
+      "certPath": null,
+      "keyPath": null
+    },
+    "auth": {
+      "mode": "none",
+      "adminPasswordHash": null,
+      "adminAccess": "localhost"
+    }
+  },
+  "jukebox": {
+    "guestQueueLimit": 3,
+    "shareLink": "lan"
   },
   "advanced": {
     "debug": false,

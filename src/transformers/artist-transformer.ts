@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Artist Data Transformers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { ArtistDTO } from '../types/index.js';
@@ -25,9 +13,6 @@ import {
   type TransformOptions,
 } from './shared-transformers.js';
 
-/**
- * Raw artist data from Navidrome API
- */
 export interface RawArtist {
   id: string;
   name: string;
@@ -42,15 +27,7 @@ export interface RawArtist {
   [key: string]: unknown;
 }
 
-/**
- * Transform a raw artist from Navidrome API to a clean DTO
- * @param rawArtist Raw artist data from API
- * @param options Verbosity controls (see {@link TransformOptions}). Default
- *   compact: only the identity block is emitted. Verbose/keep restore the rest.
- * @returns Clean artist DTO for LLM consumption
- */
 export function transformToArtistDTO(rawArtist: RawArtist, options?: TransformOptions): ArtistDTO {
-  // Identity block, always emitted.
   const dto: ArtistDTO = {
     id: rawArtist.id,
     name: rawArtist.name || '',
@@ -58,7 +35,8 @@ export function transformToArtistDTO(rawArtist: RawArtist, options?: TransformOp
     songCount: rawArtist.songCount || 0,
   };
 
-  // Navidrome omits playCount for never-played rows, so an explicit 0 separates never played from unavailable.
+  // Navidrome omits playCount on a never-played row. An explicit 0 keeps never played distinct
+  // from not reported.
   if (shouldEmit('playCount', options)) {
     dto.playCount = rawArtist.playCount ?? 0;
   }
@@ -83,12 +61,6 @@ export function transformToArtistDTO(rawArtist: RawArtist, options?: TransformOp
   return dto;
 }
 
-/**
- * Transform an array of raw artists to DTOs
- * @param rawArtists Array of raw artist data
- * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
- * @returns Array of clean artist DTOs
- */
 export function transformArtistsToDTO(rawArtists: unknown, options?: TransformOptions): ArtistDTO[] {
   return transformObjectRows(rawArtists, (artist: RawArtist) => transformToArtistDTO(artist, options));
 }

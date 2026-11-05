@@ -1,46 +1,45 @@
 /**
  * Navidrome MCP Server - Settings app route handlers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateMappedSettings } from '../config.js';
 import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
-import { readSettings, writeSettings, SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import {
+  mergeOntoStored,
+  readRawSettings,
+  readStoreProblem,
+  writeSettings,
+  SettingsFileSchema,
+  type SettingsFile,
+} from '../config/store.js';
 import { getSettingsStorePath } from '../config/store-path.js';
-import { parseWebuiTheme, WEBUI_BIND_HOSTS } from '../constants/defaults.js';
+import {
+  ADMIN_PASSWORD_MAX_LENGTH,
+  ADMIN_PASSWORD_MIN_LENGTH,
+  isAdminPasswordLengthValid,
+  parseWebuiTheme,
+  WEBUI_BIND_HOSTS,
+} from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
+import { audioDeviceDriver, filterToOneDriver, probeAudioDevices } from '../services/playback/audio-devices.js';
+import { resolveMpvBinary } from '../services/playback/mpv-process.js';
 import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
-import { ErrorFormatter } from '../utils/error-formatter.js';
+import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { logger, redact } from '../utils/logger.js';
 import { describeFetchError } from '../utils/network-safety.js';
+import { hashPassword, isPasswordHash } from '../utils/secrets.js';
 
 /**
- * Stands in for stored secrets (Navidrome password, MCP auth token) in the browser, so they
- * never leave the process in plaintext. A field still equal to it on save/test keeps the stored value.
+ * Stands in for the Navidrome password, MCP auth token and Last.fm API key in the browser, so they
+ * never leave the process in plaintext. A field still equal to it on Save or Test keeps the seeded value.
  */
 const SECRET_SENTINEL = '********';
 
-/**
- * The caller (server.ts) owns the loopback guard, so these handlers assume a local peer.
- *
- * Returns `true` if it handled the request, `false` if the path/method is not a
- * settings route (so the server can fall through to static files / 404).
- */
+/** The caller (server.ts) owns the loopback guard, so these handlers assume a local peer. */
 export async function handleSettingsRoute(
   req: IncomingMessage,
   res: ServerResponse,
@@ -55,6 +54,10 @@ export async function handleSettingsRoute(
     writeJson(res, 200, FORM_SUGGESTIONS);
     return true;
   }
+  if (method === 'GET' && path === '/api/settings/audio-devices') {
+    await handleAudioDevices(res);
+    return true;
+  }
   if (method === 'POST' && path === '/api/settings') {
     await handleSave(req, res);
     return true;
@@ -66,37 +69,89 @@ export async function handleSettingsRoute(
   return false;
 }
 
-/** GET /api/settings/seed. Returns pre-fill values with secrets masked. */
 function handleSeed(res: ServerResponse): void {
   try {
-    writeJson(res, 200, maskSecrets(buildFormSeed()));
+    const problem = readStoreProblem();
+    writeJson(res, 200, {
+      ...seedForBrowser(buildFormSeed()),
+      storeProblem: problem?.text ?? null,
+      storeUnreadable: problem?.unreadable === true,
+    });
   } catch (err) {
     logger.warn('settings seed failed:', err);
     writeError(res, 500, 'Failed to read settings');
   }
 }
 
-// The player's /api/player/settings also writes this file. Both use atomic writeSettings, so concurrent saves are last-writer-wins on the whole file.
-async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const parsed = await parseSettingsBody(req, res);
-  if (parsed === null) return;
+// A failed probe still answers 200, so the form loads with System default as the only choice. The
+// saved device's driver is kept, so a device picked from another driver does not read as missing.
+async function handleAudioDevices(res: ServerResponse): Promise<void> {
+  try {
+    const playback = buildFormSeed().playback;
+    const binary = resolveMpvBinary(playback?.mpvPath);
+    if (binary === null) {
+      writeJson(res, 200, { devices: [], message: 'mpv was not found' });
+      return;
+    }
+    const savedId = playback?.audioDevice?.id;
+    const preferredDriver = savedId === undefined ? null : audioDeviceDriver(savedId);
+    const devices = filterToOneDriver(await probeAudioDevices(binary), preferredDriver);
+    writeJson(res, 200, { devices });
+  } catch (err) {
+    logger.warn('settings audio device probe failed:', err);
+    writeJson(res, 200, { devices: [], message: errorMessage(err) });
+  }
+}
 
-  // A valid, savable config requires the mapped flat config to pass ConfigSchema
-  // (so we never persist a file the runtime would reject, e.g. a blank URL).
-  const validation = validateForm(parsed);
+// The player's /api/player/settings also writes this file with atomic writeSettings, so
+// concurrent saves are last-writer-wins on the entire file.
+async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await parseSettingsBody(req, res);
+  if (body === null) return;
+  const { settings: parsed, newAdminPassword } = body;
+
+  if (newAdminPassword !== null && !isAdminPasswordLengthValid(newAdminPassword)) {
+    writeError(res, 400, ErrorFormatter.configValidation([
+      `webui.auth.adminPassword: The admin password must be ${String(ADMIN_PASSWORD_MIN_LENGTH)} to ${String(ADMIN_PASSWORD_MAX_LENGTH)} characters.`,
+    ]));
+    return;
+  }
+
+  const stored = readRawSettings();
+  const merged = withoutLegacyTheme(mergeOntoStored(stored ?? {}, parsed) as SettingsFile);
+
+  // Never persist a file the runtime would reject, such as one with a blank URL.
+  const validation = validateForm(merged);
   if (!validation.ok) {
     writeError(res, 400, ErrorFormatter.configValidation(validation.messages));
     return;
   }
+  const { mode, adminPasswordHash: storedHash } = validation.config.webui.auth;
+  if (mode !== 'none' && newAdminPassword === null && !isUsableAdminHash(storedHash)) {
+    writeError(res, 400, ErrorFormatter.configValidation([
+      'webui.auth.adminPassword: Access with the admin password needs an admin password. Enter one, or set Access to Open.',
+    ]));
+    return;
+  }
 
-  const stored = readSettings();
+  let settings = merged;
+  if (newAdminPassword !== null) {
+    try {
+      settings = withAdminPasswordHash(merged, await hashPassword(newAdminPassword));
+    } catch (err) {
+      logger.error('admin password hash failed:', err);
+      writeError(res, 500, `Failed to hash the admin password: ${errorMessage(err)}`);
+      return;
+    }
+  }
+
   let backupPath: string | null = null;
   try {
     backupPath = backupUnusableStore(stored);
-    writeSettings(withStoredPlayerTheme(parsed, stored));
+    writeSettings(settings);
   } catch (err) {
     logger.error('settings save failed:', err);
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = errorMessage(err);
     writeError(res, 500, `Failed to write settings to ${getSettingsStorePath()}: ${reason}`);
     return;
   }
@@ -105,9 +160,8 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
     : `The previous settings.json could not be read, so it was kept as ${backupPath}. `;
   writeJson(res, 200, {
     ok: true,
-    // Host-agnostic: this server is launched by the MCP client, the standalone
-    // web player, or `navidrome-config`, and the reader doesn't know which. All
-    // load settings once at startup (no hot-reload), so cover both restart paths.
+    // The settings server runs under the MCP server, the web player, or `navidrome-config`, so the
+    // message names every restart path.
     message:
       `${backupNotice}Settings saved. They load at startup and the server does not hot-reload, so restart ` +
       "whatever you launched to apply them: your MCP client (e.g. quit and reopen Claude " +
@@ -117,8 +171,9 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
   });
 }
 
-// The form never loaded a store that readSettings rejected, so overwriting it would lose every value not retyped.
-function backupUnusableStore(stored: SettingsFile | null): string | null {
+// The form never loaded a store that readRawSettings rejected, so overwriting it would lose every
+// value not retyped.
+function backupUnusableStore(stored: Record<string, unknown> | null): string | null {
   const storePath = getSettingsStorePath();
   if (stored !== null || !existsSync(storePath)) return null;
   const backupPath = `${storePath}.bak`;
@@ -126,13 +181,14 @@ function backupUnusableStore(stored: SettingsFile | null): string | null {
   return backupPath;
 }
 
-// The player's gear modal owns webui.theme and this form does not carry it, so a save keeps the stored theme.
-function withStoredPlayerTheme(settings: SettingsFile, stored: SettingsFile | null): SettingsFile {
-  const theme = parseWebuiTheme(stored?.webui?.theme);
-  return theme === null ? settings : { ...settings, webui: { ...settings.webui, theme } };
+// The runtime reads a legacy theme such as 'system' as unset, so a save drops it from the file.
+function withoutLegacyTheme(settings: SettingsFile): SettingsFile {
+  if (settings.webui === undefined) return settings;
+  return { ...settings, webui: { ...settings.webui, theme: parseWebuiTheme(settings.webui.theme) ?? undefined } };
 }
 
-// The runtime downgrades an unsupported webui.host to a warning, so the form rejects it here where the user can fix it.
+// The runtime downgrades an unsupported webui.host to a warning, so the form rejects it here,
+// where the user can fix it.
 function validateForm(settings: SettingsFile): ReturnType<typeof validateMappedSettings> {
   const host = settings.webui?.host?.trim() ?? '';
   if (host !== '' && !WEBUI_BIND_HOSTS.includes(host)) {
@@ -145,12 +201,11 @@ function validateForm(settings: SettingsFile): ReturnType<typeof validateMappedS
   return validateMappedSettings(settings, null);
 }
 
-/** POST /api/settings/test. Connect with the entered values without saving. */
 async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const parsed = await parseSettingsBody(req, res);
-  if (parsed === null) return;
+  const body = await parseSettingsBody(req, res);
+  if (body === null) return;
 
-  const validation = validateForm(parsed);
+  const validation = validateForm(body.settings);
   if (!validation.ok) {
     writeJson(res, 200, { ok: false, error: ErrorFormatter.configValidation(validation.messages) });
     return;
@@ -158,17 +213,26 @@ async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<vo
 
   try {
     const client = new NavidromeClient(validation.config);
-    await client.initialize(); // JWT login is the actual connectivity and auth test
+    await client.initialize();
     writeJson(res, 200, { ok: true, message: 'Successfully connected to Navidrome.' });
   } catch (err) {
-    // redact() strips credentials before the text reaches the browser, since
-    // fetch reflects a mistyped URL's userinfo verbatim in its error.
+    // fetch echoes a URL's userinfo verbatim in its error, and this text reaches the browser.
     const message = redact(describeFetchError(err)) as string;
     writeJson(res, 200, { ok: false, error: message });
   }
 }
 
-async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Promise<SettingsFile | null> {
+interface SettingsBody {
+  settings: SettingsFile;
+  /** Null when the write-only field was blank, which keeps the stored hash. */
+  newAdminPassword: string | null;
+}
+
+/**
+ * The schema strips the write-only `webui.auth.adminPassword`, so it is read from the raw body. A
+ * posted hash is dropped, so only a password this server hashed reaches the store.
+ */
+async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Promise<SettingsBody | null> {
   let body: unknown;
   try {
     body = await readJsonBody(req);
@@ -178,11 +242,45 @@ async function parseSettingsBody(req: IncomingMessage, res: ServerResponse): Pro
   }
 
   const result = SettingsFileSchema.safeParse(body ?? {});
-  if (!result.success) {
+  const newAdminPassword = readNewAdminPassword(body);
+  if (!result.success || newAdminPassword === undefined) {
     writeError(res, 400, 'Malformed settings payload');
     return null;
   }
-  return unmaskSecrets(result.data);
+  return { settings: unmaskSecrets(withoutPostedHash(result.data)), newAdminPassword };
+}
+
+/** Undefined marks a field that is present but not a string. */
+function readNewAdminPassword(body: unknown): string | null | undefined {
+  let value: unknown = body;
+  for (const key of ['webui', 'auth', 'adminPassword']) {
+    value = typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+  }
+  if (value === undefined || value === null || value === '') return null;
+  return typeof value === 'string' ? value : undefined;
+}
+
+// An undefined key keeps the stored value through mergeOntoStored.
+function withoutPostedHash(settings: SettingsFile): SettingsFile {
+  const auth = settings.webui?.auth;
+  if (auth === undefined || auth === null) return settings;
+  return { ...settings, webui: { ...settings.webui, auth: { ...auth, adminPasswordHash: undefined } } };
+}
+
+function withAdminPasswordHash(settings: SettingsFile, adminPasswordHash: string): SettingsFile {
+  return { ...settings, webui: { ...settings.webui, auth: { ...settings.webui?.auth, adminPasswordHash } } };
+}
+
+/** The web player ignores a stored value that is not an Argon2id hash, so the page counts it as unset too. */
+function isUsableAdminHash(hash: string | null): boolean {
+  return hash !== null && isPasswordHash(hash);
+}
+
+/** The browser learns only whether a hash is set, never the hash. */
+function seedForBrowser(seed: SettingsFile): SettingsFile & { webui: { auth: { adminPasswordSet: boolean } } } {
+  const { adminPasswordHash, ...auth } = seed.webui?.auth ?? {};
+  const adminPasswordSet = isUsableAdminHash(adminPasswordHash?.trim() ?? null);
+  return { ...maskSecrets(seed), webui: { ...seed.webui, auth: { ...auth, adminPasswordSet } } };
 }
 
 function maskSecrets(settings: SettingsFile): SettingsFile {
@@ -195,12 +293,16 @@ function maskSecrets(settings: SettingsFile): SettingsFile {
   if (authToken !== undefined && authToken !== null && authToken !== '') {
     masked = { ...masked, transport: { ...masked.transport, authToken: SECRET_SENTINEL } };
   }
+  const lastFmApiKey = settings.features?.lastFmApiKey;
+  if (lastFmApiKey !== undefined && lastFmApiKey !== null && lastFmApiKey !== '') {
+    masked = { ...masked, features: { ...masked.features, lastFmApiKey: SECRET_SENTINEL } };
+  }
   return masked;
 }
 
 /**
- * Restore the real secrets when the form sent back the unchanged sentinel. They come from `buildFormSeed`, the
- * source the form was seeded from, because on a first run no settings.json exists to read them from.
+ * The real secrets come from `buildFormSeed`, the form's seed source, since a first run has no
+ * settings.json to read them from.
  */
 function unmaskSecrets(settings: SettingsFile): SettingsFile {
   let result = settings;
@@ -213,6 +315,10 @@ function unmaskSecrets(settings: SettingsFile): SettingsFile {
   if (result.transport?.authToken === SECRET_SENTINEL) {
     const stored = seeded().transport?.authToken ?? null;
     result = { ...result, transport: { ...result.transport, authToken: stored } };
+  }
+  if (result.features?.lastFmApiKey === SECRET_SENTINEL) {
+    const stored = seeded().features?.lastFmApiKey ?? null;
+    result = { ...result, features: { ...result.features, lastFmApiKey: stored } };
   }
   return result;
 }

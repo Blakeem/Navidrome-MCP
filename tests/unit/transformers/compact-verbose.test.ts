@@ -1,12 +1,10 @@
 /**
  * Navidrome MCP Server - compact/verbose projection tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Verifies the verbose-opt-in projection added to the song/album/artist
- * transformers: compact (the default) emits only the identity fields to keep
- * large array responses under the tool-result token cap, verbose restores the
- * full set, and `keep` force-emits a single purpose field (e.g. playCount for
- * list_most_played) without pulling in everything else.
+ * Compact output keeps large array responses under the tool-result token cap. `keep` adds one
+ * field, such as playCount for list_most_played, without the entire verbose set.
  */
 
 import { describe, expect, it } from 'vitest';

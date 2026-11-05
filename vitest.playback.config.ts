@@ -1,17 +1,5 @@
-/**
- * Vitest config for the live-playback integration test suite.
- *
- * Run with: pnpm test:playback
- *
- * Why a separate config:
- *   - These tests require a real mpv binary AND a reachable Navidrome
- *     instance. describePlayback skips them when mpv is not found or a skip
- *     flag is set. The default `pnpm test:run` excludes them so contributors
- *     need no mpv for the unit suite.
- *   - File-level parallelism is disabled here because every test file
- *     drives the same singleton mpv process; running concurrent files
- *     would produce non-deterministic queue manipulations.
- */
+// The playback and coordination suites need a real mpv, a reachable Navidrome and a built dist/,
+// so `pnpm test:run` excludes them and this config runs them.
 
 import { defineConfig } from 'vitest/config';
 import path from 'path';
@@ -25,36 +13,22 @@ export default defineConfig({
       'tests/integration/coordination/**/*.test.ts',
     ],
     exclude: ['node_modules', 'dist', 'coverage'],
-    // Registered once per test file. Adds an `afterAll` that clears mpv's
-    // queue when the file's last test finishes, so `pnpm test:playback`
-    // never leaves music playing on the host after the run exits.
+    // setup-cleanup.ts clears the mpv queue after each file, so the run never leaves music playing.
     setupFiles: ['tests/helpers/setup-config-store.ts', 'tests/integration/playback/setup-cleanup.ts'],
-    // mpv is a single shared resource; concurrent test files would fight
-    // over queue state. Run files sequentially.
+    // Every file drives the same mpv queue, so concurrent files would interleave queue changes.
     fileParallelism: false,
-    // Run all test files in the SAME worker process so the shared
-    // Navidrome auth client (a process-singleton) is reused across files.
-    // Without this, each file's worker re-authenticates, which trips
-    // Navidrome's auth rate limiter (HTTP 429) on the 2nd-Nth file.
+    // A worker per file would log in again per file and trip Navidrome's 429 login limit.
     pool: 'forks',
     poolOptions: {
       forks: {
         singleFork: true,
       },
     },
-    // Re-use module state across files in this single fork. Without this,
-    // vitest re-imports modules per-file even when sharing a worker, so the
-    // shared-client singleton (and the playback engine singleton) are
-    // re-initialized per file — which means a fresh /auth/login each time
-    // and Navidrome's auth rate limiter (HTTP 429) kicks in.
+    // An isolated file re-imports the client and engine singletons, so it logs in again.
     isolate: false,
-    // Generous: the multi-process coordination tests chain several real
-    // child-process startups (each a Navidrome login + cache load) and waits,
-    // which run slow under the load of sibling tests in the single fork.
+    // Coordination tests chain several child-process startups, each with a Navidrome login.
     testTimeout: 90000,
-    // Hook timeout is generous because beforeAll fetches test fixtures from
-    // Navidrome (random-sort song search can take 10s+ on large libraries)
-    // and may also auth against a cold cache.
+    // A beforeAll random-sort song search can take 10s+ on a large library.
     hookTimeout: 60000,
   },
   resolve: {

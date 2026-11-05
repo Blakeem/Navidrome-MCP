@@ -1,28 +1,18 @@
 /**
  * Navidrome MCP Server - Settings store → flat Config projection
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import {
+  DEFAULT_GUEST_QUEUE_LIMIT,
   DEFAULT_LRCLIB_BASE,
   DEFAULT_MCP_HTTP_PORT,
   DEFAULT_TOKEN_EXPIRY_SECONDS,
   DEFAULT_TRANSCODE_BITRATE,
   DEFAULT_TRANSCODE_FORMAT,
   DEFAULT_WEBUI_PORT,
+  parseJukeboxShareLink,
   parseWebuiTheme,
   WEBUI_BIND_HOSTS,
 } from '../constants/defaults.js';
@@ -42,7 +32,7 @@ function cleanList(value: readonly (string | null | undefined)[] | null | undefi
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-// A hand-edited or env-seeded host outside WEBUI_BIND_HOSTS falls back to loopback, the safe default.
+// A hand-edited or env-set host outside WEBUI_BIND_HOSTS falls back to loopback, the safe default.
 function resolveWebuiHost(host: string | undefined): string | undefined {
   if (host === undefined || WEBUI_BIND_HOSTS.includes(host)) return host;
   logger.warn(
@@ -51,10 +41,16 @@ function resolveWebuiHost(host: string | undefined): string | undefined {
   return '127.0.0.1';
 }
 
-/**
- * Project the nested store into the flat `RawConfigInput` that `ConfigSchema` validates.
- * `mpvPath` is the caller's resolved mpv binary, and null turns playback off.
- */
+// The id `auto` is mpv's OS default output, the same as no saved device.
+function mapAudioDevice(
+  device: NonNullable<SettingsFile['playback']>['audioDevice'],
+): RawConfigInput['playbackAudioDevice'] {
+  const id = nonEmpty(device?.id);
+  if (id === undefined || id === 'auto') return null;
+  return { id, name: nonEmpty(device?.name) ?? null };
+}
+
+/** `mpvPath` is the caller's resolved mpv binary, and null turns playback off. */
 export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null): RawConfigInput {
   const nav = settings.navidrome ?? {};
   const transport = settings.transport ?? {};
@@ -69,17 +65,14 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
   const lyricsProvider = nonEmpty(features.lyricsProvider);
   const lrclibUserAgent = nonEmpty(features.lrclibUserAgent);
 
-  // defaultLibraryIds: an empty array means "all libraries", the same as unset.
+  // An empty array means all libraries, the same as unset.
   const libIds = library.defaultLibraryIds;
   const defaultLibraryIds = libIds !== undefined && libIds.length > 0 ? libIds : undefined;
 
-  // webui host: an explicit host wins. Otherwise `expose` flips the bind to 0.0.0.0.
   const expose = webui.expose ?? false;
   const explicitHost = resolveWebuiHost(nonEmpty(webui.host));
   const host = explicitHost ?? (expose ? '0.0.0.0' : '127.0.0.1');
 
-  // transport host: the webui model above. Loopback by default, an explicit
-  // host wins, and `expose` is the deliberate opt-in to 0.0.0.0.
   const transportExpose = transport.expose ?? false;
   const transportExplicitHost = nonEmpty(transport.host);
   const transportHost = transportExplicitHost ?? (transportExpose ? '0.0.0.0' : '127.0.0.1');
@@ -111,21 +104,20 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
     },
 
     lastFmApiKey,
-    // No features.* flag, since MusicBrainz needs no API key. An absent value falls back
-    // to DEFAULT_MUSICBRAINZ_USER_AGENT at the call site.
+    // No features.* flag, since MusicBrainz needs no API key. An absent value falls back to
+    // DEFAULT_MUSICBRAINZ_USER_AGENT at the call site.
     musicBrainzUserAgent: nonEmpty(features.musicBrainzUserAgent),
     radioBrowserUserAgent,
-    // Only an explicit, real URL pins the mirror. Null or blank keeps SRV resolution.
     radioBrowserBaseOverride: nonEmpty(features.radioBrowserBase),
 
     lyricsProvider,
     lrclibUserAgent,
-    // null/blank falls through to the canonical LRCLIB endpoint.
     lrclibBase: nonEmpty(features.lrclibBase) ?? DEFAULT_LRCLIB_BASE,
 
     ...(mpvPath !== null ? { mpvPath } : {}),
     playbackTranscodeFormat: nonEmpty(playback.transcodeFormat) ?? DEFAULT_TRANSCODE_FORMAT,
     playbackTranscodeBitrate: nonEmpty(playback.transcodeBitrate) ?? DEFAULT_TRANSCODE_BITRATE,
+    playbackAudioDevice: mapAudioDevice(playback.audioDevice),
 
     filterCacheEnabled: library.filterCacheEnabled ?? true,
 
@@ -134,10 +126,26 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
       host,
       port: webui.port ?? DEFAULT_WEBUI_PORT,
       expose,
+      allowedHosts: cleanList(webui.allowedHosts) ?? [],
+      publicUrl: nonEmpty(webui.publicUrl) ?? null,
       autoOpenBrowser: webui.autoOpenBrowser ?? false,
       persistAfterMcpExit: webui.persistAfterMcpExit ?? false,
       theme: parseWebuiTheme(webui.theme),
       visualizer: webui.visualizer ?? true,
+      tls: {
+        certPath: nonEmpty(webui.tls?.certPath) ?? null,
+        keyPath: nonEmpty(webui.tls?.keyPath) ?? null,
+      },
+      auth: {
+        mode: webui.auth?.mode ?? 'none',
+        adminPasswordHash: nonEmpty(webui.auth?.adminPasswordHash) ?? null,
+        adminAccess: webui.auth?.adminAccess ?? 'localhost',
+      },
+    },
+
+    jukebox: {
+      guestQueueLimit: settings.jukebox?.guestQueueLimit ?? DEFAULT_GUEST_QUEUE_LIMIT,
+      shareLink: parseJukeboxShareLink(settings.jukebox?.shareLink),
     },
   };
 }

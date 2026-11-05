@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - User Preferences Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -32,8 +20,8 @@ import {
 } from '../schemas/index.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
 
-// Input ids and types are not echoed. The schema normalizes plural to singular,
-// so an echo would not match what the LLM sent.
+// The result omits itemId and type fields. The schema normalizes plural types to singular, so an
+// echo would not match what the LLM sent.
 interface StarItemResult {
   success: boolean;
   message: string;
@@ -51,15 +39,15 @@ interface ListTopRatedResult {
   hasMore: boolean;
 }
 
-// Input echoes are dropped here too, as in StarItemResult.
+// Omits the input fields for the same reason as StarItemResult.
 interface SetRatingResult {
   success: boolean;
   message: string;
 }
 
 /**
- * Subsonic /star, /unstar and /setRating never read `type` and resolve the kind from the ID, so the ID is checked
- * against `type` first. A missing item throws the client's NavidromeNotFoundError, which names the type and ID.
+ * Subsonic /star, /unstar and /setRating take no type and resolve the kind from the ID, so the ID
+ * is checked against `type` first. A miss throws NavidromeNotFoundError, which names both.
  */
 async function assertItemExists(client: NavidromeClient, type: 'song' | 'album' | 'artist', itemId: string): Promise<void> {
   await client.request<unknown>(`/${type}/${encodeURIComponent(itemId)}`);
@@ -146,8 +134,7 @@ export async function listStarredItems(client: NavidromeClient, args: unknown): 
       `${endpoint}?starred=true&_start=${offset}&_end=${offset + limit}&_sort=starredAt&_order=DESC`
     );
 
-    // Force-keep the starred state even in compact mode. It is the defining
-    // attribute of every item this tool returns.
+    // Compact mode keeps `starred` because it defines every item this tool returns.
     const transformOptions = { verbose, keep: ['starred'] as const };
     let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
     if (type === 'songs') {
@@ -183,7 +170,7 @@ export async function listTopRated(client: NavidromeClient, args: unknown): Prom
       `${endpoint}?_sort=rating&_order=DESC&_start=${offset}&_end=${offset + limit}`
     );
 
-    // Force-keep the rating even in compact mode. It is the filter and sort key.
+    // Compact mode keeps `rating` because it is the filter and sort key.
     const transformOptions = { verbose, keep: ['rating'] as const };
     let items: SongDTO[] | AlbumDTO[] | ArtistDTO[];
     if (type === 'songs') {

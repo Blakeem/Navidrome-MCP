@@ -1,9 +1,5 @@
-/**
- * The visualizer plugin contract from src/webui/public/visualizers/_template.js, checked against a
- * recording 2D context. The recorder bounds what a mode paints through transforms, clips, layers, masks,
- * shadows and blur filters, at a device pixel scale of 2 so a mode that ignores the scale shows. It is a
- * conservative bound, not a rasterizer, so it can reject a paint the browser would keep inside the area.
- */
+// Checks the _template.js contract by recording paint bounds at device scale 2, where a mode that
+// ignores the scale shows. The bound is conservative, so it may reject a paint that fits the area.
 
 import { BAND_COUNT, createSmoother } from '../../../src/webui/public/visualizer-timeline.js';
 import { PAD_RATIO, levelSummary } from '../../../src/webui/public/visualizer-kit.js';
@@ -144,7 +140,7 @@ class RecordedGradient {
     return 'all';
   }
 
-  // A canvas gradient pads with its end colors, so only a transparent last stop bounds a radial one.
+  // A gradient pads with its end colors, so only a transparent last stop bounds a radial one.
   private radialRegion(sorted: Array<[number, number]>, last: number): Region {
     if (last === sorted.length - 1) return 'all';
     const [x0, y0, r0, x1, y1, r1] = this.args;
@@ -153,7 +149,7 @@ class RecordedGradient {
     return union(circleBox(x0, y0, r0), end);
   }
 
-  // Only an axis-aligned linear gradient is bounded here. Any other angle counts as covering everything.
+  // Only an axis-aligned linear gradient is bounded here. Other angles count as covering all.
   private linearRegion(sorted: Array<[number, number]>, first: number, last: number): Region {
     const [x0, y0, x1, y1] = this.args;
     if (x0 === x1 && y0 === y1) return null;
@@ -189,7 +185,7 @@ interface DrawState {
   filter: string;
 }
 
-/** Shared by a surface and every layer made from it, so issues and paint counts gather in one place. */
+/** Shared by a surface and every layer made from it, so issues and paint counts land in one log. */
 interface RecorderLog {
   issues: Set<string>;
   paints: number;
@@ -516,7 +512,8 @@ class RecordingContext {
     this.composite(intersect(this.spread(region), this.state.clip), visible);
   }
 
-  // Shadow and blur lengths are taken as CSS pixels, the larger reading, so the bound holds at any device scale.
+  // Shadow and blur lengths are read as CSS pixels, the larger reading, so the bound holds at any
+  // device scale.
   private spread(region: Box | null): Box | null {
     let reach = 0;
     const { shadowBlur, shadowOffsetX, shadowOffsetY, filter } = this.state;
@@ -531,7 +528,7 @@ class RecordingContext {
     return widen(region, reach);
   }
 
-  // The bound of what shows after a paint, by how its compositing mode combines it with what is there.
+  // The bound of what shows after a paint depends on how its compositing mode combines layers.
   private composite(region: Box | null, visible: boolean): void {
     const op = this.state.globalCompositeOperation;
     const clipped = this.state.clip !== EVERYWHERE;
@@ -587,10 +584,10 @@ type Theme = keyof typeof PALETTES;
 
 // The desktop box, the phone strip, and shapes on either side of them.
 const SIZES: Array<[number, number]> = [[417, 196], [358, 72], [320, 160], [160, 320], [200, 200], [1100, 260]];
-// Frame gaps from a fast screen to a slow device, starting at the 0 a resumed animation draws first.
+// Frame gaps from a fast screen to a slow device, starting at the 0 a resumed animation draws.
 const DT_CYCLE = [0, 1 / 60, 1 / 60, 1 / 30, 1 / 144, 1 / 60, 0.1, 1 / 60, 1 / 120];
 
-/** A kick every half second, a melody that wanders across the middle bands, and hats between kicks. */
+/** A kick every half second, a melody across the middle bands, and hats between kicks. */
 function musicLevels(t: number): Float32Array {
   const values = new Float32Array(BAND_COUNT);
   const kick = Math.exp(-(t % 0.5) * 9);
@@ -618,7 +615,8 @@ interface Run {
   failures: string[];
 }
 
-// The levels pass through the host's own smoother, so values, held peaks and rest match what a mode meets.
+// The levels pass through the host's own smoother, so values, held peaks and rest match what a
+// mode meets.
 function drawFrame(run: Run, size: [number, number], targets: Float32Array, dt: number, theme: Theme, reducedMotion: boolean): FrameResult {
   const [width, height] = size;
   const pad = Math.min(width, height) * PAD_RATIO;
@@ -703,7 +701,8 @@ function checkSilence(run: Run): void {
   }
 }
 
-// The host stops drawing once the levels rest and draw returns nothing, so the last frame stays on screen.
+// The host stops drawing once the levels rest and draw returns nothing, so the last frame stays
+// on screen.
 function checkRelease(run: Run): void {
   const size: [number, number] = [417, 196];
   let t = 0;

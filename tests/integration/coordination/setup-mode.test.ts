@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - navidrome-web first-run setup mode test
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
  * A first-run desktop-shortcut launch shows no terminal, so the settings page
  * that setup mode hosts is the only visible path to configuration.

@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - subsonic-auth unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import crypto from 'node:crypto';
@@ -18,7 +19,6 @@ describe('buildSubsonicAuthParams', () => {
     expect(params.has('c')).toBe(true);
     expect(params.has('f')).toBe(true);
 
-    // The plaintext password must never be present.
     expect(params.has('p')).toBe(false);
 
     expect(params.get('u')).toBe('alice');
@@ -44,11 +44,9 @@ describe('buildSubsonicAuthParams', () => {
   it('merges extraParams without clobbering credential keys', () => {
     const params = buildSubsonicAuthParams('alice', 'sekret', { id: 'abc', format: 'mp3' });
 
-    // Extra params appear in the output.
     expect(params.get('id')).toBe('abc');
     expect(params.get('format')).toBe('mp3');
 
-    // Credential keys are intact.
     expect(params.get('u')).toBe('alice');
     expect(/^[0-9a-f]{32}$/.test(params.get('s') ?? '')).toBe(true);
     expect(params.has('p')).toBe(false);

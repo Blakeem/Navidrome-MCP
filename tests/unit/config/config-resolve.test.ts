@@ -1,34 +1,28 @@
-/**
- * Unit tests for config resolution: store → flat Config mapping (the four
- * round-trip edge cases), loadConfig, and resolveConfigState branching.
- */
-
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, resolveConfigState } from '../../../src/config.js';
+import { loadConfig, readSavedAudioDevice, resolveConfigState, saveAudioDevice, saveJukeboxSettings } from '../../../src/config.js';
 
-// process.execPath (the node binary) is guaranteed to exist and be executable —
-// a stable stand-in for "a valid mpv path" that doesn't depend on mpv install.
+// The node binary stands in for a valid mpv path, since it exists and is executable on every host.
 const EXEC = process.execPath;
 
 const BASE = {
   navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
 };
 
-// Env vars that feed the runtime env fallback. Cleared per test so the suite is
-// deterministic regardless of the developer's shell or CI's injected
-// NAVIDROME_URL/USERNAME/PASSWORD (which would otherwise legitimately activate
-// the fallback and flip the "unconfigured" expectations).
+// CI injects NAVIDROME_URL/USERNAME/PASSWORD, which would activate the env fallback and flip the
+// unconfigured expectations. A developer's shell could set the rest, so each test clears them all.
 const FALLBACK_ENV_KEYS = [
   'NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD',
   'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT', 'MCP_HTTP_EXPOSE',
   'MCP_HTTP_AUTH_TOKEN', 'MCP_HTTP_ALLOWED_HOSTS', 'MCP_HTTP_ALLOWED_ORIGINS',
-  // Feature-gating env vars — cleared so a developer's shell can't spuriously
-  // enable radio/lyrics and break the opt-in assertions below.
+  // A set feature-gating var would enable radio or lyrics and break the opt-in assertions.
   'RADIO_BROWSER_USER_AGENT', 'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LASTFM_API_KEY',
+  'PLAYBACK_AUDIO_DEVICE', 'JUKEBOX_GUEST_QUEUE_LIMIT',
 ];
+
+const DEVICE = { id: 'wasapi/{2d948da5-7f24-4c77-8553-5c67cb36d700}', name: 'Speakers (Sound BlasterX Katana)' };
 
 describe('config resolution', () => {
   let dir: string;
@@ -55,6 +49,18 @@ describe('config resolution', () => {
   });
 
   const write = (obj: unknown): void => writeFileSync(file, JSON.stringify(obj));
+  const storeRejected = (reason: RegExp): unknown => ({
+    configured: false,
+    failure: { reason: expect.stringMatching(reason), unreachable: false, source: 'store' },
+  });
+  const envRejected = {
+    configured: false,
+    failure: {
+      reason: expect.stringMatching(/^The environment-derived config is invalid: Configuration validation failed/),
+      unreachable: false,
+      source: 'env',
+    },
+  };
 
   describe('loadConfig mapping', () => {
     it('maps the core required fields', async () => {
@@ -118,6 +124,26 @@ describe('config resolution', () => {
       expect(c.mpvPath).toBe(EXEC);
     });
 
+    it('maps a stored audio device and trims its id', async () => {
+      write({ ...BASE, playback: { audioDevice: { id: ` ${DEVICE.id} `, name: DEVICE.name } } });
+      expect((await loadConfig()).playbackAudioDevice).toEqual(DEVICE);
+    });
+
+    it.each([undefined, null, ''])('maps the stored audio device name %j to null', async (name) => {
+      write({ ...BASE, playback: { audioDevice: { id: DEVICE.id, name } } });
+      expect((await loadConfig()).playbackAudioDevice).toEqual({ id: DEVICE.id, name: null });
+    });
+
+    it.each([
+      ['the id auto', { audioDevice: { id: 'auto', name: 'Autoselect device' } }],
+      ['an empty id', { audioDevice: { id: '  ', name: 'Speakers' } }],
+      ['a null device', { audioDevice: null }],
+      ['an absent key', {}],
+    ])('maps %s to the default output', async (_label, playback) => {
+      write({ ...BASE, playback });
+      expect((await loadConfig()).playbackAudioDevice).toBeNull();
+    });
+
     it('flips host to 0.0.0.0 when expose is set and no explicit host', async () => {
       write({ ...BASE, webui: { expose: true } });
       expect((await loadConfig()).webui.host).toBe('0.0.0.0');
@@ -136,6 +162,96 @@ describe('config resolution', () => {
     it.each(['192.168.1.20', '127.0.0.2', 'localhost', '::1'])('falls back to 127.0.0.1 for the unsupported web host %j', async (host) => {
       write({ ...BASE, webui: { expose: true, host } });
       expect((await loadConfig()).webui.host).toBe('127.0.0.1');
+    });
+
+    it('defaults the web remote to access mode none with the localhost admin level', async () => {
+      write(BASE);
+      expect((await loadConfig()).webui.auth).toEqual({ mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' });
+    });
+
+    it('maps the stored access settings and trims the hash', async () => {
+      write({ ...BASE, webui: { auth: { mode: 'jukebox', adminPasswordHash: ' $argon2id$hash ', adminAccess: 'anywhere' } } });
+      expect((await loadConfig()).webui.auth).toEqual({ mode: 'jukebox', adminPasswordHash: '$argon2id$hash', adminAccess: 'anywhere' });
+    });
+
+    it('voids the store for an unknown access mode, so a typo never opens the remote', async () => {
+      write({ ...BASE, webui: { auth: { mode: 'protectd' } } });
+      await expect(loadConfig()).rejects.toThrow();
+    });
+
+    it('serves plain HTTP when no TLS paths are stored', async () => {
+      write(BASE);
+      expect((await loadConfig()).webui.tls).toEqual({ certPath: null, keyPath: null });
+    });
+
+    it('maps both stored TLS paths, trimmed', async () => {
+      write({ ...BASE, webui: { tls: { certPath: ' /etc/ssl/full.pem ', keyPath: '/etc/ssl/key.pem' } } });
+      expect((await loadConfig()).webui.tls).toEqual({ certPath: '/etc/ssl/full.pem', keyPath: '/etc/ssl/key.pem' });
+    });
+
+    it.each([
+      ['only a certificate', { certPath: '/c.pem', keyPath: null }],
+      ['only a key', { certPath: '  ', keyPath: '/k.pem' }],
+    ])('rejects a store with %s', async (_label, tls) => {
+      write({ ...BASE, webui: { tls } });
+      await expect(loadConfig()).rejects.toThrow(/webui.tls: Set both certPath and keyPath/);
+    });
+
+    it('maps a stored public URL, trimmed, and null when absent', async () => {
+      write({ ...BASE, webui: { publicUrl: ' http://jukebox.example.org:8808 ' } });
+      expect((await loadConfig()).webui.publicUrl).toBe('http://jukebox.example.org:8808');
+      write(BASE);
+      expect((await loadConfig()).webui.publicUrl).toBeNull();
+    });
+
+    it('maps a stored guest song limit, and 3 when absent', async () => {
+      write({ ...BASE, jukebox: { guestQueueLimit: 7 } });
+      expect((await loadConfig()).jukebox.guestQueueLimit).toBe(7);
+      write(BASE);
+      expect((await loadConfig()).jukebox.guestQueueLimit).toBe(3);
+    });
+
+    it.each([
+      ['internet', 'internet'],
+      ['lan', 'lan'],
+      ['an unknown link', 'wifi'],
+      ['an absent link', undefined],
+      ['a null link', null],
+      ['a boolean link', true],
+      ['a numeric link', 1],
+    ])('maps the stored share link %s', async (_label, shareLink) => {
+      write({ ...BASE, jukebox: { shareLink } });
+      expect((await loadConfig()).jukebox.shareLink).toBe(shareLink === 'internet' ? 'internet' : 'lan');
+    });
+
+    it.each([0, 21, 2.5])('rejects a stored guest song limit of %s', async (guestQueueLimit) => {
+      write({ ...BASE, jukebox: { guestQueueLimit } });
+      await expect(loadConfig()).rejects.toThrow(/jukebox\.guestQueueLimit: Must be a whole number from 1 to 20/);
+    });
+
+    it('accepts an https:// public URL when the player serves HTTPS', async () => {
+      write({ ...BASE, webui: { publicUrl: 'https://jukebox.example.org:8808', tls: { certPath: '/c.pem', keyPath: '/k.pem' } } });
+      expect((await loadConfig()).webui.publicUrl).toBe('https://jukebox.example.org:8808');
+    });
+
+    it.each([
+      ['https:// on an HTTP player', 'https://jukebox.example.org:8808', { certPath: null, keyPath: null }],
+      ['http:// on an HTTPS player', 'http://jukebox.example.org:8808', { certPath: '/c.pem', keyPath: '/k.pem' }],
+    ])('rejects a stored public URL with %s', async (_label, publicUrl, tls) => {
+      write({ ...BASE, webui: { publicUrl, tls } });
+      await expect(loadConfig()).rejects.toThrow(/webui\.publicUrl: Must start with https:\/\/ when the HTTPS certificate/);
+    });
+
+    it.each([
+      ['a path', 'https://jukebox.example.org/music'],
+      ['a query', 'https://jukebox.example.org/?a=1'],
+      ['credentials', 'https://user:pw@jukebox.example.org'],
+      ['another scheme', 'ftp://jukebox.example.org'],
+      ['no scheme', 'jukebox.example.org:8808'],
+      ['no URL at all', 'jukebox'],
+    ])('rejects a stored public URL with %s', async (_label, publicUrl) => {
+      write({ ...BASE, webui: { publicUrl } });
+      await expect(loadConfig()).rejects.toThrow(/webui\.publicUrl: Must be an http/);
     });
 
     it('maps a stored web remote theme', async () => {
@@ -190,8 +306,8 @@ describe('config resolution', () => {
 
     it('rejects an unknown transport type', async () => {
       write({ ...BASE, transport: { type: 'websocket' } });
-      // SettingsFileSchema rejects the bad enum → store reads as unconfigured.
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      // SettingsFileSchema rejects the unknown enum value, so the store is rejected, not a first run.
+      expect(await resolveConfigState()).toEqual(storeRejected(/failed validation .*transport\.type/));
     });
 
     it('requires BOTH provider and user agent to enable lyrics', async () => {
@@ -229,7 +345,7 @@ describe('config resolution', () => {
   describe('resolveConfigState', () => {
     it('is configured for a valid store', async () => {
       write(BASE);
-      expect(await resolveConfigState()).toEqual({ configured: true, config: expect.any(Object) });
+      expect(await resolveConfigState()).toEqual({ configured: true, config: expect.any(Object), source: 'store' });
     });
 
     it('is unconfigured when the store is absent', async () => {
@@ -241,14 +357,14 @@ describe('config resolution', () => {
       expect(await resolveConfigState()).toEqual({ configured: false });
     });
 
-    it('is unconfigured for corrupt JSON', async () => {
+    it('rejects the store for corrupt JSON', async () => {
       writeFileSync(file, '{ broken');
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(storeRejected(/settings\.json is not valid JSON/));
     });
 
-    it('is unconfigured when present-but-invalid (bad URL)', async () => {
+    it('rejects the store when present-but-invalid (bad URL)', async () => {
       write({ navidrome: { url: 'not-a-url', username: 'u', password: 'p' } });
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(storeRejected(/Configuration validation failed/));
     });
   });
 
@@ -267,7 +383,6 @@ describe('config resolution', () => {
         expect(state.config.navidromeUrl).toBe('http://env-host:4533');
         expect(state.config.navidromeUsername).toBe('env-user');
         expect(state.config.navidromePassword).toBe('env-pass');
-        // No MCP_TRANSPORT → stdio default, same as a store-less GUI install.
         expect(state.config.transport.type).toBe('stdio');
       }
     });
@@ -289,6 +404,47 @@ describe('config resolution', () => {
       }
     });
 
+    it('marks an env-built config, so env-only values such as WEBUI_ADMIN_PASSWORD apply', async () => {
+      setEnvCreds();
+      process.env['WEBUI_AUTH_MODE'] = 'password';
+      try {
+        const state = await resolveConfigState();
+        expect(state).toMatchObject({ configured: true, source: 'env' });
+        if (state.configured) expect(state.config.webui.auth.mode).toBe('password');
+      } finally {
+        delete process.env['WEBUI_AUTH_MODE'];
+      }
+    });
+
+    it.each([
+      ['a mistyped mode', { ...BASE, webui: { auth: { mode: 'Password' } } }],
+      ['the retired mode protected', { ...BASE, webui: { auth: { mode: 'protected' } } }],
+      ['mode password and an invalid level', { ...BASE, webui: { auth: { mode: 'password', adminAccess: 'LAN' } } }],
+      ['mode jukebox and another invalid field', { ...BASE, webui: { port: 'abc', auth: { mode: 'jukebox' } } }],
+      ['mode jukebox and no Navidrome URL', { webui: { auth: { mode: 'jukebox' } } }],
+    ])('enters setup mode instead of the open env fallback for a store with %s', async (_label, store) => {
+      write(store);
+      setEnvCreds();
+      expect(await resolveConfigState()).toEqual(storeRejected(/The environment fallback is skipped/));
+    });
+
+    it('enters setup mode instead of the open env fallback for a store with a JSON syntax error', async () => {
+      writeFileSync(file, '{"navidrome": {"url": "http://h:4533"}, "webui": {"auth": {"mode": "jukebox"}},}');
+      setEnvCreds();
+      expect(await resolveConfigState()).toEqual(
+        storeRejected(/settings\.json is not valid JSON .*The environment fallback is skipped/),
+      );
+    });
+
+    it.each([
+      ['mode none', { ...BASE, webui: { port: 'abc', auth: { mode: 'none' } } }],
+      ['no auth block', { ...BASE, webui: { port: 'abc' } }],
+    ])('keeps the env fallback for an invalid store with %s', async (_label, store) => {
+      write(store);
+      setEnvCreds();
+      expect(await resolveConfigState()).toMatchObject({ configured: true, source: 'env' });
+    });
+
     it('lets an existing store win over env vars', async () => {
       write(BASE);
       setEnvCreds();
@@ -299,16 +455,31 @@ describe('config resolution', () => {
       }
     });
 
-    it('is unconfigured when the env config is incomplete (URL only)', async () => {
+    it('rejects the env config when it is incomplete (URL only)', async () => {
       process.env['NAVIDROME_URL'] = 'http://env-host:4533';
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(envRejected);
     });
 
-    it('is unconfigured when NAVIDROME_URL is not a valid URL', async () => {
+    it('rejects the env config when NAVIDROME_URL is not a valid URL', async () => {
       process.env['NAVIDROME_URL'] = 'not-a-url';
       process.env['NAVIDROME_USERNAME'] = 'u';
       process.env['NAVIDROME_PASSWORD'] = 'p';
-      expect(await resolveConfigState()).toEqual({ configured: false });
+      expect(await resolveConfigState()).toEqual(envRejected);
+    });
+
+    it('names the ignored invalid store when the env config is then rejected', async () => {
+      write({ ...BASE, transport: { type: 'HTTP' } });
+      process.env['NAVIDROME_URL'] = 'http://env-host:4533';
+      expect(await resolveConfigState()).toEqual({
+        configured: false,
+        failure: {
+          reason: expect.stringMatching(
+            /^settings\.json failed validation .*transport\.type.*\. Its values are ignored\. The environment-derived config is invalid: /,
+          ),
+          unreachable: false,
+          source: 'env',
+        },
+      });
     });
 
     it('ignores a blank NAVIDROME_URL', async () => {
@@ -321,8 +492,7 @@ describe('config resolution', () => {
       const state = await resolveConfigState();
       expect(state.configured).toBe(true);
       if (state.configured) {
-        // The headless env-runtime path must not silently enable third-party
-        // outbound features from the form-seed convenience defaults.
+        // The env runtime must not enable third-party outbound traffic from the form-seed defaults.
         expect(state.config.features.radioBrowser).toBe(false);
         expect(state.config.features.lyrics).toBe(false);
       }
@@ -339,6 +509,86 @@ describe('config resolution', () => {
         expect(state.config.features.radioBrowser).toBe(true);
         expect(state.config.features.lyrics).toBe(true);
       }
+    });
+
+    it('maps PLAYBACK_AUDIO_DEVICE to a device with no name', async () => {
+      setEnvCreds();
+      process.env['PLAYBACK_AUDIO_DEVICE'] = DEVICE.id;
+      const state = await resolveConfigState();
+      expect(state.configured).toBe(true);
+      if (state.configured) {
+        expect(state.config.playbackAudioDevice).toEqual({ id: DEVICE.id, name: null });
+      }
+    });
+  });
+
+  describe('readSavedAudioDevice', () => {
+    it('returns the saved device', () => {
+      write({ ...BASE, playback: { audioDevice: DEVICE } });
+      expect(readSavedAudioDevice()).toEqual(DEVICE);
+    });
+
+    it('returns null for a store with no device', () => {
+      write(BASE);
+      expect(readSavedAudioDevice()).toBeNull();
+    });
+
+    it('returns undefined when no store file exists', () => {
+      expect(readSavedAudioDevice()).toBeUndefined();
+    });
+  });
+
+  describe('saveAudioDevice', () => {
+    const readStore = (): Record<string, unknown> => JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+
+    it('writes the device and keeps unknown top-level and nested keys', () => {
+      write({ ...BASE, extra: { kept: true }, playback: { transcodeFormat: 'raw', outputHint: 'kept' } });
+      expect(saveAudioDevice(DEVICE)).toBe(true);
+      expect(readStore()).toEqual({
+        ...BASE,
+        extra: { kept: true },
+        playback: { transcodeFormat: 'raw', outputHint: 'kept', audioDevice: DEVICE },
+      });
+    });
+
+    it('writes null to return to the default output', () => {
+      write({ ...BASE, playback: { audioDevice: DEVICE } });
+      expect(saveAudioDevice(null)).toBe(true);
+      expect(readStore()['playback']).toEqual({ audioDevice: null });
+      expect(readSavedAudioDevice()).toBeNull();
+    });
+
+    it('returns false and writes nothing when no store file exists', () => {
+      expect(saveAudioDevice(DEVICE)).toBe(false);
+      expect(existsSync(file)).toBe(false);
+    });
+
+    it('returns false and writes nothing when the store has no Navidrome URL', () => {
+      const stored = JSON.stringify({ navidrome: { url: '  ' }, playback: { transcodeFormat: 'raw' } });
+      writeFileSync(file, stored);
+      expect(saveAudioDevice(DEVICE)).toBe(false);
+      expect(readFileSync(file, 'utf8')).toBe(stored);
+    });
+  });
+
+  describe('saveJukeboxSettings', () => {
+    it('writes the limit, keeps the other stored keys, and the next load reads it', async () => {
+      write({ ...BASE, jukebox: { kept: true } });
+      expect(saveJukeboxSettings({ guestQueueLimit: 9 })).toBe(true);
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ ...BASE, jukebox: { kept: true, guestQueueLimit: 9 } });
+      expect((await loadConfig()).jukebox.guestQueueLimit).toBe(9);
+    });
+
+    it('writes the share link and keeps the stored limit', async () => {
+      write({ ...BASE, jukebox: { guestQueueLimit: 5 } });
+      expect(saveJukeboxSettings({ shareLink: 'internet' })).toBe(true);
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ ...BASE, jukebox: { guestQueueLimit: 5, shareLink: 'internet' } });
+      expect((await loadConfig()).jukebox).toEqual({ guestQueueLimit: 5, shareLink: 'internet' });
+    });
+
+    it('returns false and writes nothing when no store file exists', () => {
+      expect(saveJukeboxSettings({ guestQueueLimit: 9 })).toBe(false);
+      expect(existsSync(file)).toBe(false);
     });
   });
 });

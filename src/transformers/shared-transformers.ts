@@ -1,31 +1,17 @@
 /**
  * Navidrome MCP Server - Shared Transformer Utilities
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-/**
- * Base interface for entities with genre information
- */
 interface RawEntityWithGenres {
   genre?: string;
   genres?: Array<{ name: string }>;
   [key: string]: unknown;
 }
 
-// Every gate name a transformer checks, so a `keep` entry that no transformer gates on fails to compile.
+// Every gate name a transformer checks, so a `keep` entry that no transformer gates on fails to
+// compile.
 type TransformField =
   | 'addedDate'
   | 'albumArtist'
@@ -47,18 +33,12 @@ type TransformField =
   | 'year';
 
 /**
- * Controls how much per-item detail a transformer emits. The default
- * (compact) mode emits only the identity fields each DTO needs to be
- * recognized and acted on (ids, title/name, artist, album, durationFormatted),
- * keeping large array responses well under the tool-result token cap. Verbose
- * mode restores every field. `keep` force-emits specific fields in compact mode
- * for tools whose entire purpose is a particular metric, e.g. `playCount` for
- * list_most_played, `starred` for list_starred_items.
+ * Compact mode, the default, emits only identity fields so large array responses stay under the
+ * tool-result token cap. `keep` force-emits a field one caller needs, such as `playCount` for
+ * list_most_played.
  */
 export interface TransformOptions {
-  /** When true, emit all fields. Default false (compact). */
   verbose?: boolean;
-  /** Field names to force-emit even in compact mode. */
   keep?: readonly TransformField[];
 }
 
@@ -91,8 +71,8 @@ export function starredFields(
 }
 
 /**
- * Navidrome can return null or non-object rows on some API errors. A row cast would crash the
- * single-item transformer and lose the whole batch, so non-object rows are dropped instead.
+ * Navidrome can return null or non-object rows on some API errors. One such row would crash the
+ * single-item transformer and lose the entire batch, so non-object rows are dropped.
  */
 export function transformObjectRows<T, R>(raw: unknown, transform: (row: T) => R): R[] {
   if (!Array.isArray(raw)) {
@@ -103,13 +83,7 @@ export function transformObjectRows<T, R>(raw: unknown, transform: (row: T) => R
     .map((row) => transform(row));
 }
 
-/**
- * Parse a `MM:SS` formatted duration string into total seconds.
- * Returns 0 for any input that does not match the two-part `MM:SS` shape.
- * Inverse of {@link formatDuration}.
- * @param durationFormatted A duration string like "3:45"
- * @returns Total seconds, or 0 if the input cannot be parsed
- */
+/** Inverse of {@link formatDuration}. Any other shape parses as 0. */
 export function parseDuration(durationFormatted: string): number {
   const parts = durationFormatted.split(':');
   if (parts.length === 2) {
@@ -126,11 +100,6 @@ export function parseDuration(durationFormatted: string): number {
   return 0;
 }
 
-/**
- * Format duration from seconds to MM:SS format
- * @param seconds Duration in seconds
- * @returns Formatted string like "3:45"
- */
 export function formatDuration(seconds?: number): string {
   if (seconds === undefined || !Number.isFinite(seconds) || seconds <= 0) {
     return '0:00';
@@ -141,11 +110,6 @@ export function formatDuration(seconds?: number): string {
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
-/**
- * Extract the primary genre from various formats
- * @param entity The entity with genre data
- * @returns The primary genre name or undefined
- */
 export function extractGenre(entity: RawEntityWithGenres): string | undefined {
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
     const first = entity.genres.find(g => g.name !== '');
@@ -159,11 +123,6 @@ export function extractGenre(entity: RawEntityWithGenres): string | undefined {
   return undefined;
 }
 
-/**
- * Extract all genres from an entity with genre data
- * @param entity The entity with genre data
- * @returns Array of genre names or undefined
- */
 export function extractAllGenres(entity: RawEntityWithGenres): string[] | undefined {
   if (entity.genres && Array.isArray(entity.genres) && entity.genres.length > 0) {
     const names = entity.genres.map(g => g.name).filter(Boolean);

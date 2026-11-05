@@ -1,10 +1,9 @@
 /**
  * Navidrome MCP Server - tags tool tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers listTagValues and getTagDistribution from src/tools/tags.ts.
- * Both are reads, but they use requestWithLibraryFilter / requestWithLibraryFilterAndMeta
- * which are mockable — mocked approach keeps tests fast and deterministic.
+ * These reads use a mocked client, so the backfill and paging cases stay deterministic.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -22,8 +21,6 @@ function makeTag(overrides: Record<string, unknown> = {}): Record<string, unknow
     ...overrides,
   };
 }
-
-// ---- listTagValues -----------------------------------------------------------
 
 describe('listTagValues', () => {
   let mockClient: MockNavidromeClient;
@@ -206,8 +203,6 @@ describe('listTagValues', () => {
   });
 });
 
-// ---- getTagDistribution -----------------------------------------------------
-
 describe('getTagDistribution', () => {
   let mockClient: MockNavidromeClient;
 
@@ -216,8 +211,7 @@ describe('getTagDistribution', () => {
   });
 
   it('returns the distributions array', async () => {
-    // The /tag fetch now goes through ...AndMeta; X-Total-Count (total) feeds
-    // uniqueValues. genre carries API counts, so no backfill calls are made.
+    // X-Total-Count feeds uniqueValues. Genre rows carry counts, so no backfill request runs.
     mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
       data: [
         makeTag({ tagName: 'genre', tagValue: 'Rock', songCount: 200, albumCount: 20 }),
@@ -230,10 +224,6 @@ describe('getTagDistribution', () => {
       tagNames: ['genre'],
     });
 
-    // Mock returns 2 genre tags, so distributions should contain exactly one
-    // entry (one tag name, two values). Asserting unconditionally — a
-    // regression that returned empty would silently pass under the old
-    // `if (length > 0)` guard.
     expect(result.distributions).toHaveLength(1);
 
     const dist = result.distributions[0]!;
@@ -248,7 +238,6 @@ describe('getTagDistribution', () => {
   });
 
   it('skips tag names that return empty arrays', async () => {
-    // Route by endpoint: genre /tag empty, mood /tag returns one value that carries counts.
     mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
       if (endpoint.includes('tag_name=genre')) return Promise.resolve({ data: [], total: 0 });
       if (endpoint.includes('tag_name=mood')) {
@@ -300,8 +289,8 @@ describe('getTagDistribution', () => {
   });
 
   it('requests genre distribution sorted by songCount DESC (true top-N, not alphabetical)', async () => {
-    // genre is the one tag name with server-provided counts, so the fetch must
-    // ask Navidrome for the top values by count rather than an alphabetical slice.
+    // Only genre rows carry server counts, so the fetch must request the top values by count,
+    // not an alphabetical slice.
     mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
       data: [makeTag({ tagName: 'genre', tagValue: 'Rock', songCount: 200, albumCount: 20 })],
       total: 1,
@@ -315,7 +304,7 @@ describe('getTagDistribution', () => {
   });
 
   it('leaves genre and a complete non-genre distribution unflagged', async () => {
-    // mood rows here carry counts, so no backfill sub-requests are triggered.
+    // These mood rows carry counts, so no backfill request runs.
     mockClient.requestWithLibraryFilterAndMeta.mockImplementation((endpoint) => {
       if (endpoint.includes('tag_name=genre')) {
         return Promise.resolve({

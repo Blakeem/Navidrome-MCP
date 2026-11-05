@@ -1,6 +1,5 @@
-// The visualizer beside the track info. It reads the level stream only while it is shown, the page is
-// visible and a track is loaded. Its canvas is transparent and fades out toward every edge, so the
-// card's own surface shows through and no box outline appears.
+// The canvas stays transparent and fades toward every edge, so the card's surface shows through
+// and no box outline appears.
 
 import { getJson } from './api.js';
 import { byId } from './dom.js';
@@ -19,7 +18,7 @@ const MODE_NAME_MS = 1500;
 // Reduced motion draws about 15 frames a second.
 const REDUCED_FRAME_MS = 66;
 const MAX_STEP_S = 0.1;
-// The dark theme's tokens, used when a theme token cannot be parsed.
+// The dark theme's tokens, used when the canvas serializes a token as anything but #rrggbb.
 const FALLBACK_PALETTE = {
   accent: { r: 124, g: 156, b: 255 },
   strong: { r: 165, g: 190, b: 255 },
@@ -40,6 +39,8 @@ const smoother = createSmoother(BAND_COUNT);
 let enabled = false;
 let hasTrack = false;
 let stream = null;
+// Set when the server closed this stream for a newer one, so refresh() stays closed until the tab shows again.
+let evicted = false;
 let frameRequest = null;
 let lastStepMs = null;
 let lastDrawMs = null;
@@ -57,13 +58,15 @@ let height = 0;
 
 export function bindVisualizer() {
   button.addEventListener('click', cycleMode);
-  document.addEventListener('visibilitychange', refresh);
+  document.addEventListener('visibilitychange', () => {
+    evicted = false;
+    refresh();
+  });
   new ResizeObserver(resizeCanvas).observe(button);
   updateLabel();
   loadModes();
 }
 
-// Called with every snapshot, after the theme applies, so the palette follows a theme change.
 export function renderVisualizer(player, np) {
   enabled = player?.visualizer === true;
   hasTrack = playingIndex(np) !== null;
@@ -76,9 +79,15 @@ export function renderVisualizer(player, np) {
   refresh();
 }
 
+// No snapshot arrives after a card stops the events stream, so the card closes the levels stream here.
+export function stopVisualizer() {
+  enabled = false;
+  refresh();
+}
+
 function refresh() {
   const visible = document.visibilityState === 'visible';
-  const wantStream = enabled && visible && hasTrack;
+  const wantStream = enabled && visible && hasTrack && !evicted;
   if (wantStream && stream === null) openStream();
   if (!wantStream && stream !== null) closeStream();
   if (enabled && visible) requestFrame();
@@ -86,6 +95,10 @@ function refresh() {
 
 function openStream() {
   stream = new EventSource('/api/visualizer');
+  stream.addEventListener('evicted', () => {
+    evicted = true;
+    closeStream();
+  });
   stream.addEventListener('levels', (event) => {
     let data = null;
     try {
@@ -127,7 +140,7 @@ function animate(nowMs) {
     lastDrawMs = nowMs;
     modeBusy = draw(nowMs, drawSeconds);
   }
-  // At rest with no levels and no mode still fading out, the loop sleeps until levels or a snapshot arrive.
+  // With no levels and nothing left to fade, the loop stops until levels or a snapshot arrive.
   if (atRest && targets === null && fadingFrom === null && !modeBusy) {
     lastStepMs = null;
     lastDrawMs = null;
@@ -167,7 +180,8 @@ function draw(nowMs, dtSeconds) {
   return busy;
 }
 
-// Each mode draws on a cleared layer of its own, so its compositing never reaches the other mode in a crossfade.
+// Each mode draws on a cleared layer of its own, so its compositing never reaches the other mode
+// in a crossfade.
 function paintMode(mode, frame, alpha, slot) {
   const layer = (hostLayers[slot] ??= createLayer(width, height));
   const scale = window.devicePixelRatio || 1;
@@ -189,7 +203,7 @@ function paintMode(mode, frame, alpha, slot) {
   return busy;
 }
 
-// Every mode leaves this inset empty, so the fade is a backstop that keeps any stray pixel off a hard edge.
+// Every mode leaves this inset empty, so the fade only keeps a stray pixel off a hard edge.
 function featherEdges() {
   const feather = Math.min(width, height) * PAD_RATIO;
   ctx.globalCompositeOperation = 'destination-in';

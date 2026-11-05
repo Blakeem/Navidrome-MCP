@@ -3,10 +3,9 @@ import { average, detectBeat, rgba } from '../visualizer-kit.js';
 const TAU = Math.PI * 2;
 // Kept clear inside the pad as well, so antialiased edges never reach the faded border.
 const SAFETY_PX = 1;
-// Below this the area is too small to hold the orrery.
 const MIN_ORBIT_PX = 2;
 
-// Inner planets ride the treble and outer ones the bass, so the spectrum reads outward from the sun.
+// Inner planets take the treble and outer ones the bass, so the spectrum runs outward from the sun.
 // Orbits are fractions of the dial's radius and sizes are fractions of the planet unit.
 const PLANETS = [
   { orbit: 0.25, size: 0.36, hue: 228, saturation: 24 },
@@ -23,18 +22,18 @@ const MOON_HOST = PLANETS.findIndex((planet) => planet.moon === true);
 // The golden angle spreads the planets at the start, so no two line up.
 const GOLDEN_ANGLE = 2.39996;
 
-// The orrery is seen from above at a tilt, the ratio of each orbit's height to its width. The phone strip
-// gets a low tilt and a square area a steep one.
+// Tilt is the ratio of each orbit's height to its width. The phone strip gets a low tilt and a
+// square area a steep one.
 const MIN_TILT = 0.12;
 const MAX_TILT = 0.6;
-// The planet unit as a fraction of the shorter side, so planets keep their size relative to the area. The
-// width cap keeps planets in scale with the orbits when a square or tall area narrows them.
+// The planet unit as a fraction of the shorter side, so planets keep their size relative to the
+// area. The width cap keeps planets in scale with the orbits in a square or tall area.
 const PLANET_SCALE = 0.045;
 const PLANET_WIDTH_SCALE = 0.021;
 const BODY_BASE = 0.7;
 const BODY_GAIN = 0.5;
 const MIN_BODY_PX = 1;
-// Near planets draw larger than far ones, which sells the tilt.
+// Near planets draw larger than far ones, which makes the tilt read as depth.
 const DEPTH_SCALE = 0.15;
 // Reaches from a planet's center, in body radii. The trail glow stays inside the halo's reach.
 const HALO_RATIO = 1.9;
@@ -52,17 +51,18 @@ const RING_ALPHA = 0.85;
 const LIGHT_OFFSET = 0.45;
 const MIN_MOON_PX = 0.4;
 
-// Angular speed in radians per second at the dial. Kepler's law has an exponent of 1.5, softened here so the
-// inner planets stay easy to follow.
+// Angular speed in radians per second at the dial. Kepler's law has an exponent of 1.5, softened
+// here so the inner planets stay easy to follow.
 const ORBIT_RATE = 0.32;
 const KEPLER_EXPONENT = 1.25;
 const SPEED_FLOOR = 0.35;
 const SPEED_GAIN = 1.4;
 const MOON_RATE = 2.2;
-// A beat jolts the whole clockwork forward, then the jolt decays.
+// A beat speeds the entire orrery forward, then the kick decays.
 const LURCH_GAIN = 1;
 const KICK_DECAY_PER_SECOND = 5;
-// A quiet band pulls its orbit in by up to this fraction, well under the gap between orbits so rings never cross.
+// A quiet band pulls its orbit in by up to this fraction, which stays under the gap between orbits
+// so no two orbits cross.
 const ORBIT_SHRINK = 0.04;
 
 // A trail covers the arc its planet swept in this time, so faster planets draw longer streaks.
@@ -74,7 +74,8 @@ const TRAIL_FADE_POWER = 1.6;
 const TRAIL_TAPER = 0.65;
 const TRAIL_BASE = 0.25;
 const TRAIL_GAIN = 0.7;
-// Ellipses are traced as lines, so their bounds stay exact. This chord keeps them round on the widest area.
+// Ellipses are traced as lines, so their bounds stay exact. This chord keeps them round on the
+// widest area.
 const ARC_CHORD_PX = 9;
 const MAX_ARC_STEPS = 72;
 
@@ -115,7 +116,7 @@ const FLASH_LIGHTNESS = 14;
 const COMET_MAX = 3;
 // Comets wait this long between launches, so each one reads as an event rather than noise.
 const COMET_GAP_S = 1.4;
-// Gravity in dial radii cubed per second squared, set so a pass through the system takes about two seconds.
+// Gravity in dial radii cubed per second squared, set so a pass through the system takes 2 to 3 s.
 const COMET_GM = 0.45;
 const COMET_PERIHELION_MIN = 0.12;
 const COMET_PERIHELION_MAX = 0.3;
@@ -131,15 +132,15 @@ const COMET_DUST_WIDTH_RATIO = 0.35;
 const COMET_GLOW_RATIO = 0.9;
 const COMET_CORE_RATIO = 0.22;
 const MIN_COMET_CORE_PX = 0.8;
-// A comet fades over this last stretch before the dial, so it never pops in or out.
+// A comet fades over this last stretch inside the dial, so it never appears or vanishes abruptly.
 const COMET_EDGE_FADE = 0.18;
-// Each midpoint step turns at most this far, which stays accurate where the comet whips round the sun.
+// Each midpoint step turns at most this far, which stays accurate where the comet passes the sun.
 const MAX_STEP_RAD = 0.06;
 const MAX_SUBSTEPS = 64;
 
 const STAR_MAX = 48;
 const STAR_MIN = 10;
-// One star per this many square pixels, capped, so the wide area stays as light as the default one.
+// One star per this many square pixels, so density holds across sizes up to the STAR_MAX cap.
 const STAR_AREA_PX = 2400;
 const STAR_SHADES = 3;
 const STAR_MIN_PX = 0.5;
@@ -151,12 +152,12 @@ const STAR_FIRST_BAND = 9;
 const RETAIN_PER_SECOND = 0.08;
 const PRESENCE_GAIN = 4;
 const MIN_GLOW = 0.01;
-// An alpha under this rounds to nothing in an 8-bit channel.
+// An alpha under this changes a pixel by at most one step of an 8-bit channel.
 const MIN_ALPHA = 0.003;
 // A fixed seed, so every page load starts the same sky.
 const SEED = 0x2545f491;
 
-// Additive glow shines on the dark card but washes out on white, so the light theme paints deeper colors over.
+// Additive glow washes out on white, so the light theme paints deeper colors over the card.
 const LOOKS = {
   dark: {
     glowOp: 'lighter',
@@ -216,11 +217,15 @@ const LOOKS = {
   },
 };
 
-// The far half of the orbital plane draws before the sun and the near half after it.
+// The far half of the plane draws before the sun and the near half after it, so near planets
+// cross the sun's disc and far ones pass under its glow.
 const BACK = { from: Math.PI, to: TAU, holds: (depth) => depth < 0 };
 const FRONT = { from: 0, to: Math.PI, holds: (depth) => depth >= 0 };
 
-/** A tilted brass orrery whose planets orbit at the speed and radius of their bands, with comets on beats. */
+/**
+ * A tilted brass orrery whose planets orbit at the speed and radius of their bands, with comets and
+ * flares on beats.
+ */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
@@ -235,11 +240,11 @@ function draw(ctx, frame) {
   const levels = planetLevels(frame.values);
   advance(state, frame, levels, beat);
   paintScene(ctx, frame, view, composeScene(state, frame, view, levels));
-  // The orrery dims with the glow after the music stops, so the host keeps drawing until it is gone.
+  // The orrery dims with the glow after the music stops, so the host draws until it is gone.
   return true;
 }
 
-// The largest orbit ellipse that keeps every planet, halo, ring, moon, flare and comet inside the pad.
+// The largest orbit ellipse that keeps every planet, halo, ring, moon, flare and comet in the pad.
 function layout(frame) {
   const { width, height, pad } = frame;
   const unit = Math.min(Math.min(width, height) * PLANET_SCALE, width * PLANET_WIDTH_SCALE);
@@ -276,7 +281,7 @@ function maxBodyRadius(unit, planet) {
   return Math.max(MIN_BODY_PX, unit * planet.size * (BODY_BASE + BODY_GAIN)) * (1 + DEPTH_SCALE);
 }
 
-// The ring is rolled, so it takes its full reach both ways. The moon's orbit is flattened by the tilt.
+// The rolled ring reaches fully on both axes. The tilt flattens only the moon's vertical reach.
 function reachAcross(planet) {
   const ring = planet.ring ? RING_RATIO + RING_WIDTH_RATIO / 2 : 0;
   const moon = planet.moon ? MOON_ORBIT_RATIO + MOON_SIZE_RATIO : 0;
@@ -294,7 +299,6 @@ function rimReach(unit) {
   return Math.max(DIAL_LINE_PX / 2, (unit * FLARE_WIDTH_RATIO) / 2, unit * COMET_GLOW_RATIO);
 }
 
-// Each planet hears two adjacent bands, the innermost the highest pair.
 function planetLevels(values) {
   return PLANETS.map((_, i) => average(values, values.length - BANDS_PER_PLANET * (i + 1), values.length - BANDS_PER_PLANET * i));
 }
@@ -314,7 +318,7 @@ function advance(state, frame, levels, beat) {
   if (still) forgetTransients(state);
 }
 
-// Comets and flares are motion of their own, so they go when the music fades or motion is reduced.
+// Comets and flares are motion of their own, so music fading or reduced motion drops them.
 function forgetTransients(state) {
   state.comets = [];
   state.flares = [];
@@ -336,7 +340,7 @@ function advanceFlares(state, launch, dt) {
   state.flares = ages.slice(-FLARE_MAX);
 }
 
-// A Kepler ellipse with the sun at one focus, in dial radii. It enters at the rim, whips round the sun and leaves.
+// A Kepler ellipse with the sun at one focus, in dial radii.
 function newComet(state) {
   const perihelion = between(state, COMET_PERIHELION_MIN, COMET_PERIHELION_MAX);
   const aphelion = between(state, COMET_APHELION_MIN, COMET_APHELION_MAX);
@@ -354,7 +358,7 @@ function newComet(state) {
   };
 }
 
-// Kepler's second law: the angle swept per second grows with the inverse square of the distance.
+// By Kepler's second law, the angle swept per second grows with the inverse square of the distance.
 function anomalyRate(comet, anomaly) {
   const lift = 1 + comet.eccentricity * Math.cos(anomaly);
   return (comet.momentum * lift * lift) / (comet.latus * comet.latus);
@@ -414,7 +418,6 @@ function composeScene(state, frame, view, levels) {
   };
 }
 
-// The flare eases out from the sun to the dial and fades as it goes.
 function flareFront(age) {
   const progress = age / FLARE_SECONDS;
   return { fraction: FLARE_START + (1 - FLARE_START) * (1 - (1 - progress) ** 2), strength: (1 - progress) ** 2 };
@@ -460,7 +463,6 @@ function paintScene(c, frame, view, scene) {
   paintHalf(paint, FRONT);
 }
 
-// Planets behind the sun pass under its glow and planets in front cross its disc.
 function paintHalf(paint, side) {
   paintDial(paint, side);
   paintOrbits(paint, side);
@@ -471,7 +473,7 @@ function paintHalf(paint, side) {
   paintPlanets(paint, side);
 }
 
-// Stars sort into a few shades, so the whole field takes a few fills.
+// Stars sort into a few shades, so the entire field takes a few fills.
 function paintStars({ c, frame, view, scene, look }) {
   const count = Math.min(STAR_MAX, Math.max(STAR_MIN, Math.round((frame.width * frame.height) / STAR_AREA_PX)));
   const bands = frame.values.length;
@@ -517,7 +519,7 @@ function paintDial({ c, frame, view, scene, look }, side) {
   c.stroke();
 }
 
-// Rings hold their brightness with the band's held peak, so each one lights like a meter.
+// Orbit lines take their brightness from the band's held peak, so each one reads as a level meter.
 function paintOrbits({ c, view, scene, look }, side) {
   for (const planet of scene.planets) {
     const alpha = scene.glow * look.orbitAlpha * (ORBIT_BASE + ORBIT_GAIN * planet.held);
@@ -552,7 +554,7 @@ function paintArms({ c, view, scene, look }, side) {
   c.stroke();
 }
 
-// Each trail is cut into pieces that thin and fade toward its tail, a soft wide pass under a bright core.
+// A canvas stroke cannot fade or taper along its length, so each trail draws as pieces.
 function paintTrails({ c, view, scene, look }, side) {
   c.lineCap = 'butt';
   c.globalCompositeOperation = look.glowOp;
@@ -586,7 +588,6 @@ function paintComets({ c, frame, view, scene, look }, side) {
   c.globalCompositeOperation = 'source-over';
 }
 
-// A color at a fixed peak alpha that a caller scales down, for pieces that fade along a tail.
 function rgbaScaler(color, alpha) {
   return (fraction) => rgba(color, alpha * fraction);
 }
@@ -646,7 +647,6 @@ function paintCometHead(c, view, head, colors) {
   c.fill();
 }
 
-// The sun swells with the bass and flares on a beat. Its corona lies over the far half of the system.
 function paintSun({ c, frame, view, scene, look }) {
   const { centerX: x, centerY: y, sunRadius } = view;
   const core = sunRadius * (SUN_CORE_BASE + SUN_CORE_BASS * frame.bass);
@@ -700,7 +700,6 @@ function paintHalo({ c, scene, look }, planet) {
   c.globalCompositeOperation = 'source-over';
 }
 
-// The lit side faces the sun, so each planet waxes and wanes as it circles.
 function paintBody({ c, view, scene, look }, planet) {
   const towardX = view.centerX - planet.x;
   const towardY = view.centerY - planet.y;

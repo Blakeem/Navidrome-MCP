@@ -1,15 +1,10 @@
 /**
  * Navidrome MCP Server - LibraryManager unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Locks in the fragility fixes for the `library-manager.ts:107-122` finding
- * from `03-core-infra-deep-review.md`:
- *   - Token + claims now go through `client.getCurrentToken()` (no
- *     `as unknown as` reach-around into private `authManager`).
- *   - Base64url-aware decode (Buffer, not atob).
- *   - Guarded JSON parse + shape validation: a malformed JWT no longer
- *     crashes MCP startup; it returns a soft-fail and leaves the manager
- *     uninitialized so library scoping is simply absent.
+ * A malformed JWT must not crash startup. It leaves the manager uninitialized, so library scoping
+ * is off for the session.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,7 +13,6 @@ import { createMockClient, type MockNavidromeClient } from '../../factories/mock
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 import type { Config } from '../../../src/config.js';
 
-/** Build a JWT with the given payload claims. Signature is dummy. */
 function makeJwt(payload: object): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
@@ -57,19 +51,16 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   } as unknown as Config;
 }
 
-describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
+describe('LibraryManager.initialize JWT decoding', () => {
   let mockClient: MockNavidromeClient;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
   let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    // The singleton persists across tests; reset for isolation. `reset()`
-    // clears the exported instance's internal state (userInfo, active library
-    // ids, initialized flag, in-flight init promise). It does not rebuild the
-    // singleton — every importer keeps the same `libraryManager` instance.
+    // libraryManager is a module singleton, so each test resets its state.
     libraryManager.reset();
     mockClient = createMockClient();
-    // Silence stderr noise from the decoder's intentional error logs.
+    // The logger writes to console.error, and the decoder logs every malformed token on purpose.
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   });
@@ -94,17 +85,11 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       expect(libraryManager.isInitialized()).toBe(true);
       expect(libraryManager.getAvailableLibraries()).toHaveLength(2);
       expect(libraryManager.getActiveLibraryIds()).toEqual([1, 2]);
-      // Verify the path-segment encoding sticks (defense-in-depth even
-      // though IDs from Navidrome are alphanumeric).
       expect(mockClient.request).toHaveBeenCalledWith('/user/user-uuid-123');
     });
 
-    it('uses the new public getCurrentToken() API (no authManager reach-around)', async () => {
-      // The regression we're locking in: the old code did
-      //   (client as unknown as { authManager }).authManager.getToken()
-      // The fix routes through a public method instead. If a future
-      // refactor reintroduces the private reach-around, this test fails
-      // because the mock's getCurrentToken would never be called.
+    it('reads the token through the public getCurrentToken() API', async () => {
+      // A read of the private authManager would skip getCurrentToken, so the mock sees no call.
       const token = makeJwt({ uid: 'abc' });
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockResolvedValue(makeUserInfo());
@@ -118,14 +103,10 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
     });
 
     it('handles a JWT payload with base64url-distinguishing characters', async () => {
-      // The original code used atob, which mishandles `_` and `-`. We
-      // need the manager to work for any valid Navidrome-issued token.
       const token = makeJwt({
         uid: 'with_uid_underscores-and-dashes',
         sub: 'user',
-        // Add some content that pushes the base64url alphabet difference.
-        // We can't directly assert the encoded shape from here, but the
-        // round-trip success is what matters.
+        // This value encodes to `_` and `-` in base64url, which atob cannot read.
         note: '????>>>>~~~~====<<<<????>>>>',
       });
       mockClient.getCurrentToken.mockResolvedValue(token);
@@ -143,8 +124,6 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
     });
 
     it('scopes to the valid subset of configured defaultLibraryIds', async () => {
-      // applyDefaultConfiguration's valid-subset branch: only library 2 is
-      // requested and it exists, so active ids narrow to exactly [2].
       const token = makeJwt({ uid: 'user-1' });
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockResolvedValue(makeUserInfo());
@@ -159,9 +138,6 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
     });
 
     it('falls back to all libraries when no configured defaultLibraryId is valid', async () => {
-      // applyDefaultConfiguration's fallback branch: 999 exists in neither
-      // library, so active ids fall back to all available ([1, 2]) and the
-      // "No valid default libraries" warning is emitted.
       const token = makeJwt({ uid: 'user-1' });
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockResolvedValue(makeUserInfo());
@@ -173,9 +149,7 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
 
       expect(libraryManager.isInitialized()).toBe(true);
       expect(libraryManager.getActiveLibraryIds()).toEqual([1, 2]);
-      // logger.warn routes to console.error with a `[WARN]` prefix
-      // (src/utils/logger.ts), so assert against the error spy — console.warn
-      // is never called by the logger.
+      // logger.warn writes to console.error with a `[WARN]` prefix and never calls console.warn.
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         '[WARN]',
         expect.stringContaining('No valid default libraries'),
@@ -185,9 +159,6 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
 
   describe('soft-fail paths (no crash, manager stays uninitialized)', () => {
     it('does not crash when the JWT is structurally malformed', async () => {
-      // Old code: `JSON.parse(atob(undefined))` would throw synchronously.
-      // New code: decoder returns null → initialize returns without
-      // throwing, leaving the manager uninitialized for the session.
       mockClient.getCurrentToken.mockResolvedValue('not-a-jwt');
 
       await expect(
@@ -195,7 +166,6 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       ).resolves.toBeUndefined();
 
       expect(libraryManager.isInitialized()).toBe(false);
-      // Never hit /user/{uid} when uid extraction fails.
       expect(mockClient.request).not.toHaveBeenCalled();
     });
 
@@ -214,7 +184,7 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
     });
 
     it('does not crash when the JWT payload lacks the `uid` claim', async () => {
-      const token = makeJwt({ sub: 'tester', exp: 999 }); // no uid
+      const token = makeJwt({ sub: 'tester', exp: 999 });
       mockClient.getCurrentToken.mockResolvedValue(token);
 
       await expect(
@@ -226,7 +196,7 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
     });
 
     it('does not crash when `uid` claim is the wrong type', async () => {
-      const token = makeJwt({ uid: 12345 }); // number, not string
+      const token = makeJwt({ uid: 12345 });
       mockClient.getCurrentToken.mockResolvedValue(token);
 
       await expect(
@@ -240,15 +210,11 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
 
   describe('hard-fail paths (rethrow — caller sees a clear error)', () => {
     it('throws when /user/{uid} fails after a successful JWT decode', async () => {
-      // If we got a valid uid but Navidrome rejects the lookup, something
-      // is genuinely wrong and the server should surface it rather than
-      // silently degrade.
       const token = makeJwt({ uid: 'valid-uid' });
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockRejectedValue(new Error('HTTP 500'));
 
-      // The outermost wrapper's name replaces the inner loadUserLibraries
-      // prefix, so exactly one prefix reaches the caller.
+      // The outer wrapper's name replaces the loadUserLibraries prefix, so one prefix remains.
       await expect(
         libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
       ).rejects.toThrow("Tool 'LibraryManager.initialize' failed: HTTP 500");
@@ -266,10 +232,7 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
       await libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig());
       await libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig());
 
-      // Token + user fetched once; second initialize() short-circuits.
-      // request() is called twice on first init: /user/{uid} then /library
-      // (the enrichment step that backfills the stats Navidrome zeros out
-      // on the user payload).
+      // One initialize() makes two requests, /user/{uid} and then /library for the stats.
       expect(mockClient.getCurrentToken).toHaveBeenCalledTimes(1);
       expect(mockClient.request).toHaveBeenCalledTimes(2);
     });
@@ -283,7 +246,6 @@ describe('LibraryManager.initialize — JWT decode fragility fixes', () => {
         libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
       ]);
 
-      // One /user/{uid} and one /library request, the same as a single initialize().
       expect(mockClient.getCurrentToken).toHaveBeenCalledTimes(1);
       expect(mockClient.request).toHaveBeenCalledTimes(2);
       expect(libraryManager.isInitialized()).toBe(true);

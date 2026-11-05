@@ -1,28 +1,12 @@
 /**
  * Navidrome MCP Server - empty-queue navigator and mutator tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * Covers the queue NAVIGATORS (next / previous / play_queue_index / resume)
- * and MUTATORS (clear / shuffle / move / remove) when no mpv is running (e.g. the web player was powered off, taking mpv with
- * it). The play queue lives inside mpv, so a fresh spawn would be empty; these
- * tools must therefore attach-only and report an empty queue rather than
- * lazy-spawning an empty player. The engine is mocked: `isRunning()` returns
- * false, and the underlying transport commands must NOT be invoked.
+ * The play queue lives inside mpv, so a fresh spawn holds an empty queue. Queue and transport tools
+ * therefore attach to a live mpv and never spawn one.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -31,10 +15,10 @@ const ensureAttachedMock = vi.fn().mockResolvedValue(undefined);
 const isRunningMock = vi.fn();
 const nextMock = vi.fn().mockResolvedValue(undefined);
 const previousMock = vi.fn().mockResolvedValue(undefined);
-const resumeMock = vi.fn().mockResolvedValue(undefined);
+const resumeMock = vi.fn().mockResolvedValue({ outputMissing: null });
 const pauseMock = vi.fn().mockResolvedValue(undefined);
 const seekMock = vi.fn().mockResolvedValue(undefined);
-const jumpMock = vi.fn().mockResolvedValue(undefined);
+const jumpMock = vi.fn().mockResolvedValue({ outputMissing: null });
 const clearQueueMock = vi.fn().mockResolvedValue(undefined);
 const shuffleQueueMock = vi.fn().mockResolvedValue(undefined);
 const moveQueueEntryMock = vi.fn().mockResolvedValue(undefined);
@@ -78,7 +62,7 @@ const {
 describe('queue navigators with no live mpv (empty queue)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    isRunningMock.mockReturnValue(false); // no mpv attached
+    isRunningMock.mockReturnValue(false);
   });
 
   it('next reports an empty queue and does not skip', async () => {
@@ -165,7 +149,7 @@ describe('queue navigators with no live mpv (empty queue)', () => {
 describe('queue navigators with a live mpv pass through to the engine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    isRunningMock.mockReturnValue(true); // mpv attached + a real queue
+    isRunningMock.mockReturnValue(true);
     readQueueStateMock.mockResolvedValue({ position: 0, count: 5 });
   });
 
@@ -196,6 +180,16 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
     expect(result.paused).toBe(false);
   });
 
+  it('resume reports a missing audio output as a failure', async () => {
+    resumeMock.mockResolvedValueOnce({ outputMissing: { id: 'wasapi/{katana}', name: 'Speakers (Katana)' } });
+    const result = await resume({});
+    expect(result).toEqual({
+      success: false,
+      message: "The selected audio device 'Speakers (Katana)' is not connected. Turn it on or call set_audio_device to pick another output, then call resume.",
+      code: 'output-missing',
+    });
+  });
+
   it('pause pauses and reports success', async () => {
     const result = await pause({});
     expect(pauseMock).toHaveBeenCalledTimes(1);
@@ -217,7 +211,18 @@ describe('queue navigators with a live mpv pass through to the engine', () => {
   it('play_queue_index jumps and reports success', async () => {
     const result = await playQueueIndex({ index: 2 });
     expect(jumpMock).toHaveBeenCalledWith(2);
-    expect(result.success).toBe(true);
+    expect(result).toEqual({ success: true });
+  });
+
+  it('play_queue_index reports a missing audio output as paused', async () => {
+    jumpMock.mockResolvedValueOnce({ outputMissing: { id: 'auto', name: null } });
+    const result = await playQueueIndex({ index: 2 });
+    expect(result).toEqual({
+      success: true,
+      paused: true,
+      message: 'No audio output device is available. Connect one, then call resume.',
+      code: 'output-missing',
+    });
   });
 
   it('move_in_play_queue lands a forward move at the final index `to`', async () => {

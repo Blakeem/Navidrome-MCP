@@ -1,31 +1,15 @@
 /**
  * Navidrome MCP Server - Pagination Schema Definitions
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { z } from 'zod';
 import { DEFAULT_VALUES } from '../constants/defaults.js';
 import { createLimitSchema, ItemListTypeSchema, OffsetSchema, OrderSchema, PlaylistIdSchema, VerboseSchema } from './common.js';
 
-// Specific pagination schemas for different resources.
-//
-// `onlyWithPlayableTracks` (default false) gates an extra per-playlist probe:
-// when true, `list_playlists` returns only playlists with >=1 track in the
-// currently active libraries. Default false preserves the full management view
-// (so the LLM can still add songs to empty/other-library playlists).
+// `onlyWithPlayableTracks` defaults to false, since the LLM also adds songs to empty and
+// other-library playlists that the playable-only view hides.
 export const PlaylistPaginationSchema = z.object({
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.PLAYLISTS_LIMIT),
   offset: OffsetSchema,
@@ -46,7 +30,6 @@ export const PlayQueuePaginationSchema = z.strictObject({
   offset: OffsetSchema,
 });
 
-// User preferences pagination. The type accepts singular or plural (see ItemListTypeSchema in common.ts)
 export const StarredItemsPaginationSchema = z.object({
   type: ItemListTypeSchema,
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.STARRED_ITEMS_LIMIT),
@@ -62,7 +45,6 @@ export const TopRatedItemsPaginationSchema = z.object({
   verbose: VerboseSchema,
 });
 
-// Listening history pagination
 export const RecentlyPlayedPaginationSchema = z.object({
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.RECENTLY_PLAYED_LIMIT),
   offset: OffsetSchema,

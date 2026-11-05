@@ -1,6 +1,5 @@
-// Test harness: stands in for a second MCP server that finds a running player. It runs the
-// real ensureWebForPlayback from dist/web/spawn.js, which holds a lease on the player, prints
-// a ready line and stays alive. Killing it closes the lease socket.
+// Stands in for a second MCP server that finds the running player and holds a lease on it.
+// Killing this harness closes the lease socket.
 //
 // argv: <distWebMain> <storePath>
 import { readFileSync } from 'node:fs';
@@ -15,9 +14,10 @@ delete process.env.NAVIDROME_DEV;
 const store = JSON.parse(readFileSync(storePath, 'utf8'));
 const port = store.webui?.port;
 const host = store.webui?.host ?? '127.0.0.1';
+const tls = { certPath: store.webui?.tls?.certPath ?? null, keyPath: store.webui?.tls?.keyPath ?? null };
 
 const { ensureWebForPlayback } = await import(pathToFileURL(join(dirname(distWebMain), 'spawn.js')).href);
-const status = await ensureWebForPlayback({ features: { playback: true }, webui: { enabled: true, port, host } });
+const status = await ensureWebForPlayback({ features: { playback: true }, webui: { enabled: true, port, host, tls } });
 if (status !== 'running') process.exit(1);
 process.stdout.write('lease-held\n');
 

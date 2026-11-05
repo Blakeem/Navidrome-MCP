@@ -1,9 +1,9 @@
 /**
  * Navidrome MCP Server - radio-browser per-session rate-limit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the in-memory dedup that prevents an LLM from voting/clicking
- * the same Radio Browser station endlessly within a session.
+ * The dedup keeps an LLM from voting for or clicking the same Radio Browser station repeatedly.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -40,7 +40,6 @@ describe('radio-browser-rate-limit', () => {
   it('vote and click are tracked independently', () => {
     markVoted('uuid-1');
     expect(hasRecentlyVoted('uuid-1')).toBe(true);
-    // A vote does not consume the click slot for the same station.
     expect(getClickedStreamUrl('uuid-1')).toBeUndefined();
 
     markClicked('uuid-1', 'http://stream.test/a');

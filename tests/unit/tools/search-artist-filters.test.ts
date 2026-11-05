@@ -1,23 +1,18 @@
 /**
  * Navidrome MCP Server - artist filter-strip tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * /api/artist ignores tag and year filters. These tests pin that:
- *  - searchAll never sends them to the artist sub-fetch, and skips that fetch when one is set.
- *  - search_artists rejects them at parse instead of returning unfiltered artists.
- *  - appliedFilters only claims the filters each slice honored.
- *
- * These are pure / module-mocked tests. No live server, no real cache.
+ * /api/artist ignores tag and year filters, so an artist search must neither send them nor report
+ * them as applied.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the filter cache manager so resolveTextFilters resolves text filters to
-// deterministic IDs without touching Navidrome.
+// The real filter cache reads tag values from Navidrome, so the mock returns a fixed ID per filter.
 const { resolveMock, ensureFreshMock } = vi.hoisted(() => ({
   ensureFreshMock: vi.fn().mockResolvedValue(undefined),
   resolveMock: vi.fn((type: string): string | null => {
-    // Return a stable fake UUID per filter type.
     const map: Record<string, string> = {
       genres: 'genre-uuid',
       moods: 'mood-uuid',

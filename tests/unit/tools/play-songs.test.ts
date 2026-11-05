@@ -1,25 +1,13 @@
 /**
  * Navidrome MCP Server - play_songs and play_albums input and lookup tests
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 
 vi.mock('../../../src/services/playback/playback-engine.js', () => ({
   playbackEngine: {
@@ -64,6 +52,21 @@ describe('play_songs active-library lookup', () => {
 
     expect(enqueueMock.mock.calls[0]?.[0]).toEqual(['song-1', 'song-3']);
     expect(result).toEqual({ success: true, count: 2, skipped: 1 });
+  });
+
+  it('keeps success and reports paused with a message when the audio output is missing', async () => {
+    client.requestWithLibraryFilter.mockResolvedValueOnce([{ id: 'song-1', title: 'One' }]);
+    enqueueMock.mockResolvedValueOnce({ demoted: false, outputMissing: { id: 'wasapi/{katana}', name: null } });
+
+    const result = await playSongs(client as never, { songIds: ['song-1'] });
+
+    expect(result).toEqual({
+      success: true,
+      count: 1,
+      paused: true,
+      message: "The selected audio device 'wasapi/{katana}' is not connected. Turn it on or call set_audio_device to pick another output, then call resume.",
+      code: 'output-missing',
+    });
   });
 
   // Navidrome paginates even an id-filtered read, so each chunk must span its own length.

@@ -10,3 +10,10 @@ export function formatTime(totalSeconds) {
   }
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
+
+// An unreadable expiry still renders, so the reader sees that the end time is unknown.
+export function formatDateTime(epochMs) {
+  return typeof epochMs === 'number'
+    ? new Date(epochMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+    : 'unknown';
+}

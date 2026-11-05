@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Playlist Export and Track Utilities
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../../client/navidrome-client.js';
@@ -35,10 +23,7 @@ interface GetPlaylistTracksJsonResponse {
   total: number;
 }
 
-/**
- * M3U-mode response. It omits `tracks` and `total`, since the m3u body carries the tracks
- * and `get_playlist` reports songCount.
- */
+/** No `tracks` or `total`, since the m3u body carries the tracks and get_playlist has songCount. */
 interface GetPlaylistTracksM3UResponse {
   format: 'm3u';
   m3uContent: string;
@@ -48,10 +33,7 @@ type GetPlaylistTracksResponse =
   | GetPlaylistTracksJsonResponse
   | GetPlaylistTracksM3UResponse;
 
-/**
- * Get all tracks in a playlist. The caller's `offset`, `limit` and `playlistId` are not echoed,
- * since they only consume context. The DEBUG log keeps them.
- */
+/** `offset`, `limit` and `playlistId` are not echoed, since they only consume context. */
 export async function getPlaylistTracks(client: NavidromeClient, args: unknown): Promise<GetPlaylistTracksResponse> {
   try {
     const params = PlaylistTracksPaginationSchema.parse(args);

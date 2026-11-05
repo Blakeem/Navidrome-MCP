@@ -1,26 +1,84 @@
 /**
  * Navidrome MCP Server - Web UI HTTP Helpers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { TLSSocket } from 'node:tls';
 import type { z } from 'zod';
 
-// A bounded body lets a misbehaving client fail fast instead of making the server buffer arbitrary input.
+// A bounded body makes a misbehaving client fail fast instead of making the server buffer it all.
 const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
+export const SSE_END_FLUSH_GRACE_MS = 2_000;
+
+/**
+ * Every directive is named, so none silently inherits `default-src`. `data:` serves the inline SVG
+ * favicon in `img-src` and the wake-lock fallback video in `media-src`.
+ */
+const CONTENT_SECURITY_POLICY: string = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  'media-src data:',
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+].join('; ');
+
+const SECURITY_HEADERS: Readonly<Record<string, string>> = {
+  'Content-Security-Policy': CONTENT_SECURITY_POLICY,
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+  'X-Frame-Options': 'DENY',
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+};
+
+/** Set before routing, since `writeHead` merges these into every response a handler writes. */
+export function setSecurityHeaders(res: ServerResponse): void {
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) res.setHeader(name, value);
+}
+
+// `none` is a request the user started, such as typing the URL.
+const ALLOWED_FETCH_SITES: ReadonlySet<string> = new Set(['same-origin', 'none']);
+
+// The web remote may serve HTTPS, so the listener's own scheme comes from the socket.
+function isSameOrigin(origin: string, req: IncomingMessage): boolean {
+  const scheme = req.socket instanceof TLSSocket ? 'https' : 'http';
+  try {
+    return new URL(origin).origin === new URL(`${scheme}://${req.headers.host ?? ''}`).origin;
+  } catch {
+    return false;
+  }
+}
+
+export const CROSS_ORIGIN_REFUSAL = 'Request refused, since it came from another site.';
+// Only the Origin compare reads the Host header and the scheme, so only its refusal names the proxy remedy.
+export const ORIGIN_MISMATCH_REFUSAL =
+  `${CROSS_ORIGIN_REFUSAL} A reverse proxy in front of the player must keep the browser's Host header and scheme.`;
+
+/**
+ * The browser computes `Sec-Fetch-Site` from the page's real origin, so a reverse proxy that rewrites
+ * Host or terminates TLS cannot break it, and it decides alone when present. The Origin compare covers
+ * browsers that omit it. A client that sends neither is not a browser, so no page can make it act with
+ * the user's access. An opaque origin sends `Origin: null`, which fails the URL parse.
+ * Returns null for a request that may proceed.
+ */
+export function crossOriginRefusal(req: IncomingMessage): string | null {
+  const origin = req.headers.origin;
+  const fetchSite = req.headers['sec-fetch-site'];
+  if (fetchSite !== undefined) {
+    const allowed = typeof fetchSite === 'string' && ALLOWED_FETCH_SITES.has(fetchSite.trim().toLowerCase());
+    return allowed ? null : CROSS_ORIGIN_REFUSAL;
+  }
+  if (origin === undefined || isSameOrigin(origin, req)) return null;
+  return ORIGIN_MISMATCH_REFUSAL;
+}
 
 export function writeJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
@@ -36,17 +94,45 @@ export function writeError(res: ServerResponse, status: number, message: string)
   writeJson(res, status, { error: message });
 }
 
-/** Opens a server-sent events response. The retry directive goes first, so the browser learns it even if the stream drops at once. */
+/** The target can depend on the session, so no browser or proxy may reuse the answer. */
+export function writeRedirect(res: ServerResponse, location: string): void {
+  res.writeHead(302, { Location: location, 'Cache-Control': 'no-store', 'Content-Length': '0' });
+  res.end();
+}
+
+/**
+ * `refused` names what was refused, such as "login attempts" or "searches", in the message the page shows.
+ * `retryAfterMs` lets the guest page send a refused add again by itself.
+ */
+export function writeTooManyRequests(res: ServerResponse, waitMs: number, refused: string): void {
+  const retryAfterSeconds = Math.ceil(waitMs / 1000);
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  writeJson(res, 429, { error: `Too many ${refused}. Try again in ${String(retryAfterSeconds)} seconds.`, retryAfterMs: waitMs });
+}
+
+/** The retry directive goes first, so the browser learns it even if the stream drops at once. */
 export function openSseStream(res: ServerResponse, retryMs: number): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
-    // Hint to reverse proxies (nginx in particular) not to buffer the
-    // stream. Harmless when no proxy is in the loop.
+    // nginx buffers a proxied response unless this header says not to.
     'X-Accel-Buffering': 'no',
   });
   res.write(`retry: ${retryMs}\n\n`);
+}
+
+/**
+ * Ends the stream with a last event instead of destroying it, so the frames queued before the event
+ * still flush. A peer that never reads them is destroyed after `SSE_END_FLUSH_GRACE_MS`.
+ */
+export function endSseStream(res: ServerResponse, event: string, data: unknown): void {
+  // A second end on an ended stream would emit an unhandled write-after-end error.
+  if (res.destroyed || res.writableEnded) return;
+  res.end(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  const reaper = setTimeout(() => { res.destroy(); }, SSE_END_FLUSH_GRACE_MS);
+  reaper.unref();
+  res.once('close', () => { clearTimeout(reaper); });
 }
 
 export function isJsonContentType(contentType: string | undefined): boolean {
@@ -54,11 +140,6 @@ export function isJsonContentType(contentType: string | undefined): boolean {
   return baseType === 'application/json';
 }
 
-/**
- * Run a route action and map its result to an HTTP response with consistent
- * error-to-status handling. Errors from the engine or the reused Zod schemas
- * flow through as 500 with their message preserved, so every web action behaves identically.
- */
 export async function runAction(res: ServerResponse, action: () => Promise<unknown>): Promise<void> {
   try {
     const result = await action();
@@ -68,11 +149,7 @@ export async function runAction(res: ServerResponse, action: () => Promise<unkno
   }
 }
 
-/**
- * Read a JSON request body with a hard size cap. Empty bodies resolve to
- * `null` so the caller can tell "no body provided" from "{}". Beyond `maxBytes`
- * the connection is destroyed (no partial JSON parse) and the promise rejects.
- */
+/** An empty body resolves to null, so the caller can tell a missing body from `{}`. */
 export async function readJsonBody(
   req: IncomingMessage,
   maxBytes: number = DEFAULT_MAX_BODY_BYTES,
@@ -111,8 +188,8 @@ export async function readJsonBody(
 }
 
 /**
- * Invalid input returns 400 here because runAction maps every thrown error, the impls' own ZodErrors included, to 500.
- * Resolves to null once the 400 response is written.
+ * Invalid input answers 400 here, because runAction maps every thrown error to 500, the impls' own
+ * ZodErrors included. Resolves to null once the 400 response is written.
  */
 export async function readValidBody<T>(req: IncomingMessage, res: ServerResponse, schema: z.ZodType<T>): Promise<T | null> {
   let body: unknown;

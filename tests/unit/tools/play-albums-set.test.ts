@@ -1,14 +1,9 @@
-/**
- * Covers the shared album-set path behind play_albums and play_albums_search:
- * one chunked `/song` read for many albums, input album order, and the shuffle modes.
- * Also covers the queue metadata play_songs_search builds from its search rows.
- * The playback engine and the searches are mocked, so no mpv or Navidrome is touched.
- */
+/** The playback engine and the searches are mocked, so these cases touch no mpv or Navidrome. */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 
-const enqueueMock = vi.fn().mockResolvedValue({ demoted: false });
+const enqueueMock = vi.fn().mockResolvedValue({ demoted: false, outputMissing: null });
 const searchAlbumsMock = vi.fn();
 const searchSongsMock = vi.fn();
 
@@ -130,7 +125,7 @@ describe('album-set playback', () => {
     expect([...ids].sort()).toEqual([...albumSongs('alpha', 4), ...albumSongs('beta', 4)].map((song) => song.id).sort());
   });
 
-  it('rejects the old shuffle enum parameter', async () => {
+  it('rejects a string shuffle value', async () => {
     await expect(
       playAlbums(client as never, { albumIds: ['alpha'], mode: 'replace', shuffle: 'albums' }),
     ).rejects.toThrow();
@@ -183,7 +178,7 @@ describe('play_songs_search', () => {
       songs: [{ id: 's1', title: 'T', artist: '', album: 'Al', durationFormatted: '3:05' }],
       appliedFilters: { starred: 'true' },
     });
-    enqueueMock.mockResolvedValueOnce({ demoted: true });
+    enqueueMock.mockResolvedValueOnce({ demoted: true, outputMissing: null });
 
     const result = await playSongsSearch(client as never, { starred: true });
 

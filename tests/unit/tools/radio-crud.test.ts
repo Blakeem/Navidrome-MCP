@@ -1,10 +1,9 @@
 /**
  * Navidrome MCP Server - radio CRUD read tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers listRadioStations, getRadioStation, deleteRadioStation from
- * src/tools/radio.ts. createRadioStation is covered in radio-create.test.ts.
- * All tests use createMockClient() — Subsonic API is not hit live.
+ * radio-create.test.ts covers createRadioStation.
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -12,11 +11,6 @@ import { listRadioStations, getRadioStation, deleteRadioStation } from '../../..
 import { createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import type { NavidromeClient } from '../../../src/client/navidrome-client.js';
 
-/**
- * Build a synthetic Navidrome REST `/radio` response. The endpoint returns a
- * raw array (no envelope), with per-station `createdAt`/`updatedAt` and an
- * always-present (but possibly empty) `homePageUrl`.
- */
 function makeRestList(stations: Array<{ id: string; name: string; streamUrl: string; homePageUrl?: string; createdAt?: string; updatedAt?: string }>) {
   return stations.map(s => ({
     id: s.id,
@@ -27,8 +21,6 @@ function makeRestList(stations: Array<{ id: string; name: string; streamUrl: str
     updatedAt: s.updatedAt ?? '2025-09-03T22:07:50Z',
   }));
 }
-
-// ---- listRadioStations ------------------------------------------------------
 
 describe('listRadioStations', () => {
   let mockClient: MockNavidromeClient;
@@ -70,7 +62,7 @@ describe('listRadioStations', () => {
     const result = await listRadioStations(mockClient as unknown as NavidromeClient, {});
 
     expect(result.stations[0]!.homePageUrl).toBe('https://a.test');
-    // second station's empty-string homePageUrl is treated as unset
+    // An empty homePageUrl counts as unset.
     expect(result.stations[1]!.homePageUrl).toBeUndefined();
   });
 
@@ -86,9 +78,6 @@ describe('listRadioStations', () => {
 
     expect(result.stations[0]!.createdAt).toBe('2025-01-15T10:00:00Z');
     expect(result.stations[1]!.createdAt).toBe('2025-06-20T20:30:00Z');
-    // Distinct timestamps (regression test for the "all stations got the
-    // same bulk-import timestamp" Subsonic limitation we worked around by
-    // switching to REST).
     expect(result.stations[0]!.createdAt).not.toBe(result.stations[1]!.createdAt);
   });
 
@@ -122,8 +111,6 @@ describe('listRadioStations', () => {
     expect(mockClient.request).toHaveBeenCalledWith('/radio?_start=0&_end=10000');
   });
 });
-
-// ---- getRadioStation --------------------------------------------------------
 
 describe('getRadioStation', () => {
   let mockClient: MockNavidromeClient;
@@ -176,8 +163,6 @@ describe('getRadioStation', () => {
   });
 });
 
-// ---- deleteRadioStation -----------------------------------------------------
-
 describe('deleteRadioStation', () => {
   let mockClient: MockNavidromeClient;
 
@@ -223,8 +208,6 @@ describe('deleteRadioStation', () => {
     ).rejects.toThrow();
   });
 });
-
-// ---- Zod schema validation (replaces args-as casts) -------------------------
 
 describe('radio.ts Zod schema validation', () => {
   let mockClient: MockNavidromeClient;

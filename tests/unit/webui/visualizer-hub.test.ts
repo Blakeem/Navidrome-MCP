@@ -9,6 +9,7 @@ interface FakeResponse extends EventEmitter {
   writeHead: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
   end: ReturnType<typeof vi.fn>;
+  destroy: ReturnType<typeof vi.fn>;
   writableNeedDrain: boolean;
   destroyed: boolean;
   writableEnded: boolean;
@@ -19,6 +20,11 @@ function fakeResponse(): FakeResponse {
   res.writeHead = vi.fn();
   res.write = vi.fn();
   res.end = vi.fn();
+  // A real response emits 'close' after destroy().
+  res.destroy = vi.fn(() => {
+    res.destroyed = true;
+    res.emit('close');
+  });
   res.writableNeedDrain = false;
   res.destroyed = false;
   res.writableEnded = false;
@@ -86,6 +92,83 @@ describe('VisualizerHub', () => {
 
     expect(levelWrites(slow)).toHaveLength(0);
     expect(levelWrites(quick)).toHaveLength(1);
+  });
+
+  it('destroys a viewer that stays backed up across two heartbeats', async () => {
+    const { hub } = hubWithFeed();
+    const stalled = fakeResponse();
+    const quick = fakeResponse();
+    stalled.writableNeedDrain = true;
+    hub.addClient(stalled as unknown as ServerResponse);
+    hub.addClient(quick as unknown as ServerResponse);
+
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
+    expect(stalled.destroy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
+
+    expect(stalled.destroy).toHaveBeenCalledTimes(1);
+    expect(quick.destroy).not.toHaveBeenCalled();
+  });
+
+  it('stops writing to a reaped viewer and keeps the others', async () => {
+    const { hub } = hubWithFeed();
+    const stalled = fakeResponse();
+    const quick = fakeResponse();
+    stalled.writableNeedDrain = true;
+    hub.addClient(stalled as unknown as ServerResponse);
+    hub.addClient(quick as unknown as ServerResponse);
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS * 2);
+    stalled.writableNeedDrain = false;
+    stalled.write.mockClear();
+    quick.write.mockClear();
+
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
+
+    expect(stalled.write).not.toHaveBeenCalled();
+    expect(quick.write).toHaveBeenCalledWith(': ping\n\n');
+  });
+
+  it('keeps a viewer that drained between heartbeats', async () => {
+    const { hub } = hubWithFeed();
+    const slow = fakeResponse();
+    slow.writableNeedDrain = true;
+    hub.addClient(slow as unknown as ServerResponse);
+
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
+    slow.writableNeedDrain = false;
+    slow.emit('drain');
+    slow.writableNeedDrain = true;
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
+
+    expect(slow.destroy).not.toHaveBeenCalled();
+  });
+
+  it('keeps a viewer that is backed up at one heartbeat only', async () => {
+    const { hub } = hubWithFeed();
+    const slow = fakeResponse();
+    slow.writableNeedDrain = true;
+    hub.addClient(slow as unknown as ServerResponse);
+
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS);
+    slow.writableNeedDrain = false;
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS * 2);
+
+    expect(slow.destroy).not.toHaveBeenCalled();
+  });
+
+  it('stops the feed a grace period after the last viewer is reaped', async () => {
+    const { hub, feed } = hubWithFeed();
+    const only = fakeResponse();
+    only.writableNeedDrain = true;
+    hub.addClient(only as unknown as ServerResponse);
+
+    await vi.advanceTimersByTimeAsync(SSE_HEARTBEAT_MS * 2);
+    expect(only.destroy).toHaveBeenCalledTimes(1);
+    expect(feed.stop).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(VISUALIZER_FEED_GRACE_MS);
+
+    expect(feed.stop).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('stops the feed a grace period after the last viewer leaves, unless one returns', async () => {

@@ -1,25 +1,26 @@
 import { detectBeat } from '../visualizer-kit.js';
 
-// Plate modes in rising pitch order, each [n, m, sign] in u = cos(n pi x) cos(m pi y) + sign cos(m pi x) cos(n pi y).
-// x and y run from the plate's center in units of its short side, so every figure is mirrored about the center.
-// A plate's pitch grows with n squared plus m squared, which sets the order.
+// Plate modes [n, m, sign] of u = cos(n pi x) cos(m pi y) + sign cos(m pi x) cos(n pi y), with x
+// and y in short sides from the center. Pitch rises with n^2 + m^2, which sets this order.
 const MODES = [
   [1, 2, 1], [1, 2, -1], [1, 3, 1], [2, 3, 1], [2, 3, -1], [1, 4, -1], [3, 4, 1], [1, 5, 1],
   [2, 5, 1], [3, 5, -1], [4, 5, 1], [4, 5, -1], [5, 6, 1], [4, 7, -1], [5, 7, -1], [6, 7, 1],
 ];
-// Each unit of a mode's highest order needs this much of the short side, so the finest figure still reads as sand.
+// Each unit of a mode's highest order needs this much of the short side, so the finest figure
+// still reads as sand.
 const PX_PER_ORDER = 9;
 
-// The sand shows fully once the average level passes a quarter, and keeps this fraction a second after silence.
+// The sand shows fully once the average level passes a quarter.
+// It keeps this fraction of its visibility one second after silence.
 const PRESENCE_GAIN = 4;
 const FADE_RETAIN_PER_SECOND = 0.08;
 const VISIBLE_FLOOR = 0.01;
 
-// The grain count is this times the plate area over its short side, which tracks the total length of nodal line,
-// so the lines hold as many grains per pixel at any size.
+// The grain count is this times the plate area over its short side, which tracks the total length
+// of nodal line, so the lines hold as many grains per pixel at any size.
 const GRAIN_DENSITY = 5.6;
 const MIN_GRAINS = 300;
-// The cap keeps the wide desktop area as light as the default one.
+// The cap keeps the wide desktop area close to the cost of the default one.
 const MAX_GRAINS = 2600;
 const GRAIN_PX = 1.25;
 // Sparser sand on a wide plate draws as coarser grains, so its lines still read.
@@ -33,69 +34,72 @@ const PLATE_INSET_PX = 2.5;
 const MIN_PLATE_PX = 16;
 // The sand thins out over this fraction of the short side at every edge, so the plate shows no box.
 const EDGE_FADE = 0.17;
-// Sand that comes to rest this far into the edge fade falls off the free edge and is sprinkled back on. Modes with
-// a nodal line along the edge would otherwise pile sand into a faint frame.
+// Sand on the plate this far into the edge fade falls off the free edge and is sprinkled back on.
+// Modes with a nodal line along the edge would otherwise pile sand into a faint frame.
 const SPILL_SHARE = 0.3;
 
 // The plate swings harder with loudness and reaches full drive near an average level of 0.6.
 const DRIVE_GAIN = 1.7;
-// Grains slide toward the nearest nodal line at this rate per second, capped in short sides per second.
+// Grains slide toward the nearest nodal line at this rate per second.
+// The slide is capped at this many short sides per second.
 const SETTLE_RATE = 4;
 const SETTLE_SPEED = 0.7;
-// Random-walk strength in short sides per root second. Antinodes throw grains hardest, and the floor keeps lines grainy.
+// Random-walk strength in short sides per root second. Antinodes throw grains hardest.
+// The line floor keeps the lines grainy.
 const JITTER_LINE = 0.014;
 const JITTER_ANTINODE = 0.09;
 // Creep along a nodal line spreads the sand evenly along it without widening the line.
 const JITTER_ALONG = 0.035;
 // A uniform step this wide has a standard deviation of 1.
 const NOISE_SPAN = 3.46;
-// Each grain rests at its own fixed offset across a nodal line, so a line keeps a grainy width with no jitter.
+// Each grain rests at a fixed offset across a nodal line, so lines stay grainy without jitter.
 const LINE_WIDTH = 0.012;
 const MIN_LINE_WIDTH_PX = 1.2;
-// Near a peak of the field the gradient vanishes, and a Newton step there would fly off.
+// Near a peak of the field the gradient vanishes, so a Newton step there would diverge.
 const MIN_GRADIENT_SQ = 1e-8;
 // Below this share of the peak swing a grain counts as resting on a nodal line.
 const SETTLED_SWING = 0.1;
 
-// The loudest band is read from a spectrum smoothed over this time, and a new pattern must lead this long to take over.
+// The loudest band is read from a spectrum smoothed over this time.
+// A new pattern must lead this long to take over.
 const SPECTRUM_SMOOTH_S = 0.45;
 const MODE_LEAD_S = 0.5;
 // A pattern holds at least this long, so the sand has time to gather into it.
 const MODE_DWELL_S = 2.6;
 const HUE_EASE_S = 0.6;
-// Pitch colors the sand from amber for the bass through rose and violet to cyan for the treble, skipping green.
+// Pitch colors the sand from amber for the bass through rose and violet to cyan, skipping green.
 const HUE_LOW = 40;
 const HUE_HIGH = -175;
 
 // A beat strikes the plate's center, and the bending wave reaches the far corner in this time.
 const WAVE_CROSS_S = 0.45;
 const MAX_WAVES = 3;
-// A beat strikes harder with more bass.
 const BEAT_BASE = 0.45;
 const BEAT_BASS = 0.7;
 // The strike weakens toward the far corner by this fraction.
 const REACH_FALLOFF = 0.5;
 const RING_WIDTH = 0.045;
-// Hop units: a full-strength hop rises to height 1 and lands 0.4 seconds later.
+// A full-strength hop rises to height 1 and lands 0.4 seconds later.
 const GRAVITY = 50;
 const HOP_SPEED = 10;
 // Above this height a grain draws at its largest, nearest to the viewer.
 const AIR_HIGH = 0.45;
-// Sideways throw of a full-strength hop in short sides per second. Its direction is random, since a push away
-// from the strike on every beat would drain the sand from the center.
+// Sideways throw of a full-strength hop in short sides per second. Its direction is random, since
+// a push away from the strike on every beat would drain the sand from the center.
 const SCATTER_SPEED = 0.2;
 const GROUND_FRICTION = 12;
 const WALL_BOUNCE = 0.4;
 
-// The plate's standing wave shows slowed to a visible rate that rises with the mode's pitch.
+// The shown standing wave is slowed to a visible rate, which rises with the mode's pitch.
 const SWING_HZ_LOW = 0.7;
 const SWING_HZ_HIGH = 2.2;
 const SWING_BASE = 0.45;
 const SWING_DECAY_PER_SECOND = 3.5;
-// The shown wave crossfades between figures this long, while the sand itself jumps at once like a real plate.
+// The shown wave crossfades between figures this long. The sand's target jumps at once, as on a
+// real plate.
 const SWITCH_BLEND_S = 0.4;
 
-// The glow grid stays under 200 by 100 cells, and the glow is soft enough that a cell can span 2.5 pixels.
+// The glow grid stays within 200 by 100 cells. The glow is soft enough for a 2.5 pixel cell.
 const GRID_MAX_COLS = 200;
 const GRID_MAX_ROWS = 100;
 const GRID_MIN_CELL_PX = 2.5;
@@ -108,7 +112,7 @@ const WIDE_CELL_PX = 3.5;
 const BLUR_WIDE = [1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16];
 const BLUR_NARROW = [1 / 4, 2 / 4, 1 / 4];
 
-// Glowing sand on a black plate for the dark theme, ink on paper like Chladni's own engravings for the light one.
+// The dark theme shows glowing sand. The light theme shows ink on paper, like Chladni's engravings.
 const LOOKS = {
   dark: {
     blend: 'lighter',
@@ -132,13 +136,13 @@ const LOOKS = {
   },
 };
 
-/** Sand on a Chladni plate gathers on the nodal lines of the loudest pitch's mode, and each beat bounces it loose. */
+/** Sand on a Chladni plate gathers on the loudest pitch's nodal lines, and each beat bounces it. */
 function draw(ctx, frame) {
   const { state } = frame;
   const beat = detectBeat(state, frame);
   const visibility = fadeVisibility(state, frame);
   if (visibility < VISIBLE_FLOOR) {
-    // The next sound pours fresh sand, so each figure forms from an even scatter the way it does on a real plate.
+    // The next sound pours fresh sand, so each figure forms from an even scatter, as on a plate.
     state.poured = false;
     return false;
   }
@@ -213,7 +217,7 @@ function makeGrains(count) {
     vz: new Float32Array(count),
     swing: new Float32Array(count),
     offset: new Float32Array(count),
-    // A fixed draw against the edge fade, so a grain near the edge shows or hides steadily instead of flickering.
+    // A fixed draw against the edge fade, so a grain near the edge shows or hides without flicker.
     seed: new Float32Array(count),
     buckets: [new Int32Array(count), new Int32Array(count), new Int32Array(count), new Int32Array(count)],
     filled: new Int32Array(4),
@@ -232,7 +236,7 @@ function makeGrid(plate, frame) {
     rows,
     cellW,
     cellH,
-    // Line brightness holds steady across sizes, since grains per cell on a line scale with this ratio.
+    // Grains per cell on a line scale with this ratio, so line brightness holds across sizes.
     densityGain: (DENSITY_GAIN * plate.w * plate.h) / (plate.grains.count * plate.unit * Math.sqrt(cellW * cellH)),
     blur: Math.sqrt(cellW * cellH) > WIDE_CELL_PX ? BLUR_NARROW : BLUR_WIDE,
     density: new Float32Array(cols * rows),
@@ -298,7 +302,6 @@ function advance(state, frame, plate, beat) {
   };
 }
 
-// The pattern follows the loudest band, but only once a new band has led for a while and the old figure has settled.
 function chooseMode(state, frame, plate) {
   const spectrum = state.spectrum;
   const smoothing = 1 - Math.exp(-frame.dtSeconds / SPECTRUM_SMOOTH_S);
@@ -344,7 +347,6 @@ function advanceWaves(state, plate, dt, strike, strength) {
   if (strike && state.waves.length < MAX_WAVES) state.waves.push({ radius: 0, previous: 0, strength });
 }
 
-// A strike sets the shown standing wave swinging at full height, and it rings down toward the level's own drive.
 function advanceSwing(state, frame, strike, strength, drive, pitch) {
   if (frame.reducedMotion) return SWING_BASE * drive;
   const hz = SWING_HZ_LOW + (SWING_HZ_HIGH - SWING_HZ_LOW) * pitch;
@@ -395,7 +397,7 @@ function sprinkle(grains, i, plate) {
   grains.swing[i] = 1;
 }
 
-// The wavefront throws each grain up and sideways as it passes, so the grains in the air trace a spreading ring.
+// The wavefront throws each grain as it passes, so the grains in the air trace a spreading ring.
 function kickGrain(grains, i, plate, wave, distance) {
   const power = wave.strength * (1 - (REACH_FALLOFF * distance) / plate.reach) * (0.55 + 0.45 * Math.random());
   const angle = Math.random() * Math.PI * 2;
@@ -416,7 +418,6 @@ function flyGrain(grains, i, dt) {
   grains.vz[i] = 0;
 }
 
-// A grain on the plate slides toward the nearest nodal line and jitters with the plate's local swing.
 function settleGrain(grains, i, field, step) {
   const dx = grains.x[i] - field.cx;
   const dy = grains.y[i] - field.cy;
@@ -436,7 +437,7 @@ function settleGrain(grains, i, field, step) {
   let moveX = 0;
   let moveY = 0;
   if (gradSq > MIN_GRADIENT_SQ) {
-    // A Newton step lands where the field's local slope reaches the grain's offset, beside the nearest nodal line.
+    // A Newton step lands at the grain's own offset beside the nearest nodal line.
     const miss = u - grains.offset[i] * step.lineWidth * Math.sqrt(gradSq);
     moveX = ((-miss * gradX) / gradSq) * step.settle;
     moveY = ((-miss * gradY) / gradSq) * step.settle;
@@ -472,7 +473,6 @@ function containGrain(grains, i, plate) {
   }
 }
 
-// A soft wash under the grains: the sand's density as a glow, the plate's standing wave and the strike rings.
 function paintGlow(ctx, plate, motion, look, visibility) {
   const grid = plate.grid;
   splatGrains(grid, plate);
@@ -500,7 +500,7 @@ function blurDensity(grid) {
   blurPass(grid.scratch, grid.density, grid.blur, grid.rows, grid.cols, grid.cols, 1);
 }
 
-// One binomial pass along lines of `length` cells spaced `stride` apart, with lines `next` apart, clamped at the ends.
+// One binomial pass over lines of `length` cells spaced `stride` apart, with lines `next` apart.
 function blurPass(from, to, taps, length, lines, stride, next) {
   const reach = (taps.length - 1) / 2;
   for (let line = 0; line < lines; line++) {
@@ -559,7 +559,7 @@ function ringAt(rings, distance) {
   return sum;
 }
 
-// Half the mode's field at each cell center, cached since a figure's shape depends only on the size.
+// Half the mode's field at each cell center, cached since a figure depends only on the size.
 function modeField(plate, mode) {
   const grid = plate.grid;
   const cached = grid.modeFields[mode];
@@ -579,8 +579,8 @@ function modeField(plate, mode) {
   return field;
 }
 
-// Grains that share a look go in one path with one fill, so the whole plate costs four paints. Resting grains are
-// squares, since they are many and too small to show a corner, and the larger airborne grains are round.
+// Grains that share a look share one path, so the plate costs four fills. Resting grains are many
+// and too small to show a corner, so they draw as squares. Airborne grains are larger and round.
 function paintGrains(ctx, plate, motion, look, visibility) {
   const grains = plate.grains;
   sortGrains(plate);
@@ -615,7 +615,8 @@ function paintGrains(ctx, plate, motion, look, visibility) {
   ctx.restore();
 }
 
-// Buckets: loose sand, sand resting on a nodal line, low hops and high hops. The edge fade drops grains by their seed.
+// Buckets: loose sand, sand resting on a nodal line, low hops and high hops.
+// The edge fade drops grains by their seed.
 function sortGrains(plate) {
   const grains = plate.grains;
   grains.filled.fill(0);

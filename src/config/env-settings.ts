@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Settings built from the environment (form seed and headless runtime fallback)
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { readFileSync } from 'node:fs';
@@ -21,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { readSettings, type SettingsFile } from './store.js';
 import {
+  DEFAULT_GUEST_QUEUE_LIMIT,
   DEFAULT_LRCLIB_BASE,
   DEFAULT_MCP_HTTP_PORT,
   DEFAULT_MUSICBRAINZ_USER_AGENT,
@@ -29,12 +18,16 @@ import {
   DEFAULT_TRANSCODE_FORMAT,
   DEFAULT_USER_AGENT,
   DEFAULT_WEBUI_PORT,
+  WEBUI_ADMIN_ACCESS_LEVELS,
+  WEBUI_AUTH_MODES,
+  type WebuiAdminAccess,
+  type WebuiAuthMode,
 } from '../constants/defaults.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Recommended feature-field values keyed by form field path. A first run pre-fills them, and later runs only hint
- * them beside blank fields so a deliberate blank survives. `radioBrowserBase` is absent: blank selects a mirror by SRV.
+ * A first run pre-fills these. Later runs only hint them beside blank fields, so a deliberate blank
+ * stays. `radioBrowserBase` has no entry, since a blank value selects a mirror by SRV.
  */
 export const FORM_SUGGESTIONS = {
   'features.musicBrainzUserAgent': DEFAULT_MUSICBRAINZ_USER_AGENT,
@@ -45,8 +38,8 @@ export const FORM_SUGGESTIONS = {
 } as const;
 
 /**
- * Settings form seed: an existing settings.json verbatim, else an import from `process.env` and a legacy `.env`,
- * so an upgrading user verifies instead of retyping. It returns real secrets. The HTTP layer masks them.
+ * Without a usable settings.json, the seed imports `process.env` and a legacy `.env`, so an
+ * upgrading user verifies instead of retyping. It returns real secrets, which the routes mask.
  */
 export function buildFormSeed(): SettingsFile {
   const existing = readSettings();
@@ -57,14 +50,30 @@ export function buildFormSeed(): SettingsFile {
 }
 
 /**
- * Headless runtime fallback built from `process.env` only. It skips `.env` files and the radio and lyrics suggestions,
- * so radio and lyrics enable only on an explicit env opt-in, and a usable settings.json wins over it.
+ * Reads `process.env` only, since `.env` files are import-only. It skips the radio and lyrics
+ * suggestions, so those features turn on only by explicit env opt-in.
  */
 export function buildEnvRuntimeSettings(): SettingsFile {
-  return settingsFromEnvSource((key) => {
-    const value = process.env[key];
-    return value !== undefined && value.trim() !== '' ? value : undefined;
-  }, false);
+  return settingsFromEnvSource(readProcessEnv, false);
+}
+
+/** Setup mode serves stdio and a local page, which a headless HTTP deployment can reach neither of. */
+export function envRequestsHttpTransport(): boolean {
+  return toTransportType(readProcessEnv('MCP_TRANSPORT')) === 'http';
+}
+
+function readProcessEnv(key: string): string | undefined {
+  const value = process.env[key];
+  return value !== undefined && value.trim() !== '' ? value : undefined;
+}
+
+/**
+ * The plaintext stays out of the settings shape, so the form seed never carries it to the browser.
+ * The web player reads it only when it runs from env, since a usable store wins over env.
+ */
+export function readEnvAdminPassword(): string | null {
+  const value = process.env['WEBUI_ADMIN_PASSWORD'];
+  return value !== undefined && value !== '' ? value : null;
 }
 
 function importFromLegacyEnv(): SettingsFile {
@@ -79,8 +88,8 @@ function importFromLegacyEnv(): SettingsFile {
 }
 
 /**
- * `applySuggestions` fills the feature-gating fields from FORM_SUGGESTIONS for the review-gated form seed only.
- * MusicBrainz keeps its default either way because it has no feature gate.
+ * `applySuggestions` is true only for the form seed, which the user reviews before saving.
+ * MusicBrainz keeps its default either way, since it gates no feature.
  */
 function settingsFromEnvSource(
   get: (key: string) => string | undefined,
@@ -96,6 +105,8 @@ function settingsFromEnvSource(
 
   const transportType = toTransportType(get('MCP_TRANSPORT'));
   const transportPort = toInt('MCP_HTTP_PORT', get('MCP_HTTP_PORT'), DEFAULT_MCP_HTTP_PORT);
+
+  const audioDeviceId = get('PLAYBACK_AUDIO_DEVICE');
 
   return {
     navidrome: {
@@ -129,15 +140,30 @@ function settingsFromEnvSource(
       mpvPath: get('MPV_PATH') ?? null,
       transcodeFormat: get('PLAYBACK_TRANSCODE_FORMAT') ?? DEFAULT_TRANSCODE_FORMAT,
       transcodeBitrate: get('PLAYBACK_TRANSCODE_BITRATE') ?? DEFAULT_TRANSCODE_BITRATE,
+      audioDevice: audioDeviceId !== undefined ? { id: audioDeviceId, name: null } : null,
     },
     webui: {
       enabled: toBool('WEBUI_ENABLED', get('WEBUI_ENABLED'), true),
       port,
       host: get('WEBUI_HOST') ?? null,
       expose: toBool('WEBUI_EXPOSE', get('WEBUI_EXPOSE'), false),
+      allowedHosts: toList(get('WEBUI_ALLOWED_HOSTS')),
+      publicUrl: get('WEBUI_PUBLIC_URL') ?? null,
       autoOpenBrowser: toBool('WEBUI_AUTO_OPEN_BROWSER', get('WEBUI_AUTO_OPEN_BROWSER'), false),
       persistAfterMcpExit: toBool('WEBUI_PERSIST_AFTER_MCP_EXIT', get('WEBUI_PERSIST_AFTER_MCP_EXIT'), false),
       visualizer: toBool('WEBUI_VISUALIZER', get('WEBUI_VISUALIZER'), true),
+      tls: {
+        certPath: get('WEBUI_TLS_CERT') ?? null,
+        keyPath: get('WEBUI_TLS_KEY') ?? null,
+      },
+      auth: {
+        mode: toAuthMode(get('WEBUI_AUTH_MODE')),
+        adminPasswordHash: null,
+        adminAccess: toAdminAccess(get('WEBUI_ADMIN_ACCESS')),
+      },
+    },
+    jukebox: {
+      guestQueueLimit: toInt('JUKEBOX_GUEST_QUEUE_LIMIT', get('JUKEBOX_GUEST_QUEUE_LIMIT'), DEFAULT_GUEST_QUEUE_LIMIT),
     },
     advanced: {
       debug: toBool('DEBUG', get('DEBUG'), false),
@@ -182,25 +208,35 @@ function toTransportType(value: string | undefined): 'stdio' | 'http' {
   return 'stdio';
 }
 
-/** Split a comma-separated env value into a trimmed list, or null when unset. */
+// An unknown mode falls back to password, the strictest mode with a login and no guest routes, so a typo never opens the remote.
+function toAuthMode(value: string | undefined): WebuiAuthMode {
+  if (value === undefined) return 'none';
+  const mode = WEBUI_AUTH_MODES.find((candidate) => candidate === value);
+  if (mode !== undefined) return mode;
+  logger.warn(`WEBUI_AUTH_MODE="${value}" is not supported (use one of ${WEBUI_AUTH_MODES.join(', ')}), so password is used.`);
+  return 'password';
+}
+
+function toAdminAccess(value: string | undefined): WebuiAdminAccess {
+  if (value === undefined) return 'localhost';
+  const level = WEBUI_ADMIN_ACCESS_LEVELS.find((candidate) => candidate === value);
+  if (level !== undefined) return level;
+  logger.warn(`WEBUI_ADMIN_ACCESS="${value}" is not supported (use ${WEBUI_ADMIN_ACCESS_LEVELS.join(', ')}), so localhost is used.`);
+  return 'localhost';
+}
+
 function toList(value: string | undefined): string[] | null {
   if (value === undefined) return null;
   const items = value.split(',').map((s) => s.trim()).filter((s) => s !== '');
   return items.length > 0 ? items : null;
 }
 
-/**
- * Parse a legacy `.env` (project root or cwd), import-only. A plain KEY=VALUE
- * line parser, NOT a shell sourcer, so values with shell-special characters
- * (e.g. parens in `RADIO_BROWSER_USER_AGENT`) are read verbatim. Returns an
- * empty map when no `.env` is found.
- */
 function readLegacyEnvFile(): Record<string, string> {
   for (const candidate of legacyEnvCandidates()) {
     try {
       return parseEnv(readFileSync(candidate, 'utf8'));
     } catch {
-      /* try next candidate */
+      // A missing or unreadable candidate falls through to the next one.
     }
   }
   return {};
@@ -208,13 +244,17 @@ function readLegacyEnvFile(): Record<string, string> {
 
 function legacyEnvCandidates(): string[] {
   return [
-    // dist/config/env-settings.js sits two levels below the project root.
-    // src/config/env-settings.ts under tsx resolves the same way.
+    // Both dist/config/env-settings.js and src/config/env-settings.ts sit two levels below the
+    // project root.
     join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.env'),
     join(process.cwd(), '.env'),
   ];
 }
 
+/**
+ * A KEY=VALUE line parser, not a shell sourcer, so shell-special characters such as the parens in
+ * `RADIO_BROWSER_USER_AGENT` are read verbatim.
+ */
 function parseEnv(content: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const rawLine of content.split(/\r?\n/)) {

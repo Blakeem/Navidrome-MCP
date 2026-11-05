@@ -1,38 +1,26 @@
 /**
  * Navidrome MCP Server - Visualizer log parser
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { VISUALIZER_BAND_COUNT } from './visualizer-filter.js';
 
-/** One measurement of every band. `segment` changes when timestamps restart, which marks a new file. */
+/** `segment` changes when timestamps restart, which marks a new file. */
 export interface LevelRecord {
   segment: number;
   ptsSeconds: number;
-  /** Whole decibels per band, lowest band first, clamped to the floor and 0. */
+  /** Integer decibels per band, lowest band first, clamped to FLOOR_DB and 0. */
   levels: number[];
 }
 
-/** The fields of an mpv `log-message` event that the parser reads. */
 interface LogMessage {
   prefix: unknown;
   text: unknown;
 }
 
-// mpv's IPC docs warn that log text may change between releases, so anything unmatched is skipped, never fatal.
+// mpv's IPC docs warn that log text may change between releases, so an unmatched line is skipped,
+// never fatal.
 const FRAME_LINE = /^(Parsed_ametadata_\d+): frame:(\d+)\s+pts:\S+\s+pts_time:(\S+)/;
 const BAND_LINE = /^(Parsed_ametadata_\d+): lavfi\.astats\.(\d+)\.RMS_level=(\S+)/;
 // astats prints -inf for a silent band, which Number() reads as NaN.
@@ -46,8 +34,8 @@ interface PendingRecord {
 }
 
 /**
- * Groups the visualizer filter's log lines into records. Other FFmpeg lines can land between a
- * frame line and its band lines, so band lines join the pending record only from the same filter instance.
+ * Other FFmpeg lines can land between a frame line and its band lines, so a band line joins the
+ * pending record only from the same filter instance.
  */
 export class VisualizerLogParser {
   private pending: PendingRecord | null = null;
@@ -55,7 +43,7 @@ export class VisualizerLogParser {
   private lastPts = Number.POSITIVE_INFINITY;
 
   push(message: LogMessage): LevelRecord | null {
-    // mpv drops the oldest lines when a reader falls behind, which can split a record.
+    // mpv drops lines when a reader falls behind, which can split a record.
     if (message.prefix === 'overflow') {
       this.pending = null;
       return null;

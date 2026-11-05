@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Album Data Transformers
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { AlbumDTO } from '../types/index.js';
@@ -28,14 +16,8 @@ import {
 } from './shared-transformers.js';
 
 /**
- * Raw album data from Navidrome API
- *
- * Navidrome's `/api/album` rows do NOT include a top-level `artist`/`artistId`
- * field, only `albumArtist`/`albumArtistId`. We carry both shapes here so the
- * transformer can fall back cleanly when the REST surface omits `artist`.
- *
- * `releaseYear` comes from the first nonzero of maxYear, then minYear, then maxOriginalYear,
- * then minOriginalYear.
+ * Navidrome's `/api/album` rows carry no `artist` or `artistId`, only `albumArtist` and
+ * `albumArtistId`, so the transformer falls back to those.
  */
 export interface RawAlbum {
   id: string;
@@ -60,12 +42,6 @@ export interface RawAlbum {
   [key: string]: unknown;
 }
 
-/**
- * Pick the most informative non-empty string from a list of candidates. Treats
- * empty strings, null, and undefined as "missing" so we fall through to the
- * next candidate. Used to recover `artist`/`artistId` from `albumArtist` when
- * the Navidrome listing omits the artist fields.
- */
 function pickString(...candidates: Array<string | null | undefined>): string | undefined {
   for (const candidate of candidates) {
     if (typeof candidate === 'string' && candidate.length > 0) {
@@ -75,11 +51,7 @@ function pickString(...candidates: Array<string | null | undefined>): string | u
   return undefined;
 }
 
-/**
- * Pick the first finite, non-zero number from candidates. Navidrome reports
- * "year unknown" as `0`, so we treat zero as missing rather than emitting it
- * as a valid release year (which would be misleading).
- */
+/** Navidrome reports an unknown year as 0, so zero counts as missing. */
 function pickYear(...candidates: Array<number | undefined>): number | undefined {
   for (const candidate of candidates) {
     if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
@@ -89,18 +61,10 @@ function pickYear(...candidates: Array<number | undefined>): number | undefined 
   return undefined;
 }
 
-/**
- * Transform a raw album from Navidrome API to a clean DTO
- * @param rawAlbum Raw album data from API
- * @param options Verbosity controls (see {@link TransformOptions}). Default
- *   compact: only the identity block is emitted. Verbose/keep restore the rest.
- * @returns Clean album DTO for LLM consumption
- */
 export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptions): AlbumDTO {
   const artist = pickString(rawAlbum.artist, rawAlbum.albumArtist) ?? '';
   const artistId = pickString(rawAlbum.artistId, rawAlbum.albumArtistId) ?? '';
 
-  // Identity block, always emitted.
   const dto: AlbumDTO = {
     id: rawAlbum.id,
     name: rawAlbum.name || '',
@@ -110,7 +74,6 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
     durationFormatted: formatDuration(rawAlbum.duration),
   };
 
-  // Secondary fields, verbose-gated (or force-kept).
   if (shouldEmit('albumArtist', options) && rawAlbum.albumArtist !== undefined && rawAlbum.albumArtist !== '') {
     dto.albumArtist = rawAlbum.albumArtist;
   }
@@ -149,7 +112,8 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
     dto.compilation = rawAlbum.compilation;
   }
 
-  // Navidrome omits playCount for never-played rows, so an explicit 0 separates never played from unavailable.
+  // Navidrome omits playCount on a never-played row. An explicit 0 keeps never played distinct
+  // from not reported.
   if (shouldEmit('playCount', options)) {
     dto.playCount = rawAlbum.playCount ?? 0;
   }
@@ -163,12 +127,6 @@ export function transformToAlbumDTO(rawAlbum: RawAlbum, options?: TransformOptio
   return dto;
 }
 
-/**
- * Transform an array of raw albums to DTOs
- * @param rawAlbums Array of raw album data
- * @param options Verbosity controls forwarded to each item (see {@link TransformOptions})
- * @returns Array of clean album DTOs
- */
 export function transformAlbumsToDTO(rawAlbums: unknown, options?: TransformOptions): AlbumDTO[] {
   return transformObjectRows(rawAlbums, (album: RawAlbum) => transformToAlbumDTO(album, options));
 }

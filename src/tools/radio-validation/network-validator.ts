@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Radio Network Validation Module
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { DEFAULT_USER_AGENT } from '../../constants/defaults.js';
@@ -44,8 +32,8 @@ interface FetchWithRedirectsResult {
 }
 
 /**
- * Manual redirect following lets each hop be refused with a specific message.
- * safeFetch's dispatcher enforces the private-IP block on every connection, the initial URL included.
+ * Manual redirect following lets each hop be refused with a specific message. safeFetch's
+ * dispatcher enforces the private-IP block on every connection, the initial URL included.
  */
 async function fetchWithManualRedirects(
   initialUrl: string,
@@ -64,7 +52,6 @@ async function fetchWithManualRedirects(
 
     const location = response.headers.get('location');
     if (location === null || location === '') {
-      // A 3xx with no Location is treated as the terminal response.
       return { response, finalUrl: currentUrl, error: null };
     }
 
@@ -99,7 +86,7 @@ async function fetchWithManualRedirects(
   return { response: null, finalUrl: currentUrl, error: `Exceeded maximum redirects (${MAX_REDIRECTS})` };
 }
 
-/** undici's strict parser fails deterministically on legacy ICY responses, so the reason is marked. */
+/** undici's strict parser fails every time on a legacy ICY response, so the error is marked. */
 function describeProbeError(err: unknown): string {
   const marker = isHttpParserError(err) ? ` (${NON_STANDARD_HTTP_RESPONSE})` : '';
   return `${describeFetchError(err)}${marker}`;
@@ -123,7 +110,7 @@ export async function validateWithHead(
           method: 'HEAD',
           signal: controller.signal,
           headers: {
-            // Shoutcast DNAS v2 serves its HTML status page to any User-Agent carrying a `Mozilla` token.
+            // Shoutcast DNAS v2 serves its HTML status page to a User-Agent with a `Mozilla` token.
             'User-Agent': DEFAULT_USER_AGENT,
             'Accept': 'audio/*',
           },
@@ -184,8 +171,7 @@ export async function sampleAudioData(
 
       const response = result.response;
       if (!response.ok && response.status !== 206) {
-        // Error responses (404/500 etc.) can carry a body we never read. Cancel
-        // it so the socket returns to the pool without waiting on GC.
+        // Cancelling the unread error body returns its socket to the pool without waiting on GC.
         if (response.body) {
           await response.body.cancel().catch(() => { /* body already released */ });
         }
@@ -202,7 +188,7 @@ export async function sampleAudioData(
       const chunks: Uint8Array[] = [];
       let totalLength = 0;
 
-      // Some servers don't handle Range requests properly and hang on arrayBuffer()
+      // A live stream that ignores Range never ends its body, so arrayBuffer() would never resolve.
       try {
         const bodyStream = response.body;
         if (!bodyStream) {
@@ -220,13 +206,13 @@ export async function sampleAudioData(
         try {
           const maxBytes = RADIO_VALIDATION.SAMPLE_BUFFER_SIZE;
 
-          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop, exits via break/return
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- intentional infinite read loop that exits through break
           while (true) {
             const { value, done } = await reader.read();
 
             if (done) break;
-            // A server that ignores the Range header can hand over one multi-MB chunk.
-            // Slicing before the push keeps that blob off the heap.
+            // A server that ignores the Range header can send one multi-MB chunk, so the slice
+            // caps the sample at maxBytes.
             const remaining = maxBytes - totalLength;
             const slice = value.length > remaining ? value.subarray(0, remaining) : value;
             chunks.push(slice);

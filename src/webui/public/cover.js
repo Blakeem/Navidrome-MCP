@@ -1,5 +1,5 @@
-// Swap the art inside one .cover box. `stillCurrent` is checked again on load,
-// so a slow image for an already replaced track never paints over the new one.
+// `stillCurrent` is checked on load, so a replaced track's late image never sets has-art
+// for the track that replaced it.
 export function mountCover(wrap, songId, stillCurrent) {
   const existing = wrap.querySelector('img');
   if (existing !== null) existing.remove();

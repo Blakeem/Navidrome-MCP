@@ -1,5 +1,3 @@
-// The latest SSE snapshot. app.js stores each one, and modules read it on demand.
-
 const EMPTY_QUEUE = { items: [], length: 0 };
 
 let current = { nowPlaying: null, queue: EMPTY_QUEUE, status: null, player: null };
@@ -26,7 +24,6 @@ export function playingIndex(np) {
     : null;
 }
 
-// The now-playing snapshot carries no songId, so the cover art and the lyrics read it from the queue row.
 export function queueSongId(index) {
   const item = (current.queue.items ?? []).find((it) => it.index === index);
   return item && item.songId ? item.songId : null;

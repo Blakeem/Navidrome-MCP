@@ -1,9 +1,7 @@
 /**
  * Navidrome MCP Server - NavidromeClient unit tests
  * Copyright (C) 2025
- *
- * Covers the B1 retry-on-401 + B2 endpoint-traversal guard. Mocks
- * `global.fetch` so the request path is exercised without a live Navidrome.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
@@ -14,11 +12,7 @@ import type { Config } from '../../../src/config.js';
 const mockFetch = vi.fn() as MockedFunction<typeof fetch>;
 global.fetch = mockFetch;
 
-/**
- * fetch impl that hangs until the AbortSignal fires — used for timeout tests.
- * Mirrors how native fetch behaves on a server that accepts the connection
- * but never replies.
- */
+/** Mirrors native fetch against a server that accepts the connection but never replies. */
 function hangingFetchImpl(_url: unknown, init?: RequestInit): Promise<Response> {
   return new Promise<Response>((_resolve, reject) => {
     const signal = init?.signal;
@@ -66,27 +60,22 @@ describe('NavidromeClient', () => {
   describe('request() retry-on-401', () => {
     it('401 then 200 returns the parsed body and uses the new token on retry', async () => {
       mockFetch
-        .mockResolvedValueOnce(tokenResponse('first'))            // initial /auth/login
-        .mockResolvedValueOnce(jsonResponse({ ok: false }, 401))  // first /api/album fails
-        .mockResolvedValueOnce(tokenResponse('second'))           // re-auth after invalidate
-        .mockResolvedValueOnce(jsonResponse({ ok: true }));       // retry succeeds
+        .mockResolvedValueOnce(tokenResponse('first'))
+        .mockResolvedValueOnce(jsonResponse({ ok: false }, 401))
+        .mockResolvedValueOnce(tokenResponse('second'))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
 
       const client = new NavidromeClient(makeConfig());
       const result = await client.request<{ ok: boolean }>('/album/123');
 
       expect(result).toEqual({ ok: true });
-      // 4 fetches: login, request (401), re-login, request (200)
       expect(mockFetch).toHaveBeenCalledTimes(4);
 
-      // Inspect the request fetches: both target /api/album/123 and the
-      // second one carries the refreshed token.
       const apiCalls = mockFetch.mock.calls.filter(
         ([url]) => typeof url === 'string' && url.includes('/api/album/123'),
       );
       expect(apiCalls).toHaveLength(2);
-      // doFetch now merges headers via the Headers API (so a caller's
-      // `Headers` instance isn't silently dropped), so the value reaching
-      // fetch is a Headers object, not a plain record.
+      // doFetch hands fetch a Headers instance, not a plain record.
       const firstHeaders = new Headers((apiCalls[0]![1] as RequestInit).headers);
       const retryHeaders = new Headers((apiCalls[1]![1] as RequestInit).headers);
       expect(firstHeaders.get('X-ND-Authorization')).toBe('Bearer first');
@@ -102,7 +91,6 @@ describe('NavidromeClient', () => {
 
       const client = new NavidromeClient(makeConfig());
       await expect(client.request('/album/123')).rejects.toThrow();
-      // login + req + re-login + retry = 4 fetches; no third attempt.
       expect(mockFetch).toHaveBeenCalledTimes(4);
     });
 
@@ -187,16 +175,12 @@ describe('NavidromeClient', () => {
 
       const client = new NavidromeClient(makeConfig());
       await expect(client.request('/album/123')).rejects.toThrow(/Navidrome GET \/album\/123 - 500/);
-      // login + one request only — 500 is not retried.
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('doFetch header merge', () => {
-    // RequestInit.headers is HeadersInit (Headers | [k,v][] | object). The old
-    // object-spread merge silently dropped a caller's Headers instance, yielding
-    // `{}`. The Headers-API merge must preserve every form AND keep the default
-    // auth header. We assert a caller header actually reaches fetch.
+    // Spreading a Headers instance yields `{}`, so the merge must accept each HeadersInit form.
     it('preserves a caller-supplied header alongside the default auth header', async () => {
       mockFetch
         .mockResolvedValueOnce(tokenResponse('tok'))
@@ -212,13 +196,11 @@ describe('NavidromeClient', () => {
       );
       expect(apiCall).toBeDefined();
       const sent = new Headers((apiCall![1] as RequestInit).headers);
-      // Caller header survives the merge...
       expect(sent.get('X-Custom-Header')).toBe('custom-value');
-      // ...and the default auth header is still present.
       expect(sent.get('X-ND-Authorization')).toBe('Bearer tok');
     });
 
-    it('preserves a caller-supplied Headers instance (the form the old spread dropped)', async () => {
+    it('preserves a caller-supplied Headers instance', async () => {
       mockFetch
         .mockResolvedValueOnce(tokenResponse('tok'))
         .mockResolvedValueOnce(jsonResponse({ ok: true }));
@@ -238,11 +220,8 @@ describe('NavidromeClient', () => {
   });
 
   describe('parseResponse content-type sniffing', () => {
-    // Navidrome returns JSON bodies with Content-Type: text/plain on several
-    // endpoints (POST /playlist/{id}/tracks, GET /song/{id}/playlists, etc.).
-    // The client must fall back to JSON-parsing when the body looks like JSON,
-    // otherwise callers like addTracksToPlaylist see `response.added` as
-    // undefined and silently report 0 added.
+    // Navidrome's POST /playlist/{id}/tracks and GET /song/{id}/playlists send JSON as text/plain.
+    // Without the sniff, addTracksToPlaylist reads `added` as undefined and reports 0 added.
     it('parses JSON body even when Content-Type is text/plain', async () => {
       mockFetch
         .mockResolvedValueOnce(tokenResponse('t'))
@@ -257,11 +236,7 @@ describe('NavidromeClient', () => {
     });
 
     it('parses array JSON body even when Content-Type is text/plain (getPlaylistTracks shape)', async () => {
-      // Regression lock for the "getPlaylistTracks silent empty tracks" finding.
-      // The endpoint returns a JSON array; if Navidrome ever sends text/plain,
-      // parseResponse must JSON-sniff the array opener '[' and return parsed data
-      // rather than a raw string (which would fail the Array.isArray() guard and
-      // produce tracks: []).
+      // An unparsed array reaches getPlaylistTracks as a string, which transforms to no tracks.
       const trackArray = [
         { id: 1, mediaFileId: 'abc', playlistId: 'pl1', title: 'Song A', duration: 180 },
         { id: 2, mediaFileId: 'def', playlistId: 'pl1', title: 'Song B', duration: 200 },
@@ -308,11 +283,7 @@ describe('NavidromeClient', () => {
   });
 
   describe('requestWithMeta — X-Total-Count surfacing', () => {
-    // The pagination-correctness fix surfaces Navidrome's `X-Total-Count`
-    // header so listing tools can report the real match count instead of
-    // the page size. Subsonic and single-resource REST endpoints don't
-    // emit this header, so callers fall back to items.length when
-    // `total` comes back null.
+    // Single-resource endpoints omit X-Total-Count, and a null total sends callers to items.length.
 
     function jsonWithTotal(body: unknown, total: string): Response {
       return new Response(JSON.stringify(body), {
@@ -370,9 +341,7 @@ describe('NavidromeClient', () => {
     });
 
     it('preserves 401 retry semantics through requestWithMeta', async () => {
-      // 401 → invalidate → retry → 200 + header. We assert the retry
-      // path still works AND the second response's header is what gets
-      // returned (not the failed first response's).
+      // The total must come from the retried response, not the discarded 401.
       mockFetch
         .mockResolvedValueOnce(tokenResponse('first'))
         .mockResolvedValueOnce(jsonResponse({ ok: false }, 401))
@@ -387,9 +356,6 @@ describe('NavidromeClient', () => {
     });
 
     it('request<T>() delegates to requestWithMeta and discards total', async () => {
-      // Regression: ensure the body-only wrapper still works after the
-      // refactor that made it call requestWithMeta internally. JSON-sniff
-      // for text/plain bodies must still kick in.
       mockFetch
         .mockResolvedValueOnce(tokenResponse('t'))
         .mockResolvedValueOnce(new Response('{"added":3}', {
@@ -399,15 +365,11 @@ describe('NavidromeClient', () => {
 
       const client = new NavidromeClient(makeConfig());
       const result = await client.request<{ added: number }>('/playlist/abc/tracks', { method: 'POST' });
-      // Body-only — total is silently discarded.
       expect(result.added).toBe(3);
     });
 
     it('requestWithLibraryFilterAndMeta appends library_id AND surfaces total', async () => {
-      // The library-filter URL mutation should run AND the X-Total-Count
-      // should still come through. We can't easily assert the URL contains
-      // library_id without initializing the LibraryManager, but the call
-      // shape and total propagation are the regression we want to lock in.
+      // libraryManager is uninitialized here, so no library_id is appended. Only total is checked.
       mockFetch
         .mockResolvedValueOnce(tokenResponse('t'))
         .mockResolvedValueOnce(jsonWithTotal([{ id: '1' }], '42'));
@@ -432,15 +394,10 @@ describe('NavidromeClient', () => {
     });
 
     it('rejects URL-encoded traversal (%2e%2e) that would normalize back to ..', async () => {
-      // The literal `..` check misses percent-encoded traversal, but Node
-      // decodes `%2e%2e` to `..` before the request leaves the process. The
-      // decode-and-recheck guard must reject it.
       await expect(client.request('/album/%2e%2e/user/admin')).rejects.toThrow(/path-traversal/);
     });
 
     it('rejects endpoints with a malformed percent-encoding sequence', async () => {
-      // A lone `%` (no two hex digits) makes decodeURIComponent throw; we treat
-      // that as suspect and reject rather than letting it through.
       await expect(client.request('/album/%zz')).rejects.toThrow(/malformed percent-encoding/);
     });
 
@@ -463,19 +420,12 @@ describe('NavidromeClient', () => {
     });
 
     it('guards requestWithLibraryFilter on the RAW endpoint before URL-normalization hides the ..', async () => {
-      // buildLibraryFilteredEndpoint runs the path through `new URL()`, which
-      // collapses dot-segments (`/album/../user/admin` -> `/user/admin`) before
-      // the downstream requestWithMeta guard sees it. The traversal check must
-      // therefore run on the raw endpoint first, or it's a no-op on this path.
       await expect(client.requestWithLibraryFilter('/album/../user/admin')).rejects.toThrow(/path-traversal/);
     });
   });
 
   describe('subsonicRequest response-shape guard', () => {
     it('throws Subsonic-context error (not a native TypeError) on a literal null JSON body', async () => {
-      // A 200 OK Subsonic body of literal `null` parses fine but is not an
-      // object. Indexing it (`data['subsonic-response']`) would throw a native
-      // TypeError; the shape guard must reject with Subsonic context instead.
       mockFetch.mockResolvedValueOnce(jsonResponse(null));
 
       const client = new NavidromeClient(makeConfig());
@@ -485,9 +435,7 @@ describe('NavidromeClient', () => {
 
   describe('401 retry drains the discarded first body', () => {
     it('cancels the first (401) response body before the retry fetch', async () => {
-      // An un-consumed 401 body keeps undici's socket out of the keep-alive
-      // pool until GC. The retry path must drain/cancel it so bursts of 401s
-      // (server-side token rotation) don't tie up sockets.
+      // An unconsumed body holds undici's socket out of the keep-alive pool until GC.
       const first401 = new Response('unauthorized', { status: 401 });
       const cancelSpy = vi.spyOn(first401.body!, 'cancel');
 
@@ -506,11 +454,6 @@ describe('NavidromeClient', () => {
   });
 
   describe('request() timeout + retry', () => {
-    // The MCP SDK's DEFAULT_REQUEST_TIMEOUT_MSEC is 60s — these tests verify
-    // we surface a clear timeout error well before the SDK envelope fires,
-    // and that GET requests retry once (idempotent) but POST does not
-    // (mutation-safety: a timed-out POST may have been applied server-side).
-
     beforeEach(() => {
       delete process.env['NAVIDROME_REQUEST_TIMEOUT_MS'];
     });
@@ -521,10 +464,8 @@ describe('NavidromeClient', () => {
 
     it('GET request times out and retries once, then succeeds', async () => {
       vi.useFakeTimers();
-      // Tighter timeout for fast tests.
       process.env['NAVIDROME_REQUEST_TIMEOUT_MS'] = '1000';
 
-      // login (1) → first GET hangs (2) → second GET succeeds (3).
       mockFetch.mockResolvedValueOnce(tokenResponse('t'));
       mockFetch.mockImplementationOnce(hangingFetchImpl);
       mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
@@ -532,12 +473,10 @@ describe('NavidromeClient', () => {
       const client = new NavidromeClient(makeConfig());
       const promise = client.request<{ ok: boolean }>('/album/123');
 
-      // Drive the first GET attempt to timeout (1000ms cap from env above).
       await vi.advanceTimersByTimeAsync(1001);
 
       const result = await promise;
       expect(result).toEqual({ ok: true });
-      // login + GET-hang + GET-success = 3 fetches.
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
@@ -560,7 +499,6 @@ describe('NavidromeClient', () => {
       expect(result).toBeInstanceOf(FetchTimeoutError);
       // A read has no side effect, so its timeout carries no write note.
       expect((result as Error).message).not.toContain('may already have been applied');
-      // login + 2 attempts = 3 fetches total.
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
@@ -572,11 +510,6 @@ describe('NavidromeClient', () => {
       mockFetch.mockImplementationOnce(hangingFetchImpl);
 
       const client = new NavidromeClient(makeConfig());
-      // Simulating addTracksToPlaylist or createPlaylist: POST that the LLM
-      // can re-invoke via the tool layer if it wants. The wrapper must NOT
-      // silently retry — if Navidrome already applied the mutation just
-      // before the timeout, retry would create a duplicate playlist or
-      // double-add tracks.
       const promise = client.request('/playlist', {
         method: 'POST',
         body: JSON.stringify({ name: 'New Playlist' }),
@@ -591,24 +524,17 @@ describe('NavidromeClient', () => {
       expect((result as Error).message).toContain(
         'The change may already have been applied. Check the current state before retrying.',
       );
-      // login + single POST attempt = 2 fetches. No retry.
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('getCurrentToken — public token accessor', () => {
-    // The library-manager fragility fix added this method so callers can
-    // decode user-scoped JWT claims without reaching into the private
-    // `authManager` field via `as unknown as`. It must round-trip whatever
-    // AuthManager has cached and continue to participate in the standard
-    // refresh-on-expiry flow.
     it('returns the current cached JWT', async () => {
       mockFetch.mockResolvedValueOnce(tokenResponse('jwt.payload.sig'));
       const client = new NavidromeClient(makeConfig());
 
       const token = await client.getCurrentToken();
       expect(token).toBe('jwt.payload.sig');
-      // No second /auth/login on a follow-up call when the cache is hot.
       const second = await client.getCurrentToken();
       expect(second).toBe('jwt.payload.sig');
       expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -620,7 +546,6 @@ describe('NavidromeClient', () => {
 
       const token = await client.getCurrentToken();
       expect(token).toBe('lazy-auth-token');
-      // First call is the only fetch — no implicit warm-up.
       expect(mockFetch).toHaveBeenCalledTimes(1);
       const [url] = mockFetch.mock.calls[0]!;
       expect(typeof url === 'string' && url.endsWith('/auth/login')).toBe(true);
@@ -629,8 +554,7 @@ describe('NavidromeClient', () => {
 
   describe('subsonicRequest', () => {
     it('defaults to POST with auth in form-encoded body (no auth params in URL)', async () => {
-      // subsonicRequest does NOT use the JWT auth path — it builds its own
-      // salted-MD5 auth — so no /auth/login fetch is queued.
+      // subsonicRequest signs with salted MD5, not the JWT, so no /auth/login response is queued.
       mockFetch.mockResolvedValueOnce(jsonResponse({ 'subsonic-response': { status: 'ok' } }));
 
       const client = new NavidromeClient(makeConfig());
@@ -641,12 +565,10 @@ describe('NavidromeClient', () => {
       );
       expect(call).toBeDefined();
       const [url, init] = call!;
-      // URL must be the bare endpoint — no `?u=...&t=...` query string.
       expect(url).toBe('http://test:4533/rest/getStarred');
       expect(init?.method).toBe('POST');
       expect((init?.headers as Record<string, string>)['Content-Type']).toBe('application/x-www-form-urlencoded');
       const body = init?.body as string;
-      // Body carries the salted-MD5 auth — never plaintext password.
       expect(body).toContain('u=tester');
       expect(body).toContain('t=');
       expect(body).toContain('s=');

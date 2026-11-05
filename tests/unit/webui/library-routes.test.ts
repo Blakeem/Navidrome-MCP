@@ -1,8 +1,3 @@
-/**
- * Web remote library browse routes, driven directly with a captured
- * ServerResponse and a mocked Navidrome client so no request leaves the process.
- */
-
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -181,7 +176,8 @@ describe('handleLibrarySearch', () => {
     expect(ids(body['artists'])).toEqual(['ar1']);
     expect(ids(body['albums'])).toEqual(['al1']);
     expect(ids(body['songs'])).toEqual(['so1']);
-    // The remote formats numeric seconds itself, so a song past one hour reads H:MM:SS like the queue.
+    // The remote formats numeric seconds itself, so a song past one hour reads H:MM:SS like the
+    // queue.
     expect((body['songs'] as Array<{ duration?: number }>)[0]?.duration).toBe(7800);
   });
 });
@@ -309,7 +305,7 @@ describe('handleLibraryPlay', () => {
 
   it('rejects malformed JSON with 400 and does not play', async () => {
     const cap = fakeRes();
-    await handleLibraryPlay(fakeReq('{"type":'), cap.res, asClient(client));
+    await handleLibraryPlay(fakeReq('{"type":'), cap.res, asClient(client), null);
 
     expect(cap.status()).toBe(400);
     expect(playMock).not.toHaveBeenCalled();
@@ -324,7 +320,7 @@ describe('handleLibraryPlay', () => {
     ['a non-boolean shuffle flag', { type: 'starred-songs', mode: 'append', shuffleSongs: 'yes' }, /boolean/],
   ])('rejects %s with 400 and does not play', async (_label, body, message) => {
     const cap = fakeRes();
-    await handleLibraryPlay(fakeReq(JSON.stringify(body)), cap.res, asClient(client));
+    await handleLibraryPlay(fakeReq(JSON.stringify(body)), cap.res, asClient(client), null);
 
     expect(cap.status()).toBe(400);
     expect((cap.json() as { error: string }).error).toMatch(message);
@@ -342,10 +338,10 @@ describe('handleLibraryPlay', () => {
     playMock.mockResolvedValue({ success: true, count: 1 });
 
     const cap = fakeRes();
-    await handleLibraryPlay(fakeReq(JSON.stringify(body)), cap.res, asClient(client));
+    await handleLibraryPlay(fakeReq(JSON.stringify(body)), cap.res, asClient(client), null);
 
     expect(playMock).toHaveBeenCalledTimes(1);
-    expect(playMock).toHaveBeenCalledWith(asClient(client), { ...body, shuffleSongs: false, shuffleAlbums: false });
+    expect(playMock).toHaveBeenCalledWith(asClient(client), { ...body, shuffleSongs: false, shuffleAlbums: false }, undefined);
     expect(cap.status()).toBe(200);
     expect(cap.json()).toEqual({ success: true, count: 1 });
   });
@@ -355,9 +351,9 @@ describe('handleLibraryPlay', () => {
     const body = { type: 'starred-albums', mode: 'replace', shuffleSongs: true, shuffleAlbums: true };
 
     const cap = fakeRes();
-    await handleLibraryPlay(fakeReq(JSON.stringify(body)), cap.res, asClient(client));
+    await handleLibraryPlay(fakeReq(JSON.stringify(body)), cap.res, asClient(client), null);
 
-    expect(playMock).toHaveBeenCalledWith(asClient(client), body);
+    expect(playMock).toHaveBeenCalledWith(asClient(client), body, undefined);
     expect(cap.status()).toBe(200);
   });
 
@@ -369,6 +365,7 @@ describe('handleLibraryPlay', () => {
       fakeReq(JSON.stringify({ type: 'starred-songs', id: 'x1', mode: 'append' })),
       cap.res,
       asClient(client),
+      null,
     );
 
     expect(playMock).toHaveBeenCalledWith(asClient(client), {
@@ -376,7 +373,29 @@ describe('handleLibraryPlay', () => {
       mode: 'append',
       shuffleSongs: false,
       shuffleAlbums: false,
+    }, undefined);
+  });
+
+  it('labels the loaded songs through the jukebox when the host labels apply', async () => {
+    playMock.mockImplementation((_client, _args, onQueued) => {
+      onQueued?.([41], [{ songId: 'so1' }]);
+      return Promise.resolve({ success: true, count: 1 });
     });
+    const hostLabels = { labelAdminPageSongs: vi.fn() };
+
+    const cap = fakeRes();
+    await handleLibraryPlay(fakeReq(JSON.stringify({ type: 'song', id: 'so1', mode: 'append' })), cap.res, asClient(client), hostLabels);
+
+    expect(hostLabels.labelAdminPageSongs).toHaveBeenCalledWith([41], [{ songId: 'so1' }]);
+    expect(cap.status()).toBe(200);
+  });
+
+  it('passes no label callback when no host label applies', async () => {
+    playMock.mockResolvedValue({ success: true, count: 1 });
+
+    await handleLibraryPlay(fakeReq(JSON.stringify({ type: 'song', id: 'so1', mode: 'append' })), fakeRes().res, asClient(client), null);
+
+    expect(playMock.mock.calls[0]?.[2]).toBeUndefined();
   });
 
   it('maps an empty source to 409 with the empty-source code', async () => {
@@ -387,6 +406,7 @@ describe('handleLibraryPlay', () => {
       fakeReq(JSON.stringify({ type: 'starred-songs', mode: 'append' })),
       cap.res,
       asClient(client),
+      null,
     );
 
     expect(cap.status()).toBe(409);
@@ -401,6 +421,7 @@ describe('handleLibraryPlay', () => {
       fakeReq(JSON.stringify({ type: 'artist', id: 'ar1', mode: 'replace' })),
       cap.res,
       asClient(client),
+      null,
     );
 
     expect(cap.status()).toBe(500);

@@ -1,22 +1,15 @@
 /**
  * Navidrome MCP Server - lastfm-discovery happy-path tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the five Last.fm tools with mocked fetch responses.
- * Bug-fix regression cases live in lastfm-lyrics-bugs.test.ts; this file
- * adds function-level happy-path structural coverage.
- *
- * NOTE: `lastfm-lyrics-bugs.test.ts` already imports getSimilarArtists /
- * getSimilarTracks extensively. This file covers getArtistInfo,
- * getTopTracksByArtist, and getTrendingMusic (all three modes), and adds
- * one missing-apiKey guard for each function.
+ * Happy-path shape tests for the Last.fm tools. The match-parsing and error-code cases for
+ * getSimilarArtists and getSimilarTracks live in lastfm-lrclib-parsing.test.ts.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Config } from '../../../src/config.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
-
-// ---- helpers ----------------------------------------------------------------
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
@@ -65,8 +58,6 @@ function tagRows(count: number): { name: string; count: string; url: string }[] 
   }));
 }
 
-// ---- getArtistInfo ----------------------------------------------------------
-
 describe('getArtistInfo', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -101,7 +92,6 @@ describe('getArtistInfo', () => {
     expect(Number.isFinite(result.playcount)).toBe(true);
     expect(Array.isArray(result.tags)).toBe(true);
     expect(Array.isArray(result.similar)).toBe(true);
-    // biography has HTML stripped
     expect(result.biography).not.toContain('<a');
   });
 
@@ -135,7 +125,6 @@ describe('getArtistInfo', () => {
         stats: { listeners: '0', playcount: '0' },
         tags: { tag: [] },
         similar: { artist: [] },
-        // no bio field
       },
     };
     global.fetch = makeFetch(200, mockBody);
@@ -202,8 +191,6 @@ describe('getArtistInfo', () => {
   });
 });
 
-// ---- getTopTracksByArtist ---------------------------------------------------
-
 describe('getTopTracksByArtist', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -237,7 +224,6 @@ describe('getTopTracksByArtist', () => {
     expect(Number.isFinite(first.playcount)).toBe(true);
     expect(typeof first.listeners).toBe('number');
     expect(first).not.toHaveProperty('url');
-    // rank starts at 1
     expect(first.rank).toBe(1);
     expect(result.tracks[1]!.rank).toBe(2);
   });
@@ -264,8 +250,6 @@ describe('getTopTracksByArtist', () => {
     expect(result.tracks).toHaveLength(0);
   });
 });
-
-// ---- getTrendingMusic -------------------------------------------------------
 
 describe('getTrendingMusic — artists', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
@@ -423,9 +407,6 @@ describe('getTrendingMusic — tags', () => {
   });
 });
 
-// ---- getSimilarArtists and getSimilarTracks are covered in lastfm-lyrics-bugs.test.ts
-// but add one missing-key guard for completeness
-
 describe('getSimilarArtists and getSimilarTracks — missing API key guard', () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -470,5 +451,90 @@ describe('getSimilarArtists and getSimilarTracks — url under verbose', () => {
     expect(compact.similarTracks[0]!.artist).toBe('Radiohead');
     expect(compact.similarTracks[0]).not.toHaveProperty('url');
     expect(verbose.similarTracks[0]!.url).toBe('https://last.fm/creep');
+  });
+});
+
+// Last.fm sends a one-element list as a bare object, so each read must accept that shape.
+describe('one-element Last.fm containers', () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it('getSimilarArtists returns one row from a bare artist object', async () => {
+    global.fetch = makeFetch(200, { similarartists: { artist: { name: 'Mogwai', match: '0.8', mbid: '' } } });
+
+    const { getSimilarArtists } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getSimilarArtists(makeConfig(), { artist: 'Explosions in the Sky', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect(result.similarArtists[0]!.name).toBe('Mogwai');
+  });
+
+  it('getSimilarTracks returns one row from a bare track object', async () => {
+    global.fetch = makeFetch(200, {
+      similartracks: { track: { name: 'Creep', match: '0.9', mbid: '', artist: { name: 'Radiohead' } } },
+    });
+
+    const { getSimilarTracks } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getSimilarTracks(makeConfig(), { artist: 'Muse', track: 'Unintended', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect(result.similarTracks[0]!.artist).toBe('Radiohead');
+  });
+
+  it('getArtistInfo returns one tag and one similar artist from bare objects', async () => {
+    global.fetch = makeFetch(200, {
+      artist: {
+        name: 'Radiohead',
+        stats: { listeners: '1', playcount: '1' },
+        bio: { summary: 'An English band.' },
+        tags: { tag: { name: 'alternative' } },
+        similar: { artist: { name: 'Thom Yorke' } },
+      },
+    });
+
+    const { getArtistInfo } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getArtistInfo(makeConfig(), { artist: 'Radiohead' });
+
+    expect(result.tags).toEqual(['alternative']);
+    expect(result.similar).toEqual(['Thom Yorke']);
+  });
+
+  it('getTopTracksByArtist returns one row from a bare track object', async () => {
+    global.fetch = makeFetch(200, { toptracks: { track: { name: 'Creep', playcount: '5', listeners: '2', mbid: '' } } });
+
+    const { getTopTracksByArtist } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTopTracksByArtist(makeConfig(), { artist: 'Radiohead', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect(result.tracks[0]!.name).toBe('Creep');
+  });
+
+  it('getTrendingMusic artists returns one row from a bare artist object', async () => {
+    global.fetch = makeFetch(200, { artists: { artist: { name: 'Taylor Swift', playcount: '9', listeners: '1', mbid: '' } } });
+
+    const { getTrendingMusic } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTrendingMusic(makeConfig(), { type: 'artists', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect((result.items[0] as { name: string }).name).toBe('Taylor Swift');
+  });
+
+  it('getTrendingMusic tracks returns one row from a bare track object', async () => {
+    global.fetch = makeFetch(200, { tracks: { track: { name: 'Song', playcount: '9', listeners: '1', mbid: '', artist: { name: 'Band' } } } });
+
+    const { getTrendingMusic } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTrendingMusic(makeConfig(), { type: 'tracks', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect((result.items[0] as { artist: string }).artist).toBe('Band');
+  });
+
+  it('getTrendingMusic tags returns one row from a bare tag object', async () => {
+    global.fetch = makeFetch(200, { tags: { tag: { name: 'rock', taggings: '9', reach: '1' } } });
+
+    const { getTrendingMusic } = await import('../../../src/tools/lastfm-discovery.js');
+    const result = await getTrendingMusic(makeConfig(), { type: 'tags', limit: 1 });
+
+    expect(result.count).toBe(1);
+    expect((result.items[0] as { name: string }).name).toBe('rock');
   });
 });

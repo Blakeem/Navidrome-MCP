@@ -1,13 +1,10 @@
 /**
  * Navidrome MCP Server - get_artist_albums orchestration tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the three-source merge (MusicBrainz spine + Last.fm enrichment +
- * Navidrome library compare) per docs/ARTIST-ALBUMS-SPEC.md: type filtering,
- * junk dropping, popularity ranking, onlyMissing, the unverified bucket,
- * per-source degradation, and the multi-artist-id alias union. External APIs
- * are mocked via a host-routed global.fetch; Navidrome via createMockClient()
- * (we assert specific membership outcomes, so live reads don't apply).
+ * Checks get_artist_albums against docs/ARTIST-ALBUMS-SPEC.md. Navidrome is mocked, not read
+ * live, because the cases assert specific library membership.
  */
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,8 +16,6 @@ import {
   getArtistAlbums,
   clearArtistAlbumsCachesForTests,
 } from '../../../src/tools/artist-discography.js';
-
-// ---- fetch routing ----------------------------------------------------------
 
 function jsonResponse(body: unknown): Response {
   return {
@@ -39,7 +34,7 @@ interface FetchRoutes {
   lastFm?: (url: URL) => unknown;
 }
 
-/** Route global.fetch by host/path; throwing handlers simulate a source being down. */
+/** A route handler that throws makes fetch reject, which simulates that source being down. */
 function installFetch(routes: FetchRoutes): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn((input: unknown) => {
     const url = new URL(String(input));
@@ -68,8 +63,6 @@ function installFetch(routes: FetchRoutes): ReturnType<typeof vi.fn> {
   return fetchMock;
 }
 
-// ---- fixtures ----------------------------------------------------------------
-
 function mbArtist(id: string, name: string, score = 100): unknown {
   return { artists: [{ id, name, score, disambiguation: 'synthwave' }] };
 }
@@ -97,9 +90,7 @@ function lastFmBody(albums: unknown[]): unknown {
   return { topalbums: { album: albums, '@attr': { artist: 'X' } } };
 }
 
-// The GUNSHIP fixture mirrors the live data shape: 5 MB albums of which two
-// are Remix-secondary instrumentals, Last.fm rows with junk + a single, and
-// one owned library album. Default filters ⇒ 3 real albums, 1 in library.
+// The GUNSHIP fixture mirrors the live MusicBrainz and Last.fm data shape.
 const GUNSHIP_BROWSE = mbBrowseBody([
   mbRg('rg-gunship', 'GUNSHIP', '2015-07-24', [], [{ name: 'synthwave', count: 7 }, { name: 'electronic', count: 3 }]),
   mbRg('rg-dad', 'Dark All Day', '2018-10-05'),
@@ -112,7 +103,7 @@ const GUNSHIP_LASTFM = lastFmBody([
   lastFmAlbum('Gunship', 3633923),
   lastFmAlbum('Dark All Day', 2478434),
   lastFmAlbum('Unicorn', 1461520, 'release-mbid-not-rg'),
-  lastFmAlbum('Tech Noir', 99999), // single — no spine match, unverified bucket
+  lastFmAlbum('Tech Noir', 99999), // A single with no spine match, so it is unverified.
   lastFmAlbum('null', 50),
   lastFmAlbum('uploaded by synthfan99', 10),
 ]);
@@ -125,7 +116,6 @@ function gunshipRoutes(): FetchRoutes {
   };
 }
 
-/** Navidrome mock: GUNSHIP resolved, owning exactly the self-titled album. */
 function wireGunshipNavidrome(client: MockNavidromeClient): void {
   client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
     if (endpoint.startsWith('/artist?')) {
@@ -141,8 +131,6 @@ function wireGunshipNavidrome(client: MockNavidromeClient): void {
 function asClient(mock: MockNavidromeClient): NavidromeClient {
   return mock as unknown as NavidromeClient;
 }
-
-// ---- tests --------------------------------------------------------------------
 
 let client: MockNavidromeClient;
 
@@ -171,19 +159,19 @@ describe('getArtistAlbums — happy path (GUNSHIP fixture)', () => {
 
     const result = await getArtistAlbums(asClient(client), config, { artist: 'GUNSHIP' });
 
-    // Remix-secondary instrumentals are filtered; junk + unmatched singles dropped.
+    // The default filters drop the Remix instrumentals, the junk rows and the unmatched single.
     expect(result.counts).toEqual({ discography: 3, inLibrary: 1, missing: 2, returned: 3 });
     expect(result.sources).toEqual({ musicbrainz: true, lastfm: true });
     expect(result.artist).toEqual({ name: 'GUNSHIP', mbid: 'mb-gunship', navidromeArtistId: 'nav-gunship' });
 
     const titles = result.albums.map(a => a.title);
-    expect(titles).toEqual(['GUNSHIP', 'Dark All Day', 'UNICORN']); // playcount order
+    expect(titles).toEqual(['GUNSHIP', 'Dark All Day', 'UNICORN']);
     expect(result.albums.map(a => a.popularityRank)).toEqual([1, 2, 3]);
 
     const self = result.albums[0];
     expect(self?.inLibrary).toBe(true);
     expect(self?.libraryAlbumId).toBe('nav-album-gunship');
-    expect(self?.genres).toEqual(['synthwave', 'electronic']); // count-desc off the MB spine
+    expect(self?.genres).toEqual(['synthwave', 'electronic']);
     expect(self?.year).toBe(2015);
     expect(self?.source).toBe('musicbrainz');
     expect(self?.typeUnverified).toBe(false);
@@ -195,7 +183,7 @@ describe('getArtistAlbums — happy path (GUNSHIP fixture)', () => {
     expect(titles).not.toContain('null');
     expect(titles).not.toContain('Tech Noir');
 
-    // Compact mode: no verbose-only fields.
+    // Compact mode omits the verbose-only fields.
     expect(self).not.toHaveProperty('playcount');
     expect(self).not.toHaveProperty('url');
   });
@@ -209,7 +197,7 @@ describe('getArtistAlbums — happy path (GUNSHIP fixture)', () => {
 
     expect(result.counts).toEqual({ discography: 3, inLibrary: 1, missing: 2, returned: 2 });
     expect(result.albums.map(a => a.title)).toEqual(['Dark All Day', 'UNICORN']);
-    // Ranks are assigned across the full discography BEFORE the membership filter.
+    // Ranks come from the full discography before the membership filter, so they stay stable.
     expect(result.albums.map(a => a.popularityRank)).toEqual([2, 3]);
     expect(result.albums.every(a => a.inLibrary === false)).toBe(true);
   });
@@ -237,7 +225,7 @@ describe('getArtistAlbums — happy path (GUNSHIP fixture)', () => {
     const self = result.albums[0];
     expect(self?.playcount).toBe(3633923);
     expect(typeof self?.url).toBe('string');
-    // 2 MB (search + browse) + 1 Last.fm — constant request budget.
+    // The external budget is fixed at two MusicBrainz calls and one Last.fm call.
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -279,7 +267,7 @@ describe('getArtistAlbums — unverified bucket (Waveshaper fixture)', () => {
     const result = await getArtistAlbums(asClient(client), config, { artist: 'Waveshaper' });
 
     expect(result.albums.map(a => a.title)).toEqual(['Velocity']);
-    expect(result.albums[0]?.popularityRank).toBe(1); // rank within the returned set
+    expect(result.albums[0]?.popularityRank).toBe(1); // Dropped Last.fm rows take no rank.
   });
 
   it('includeUnverified surfaces them flagged, never as verified albums', async () => {
@@ -296,7 +284,7 @@ describe('getArtistAlbums — unverified bucket (Waveshaper fixture)', () => {
     expect(single?.source).toBe('lastfm-only');
     // Last.fm's mbid is a release MBID that get_album_info's release-group lookup rejects.
     expect(single?.mbid).toBeNull();
-    // Ranks span the whole merged set, by playcount.
+    // Ranks span the entire merged set, by playcount.
     expect(result.albums.map(a => a.title)).toEqual(['66 MHz', 'Maniac', 'Velocity']);
     expect(result.albums.map(a => a.popularityRank)).toEqual([1, 2, 3]);
   });
@@ -326,10 +314,8 @@ describe('getArtistAlbums — unverified bucket (Waveshaper fixture)', () => {
 });
 
 describe('getArtistAlbums — excludeSecondary vs includeUnverified', () => {
-  // Regression (src-tools-lastfm-discovery-ts-1): a spine RG dropped by the
-  // secondary-type exclusion whose Last.fm row matched it by title must be
-  // marked joined, so includeUnverified does NOT resurrect it as a
-  // lastfm-only/typeUnverified entry — that would silently undo excludeSecondary.
+  // A spine album dropped by excludeSecondary stays joined to its Last.fm row, so
+  // includeUnverified cannot re-add it as a lastfm-only row and undo the exclusion.
   function routes(): FetchRoutes {
     return {
       mbArtistSearch: () => mbArtist('mb-testartist', 'TestArtist'),
@@ -357,8 +343,8 @@ describe('getArtistAlbums — excludeSecondary vs includeUnverified', () => {
 
     const titles = result.albums.map(a => a.title);
     expect(titles).toContain('Studio Album');
-    // The live album was joined at [D] then dropped at [F]; it must not reappear
-    // via the unverified fallback under either its MB title or its Last.fm name.
+    // The live album is joined at pipeline step [D] and dropped at step [F], so the unverified
+    // fallback must not re-add it.
     expect(titles).not.toContain('Live At Wembley');
     expect(result.albums.every(a => a.title !== 'Live At Wembley')).toBe(true);
   });
@@ -385,7 +371,6 @@ describe('getArtistAlbums — MB genres empty', () => {
 describe('getArtistAlbums — degradation', () => {
   it('MB down ⇒ Last.fm rows become the spine, all typeUnverified, with a note', async () => {
     installFetch({
-      // Both MB endpoints reject.
       mbArtistSearch: () => { throw new Error('MB 503'); },
       mbBrowse: () => { throw new Error('MB 503'); },
       lastFm: () => GUNSHIP_LASTFM,
@@ -401,9 +386,9 @@ describe('getArtistAlbums — degradation', () => {
     expect(result.albums.every(a => a.typeUnverified)).toBe(true);
     expect(result.albums.every(a => a.source === 'lastfm-only')).toBe(true);
     expect(result.note).toMatch(/MusicBrainz was unreachable/);
-    // Junk still never gets through, even on the degraded path.
+    // The junk filter still applies on the degraded path.
     expect(result.albums.map(a => a.title)).not.toContain('null');
-    // Library compare still works (the in-library self-titled album matches).
+    // Library membership still resolves on the degraded path, by normalized title.
     expect(result.albums.find(a => a.title === 'Gunship')?.inLibrary).toBe(true);
   });
 
@@ -436,7 +421,7 @@ describe('getArtistAlbums — degradation', () => {
     expect(result.albums.every(a => a.libraryAlbumId === null)).toBe(true);
     expect(result.counts.inLibrary).toBeNull();
     expect(result.counts.missing).toBeNull();
-    expect(result.counts.returned).toBe(3); // onlyMissing skipped — membership unknown
+    expect(result.counts.returned).toBe(3); // onlyMissing is skipped while membership is unknown.
     expect(result.note).toMatch(/Navidrome was unreachable/);
     expect(result.note).toMatch(/onlyMissing was not applied/);
   });
@@ -527,8 +512,8 @@ describe('getArtistAlbums — Navidrome alias union (Miami Nights fixture)', () 
     });
 
     client.requestWithLibraryFilterAndMeta.mockImplementation((endpoint: string) => {
-      // Contains-filter semantics: the full-name query only returns the exact
-      // row; the stripped "Miami Nights" variant surfaces both spellings.
+      // Navidrome's name filter is a contains-filter, so only the stripped "Miami Nights" query
+      // returns both spellings.
       if (endpoint.startsWith(`/artist?name=${encodeURIComponent('Miami Nights 1984')}`)) {
         return Promise.resolve({ data: [{ id: 'nav-mn1984', name: 'Miami Nights 1984' }], total: 1 });
       }
@@ -553,7 +538,6 @@ describe('getArtistAlbums — Navidrome alias union (Miami Nights fixture)', () 
 
     const result = await getArtistAlbums(asClient(client), config, { artist: 'Miami Nights 1984' });
 
-    // Albums owned under EITHER spelling count as in-library.
     expect(result.counts).toEqual({ discography: 3, inLibrary: 2, missing: 1, returned: 3 });
     expect(result.albums.find(a => a.title === 'Turbulence')?.libraryAlbumId).toBe('nav-album-turbulence');
     expect(result.albums.find(a => a.title === 'Early Summer')?.libraryAlbumId).toBe('nav-album-early-summer');

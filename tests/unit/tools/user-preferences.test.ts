@@ -1,18 +1,10 @@
-/**
- * Unit Tests for User Preferences Operations
- * 
- * Following UNIT-TEST-STRATEGY.md - Tier 1 Critical Tests
- * Combines live read operations with mocked write operations for data integrity protection.
- * 
- * DATA INTEGRITY: User preferences (stars/ratings) affect personal data - extensive mocking required for safety.
- */
+// Stars and ratings are personal data, so writes are mocked and only reads reach Navidrome.
 
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { NavidromeNotFoundError, type NavidromeClient } from '../../../src/client/navidrome-client.js';
 import { getSharedLiveClient, createMockClient, type MockNavidromeClient } from '../../factories/mock-client.js';
 import { describeLive, shouldSkipLiveTests, getSkipReason } from '../../helpers/env-detection.js';
 
-// Import user preference functions
 import {
   starItem,
   unstarItem,
@@ -29,7 +21,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       console.warn(`Skipping live tests: ${getSkipReason()}`);
       return;
     }
-    // Use shared client for read operations testing (avoids rate limiting)
+    // The shared client authenticates once, since Navidrome rate-limits concurrent logins.
     liveClient = await getSharedLiveClient();
   });
 
@@ -41,25 +33,21 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           limit: 1
         });
 
-        // Validate response structure (not specific content). `type` is no
-        // longer echoed (LLM input echo), so we don't assert it.
+        // `type` is not echoed, since the LLM sent it.
         expect(result).toHaveProperty('count');
         expect(result).toHaveProperty('items');
         expect(result).not.toHaveProperty('type');
 
-        // Ensure correct types
         expect(typeof result.count).toBe('number');
         expect(Array.isArray(result.items)).toBe(true);
 
         expect(result.items.length).toBeLessThanOrEqual(1);
 
-        // If there are starred items, validate structure
         if (result.items.length > 0) {
           const item = result.items[0];
           expect(item).toHaveProperty('id');
           expect(typeof item.id).toBe('string');
 
-          // For songs, should have title
           if ('title' in item) {
             expect(typeof item.title).toBe('string');
           }
@@ -118,8 +106,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           limit: 2
         });
 
-        // Validate response structure. `type` and `minRating` are no longer
-        // echoed (LLM input echoes), so we don't assert them.
         expect(result).toHaveProperty('count');
         expect(result).toHaveProperty('items');
         expect(result).not.toHaveProperty('type');
@@ -183,7 +169,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           type: 'song'
         });
 
-        // Verify correct API call was made (wire param key stays `id`)
+        // The Subsonic param is `id`, while the tool input names it `itemId`.
         expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
           '/star',
           expect.objectContaining({
@@ -191,9 +177,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           })
         );
 
-        // Verify response structure. `type` AND `id` are intentionally NOT
-        // echoed — they are LLM input echoes and waste context window. The
-        // success+message pair is the round-trip-safe confirmation.
+        // Input fields are not echoed, since the LLM sent them.
         expect(result).toHaveProperty('success');
         expect(result).toHaveProperty('message');
         expect(result).not.toHaveProperty('type');
@@ -254,9 +238,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       });
 
       it('accepts the plural form (`type: "songs"`) without throwing', async () => {
-        // Schema-layer normalization should silently coerce the plural to
-        // singular so the LLM doesn't get a Zod error for a common confusion
-        // bug. The response carries no `type` field either way.
         mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
         const result = await starItem(mockClient, {
@@ -267,7 +248,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
         expect(result.success).toBe(true);
         expect(result).not.toHaveProperty('id');
         expect(result).not.toHaveProperty('type');
-        // The internal singular form drives the message text.
         expect(result.message).toBe('Successfully starred song');
       });
 
@@ -314,8 +294,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           type: 'song'
         });
 
-        // Verify correct API call was made (DELETE method). `id` is no
-        // longer echoed in the response (LLM input echo).
         expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
           '/unstar',
           expect.objectContaining({
@@ -392,9 +370,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
           rating: 5
         });
 
-        // Verify correct API call was made (wire param key stays `id`).
-        // `id`, `type`, and `rating` are not echoed back — they are LLM input
-        // echoes. The success+message confirms the round trip.
         expect(mockClient.subsonicRequest).toHaveBeenCalledWith(
           '/setRating',
           expect.objectContaining({
@@ -566,41 +541,34 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
     });
 
     it('should validate rating range values', async () => {
-      // Test below minimum
       await expect(
         setRating(mockClient, { itemId: 'song-123', type: 'song', rating: -1 })
       ).rejects.toThrow();
 
-      // Test above maximum
       await expect(
         setRating(mockClient, { itemId: 'song-123', type: 'song', rating: 6 })
       ).rejects.toThrow();
     });
 
     it('should validate pagination parameters', async () => {
-      // Test negative offset
       await expect(
         listStarredItems(mockClient, { type: 'songs', offset: -1 })
       ).rejects.toThrow();
 
-      // Test zero limit
       await expect(
         listStarredItems(mockClient, { type: 'songs', limit: 0 })
       ).rejects.toThrow();
 
-      // Test limit over maximum
       await expect(
         listStarredItems(mockClient, { type: 'songs', limit: 501 })
       ).rejects.toThrow();
     });
 
     it('should validate minRating parameter for top-rated items', async () => {
-      // Test below minimum
       await expect(
         listTopRated(mockClient, { type: 'songs', minRating: 0 })
       ).rejects.toThrow();
 
-      // Test above maximum
       await expect(
         listTopRated(mockClient, { type: 'songs', minRating: 6 })
       ).rejects.toThrow();
@@ -632,7 +600,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
 
       const result = await listStarredItems(mockClient, { type: 'songs', limit: 1 });
 
-      // Navidrome keeps starredAt after an unstar, so only the starred=true filter excludes unstarred rows.
+      // Navidrome keeps starredAt after an unstar, so only starred=true excludes unstarred rows.
       expect(mockClient.requestWithLibraryFilterAndMeta.mock.calls[0]![0]).toBe(
         '/song?starred=true&_start=0&_end=1&_sort=starredAt&_order=DESC',
       );
@@ -642,7 +610,7 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
       expect(result).not.toHaveProperty('hasMore');
     });
 
-    // Navidrome can omit or garble X-Total-Count, which the client resolves to null.
+    // The client resolves a missing or unparseable X-Total-Count to null.
     it('falls back to the page length for total when the header is missing', async () => {
       mockClient.requestWithLibraryFilterAndMeta.mockResolvedValue({
         data: [
@@ -737,9 +705,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
     });
 
     it('should call subsonicRequest /star and return success for starItem', async () => {
-      // starItem/unstarItem use client.subsonicRequest, not client.request.
-      // The Subsonic endpoint is idempotent (re-starring is not an error), so
-      // we just verify the correct endpoint and id are forwarded.
       mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
       const result = await starItem(mockClient, {
@@ -753,8 +718,6 @@ describe('User Preferences Operations - Tier 1 Critical Tests', () => {
     });
 
     it('should call subsonicRequest /unstar and return success for unstarItem', async () => {
-      // Unstarring a non-starred item is also idempotent on the Subsonic API —
-      // the endpoint succeeds regardless. Verify the right path and id are sent.
       mockClient.subsonicRequest.mockResolvedValue({ status: 'ok' });
 
       const result = await unstarItem(mockClient, {

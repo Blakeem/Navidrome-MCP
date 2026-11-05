@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Web UI Lyrics Route
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { ServerResponse } from 'node:http';
@@ -24,17 +12,18 @@ import { buildLyricsLookup, resolveLyricsByMetadata } from '../../tools/lyrics.j
 import { getPlayQueue } from '../../tools/playback.js';
 import type { LyricsDTO } from '../../types/index.js';
 import { Cache } from '../../utils/cache.js';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { writeError, writeJson } from '../http-helpers.js';
 
 type QueueItem = Awaited<ReturnType<typeof getPlayQueue>>['items'][number];
 
-/** A track's lyrics do not change, so an answered lookup is held for a long while. */
+/** A track's lyrics do not change, so an answered lookup is held for an hour. */
 const HIT_TTL_SECONDS = 3600;
 
 /**
- * A miss expires far sooner because queue metadata arrives by best-effort
- * enrichment: an entry with no artist yet can become searchable moments later.
+ * A miss expires sooner, since queue metadata arrives by best-effort enrichment and an entry with
+ * no artist yet can become searchable moments later.
  */
 const MISS_TTL_SECONDS = 60;
 
@@ -42,61 +31,31 @@ const MISS_TTL_SECONDS = 60;
 const hitCache = new Cache<LyricsDTO>(HIT_TTL_SECONDS);
 const missCache = new Cache<LyricsDTO>(MISS_TTL_SECONDS);
 
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-/** A DTO with no text and no instrumental flag is a miss worth retrying, not an answer worth holding. */
+/** A DTO with no text and no instrumental flag is a miss to retry, not an answer to hold. */
 function isAnswered(dto: LyricsDTO): boolean {
   return dto.hasSynced || dto.unsynced !== undefined || dto.isInstrumental;
 }
 
-/**
- * GET /api/lyrics/:songId resolves lyrics for one entry of the live play queue.
- *
- * Track metadata comes from the queue rather than from the caller, so the
- * browser cannot steer an LRCLIB query. `songId` is validated against the
- * Navidrome ID character set before any upstream call, exactly as `handleCover`
- * does, so a request carrying path separators is rejected with no network I/O.
- *
- * A song with no lyrics answers 200 with an empty DTO. Only a failed lookup is
- * a non-200, which is what lets the overlay tell "no lyrics" from "it broke".
- */
-export async function handleLyrics(
-  res: ServerResponse,
-  config: Config,
-  client: NavidromeClient,
-  rawId: string,
-): Promise<void> {
-  // INPUT
-  const parsed = IdSchema.safeParse({ id: rawId });
-  if (!parsed.success) {
-    writeError(res, 400, 'Invalid id');
-    return;
-  }
-  const songId = parsed.data.id;
+type LookupOutcome =
+  | { ok: true; dto: LyricsDTO }
+  | { ok: false; status: number; message: string };
 
-  const cached = hitCache.get(songId) ?? missCache.get(songId);
-  if (cached !== undefined) {
-    writeJson(res, 200, cached);
-    return;
-  }
+// Every guest page asks for the same song on the same track change, so concurrent misses share one lookup.
+const pendingLookups = new Map<string, Promise<LookupOutcome>>();
 
+async function lookupLyrics(config: Config, client: NavidromeClient, songId: string): Promise<LookupOutcome> {
   let entry: QueueItem | undefined;
   try {
     const queue = await getPlayQueue(client, {});
     entry = queue.items.find((item) => item.songId === songId);
   } catch (err) {
-    logger.debug(`webui: lyrics queue lookup failed for id=${songId}: ${errorText(err)}`);
-    writeError(res, 502, 'Play-queue lookup failed');
-    return;
+    logger.debug(`webui: lyrics queue lookup failed for id=${songId}: ${errorMessage(err)}`);
+    return { ok: false, status: 502, message: 'Play-queue lookup failed' };
   }
   if (entry === undefined) {
-    writeError(res, 404, 'Song is not in the current play queue');
-    return;
+    return { ok: false, status: 404, message: 'Song is not in the current play queue' };
   }
 
-  // PROCESS
   const lookup = buildLyricsLookup({
     title: entry.title,
     artist: entry.artist,
@@ -110,13 +69,52 @@ export async function handleLyrics(
   try {
     dto = await resolveLyricsByMetadata(config, lookup.metadata, { local: { client, songId }, allowLrclib });
   } catch (err) {
-    logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorText(err)}`);
-    writeError(res, 502, 'Lyrics lookup failed');
+    logger.debug(`webui: lyrics lookup failed for id=${songId}: ${errorMessage(err)}`);
+    return { ok: false, status: 502, message: 'Lyrics lookup failed' };
+  }
+
+  const store = isAnswered(dto) ? hitCache : missCache;
+  store.set(songId, dto);
+  return { ok: true, dto };
+}
+
+function sharedLookup(config: Config, client: NavidromeClient, songId: string): Promise<LookupOutcome> {
+  const pending = pendingLookups.get(songId);
+  if (pending !== undefined) return pending;
+  const started = lookupLyrics(config, client, songId).finally(() => {
+    pendingLookups.delete(songId);
+  });
+  pendingLookups.set(songId, started);
+  return started;
+}
+
+/**
+ * Track metadata comes from the live queue, so the browser cannot steer an LRCLIB query. A song
+ * with no lyrics answers 200 with an empty DTO, so the overlay can tell no lyrics from a failure.
+ */
+export async function handleLyrics(
+  res: ServerResponse,
+  config: Config,
+  client: NavidromeClient,
+  rawId: string,
+): Promise<void> {
+  const parsed = IdSchema.safeParse({ id: rawId });
+  if (!parsed.success) {
+    writeError(res, 400, 'Invalid id');
+    return;
+  }
+  const songId = parsed.data.id;
+
+  const cached = hitCache.get(songId) ?? missCache.get(songId);
+  if (cached !== undefined) {
+    writeJson(res, 200, cached);
     return;
   }
 
-  // OUTPUT
-  const store = isAnswered(dto) ? hitCache : missCache;
-  store.set(songId, dto);
-  writeJson(res, 200, dto);
+  const outcome = await sharedLookup(config, client, songId);
+  if (!outcome.ok) {
+    writeError(res, outcome.status, outcome.message);
+    return;
+  }
+  writeJson(res, 200, outcome.dto);
 }

@@ -1,19 +1,7 @@
 /**
  * Navidrome MCP Server - Media Library Tools
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import type { NavidromeClient } from '../client/navidrome-client.js';
@@ -41,8 +29,7 @@ export async function getSong(client: NavidromeClient, args: unknown): Promise<S
     logger.debug('Tool getSong called with args:', params);
 
     const rawSong = await client.requestWithLibraryFilter<unknown>(`/song/${encodeURIComponent(params.songId)}`);
-    // Single-item detail lookup: full metadata is the whole point and there is
-    // no array to bloat context, so always return the verbose shape.
+    // A detail lookup returns one item, so the verbose shape cannot bloat context.
     return transformToSongDTO(rawSong as RawSong, { verbose: true });
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_song', error));
@@ -55,7 +42,7 @@ export async function getAlbum(client: NavidromeClient, args: unknown): Promise<
     logger.debug('Tool getAlbum called with args:', params);
 
     const rawAlbum = await client.requestWithLibraryFilter<unknown>(`/album/${encodeURIComponent(params.albumId)}`);
-    // Single-item detail lookup, always verbose (see getSong).
+    // Verbose for the same reason as getSong.
     return transformToAlbumDTO(rawAlbum as RawAlbum, { verbose: true });
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_album', error));
@@ -68,7 +55,7 @@ export async function getArtist(client: NavidromeClient, args: unknown): Promise
     logger.debug('Tool getArtist called with args:', params);
 
     const rawArtist = await client.requestWithLibraryFilter<unknown>(`/artist/${encodeURIComponent(params.artistId)}`);
-    // Single-item detail lookup, always verbose (see getSong).
+    // Verbose for the same reason as getSong.
     return transformToArtistDTO(rawArtist as RawArtist, { verbose: true });
   } catch (error) {
     throw new Error(ErrorFormatter.toolExecution('get_artist', error));

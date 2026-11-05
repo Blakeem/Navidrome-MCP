@@ -1,23 +1,18 @@
 /**
  * Navidrome MCP Server - Validation Schema Definitions
  * Copyright (C) 2025
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published
- * by the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU Affero General Public License for more details.
- *
- * You should have received a copy of the GNU Affero General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { z } from 'zod';
-import { DEFAULT_VALUES, WEBUI_THEMES } from '../constants/defaults.js';
+import {
+  DEFAULT_VALUES,
+  GUEST_QUEUE_LIMIT_MAX,
+  GUEST_QUEUE_LIMIT_MIN,
+  JUKEBOX_CODE_MAX_LIFETIME_HOURS,
+  JUKEBOX_SHARE_LINKS,
+  WEBUI_THEMES,
+} from '../constants/defaults.js';
 import {
   MAX_VALIDATION_TIMEOUT_MS,
   MIN_VALIDATION_TIMEOUT_MS,
@@ -100,7 +95,8 @@ export const AddTracksToPlaylistSchema = PlaylistIdSchema.extend({
   }
 });
 
-// get_playlist_tracks emits each row's 1-based position as a string, so positions round-trip as strings.
+// get_playlist_tracks emits each row's 1-based position as a string, so positions round-trip
+// as strings.
 const PlaylistPositionSchema = z.string().regex(/^[1-9]\d*$/, 'Track position must be a 1-based positive integer');
 
 export const RemoveTracksFromPlaylistSchema = PlaylistIdSchema.extend({
@@ -184,8 +180,8 @@ export const TrendingMusicSchema = z.object({
   verbose: VerboseSchema,
 });
 
-// MusicBrainz release-group vocabulary, the subset relevant to discographies (docs/musicbrainz-api.md §8).
-// Values are lowercase, since MB's `type=` browse filter accepts them lowercase, and secondary types are lowercased on parse.
+// MusicBrainz release-group types (docs/musicbrainz-api.md §8). Lowercase, since MB's `type=`
+// browse filter accepts lowercase and the parser lowercases secondary types.
 const MbPrimaryTypeSchema = z.enum(['album', 'ep', 'single']);
 const MbSecondaryTypeSchema = z.enum([
   'live',
@@ -221,8 +217,8 @@ export const ArtistAlbumsSchema = z.object({
   }
 });
 
-// `mbid` is a MusicBrainz RELEASE-GROUP MBID, the mbid of a get_artist_albums row with source 'musicbrainz'.
-// See docs/ARTIST-ALBUMS-SPEC.md §9.
+// `mbid` is a MusicBrainz RELEASE-GROUP MBID, the mbid of a get_artist_albums row with source
+// 'musicbrainz'. See docs/ARTIST-ALBUMS-SPEC.md §9.
 export const AlbumInfoSchema = z.object({
   artist: z.string().min(1).optional(),
   album: z.string().min(1).optional(),
@@ -245,7 +241,7 @@ export const LyricsMetadataSchema = z.object({
   durationMs: z.number().min(0).optional(),
 });
 
-// get_lyrics takes an identity. search_lyrics candidates carry the lrclibId it accepts.
+// search_lyrics candidates carry the lrclibId that get_lyrics accepts.
 export const LyricsIdentitySchema = z.object({
   songId: SongIdSchema.shape.songId.optional(),
   lrclibId: z.string().min(1).regex(/^\d+$/, 'LRCLIB record ID must be numeric').optional(),
@@ -308,11 +304,19 @@ export const LibraryPlayRequestSchema = z.discriminatedUnion('type', [
   }),
 ], { error: 'type must be one of artist, album, song, playlist, starred-songs, starred-albums' });
 
-// Playback controls shared by the MCP tools and the web remote routes
 export const SetVolumeSchema = z.strictObject({
-  // The tool contract promises clamping to [0, 100] in playback-engine.setVolume,
-  // so the schema rejects only non-finite values, never out-of-range ones.
+  // The tool contract promises clamping to [0, 100] in playback-engine.setVolume, so the
+  // schema rejects only non-finite values, never out-of-range ones.
   level: z.number().finite(),
+});
+
+export const ListAudioDevicesSchema = z.strictObject({
+  verbose: z.boolean().optional(),
+});
+
+// Not IdSchema, since mpv device ids carry characters such as `/`, `{`, `}`, `.`, `:` and `=`.
+export const SetAudioDeviceSchema = z.strictObject({
+  id: z.string().trim().min(1).max(512),
 });
 
 export const SeekSchema = z.strictObject({
@@ -370,9 +374,96 @@ export const PlayerSettingsPatchSchema = z.strictObject({
   visualizer: z.boolean().optional(),
 });
 
+// Any string is a login attempt, so a too-short or too-long one fails as "Wrong password" too.
+export const AdminLoginSchema = z.strictObject({
+  password: z.string({ error: 'password must be a string' }),
+});
+
+const JUKEBOX_CODE_LIFETIME_ERROR = `lifetimeHours must be a whole number from 1 to ${String(JUKEBOX_CODE_MAX_LIFETIME_HOURS)}`;
+
+export const JukeboxCodeCreateSchema = z.strictObject({
+  lifetimeHours: z.number({ error: JUKEBOX_CODE_LIFETIME_ERROR })
+    .int({ error: JUKEBOX_CODE_LIFETIME_ERROR })
+    .min(1, { error: JUKEBOX_CODE_LIFETIME_ERROR })
+    .max(JUKEBOX_CODE_MAX_LIFETIME_HOURS, { error: JUKEBOX_CODE_LIFETIME_ERROR }),
+  signOutGuests: z.boolean({ error: 'signOutGuests must be true or false' }).default(false),
+});
+
+// Indic vowel signs and decomposed accents are combining marks (\p{M}), so a name in letters needs them too.
+// An invisible letter or mark such as U+3164 would let `Host` and a blank name pass, so none is allowed.
+const GUEST_NICKNAME_PATTERN = /^(?!.*\p{Default_Ignorable_Code_Point})[\p{L}\p{M}\p{Nd} .,'!?_-]{1,24}$/u;
+
+const GuestNicknameField = z.string().trim().normalize('NFC').regex(GUEST_NICKNAME_PATTERN, {
+  error: "nickname must be 1 to 24 letters, digits, spaces or . , ' ! ? - _",
+});
+
+// Any key string is a join attempt, so a malformed key fails with the same message as a wrong one.
+export const GuestJoinSchema = z.strictObject({
+  key: z.string({ error: 'key must be a string' }),
+  nickname: GuestNicknameField.optional(),
+});
+
+export const GuestNicknameSchema = z.strictObject({ nickname: GuestNicknameField });
+
 export const LibrarySearchQuerySchema = z.string().trim().min(1).max(SEARCH_QUERY_MAX_LENGTH);
 
-// Node fetch probes only http and https, so other radio schemes fail here with guidance instead of an opaque fetch error.
+const GUEST_SEARCH_QUERY_MAX_LENGTH = 100;
+const GUEST_SEARCH_QUERY_ERROR = `Enter 1 to ${String(GUEST_SEARCH_QUERY_MAX_LENGTH)} characters to search.`;
+
+export const GuestSearchQuerySchema = z.string({ error: GUEST_SEARCH_QUERY_ERROR }).trim()
+  .min(1, { error: GUEST_SEARCH_QUERY_ERROR })
+  .max(GUEST_SEARCH_QUERY_MAX_LENGTH, { error: GUEST_SEARCH_QUERY_ERROR });
+
+export const GuestQueueAddSchema = z.strictObject({
+  songId: SongIdSchema.shape.songId,
+});
+
+const ENTRY_ID_ERROR = 'entryId must be a whole number of 0 or more';
+
+// The host and guest remove routes name an entry by its mpv id, which survives a move.
+export const QueueEntryRemoveSchema = z.strictObject({
+  entryId: z.number({ error: ENTRY_ID_ERROR }).int({ error: ENTRY_ID_ERROR }).min(0, { error: ENTRY_ID_ERROR }),
+});
+
+const GUEST_SESSION_ID_ERROR = 'sessionId must be a guest session id';
+const GuestSessionIdSchema = z.string({ error: GUEST_SESSION_ID_ERROR }).min(1, { error: GUEST_SESSION_ID_ERROR });
+
+export const JukeboxGuestRemoveSchema = z.strictObject({
+  sessionId: GuestSessionIdSchema,
+});
+
+// The durations the Guests dialog offers. A network ban always expires, since one address can hold innocent guests.
+const NETWORK_BAN_HOURS = [0, 1, 24, 168, 720] as const;
+
+export const JukeboxGuestBanSchema = z.strictObject({
+  sessionId: GuestSessionIdSchema,
+  networkBanHours: z.literal(NETWORK_BAN_HOURS, { error: `networkBanHours must be one of ${NETWORK_BAN_HOURS.join(', ')}` }),
+});
+
+const BAN_ID_ERROR = 'banId must be a ban id';
+
+export const JukeboxBanRemoveSchema = z.strictObject({
+  banId: z.string({ error: BAN_ID_ERROR }).min(1, { error: BAN_ID_ERROR }),
+});
+
+const GUEST_QUEUE_LIMIT_ERROR =
+  `guestQueueLimit must be a whole number from ${String(GUEST_QUEUE_LIMIT_MIN)} to ${String(GUEST_QUEUE_LIMIT_MAX)}`;
+
+const JUKEBOX_SHARE_LINK_ERROR = `shareLink must be one of ${JUKEBOX_SHARE_LINKS.join(', ')}`;
+
+export const JukeboxSettingsPatchSchema = z.strictObject({
+  guestQueueLimit: z.number({ error: GUEST_QUEUE_LIMIT_ERROR })
+    .int({ error: GUEST_QUEUE_LIMIT_ERROR })
+    .min(GUEST_QUEUE_LIMIT_MIN, { error: GUEST_QUEUE_LIMIT_ERROR })
+    .max(GUEST_QUEUE_LIMIT_MAX, { error: GUEST_QUEUE_LIMIT_ERROR })
+    .optional(),
+  shareLink: z.enum(JUKEBOX_SHARE_LINKS, { error: JUKEBOX_SHARE_LINK_ERROR }).optional(),
+}).refine((patch) => patch.guestQueueLimit !== undefined || patch.shareLink !== undefined, {
+  error: 'Send guestQueueLimit, shareLink or both',
+});
+
+// Node fetch probes only http and https, so other radio schemes fail here with guidance
+// instead of an opaque fetch error.
 export const ValidateStreamSchema = z.object({
   url: z.string()
     .trim()
@@ -404,7 +495,8 @@ export const DiscoverRadioStationsSchema = z.object({
   bitrateMin: z.number().min(0).optional(),
   isHttps: z.boolean().optional(),
   sort: z.enum(['name', 'votes', 'clickcount', 'bitrate', 'lastcheckok', 'random']).default('votes'),
-  // The direction default depends on the sort field, so OrderSchema's fixed ASC default does not apply.
+  // The direction default depends on the sort field, so OrderSchema's fixed ASC default does
+  // not apply.
   order: OrderSchema.removeDefault(),
   offset: OffsetSchema,
   limit: createLimitSchema(1, 500, DEFAULT_VALUES.RADIO_DISCOVERY_LIMIT),

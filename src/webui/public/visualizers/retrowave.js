@@ -2,11 +2,11 @@ import { average, detectBeat, resample, rgba } from '../visualizer-kit.js';
 
 // The horizon's place, as a share of the padded height from the top.
 const HORIZON_AT = 0.56;
-// The scene dissolves over these shares of the padded area, so it floats on the card with no box.
+// The scene fades out over these shares of the padded area, so no hard box edge shows on the card.
 const SIDE_FADE = 0.13;
 const TOP_FADE = 0.07;
 const BOTTOM_FADE = 0.17;
-// Keeps the faded edge a pixel inside the pad, since the contract's bound is conservative.
+// Keeps the faded edge a pixel inside the pad, since the contract test's bound is conservative.
 const EDGE_MARGIN = 1;
 
 // The sun's radius is the smaller of these shares of the sky height and the padded width.
@@ -54,7 +54,7 @@ const NEAR_SEED = 11;
 const FAR_SEED = 71;
 const CONTOURS = [0.62, 0.3];
 
-// The camera sits this many ground heights behind the near edge. Closer foreshortens the floor more.
+// The camera sits this many ground heights behind the near edge. Closer foreshortens the floor.
 const CAMERA_DEPTH = 1.4;
 const ROW_DEPTH = 0.5;
 const COLUMN_SHARE = 0.6;
@@ -88,7 +88,7 @@ const METEOR_LIFE_S = 0.7;
 const METEOR_GAP_S = 5;
 const METEOR_SLOPE = 0.3;
 const METEOR_TRAVEL = 0.35;
-// Caps the fall in sky heights, so a meteor burns out above the mountains.
+// Caps the travel in sky heights, so the fall stays under half the sky height.
 const METEOR_SKY_TRAVEL = 1.5;
 const METEOR_TAIL = 0.45;
 
@@ -115,13 +115,14 @@ const METEOR_WIDTH = 1.3;
 const SILENCE_ENERGY = 0.004;
 const PRESENCE_GAIN = 4;
 const PRESENCE_RISE_PER_SECOND = 3;
-// A full sunset takes under two seconds, inside the three the host allows.
+// A full sunset takes under two seconds, inside the three the contract test allows.
 const PRESENCE_FALL_PER_SECOND = 0.6;
 const MIN_PRESENCE = 0.01;
 // The scene stays opaque while the sun sets and fades only in the last part of the fall.
 const SCENE_ALPHA_GAIN = 2.5;
 
-// Neon glows additively on the dark card. On white it would wash out, so the light theme paints deeper ink over.
+// Neon glows additively on the dark card. It washes out on white, so the light theme paints deeper
+// ink over the card.
 const INK = {
   dark: {
     blend: 'lighter',
@@ -184,8 +185,8 @@ const INK = {
 };
 
 /**
- * An outrun sunset. A striped sun cut by the spectrum sets behind a skyline of mountains raised by the
- * bands, while a neon grid races toward the viewer on the bass and each beat sends a pulse down the floor.
+ * An outrun sunset. A striped sun cut by the spectrum sets behind mountains raised by the bands,
+ * while a neon grid races toward the viewer on the bass and each beat sends a pulse down the floor.
  */
 function draw(ctx, frame) {
   const { state } = frame;
@@ -198,7 +199,7 @@ function draw(ctx, frame) {
   const scene = layout(frame, motion);
   const ink = INK[frame.theme] ?? INK.dark;
   const levels = resample(frame.values, SUN_LEVELS);
-  // ctx holds only this mode, so the edge mask and the sunset fade apply to it in place, with no layer to copy.
+  // ctx holds only this mode, so the edge mask and sunset fade apply in place with no layer.
   drawSky(ctx, scene, motion, ink, frame);
   drawSun(ctx, scene, motion, ink, levels, frame.bass);
   drawMountains(ctx, scene, frame, ink);
@@ -223,7 +224,7 @@ function advance(state, frame, beat, presence) {
   const surge = beat && !frame.reducedMotion;
   state.kick = (beat ? 1 : (state.kick ?? 0)) * Math.exp(-KICK_DECAY_PER_SECOND * frame.dtSeconds);
   state.clock = (state.clock ?? 0) + dt;
-  // The grid coasts to a stop as the music fades, the way a car rolls out after the gas.
+  // The grid coasts to a stop as the music fades, like a car rolling off the gas.
   const rowsPerSecond = (ROWS_PER_SECOND + ROWS_PER_BASS * frame.bass + ROWS_PER_KICK * state.kick) * presence;
   state.gridPhase = ((state.gridPhase ?? 0) + dt * rowsPerSecond) % 1;
   state.stripeDrift = ((state.stripeDrift ?? 0) + dt * (STRIPES_PER_SECOND + STRIPES_PER_ENERGY * frame.energy)) % 1;
@@ -271,7 +272,7 @@ function layout(frame, motion) {
   const ground = bottom - horizon;
   const size = Math.min(sky * SUN_SKY_SHARE, innerWidth * SUN_WIDTH_SHARE);
   const radius = size * (1 + SUN_BASS_SWELL * frame.bass + SUN_KICK_SWELL * motion.kick);
-  // At rise 0 the disk's top touches the horizon, and at rise 1 the horizon crosses it at SUN_RISEN_AT.
+  // At rise 0 the disk's top touches the horizon.
   const sunY = horizon + radius * (1 - 2 * SUN_RISEN_AT * motion.rise);
   const camera = ground * CAMERA_DEPTH;
   const rowDepth = ground * ROW_DEPTH;
@@ -295,7 +296,7 @@ function layout(frame, motion) {
   };
 }
 
-// The gap between rows shrinks with the square of their distance, so rows stop where it reaches the minimum.
+// Row gaps shrink with the square of distance, so rows stop where the gap reaches the minimum.
 function rowCount(ground, camera, rowDepth) {
   const reach = Math.sqrt((ground * camera * rowDepth) / MIN_ROW_GAP_PX) - camera;
   return Math.min(MAX_ROWS, Math.max(MIN_ROWS, Math.floor(reach / rowDepth)));
@@ -314,7 +315,7 @@ function drawSky(c, scene, motion, ink, frame) {
   c.restore();
 }
 
-// Stars sort into a few brightness steps, so the whole field costs one fill per step.
+// Stars sort into a few brightness steps, so the entire field costs one fill per step.
 function drawStars(c, scene, motion, ink, treble) {
   const count = Math.round(Math.min(STAR_MAX, Math.max(STAR_MIN, (scene.innerWidth * scene.sky) / STAR_AREA_PX)));
   for (const [step, alpha] of STAR_ALPHAS.entries()) {
@@ -357,7 +358,7 @@ function drawMeteor(c, scene, meteor, ink) {
   strokeNeon(c, ink, streak, METEOR_WIDTH, 1);
 }
 
-// The disk is built from horizontal slabs between the stripe gaps, so the cut shows the sky behind it.
+// The disk is built from slabs between the stripe gaps, so the cuts show the sky behind it.
 function drawSun(c, scene, motion, ink, levels, bass) {
   const { sun, horizon } = scene;
   const diskTop = sun.y - sun.radius;
@@ -371,7 +372,7 @@ function drawSun(c, scene, motion, ink, levels, bass) {
     from = gapBottom;
   }
   if (from < horizon) addSlab(c, sun, from, horizon);
-  // The colors run to the disk's risen horizon point, so they ride down with it at sunset.
+  // The colors run to the disk's risen horizon point, so they move down with it at sunset.
   const body = c.createLinearGradient(0, diskTop, 0, diskTop + 2 * sun.radius * SUN_RISEN_AT);
   body.addColorStop(0, rgba(ink.sunTop, 1));
   body.addColorStop(0.5, rgba(ink.sunMid, 1));
@@ -395,7 +396,7 @@ function drawHalo(c, scene, motion, ink, bass) {
   c.restore();
 }
 
-// Gaps open from nothing at the top of the zone and widen toward the horizon, the classic outrun cut.
+// Gaps open from nothing at the top of the zone and widen toward the horizon, as in the outrun sun.
 // Each gap's width follows the band at its height, bass at the bottom.
 function stripeGaps(sun, drift, levels) {
   const zoneTop = sun.y - sun.radius + 2 * sun.radius * STRIPE_TOP;
@@ -414,7 +415,6 @@ function stripeGaps(sun, drift, levels) {
   return gaps;
 }
 
-// One slab of the disk between two heights, traced down its right edge and back up its left.
 function addSlab(c, sun, from, to) {
   if (to - from < MIN_SLAB_PX) return;
   const start = Math.asin(Math.min(1, Math.max(-1, (from - sun.y) / sun.radius)));
@@ -425,7 +425,7 @@ function addSlab(c, sun, from, to) {
   c.closePath();
 }
 
-// The near range takes the live levels and the far range the held peaks, so the backdrop moves slower.
+// The near range takes live levels and the far range held peaks, so the backdrop moves slower.
 function drawMountains(c, scene, frame, ink) {
   const nearCount = clampRound(scene.innerWidth / 2 / RIDGE_SPACING_PX, RIDGE_MIN, RIDGE_MAX);
   const farCount = clampRound(nearCount * FAR_DENSITY, RIDGE_MIN, RIDGE_MAX * FAR_DENSITY);
@@ -461,7 +461,8 @@ function drawMountains(c, scene, frame, ink) {
   c.restore();
 }
 
-// Bass sits at both outer edges and treble meets in the center, so the loud low end raises the flanking peaks.
+// Bass sits at both outer edges and treble meets in the center, so the loud low end raises the
+// flanking peaks.
 function ridge(scene, levels, maxHeight, valleyFloor, seed) {
   const count = levels.length - 1;
   const step = scene.innerWidth / (2 * count);
@@ -536,7 +537,6 @@ function drawReflection(c, scene, motion, ink, levels) {
   c.fill();
 }
 
-// Rows ride toward the viewer in perspective and columns fan out from the vanishing point.
 function drawGrid(c, scene, motion, ink) {
   const { grid, horizon, ground, left, right, bottom, centerX } = scene;
   const farScale = grid.camera / (grid.camera + grid.rows * grid.rowDepth);
@@ -562,7 +562,7 @@ function drawGrid(c, scene, motion, ink) {
     c.lineTo(centerX + i * grid.column, bottom);
   }
   strokeNeon(c, ink, shade, GRID_WIDTH, alpha);
-  // The farthest row fades in as it arrives, so rows never pop out of the haze.
+  // The farthest row fades in as it arrives, so rows never appear abruptly out of the haze.
   const newest = groundAt(scene, (grid.rows - motion.gridPhase) * grid.rowDepth);
   c.beginPath();
   c.moveTo(left, newest);
@@ -574,7 +574,7 @@ function drawGrid(c, scene, motion, ink) {
   c.globalAlpha = 1;
 }
 
-// Each beat launches a bright row from the distance that overtakes the grid on its way to the viewer.
+// Each beat launches a bright row from the distance that overtakes the grid on its way in.
 function drawPulses(c, scene, motion, ink) {
   const start = Math.min(PULSE_START_ROWS, scene.grid.rows);
   for (const depth of motion.pulses) {
@@ -606,8 +606,7 @@ function strokeNeon(c, ink, style, width, alpha) {
   c.globalAlpha = 1;
 }
 
-// Two ramps cut the scene to the padded area, so every element dissolves into the card instead of meeting an edge.
-// The side ramp also carries the sunset fade, so the scene fades as a whole with no extra pass.
+// The side ramp also carries the sunset fade, so the scene fades as one with no extra pass.
 function fadeEdges(c, scene, frame, alpha) {
   c.save();
   c.globalCompositeOperation = 'destination-in';
@@ -630,7 +629,7 @@ function edgeRamp(gradient, start, end, alpha) {
   return gradient;
 }
 
-// A fixed pseudo-random value from 0 to 1, so stars and peaks keep their places from frame to frame.
+// A fixed pseudo-random value from 0 to 1, so stars and peaks keep their places across frames.
 function hash(n) {
   const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
   return s - Math.floor(s);

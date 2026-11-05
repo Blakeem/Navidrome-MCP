@@ -1,11 +1,10 @@
 /**
  * Navidrome MCP Server - stripHtml unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the HTML-stripper used to sanitize ICY notice fields and other
- * low-trust streaming-header text before it reaches the LLM. Focus is on
- * the in-the-wild cases (BR tags, anchor wrappers, basic entities) rather
- * than full HTML parser coverage.
+ * stripHtml only cleans stream-header text such as ICY notices, so the cases follow real headers
+ * instead of full HTML parsing.
  */
 
 import { describe, expect, it } from 'vitest';

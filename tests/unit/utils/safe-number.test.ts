@@ -1,6 +1,7 @@
 /**
  * Navidrome MCP Server - safeNumber unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { describe, expect, it } from 'vitest';
@@ -27,9 +28,7 @@ describe('safeNumber()', () => {
     expect(safeNumber(-Infinity, -1)).toBe(-1);
   });
 
-  // Regression: Number(null) === 0 (finite), so the pre-fix code returned 0
-  // instead of the fallback, breaking sentinel-based missing-value detection
-  // (e.g. radio-discovery bitrate uses safeNumber(value, -1)).
+  // Number(null) is 0, and callers such as the radio-discovery bitrate read -1 as missing.
   it('returns the fallback for null, not 0', () => {
     expect(safeNumber(null, -1)).toBe(-1);
     expect(safeNumber(null, 99)).toBe(99);
@@ -39,7 +38,7 @@ describe('safeNumber()', () => {
     expect(safeNumber(undefined, -1)).toBe(-1);
   });
 
-  // Regression: Number('') === 0 (finite), so the pre-fix code returned 0.
+  // Number('') is 0, which would hide a missing value.
   it('returns the fallback for an empty string, not 0', () => {
     expect(safeNumber('', -1)).toBe(-1);
   });

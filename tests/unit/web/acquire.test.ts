@@ -1,13 +1,15 @@
 /**
  * Navidrome MCP Server - Port-as-lock acquire/attach unit tests
  * Copyright (C) 2025
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Covers the acquire decision flow with injected probe + bind (the
- * multi-process coordination suite binds the real port under test:playback).
- * The probe verdict tests bind one ephemeral loopback server.
+ * The decision flow runs on an injected probe and bind, since the coordination suite binds the
+ * real port.
  */
 
-import { createServer, type RequestListener, type Server } from 'node:http';
+import { EventEmitter } from 'node:events';
+import { type ClientRequest, createServer, type RequestListener, type Server } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,23 +20,30 @@ import {
   type WebEndpoint,
   acquireOrAttach,
   probeHealthz,
-  legacyOwnerScrobbles,
+  probeOwner,
   probeWebOwner,
   webOwnerPresent,
 } from '../../../src/web/acquire.js';
+import { loopbackRequest } from '../../../src/web/loopback-client.js';
 import { HEALTH_APP_ID } from '../../../src/webui/routes/health.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
+import { readPair, TLS_PAIR_A, TLS_PAIR_PUBLIC } from '../../helpers/tls-fixtures.js';
+
+// A pass-through spy, so a test can count the probes while every probe still reaches its socket.
+vi.mock('../../../src/web/loopback-client.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/web/loopback-client.js')>();
+  return { ...actual, loopbackRequest: vi.fn(actual.loopbackRequest) };
+});
 
 const config = makeTestConfig();
 
 const noSavedEndpoint = (): WebEndpoint | null => null;
 
 function loopback(port: number): WebEndpoint {
-  return { port, host: '127.0.0.1' };
+  return { port, host: '127.0.0.1', tls: { certPath: null, keyPath: null } };
 }
 
-/** A throwaway object standing in for an http.Server — the injected `bind`
- * never touches it, so its identity is all that matters. */
+/** The injected bind never touches the server, so only its identity matters. */
 function fakeServer(): Server {
   return { tag: 'fake-server' } as unknown as Server;
 }
@@ -46,13 +55,13 @@ function deps(
   let probeCalls = 0;
   let bindCalls = 0;
   return {
-    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async AcquireDeps.probe interface
+    // eslint-disable-next-line @typescript-eslint/require-await -- AcquireDeps.probe is async
     probe: async () => {
       const outcome = probeOutcomes[Math.min(probeCalls, probeOutcomes.length - 1)];
       probeCalls += 1;
-      return outcome as ProbeOutcome;
+      return { outcome: outcome as ProbeOutcome, secure: false };
     },
-    // eslint-disable-next-line @typescript-eslint/require-await -- mock must match async AcquireDeps.bind interface
+    // eslint-disable-next-line @typescript-eslint/require-await -- AcquireDeps.bind is async
     bind: async () => {
       bindCalls += 1;
       return bindResult;
@@ -100,7 +109,7 @@ describe('acquireOrAttach', () => {
 
     expect(result.mode).toBe('attached');
     expect(d.bindCalls).toBe(1);
-    expect(d.probeCalls).toBe(2); // re-probed after the race
+    expect(d.probeCalls).toBe(2);
   });
 
   it('throws when it loses a bind race to a foreign process', async () => {
@@ -110,10 +119,38 @@ describe('acquireOrAttach', () => {
 
   it('probes at the configured bind host', async () => {
     const lanConfig = makeTestConfig({ webui: { ...config.webui, host: '192.168.1.10' } });
-    const probe = vi.fn().mockResolvedValue('ours');
+    const probe = vi.fn().mockResolvedValue({ outcome: 'ours', secure: false });
     await acquireOrAttach(lanConfig, fakeServer, { probe, bind: vi.fn() });
 
-    expect(probe).toHaveBeenCalledWith(8808, '192.168.1.10');
+    expect(probe).toHaveBeenCalledWith(8808, '192.168.1.10', false);
+  });
+
+  it('probes over HTTPS and reports an https URL when a TLS pair is configured', async () => {
+    const tlsConfig = makeTestConfig({ webui: { ...config.webui, tls: TLS_PAIR_A } });
+    const probe = vi.fn().mockResolvedValue({ outcome: 'ours', secure: true });
+    const result = await acquireOrAttach(tlsConfig, fakeServer, { probe, bind: vi.fn() });
+
+    expect(probe).toHaveBeenCalledWith(8808, '127.0.0.1', true);
+    expect(result.url).toBe('https://127.0.0.1:8808');
+  });
+
+  it("reports the owner's scheme in the attached URL when it differs from the configured one", async () => {
+    const probe = vi.fn().mockResolvedValue({ outcome: 'ours', secure: true });
+    const result = await acquireOrAttach(config, fakeServer, { probe, bind: vi.fn() });
+
+    expect(result).toEqual({ mode: 'attached', url: 'https://127.0.0.1:8808' });
+  });
+
+  it("reports the owner's scheme after a lost bind race", async () => {
+    const probe = vi.fn()
+      .mockResolvedValueOnce({ outcome: 'refused', secure: false })
+      .mockResolvedValueOnce({ outcome: 'ours', secure: true });
+    const bind = vi.fn().mockResolvedValue('eaddrinuse');
+
+    expect(await acquireOrAttach(config, fakeServer, { probe, bind })).toEqual({
+      mode: 'attached',
+      url: 'https://127.0.0.1:8808',
+    });
   });
 });
 
@@ -142,38 +179,23 @@ describe('/healthz probe verdicts', () => {
     });
   }
 
-  async function legacyScrobbles(body: unknown): Promise<boolean> {
-    const port = await serveHealthz(body);
-    return legacyOwnerScrobbles(await probeWebOwner(loopback(port), noSavedEndpoint));
-  }
+  it('reports ours for a body that carries only the app signature', async () => {
+    const port = await serveHealthz({ app: HEALTH_APP_ID });
 
-  it('does not defer to an attached owner that claims scrobbles', async () => {
-    expect(await legacyScrobbles({ app: HEALTH_APP_ID, playbackAttached: true, scrobbleClaims: true })).toBe(false);
-  });
-
-  it('defers to an attached owner older than scrobble claims', async () => {
-    expect(await legacyScrobbles({ app: HEALTH_APP_ID, playbackAttached: true })).toBe(true);
-  });
-
-  it('defers to an owner older than the playbackAttached field', async () => {
-    expect(await legacyScrobbles({ app: HEALTH_APP_ID })).toBe(true);
-  });
-
-  it('does not defer to an older owner whose engine is not attached', async () => {
-    const port = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: false });
-
-    expect(legacyOwnerScrobbles(await probeWebOwner(loopback(port), noSavedEndpoint))).toBe(false);
+    expect(await probeWebOwner(loopback(port), noSavedEndpoint)).toEqual({ outcome: 'ours', port, secure: false });
     expect(await webOwnerPresent(loopback(port), noSavedEndpoint)).toBe(true);
   });
 
-  it('never defers to a foreign signature', async () => {
-    expect(await legacyScrobbles({ app: 'something-else', playbackAttached: true })).toBe(false);
+  it('reports foreign for a foreign signature', async () => {
+    const port = await serveHealthz({ app: 'something-else' });
+
+    expect((await probeWebOwner(loopback(port), noSavedEndpoint)).outcome).toBe('foreign');
   });
 
   it.each(['0.0.0.0', '::'])('probes a wildcard bind host %s at loopback', async (bindHost) => {
-    const port = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: false });
+    const port = await serveHealthz({ app: HEALTH_APP_ID });
 
-    expect(await probeHealthz(port, bindHost)).toBe('ours');
+    expect(await probeHealthz(port, bindHost, false)).toBe('ours');
   });
 
   it('settles foreign for a listener that never answers', async () => {
@@ -181,7 +203,7 @@ describe('/healthz probe verdicts', () => {
       // Never responds, so only the probe timeout can settle.
     });
 
-    expect(await probeHealthz(port, '127.0.0.1')).toBe('foreign');
+    expect(await probeHealthz(port, '127.0.0.1', false)).toBe('foreign');
   });
 
   // The stream never ends and never idles, so only the body size cap can settle it.
@@ -193,7 +215,92 @@ describe('/healthz probe verdicts', () => {
       res.on('close', () => { clearInterval(timer); });
     });
 
-    expect(await probeHealthz(port, '127.0.0.1')).toBe('foreign');
+    expect(await probeHealthz(port, '127.0.0.1', false)).toBe('foreign');
+  });
+});
+
+describe('owner probe over HTTPS', () => {
+  const servers: Server[] = [];
+
+  afterEach(async () => {
+    const closing = servers.splice(0);
+    await Promise.all(closing.map((server) => {
+      server.closeAllConnections();
+      return new Promise<void>((resolve) => server.close(() => resolve()));
+    }));
+  });
+
+  async function serveSecureHealthz(): Promise<number> {
+    const server = createHttpsServer(readPair(TLS_PAIR_PUBLIC), (_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ app: HEALTH_APP_ID }));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return (server.address() as AddressInfo).port;
+  }
+
+  function secureLoopback(port: number): WebEndpoint {
+    return { port, host: '127.0.0.1', tls: TLS_PAIR_PUBLIC };
+  }
+
+  it('reports ours for an HTTPS player with a certificate for another name', async () => {
+    const port = await serveSecureHealthz();
+
+    expect(await probeHealthz(port, '127.0.0.1', true)).toBe('ours');
+  });
+
+  it('reports foreign for a plain HTTP probe of an HTTPS player', async () => {
+    const port = await serveSecureHealthz();
+
+    expect(await probeHealthz(port, '127.0.0.1', false)).toBe('foreign');
+  });
+
+  it('finds an HTTPS owner when the saved endpoint differs from the startup endpoint only in scheme', async () => {
+    const port = await serveSecureHealthz();
+
+    expect(await probeWebOwner(loopback(port), () => secureLoopback(port))).toEqual({ outcome: 'ours', port, secure: true });
+  });
+
+  it('finds an HTTPS owner from an HTTP-configured probe when the saved scheme matches the startup one', async () => {
+    const port = await serveSecureHealthz();
+
+    expect(await probeOwner(port, '127.0.0.1', false)).toEqual({ outcome: 'ours', secure: true });
+    expect(await probeWebOwner(loopback(port), () => loopback(port))).toEqual({ outcome: 'ours', port, secure: true });
+  });
+
+  it('finds an HTTP owner from an HTTPS-configured probe', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ app: HEALTH_APP_ID }));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    expect(await probeOwner(port, '127.0.0.1', true)).toEqual({ outcome: 'ours', secure: false });
+    expect(await probeWebOwner(secureLoopback(port), () => secureLoopback(port))).toEqual({
+      outcome: 'ours',
+      port,
+      secure: false,
+    });
+  });
+
+  it('keeps the preferred scheme on a refused probe, without a second try', async () => {
+    // A freed ephemeral port can be taken by a parallel test, so the refusal is simulated.
+    vi.mocked(loopbackRequest).mockClear();
+    vi.mocked(loopbackRequest).mockImplementationOnce(() => {
+      const req = new EventEmitter() as ClientRequest;
+      req.end = (() => {
+        const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+        process.nextTick(() => req.emit('error', refused));
+        return req;
+      }) as ClientRequest['end'];
+      return req;
+    });
+
+    expect(await probeOwner(4533, '127.0.0.1', true)).toEqual({ outcome: 'refused', secure: true });
+    expect(loopbackRequest).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -229,20 +336,19 @@ describe('startup and saved endpoint owner probe', () => {
 
   it('finds the owner on the saved endpoint when the startup endpoint refuses', async () => {
     const startupPort = await refusedPort();
-    const savedPort = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: false });
+    const savedPort = await serveHealthz({ app: HEALTH_APP_ID });
     const readSaved = (): WebEndpoint => loopback(savedPort);
 
     expect(await probeWebOwner(loopback(startupPort), readSaved)).toEqual({
       outcome: 'ours',
-      playbackAttached: false,
-      scrobbleClaims: false,
       port: savedPort,
+      secure: false,
     });
     expect(await webOwnerPresent(loopback(startupPort), readSaved)).toBe(true);
   });
 
   it('does not read the saved endpoint when the startup endpoint answers as ours', async () => {
-    const startupPort = await serveHealthz({ app: HEALTH_APP_ID, playbackAttached: true });
+    const startupPort = await serveHealthz({ app: HEALTH_APP_ID });
     const readSaved = vi.fn((): WebEndpoint | null => null);
 
     expect((await probeWebOwner(loopback(startupPort), readSaved)).outcome).toBe('ours');
@@ -262,9 +368,8 @@ describe('startup and saved endpoint owner probe', () => {
 
     expect(await probeWebOwner(loopback(startupPort), noSavedEndpoint)).toEqual({
       outcome: 'refused',
-      playbackAttached: false,
-      scrobbleClaims: false,
       port: startupPort,
+      secure: false,
     });
   });
 

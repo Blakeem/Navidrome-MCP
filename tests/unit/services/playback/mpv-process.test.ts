@@ -1,12 +1,7 @@
 /**
  * Navidrome MCP Server - mpv-process unit tests
  * Copyright (C) 2025
- *
- * Covers production-hardening changes from docs/review/02 batch C:
- *   - M1: socket path prefers XDG_RUNTIME_DIR when set
- *   - mpv binary resolution rejects directories and the mpv.com wrapper
- *
- * The real mpv binary is exercised by tests/integration/playback/.
+ * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -118,6 +113,14 @@ describe('spawnMpv', () => {
     } finally {
       errorSpy.mockRestore();
     }
+  });
+
+  it('falls back to the null output when the audio output is lost', () => {
+    vi.mocked(spawn).mockReturnValue(Object.assign(new EventEmitter(), { unref: vi.fn() }) as never);
+
+    spawnMpv('/fake/mpv', '/tmp/fake.sock');
+
+    expect(vi.mocked(spawn).mock.calls.at(-1)?.[1]).toContain('--audio-fallback-to-null=yes');
   });
 });
 
