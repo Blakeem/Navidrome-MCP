@@ -51,14 +51,14 @@ Release 1. Roadmap: [audio-device-selector.md](audio-device-selector.md).
 
 ## Web UI Auth + Roles
 
-Release 1. Roadmap: [web-ui-auth-roles.md](web-ui-auth-roles.md). The decisions below replace the roadmap's invite-only design and its trusted loopback browser.
+Release 1. Roadmap: [web-ui-auth-roles.md](web-ui-auth-roles.md). The decisions below replace the roadmap's invite-only design and its loopback browser that never logs in.
 
 **Status:** built. Mode `password` has one admin password. Mode `jukebox` adds jukebox code guests. Device access and user accounts are not built.
 
 **Decisions**
 - One setting picks the access mode. `none` is the default and keeps today's open LAN behavior, so existing users see no change.
 - The other modes are device access and username-and-password access. Both are to be supported.
-- With access control on, every browser logs in, including one on the host machine.
+- With access control on, every browser logs in. The host computer's browser instead becomes an admin with no login when "Ask for the admin password on this computer" is off or no admin password is saved.
 - An admin account manages users, devices and roles.
 - Roles split queue rights. A guest adds to the queue within a limit. An admin holds the full control the web remote has today, including replace and clear.
 - Passwords are hashed with Argon2id from `node:crypto`, which raises the minimum Node version.

@@ -84,7 +84,7 @@ export const WEBUI_ADMIN_ACCESS_LEVELS = ['localhost', 'lan', 'anywhere'] as con
 export type WebuiAdminAccess = (typeof WEBUI_ADMIN_ACCESS_LEVELS)[number];
 
 /** The bounds a new admin password must meet, shared by the settings page and the env fallback. */
-export const ADMIN_PASSWORD_MIN_LENGTH = 12;
+export const ADMIN_PASSWORD_MIN_LENGTH = 8;
 export const ADMIN_PASSWORD_MAX_LENGTH = 128;
 
 export function isAdminPasswordLengthValid(password: string): boolean {

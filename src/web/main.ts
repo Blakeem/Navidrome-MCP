@@ -14,7 +14,7 @@ import { logPath } from './file-logging.js';
 
 import type { Server } from 'node:http';
 
-import { createRuntime } from '../bootstrap.js';
+import { createRuntime, type Runtime } from '../bootstrap.js';
 import { resolveConfigState, type Config, type StartupFailure } from '../config.js';
 import { readEnvAdminPassword } from '../config/env-settings.js';
 import { startConfigServer } from '../config-app/server.js';
@@ -47,6 +47,7 @@ import {
   shouldStopForMcpExit,
 } from './player-runtime.js';
 import { createSettingsPageHolder } from './settings-page.js';
+import { createSetupSaveHandler, type ConfiguredState, type PortAcquisition } from './setup-mode.js';
 
 // Node exits on an unhandled rejection by default, and an MCP-spawned child's stderr is ignored, so
 // the reason goes to the log file instead.
@@ -61,8 +62,9 @@ const SHUTDOWN_HARD_EXIT_MS = 3000;
 const launchedByMcp = process.send !== undefined;
 
 /**
- * Only this process knows the bind succeeded, so the MCP parent never opens the browser. A direct
- * run always opens, since the user launched it to use it. Tests set NAVIDROME_WEB_AUTO_OPEN=0.
+ * Only this process knows the bind succeeded, so the MCP parent opens the browser only for open_jukebox_remote,
+ * after its probe sees this player answer. A direct run always opens, since the user launched it to use it.
+ * Tests set NAVIDROME_WEB_AUTO_OPEN=0.
  */
 function maybeOpenBrowser(url: string, autoOpenBrowser: boolean): void {
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] === '0') return;
@@ -172,7 +174,11 @@ function keepPlaybackAttached(): void {
  */
 async function runSetupMode(failure?: StartupFailure): Promise<void> {
   const headline = buildSetupHeadline(failure);
+  const stopSetup = (): void => {
+    void settings.close().then(() => process.exit(0));
+  };
   const settings = await startConfigServer({
+    host: 'jukebox-setup',
     idleTimeoutMs: SETTINGS_PAGE_IDLE_TIMEOUT_MS,
     onIdleTimeout: () => {
       logger.info(
@@ -180,39 +186,58 @@ async function runSetupMode(failure?: StartupFailure): Promise<void> {
       );
       process.exit(0);
     },
+    onSaved: createSetupSaveHandler({
+      resolveState: resolveConfigState,
+      acquire: async (state) => acquirePlayerPort(state, await createPlayerRuntime(state)),
+      leaveSetup: () => {
+        // The player installs its own shutdown triggers, which quit mpv.
+        process.removeListener('SIGINT', stopSetup);
+        process.removeListener('SIGTERM', stopSetup);
+        logger.info('Jukebox Remote: the saved settings are usable. Leaving setup mode.');
+      },
+      runOwner: (owner) => {
+        runPortOwner(owner).catch(failStart);
+      },
+    }),
   });
 
   logger.warn(`${headline} Opening the settings page: ${settings.url}`);
   // The logger writes to a file, so stdout carries the URL for a terminal run and for a host where
   // no browser opens.
   process.stdout.write(
-    `\n  ${headline}\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, run \`navidrome-mcp jukebox\` again.\n\n`,
+    `\n  ${headline}\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  The Jukebox Remote starts after you Save.\n\n`,
   );
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] !== '0') openBrowser(settings.url);
 
-  const stop = (): void => {
-    void settings.close().then(() => process.exit(0));
-  };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  process.once('SIGINT', stopSetup);
+  process.once('SIGTERM', stopSetup);
 
-  // The listening config server keeps the process alive. Serving waits for the next launch to read
-  // the saved config.
+  // The listening config server keeps the process alive until a Save starts the player.
 }
 
-async function main(): Promise<void> {
-  logger.info('Jukebox Remote starting');
-
-  const state = await resolveConfigState();
-  if (!state.configured) {
-    await runSetupMode(state.failure);
-    return;
-  }
+async function createPlayerRuntime(state: ConfiguredState): Promise<Runtime> {
   logger.setDebug(state.config.debug);
   // Only a mode with a login hashes or verifies a password, so mode none runs on a Node.js without Argon2.
   if (state.config.webui.auth.mode !== 'none') await assertArgon2Available();
+  return createRuntime(state.config);
+}
 
-  const { config, client } = await createRuntime(state.config);
+interface PortOwner {
+  runtime: Runtime;
+  url: string;
+  server: Server;
+  auth: AuthService;
+  guests: GuestQueue;
+  broadcaster: SseBroadcaster;
+  visualizer: VisualizerHub;
+}
+
+/**
+ * Setup mode runs createPlayerRuntime and this before its settings page closes, so a failure up to
+ * the bind, such as a busy port, leaves that page up.
+ */
+async function acquirePlayerPort(state: ConfiguredState, runtime: Runtime): Promise<PortAcquisition<PortOwner>> {
+  const { config, client } = runtime;
   setPersist(config.webui.persistAfterMcpExit);
   setTheme(config.webui.theme);
   setVisualizer(config.webui.visualizer);
@@ -225,7 +250,7 @@ async function main(): Promise<void> {
   // Startup can outlast the spawning MCP, and a player bound then would stop at once.
   if (launchedByMcp && !process.connected && !getPersist()) {
     logger.info('Jukebox Remote: the spawning MCP exited during startup. Standing down.');
-    return;
+    return { mode: 'mcp-exited' };
   }
 
   const auth = await AuthService.load(config, state.source, state.source === 'env' ? readEnvAdminPassword() : null);
@@ -244,10 +269,14 @@ async function main(): Promise<void> {
     logger.info(`${attachLines.join(' ')} Standing down.`);
     process.stdout.write(`\n  ${attachLines.join('\n  ')}\n\n`);
     if (!launchedByMcp) maybeOpenBrowser(adminUrl, config.webui.autoOpenBrowser);
-    return;
+    return { mode: 'attached', url: result.url };
   }
+  return { mode: 'owner', owner: { runtime, url: result.url, server: result.server, auth, guests, broadcaster, visualizer } };
+}
 
-  serverRef = result.server;
+async function runPortOwner(owner: PortOwner): Promise<void> {
+  const { runtime: { config, client }, auth, guests, broadcaster, visualizer } = owner;
+  serverRef = owner.server;
   broadcasterRef = broadcaster;
   visualizerHubRef = visualizer;
   authRef = auth;
@@ -278,13 +307,25 @@ async function main(): Promise<void> {
     logger.warn('Jukebox Remote runs in a container or WSL, where port forwarding may rewrite source addresses. LAN checks may then treat internet clients as local.');
   }
   logBanner(config.webui);
-  maybeOpenBrowser(adminPageUrl(result.url), config.webui.autoOpenBrowser);
+  maybeOpenBrowser(adminPageUrl(owner.url), config.webui.autoOpenBrowser);
   installShutdownTriggers();
 
   logger.info('Jukebox Remote started successfully (port owner)');
 }
 
-main().catch((error: unknown) => {
+async function main(): Promise<void> {
+  logger.info('Jukebox Remote starting');
+
+  const state = await resolveConfigState();
+  if (!state.configured) {
+    await runSetupMode(state.failure);
+    return;
+  }
+  const acquired = await acquirePlayerPort(state, await createPlayerRuntime(state));
+  if (acquired.mode === 'owner') await runPortOwner(acquired.owner);
+}
+
+function failStart(error: unknown): void {
   logger.error('Jukebox Remote failed to start:', error);
   // A direct terminal run would otherwise exit with no visible reason.
   const message = errorMessage(error);
@@ -294,4 +335,6 @@ main().catch((error: unknown) => {
     /* best-effort */
   }
   process.exit(1);
-});
+}
+
+main().catch(failStart);

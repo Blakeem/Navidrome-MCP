@@ -93,7 +93,7 @@ LLM client
 |     v                                                                          |
 |  config mapper (src/config/map-config.ts:88-93)                                |
 |     features.lastfm = lastFmApiKey set                                         |
-|     features.lyrics = lyricsProvider and lrclibUserAgent set                   |
+|     features.lyrics = the features.lyrics switch                               |
 |     features.playback = mpv binary found                                       |
 |     |                                                                          |
 |     v                                                                          |

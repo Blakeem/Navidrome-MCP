@@ -30,12 +30,15 @@ export async function createRuntime(config: Config): Promise<Runtime> {
   const client = new NavidromeClient(config);
   await client.initialize();
 
+  // The Jukebox Remote's setup mode runs this again after a failed start, and both caches skip a second load.
+  libraryManager.reset();
+  filterCacheManager.reset();
   await libraryManager.initialize(client, config);
   await filterCacheManager.initialize(client, config);
 
   // Tools lazy-spawn mpv on first use, so the engine needs the config before any tool runs.
+  playbackEngine.configure(config.features.playback ? config : null);
   if (config.features.playback) {
-    playbackEngine.configure(config);
     // Read at each mpv spawn, so a visualizer toggle saved after this process started applies.
     playbackEngine.setVisualizerSource(
       () => config.webui.enabled && (readSavedWebuiSettings()?.visualizer ?? config.webui.visualizer),

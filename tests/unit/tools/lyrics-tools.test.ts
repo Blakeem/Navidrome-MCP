@@ -466,7 +466,7 @@ describe('lyrics category with LRCLIB disabled', () => {
     const { category } = makeCategory(localOnlyConfig);
 
     await expect(category.handleToolCall('get_lyrics', { lrclibId: '12345' })).rejects.toThrow(
-      /lyricsProvider and features\.lrclibUserAgent/,
+      'LRCLIB lyrics lookup is off. Set features.lyrics to true in settings.json. When the server runs from environment variables, set LYRICS_PROVIDER=lrclib and LRCLIB_USER_AGENT.',
     );
     expect(global.fetch).not.toHaveBeenCalled();
   });
@@ -476,7 +476,7 @@ describe('lyrics category with LRCLIB disabled', () => {
 
     await expect(
       category.handleToolCall('search_lyrics', { title: 'Creep', artist: 'Radiohead' }),
-    ).rejects.toThrow(/lyricsProvider and features\.lrclibUserAgent/);
+    ).rejects.toThrow('LRCLIB lyrics lookup is off. Set features.lyrics to true in settings.json. When the server runs from environment variables, set LYRICS_PROVIDER=lrclib and LRCLIB_USER_AGENT.');
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });

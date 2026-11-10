@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { HostStartError, type SaveTakeover } from '../../../src/config-app/save-message.js';
 import { startConfigServer } from '../../../src/config-app/server.js';
 import { CROSS_ORIGIN_REFUSAL } from '../../../src/webui/http-helpers.js';
 import { readSettings } from '../../../src/config/store.js';
@@ -48,7 +49,11 @@ describe('settings server seed/save', () => {
   let server: { url: string; close: () => Promise<void> } | null = null;
 
   beforeEach(() => {
-    for (const k of ['NAVIDROME_CONFIG_PATH', 'NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD']) {
+    for (const k of [
+      'NAVIDROME_CONFIG_PATH', 'NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD', 'MUSICBRAINZ_USER_AGENT',
+      'WEBUI_PERSIST_AFTER_MCP_EXIT', 'WEBUI_VISUALIZER', 'JUKEBOX_GUEST_QUEUE_LIMIT', 'TOKEN_EXPIRY',
+      'MCP_HTTP_PORT', 'MCP_HTTP_AUTH_TOKEN', 'PLAYBACK_TRANSCODE_BITRATE', 'WEBUI_ADMIN_ACCESS',
+    ]) {
       saved[k] = process.env[k];
     }
     dir = mkdtempSync(join(tmpdir(), 'nd-srv-'));
@@ -66,8 +71,8 @@ describe('settings server seed/save', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function start(options?: { idleTimeoutMs?: number; onIdleTimeout?: () => void }): Promise<string> {
-    server = await startConfigServer(options);
+  async function start(options: Partial<Parameters<typeof startConfigServer>[0]> = {}): Promise<string> {
+    server = await startConfigServer({ host: 'settings-command', ...options });
     return server.url.replace(/\/$/, '');
   }
 
@@ -95,6 +100,7 @@ describe('settings server seed/save', () => {
     const seed = await getJson(await fetch(`${base}/api/settings/seed`));
     expect(seed.storeProblem).toEqual(expect.stringContaining('webui.auth.mode'));
     expect(seed.storeUnreadable).toBe(false);
+    expect(seed.storeSalvaged).toBe(true);
   });
 
   it('marks a store the server cannot read as unreadable in the seed response', async () => {
@@ -103,13 +109,14 @@ describe('settings server seed/save', () => {
     const seed = await getJson(await fetch(`${base}/api/settings/seed`));
     expect(seed.storeProblem).toMatch(/is unreadable \(EISDIR\)/);
     expect(seed.storeUnreadable).toBe(true);
+    expect(seed.storeSalvaged).toBe(false);
   });
 
   it('answers a null store problem for a usable store and for no store', async () => {
     const base = await start();
-    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeProblem: null, storeUnreadable: false });
+    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeProblem: null, storeUnreadable: false, storeSalvaged: false });
     writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } }));
-    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeProblem: null, storeUnreadable: false });
+    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeProblem: null, storeUnreadable: false, storeSalvaged: false });
   });
 
   it('reports the settings file and Jukebox Remote log paths in the seed response', async () => {
@@ -143,15 +150,193 @@ describe('settings server seed/save', () => {
     expect(readSettings()?.transport?.authToken).toBe('tok-secret');
   });
 
-  it('serves recommended values for the optional radio/lyrics fields', async () => {
+  it('checks radio and lyrics on first run, and the first Save writes both as true', async () => {
     const base = await start();
-    const sug = await getJson(await fetch(`${base}/api/settings/suggestions`));
-    expect(sug['features.radioBrowserUserAgent']).toBe('Navidrome-MCP');
-    expect(sug['features.lyricsProvider']).toBe('lrclib');
-    expect(sug['features.lrclibUserAgent']).toBe('Navidrome-MCP');
-    expect(sug['features.lrclibBase']).toBe('https://lrclib.net');
-    // A blank radio base selects a mirror by SRV lookup, so the form suggests none.
-    expect(sug['features.radioBrowserBase']).toBeUndefined();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.features).toMatchObject({ radio: true, lyrics: true });
+    expect(seed.features.radioBrowserUserAgent ?? null).toBeNull();
+    expect(seed.features.lrclibUserAgent ?? null).toBeNull();
+
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      features: { radio: seed.features.radio, lyrics: seed.features.lyrics, radioBrowserUserAgent: null, lrclibUserAgent: null },
+    });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.features).toEqual({ radio: true, lyrics: true });
+  });
+
+  it.each([
+    [{ radioBrowserUserAgent: 'UA/1.0' }, { radio: true, lyrics: false }],
+    [{ lyricsProvider: 'lrclib', lrclibUserAgent: 'UA/1.0' }, { radio: false, lyrics: true }],
+    [{}, { radio: false, lyrics: false }],
+  ])('seeds the radio and lyrics boxes of a file without the booleans from %j', async (features, expected) => {
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' }, features }));
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.features).toMatchObject(expected);
+  });
+
+  it('writes the booleans over a legacy file, keeps its user agent override and drops lyricsProvider', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      features: { lyricsProvider: 'lrclib', lrclibUserAgent: 'Custom/1.0', musicBrainzUserAgent: 'Mb/1.0' },
+    }));
+    const base = await start();
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: MASK },
+      features: { radio: false, lyrics: true, lrclibUserAgent: 'Custom/1.0' },
+    });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.features).toEqual({
+      radio: false,
+      lyrics: true,
+      lrclibUserAgent: 'Custom/1.0',
+      musicBrainzUserAgent: 'Mb/1.0',
+    });
+  });
+
+  it.each([
+    ['no store', null],
+    ['a voided store', { navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' }, webui: { port: 'abc' } }],
+  ])('keeps the env MusicBrainz user agent, which the page does not show, on a save over %s', async (_label, storeContent) => {
+    process.env['MUSICBRAINZ_USER_AGENT'] = 'MyApp/1.0 (me@example.com)';
+    if (storeContent !== null) writeFileSync(file, JSON.stringify(storeContent));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: 'p' } });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.features?.musicBrainzUserAgent).toBe('MyApp/1.0 (me@example.com)');
+  });
+
+  it('keeps the stored MusicBrainz user agent over the env one', async () => {
+    process.env['MUSICBRAINZ_USER_AGENT'] = 'Env/1.0';
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      features: { musicBrainzUserAgent: 'Stored/1.0' },
+    }));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK } });
+    expect(res.status).toBe(200);
+    expect(readSettings()?.features?.musicBrainzUserAgent).toBe('Stored/1.0');
+  });
+
+  it('marks only a usable store as usable in the seed response', async () => {
+    const base = await start();
+    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeUsable: false });
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } }));
+    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeUsable: true });
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533' }, webui: { port: 'abc' } }));
+    expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeUsable: false });
+  });
+
+  it('keeps each key a changed-fields save omits, such as a gear-menu value and the player-owned settings', async () => {
+    const stored = {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      webui: { port: 8808, autoOpenBrowser: true, persistAfterMcpExit: true, visualizer: false },
+      jukebox: { guestQueueLimit: 7 },
+      advanced: { tokenExpiry: 600 },
+    };
+    writeFileSync(file, JSON.stringify(stored));
+    const base = await start();
+
+    const res = await post(base, { webui: { port: 9000 } });
+
+    expect(res.status).toBe(200);
+    expect(readSettings()).toMatchObject({
+      navidrome: stored.navidrome,
+      webui: { port: 9000, autoOpenBrowser: true, persistAfterMcpExit: true, visualizer: false },
+      jukebox: { guestQueueLimit: 7 },
+      advanced: { tokenExpiry: 600 },
+    });
+  });
+
+  it('writes the radio and lyrics state the page showed when a save over a legacy file posts neither', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      features: { radioBrowserUserAgent: 'UA/1.0' },
+    }));
+    const base = await start();
+
+    const res = await post(base, { webui: { port: 9000 } });
+
+    expect(res.status).toBe(200);
+    expect(readSettings()?.features).toEqual({ radio: true, lyrics: false, radioBrowserUserAgent: 'UA/1.0' });
+  });
+
+  it('keeps the env values of the player-owned settings and the token expiry on a first save', async () => {
+    process.env['WEBUI_PERSIST_AFTER_MCP_EXIT'] = 'true';
+    process.env['WEBUI_VISUALIZER'] = 'false';
+    process.env['JUKEBOX_GUEST_QUEUE_LIMIT'] = '7';
+    process.env['TOKEN_EXPIRY'] = '600';
+    const base = await start();
+
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: 'p' } });
+
+    expect(res.status).toBe(200);
+    expect(readSettings()).toMatchObject({
+      webui: { persistAfterMcpExit: true, visualizer: false },
+      jukebox: { guestQueueLimit: 7 },
+      advanced: { tokenExpiry: 600 },
+    });
+  });
+
+  it('skips an out-of-range env value the page cannot edit on a first save', async () => {
+    process.env['JUKEBOX_GUEST_QUEUE_LIMIT'] = '25';
+    process.env['TOKEN_EXPIRY'] = '0';
+    process.env['MCP_HTTP_PORT'] = '70000';
+    const base = await start();
+
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      transport: { type: 'stdio' },
+      webui: { auth: { mode: 'none' } },
+    });
+
+    expect(res.status).toBe(200);
+    const stored = readSettings();
+    expect(stored?.jukebox?.guestQueueLimit).toBeUndefined();
+    expect(stored?.advanced?.tokenExpiry).toBeUndefined();
+    expect(stored?.transport).toMatchObject({ type: 'stdio' });
+    expect(stored?.transport?.port).toBeUndefined();
+  });
+
+  it('keeps the env values of the fields the page disables, such as the http port, on a first save', async () => {
+    process.env['MCP_HTTP_PORT'] = '4000';
+    process.env['MCP_HTTP_AUTH_TOKEN'] = 'env-token';
+    process.env['PLAYBACK_TRANSCODE_BITRATE'] = '256';
+    process.env['WEBUI_ADMIN_ACCESS'] = 'lan';
+    const base = await start();
+
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      transport: { type: 'stdio' },
+      playback: { transcodeFormat: 'raw' },
+      webui: { auth: { mode: 'none' } },
+    });
+
+    expect(res.status).toBe(200);
+    expect(readSettings()).toMatchObject({
+      transport: { type: 'stdio', port: 4000, authToken: 'env-token' },
+      playback: { transcodeFormat: 'raw', transcodeBitrate: '256' },
+      webui: { auth: { mode: 'none', adminAccess: 'lan' } },
+    });
+  });
+
+  it('writes a posted http field over its env value on a first save', async () => {
+    process.env['MCP_HTTP_PORT'] = '4000';
+    const base = await start();
+
+    const res = await post(base, {
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      transport: { type: 'http', port: 5000 },
+    });
+
+    expect(res.status).toBe(200);
+    expect(readSettings()?.transport).toMatchObject({ type: 'http', port: 5000 });
+  });
+
+  it('serves no suggestions route', async () => {
+    const base = await start();
+    expect((await fetch(`${base}/api/settings/suggestions`)).status).toBe(404);
   });
 
   it('keeps the stored password when the form re-submits the mask sentinel', async () => {
@@ -201,7 +386,7 @@ describe('settings server seed/save', () => {
     expect(written['webui']).toEqual({ port: 9000, note: 'kept', auth: { enabled: true } });
   });
 
-  it('keeps a cleared field cleared and replaces a stored value with a posted one', async () => {
+  it('drops a cleared field from the file and replaces a stored value with a posted one', async () => {
     writeFileSync(file, JSON.stringify({
       navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
       transport: { allowedHosts: ['mcp.example.com'], port: 3000 },
@@ -216,8 +401,8 @@ describe('settings server seed/save', () => {
     expect(res.status).toBe(200);
     const after = readSettings();
     expect(after?.navidrome?.url).toBe('http://new:4533');
-    expect(after?.transport).toEqual({ allowedHosts: [], port: 3000 });
-    expect(after?.features).toEqual({ lastFmApiKey: null, lrclibBase: 'https://new.example' });
+    expect(after?.transport).toEqual({ port: 3000 });
+    expect(after?.features).toEqual({ radio: false, lyrics: false, lrclibBase: 'https://new.example' });
   });
 
   it('lists the probed audio devices narrowed to one driver, using the stored mpv path', async () => {
@@ -295,11 +480,11 @@ describe('settings server seed/save', () => {
 
     const chosen = await post(base, { navidrome, playback: { audioDevice: { id: 'wasapi/{b}', name: null } } });
     expect(chosen.status).toBe(200);
-    expect(readSettings()?.playback).toEqual({ audioDevice: { id: 'wasapi/{b}', name: null }, mpvPath: '/opt/mpv/mpv' });
+    expect(readSettings()?.playback).toEqual({ audioDevice: { id: 'wasapi/{b}' }, mpvPath: '/opt/mpv/mpv' });
 
     const cleared = await post(base, { navidrome, playback: { audioDevice: null } });
     expect(cleared.status).toBe(200);
-    expect(readSettings()?.playback).toEqual({ audioDevice: null, mpvPath: '/opt/mpv/mpv' });
+    expect(readSettings()?.playback).toEqual({ mpvPath: '/opt/mpv/mpv' });
   });
 
   it('masks the Last.fm API key in the seed response', async () => {
@@ -453,8 +638,60 @@ describe('settings server seed/save', () => {
     const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: 'p' } });
     expect(res.status).toBe(200);
     expect(readFileSync(`${file}.bak`, 'utf8')).toBe(original);
-    expect((await getJson(res)).message).toContain(`kept as ${file}.bak`);
+    expect((await getJson(res)).message).toContain(`could not be read, so it was kept as ${file}.bak`);
     expect(readSettings()?.navidrome?.url).toBe('http://h:4533');
+  });
+
+  it('seeds the valid values of a voided store, and a save keeps them, its unknown keys and the admin password hash', async () => {
+    const hash = '$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      webui: { port: 'abc', expose: true, newFeature: true, auth: { mode: 'password', adminPasswordHash: hash, adminAccess: 'everywhere' } },
+      futureSection: { a: 1 },
+    }));
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.storeProblem).toEqual(expect.stringContaining('webui.port'));
+    expect(seed.navidrome).toEqual({ url: 'http://h:4533', username: 'u', password: MASK });
+    expect(seed.webui.expose).toBe(true);
+    expect(seed.webui.auth).toMatchObject({ mode: 'password', adminPasswordSet: true });
+
+    const res = await post(base, { navidrome: seed.navidrome, webui: { port: 8808, expose: true, auth: { mode: 'password' } } });
+
+    expect(res.status).toBe(200);
+    expect(readSettings()).toMatchObject({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      webui: { port: 8808, expose: true, auth: { mode: 'password', adminPasswordHash: hash } },
+    });
+    const written = JSON.parse(readFileSync(file, 'utf8'));
+    expect(written.webui.newFeature).toBe(true);
+    expect(written.futureSection).toEqual({ a: 1 });
+    expect(existsSync(`${file}.bak`)).toBe(true);
+    const { message } = await getJson(res);
+    expect(message).toContain(`The previous settings.json failed validation. This save kept each of its valid values. The old file is kept as ${file}.bak.`);
+    expect(message).not.toContain('could not be read');
+  });
+
+  it('lists the hand-edit notices of the store in the seed response', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533' }, webui: { prot: 1, port: '8808' } }));
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.storeNotices).toEqual([
+      'webui.port holds the text "8808", so it is read as the number 8808. Remove the quotes to fix the file.',
+      'webui.prot is not a setting this version knows. Did you mean webui.port?',
+    ]);
+    expect(seed.webui.port).toBe(8808);
+  });
+
+  it('keeps an unknown key and writes a coerced value back in its type on save', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' }, webui: { prot: 1, port: '9001' } }));
+    const base = await start();
+    const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK } });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(readFileSync(file, 'utf8')).webui).toEqual({ prot: 1, port: 9001 });
+    expect((await getJson(res)).storeNotices).toEqual([
+      'webui.prot is not a setting this version knows. Did you mean webui.port?',
+    ]);
   });
 
   it('keeps no backup when the store was usable', async () => {
@@ -463,6 +700,57 @@ describe('settings server seed/save', () => {
     const res = await post(base, { navidrome: { url: 'http://h:4533', username: 'u', password: MASK } });
     expect(res.status).toBe(200);
     expect(existsSync(`${file}.bak`)).toBe(false);
+  });
+
+  describe('a changed-fields save', () => {
+    const STORED = JSON.stringify({ navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' } });
+    const postChanged = (base: string, body: unknown): Promise<Response> =>
+      fetch(`${base}/api/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Settings-Changed-Only': '1' },
+        body: JSON.stringify(body),
+      });
+
+    it('merges onto a usable store', async () => {
+      writeFileSync(file, STORED);
+      const base = await start();
+      const res = await postChanged(base, { webui: { port: 9000 } });
+      expect(res.status).toBe(200);
+      expect(readSettings()).toMatchObject({ navidrome: { url: 'http://h:4533', password: 'secret' }, webui: { port: 9000 } });
+    });
+
+    // Env credentials give the server a base that would validate, so only the refusal keeps the file.
+    it('is refused when the store turned invalid after the page loaded', async () => {
+      process.env['NAVIDROME_URL'] = 'http://env:4533';
+      process.env['NAVIDROME_USERNAME'] = 'envuser';
+      process.env['NAVIDROME_PASSWORD'] = 'envpass';
+      writeFileSync(file, STORED);
+      const base = await start();
+      writeFileSync(file, '{"navidrome": {},}');
+
+      const res = await postChanged(base, { webui: { port: 9000 } });
+
+      expect(res.status).toBe(409);
+      expect((await getJson(res)).error).toBe(
+        'settings.json changed after this page loaded, and the server can no longer use it. Reload the page, then save again.',
+      );
+      expect(readFileSync(file, 'utf8')).toBe('{"navidrome": {},}');
+      expect(existsSync(`${file}.bak`)).toBe(false);
+    });
+
+    it('is refused when the store was removed after the page loaded', async () => {
+      process.env['NAVIDROME_URL'] = 'http://env:4533';
+      process.env['NAVIDROME_USERNAME'] = 'envuser';
+      process.env['NAVIDROME_PASSWORD'] = 'envpass';
+      writeFileSync(file, STORED);
+      const base = await start();
+      rmSync(file);
+
+      const res = await postChanged(base, { webui: { port: 9000 } });
+
+      expect(res.status).toBe(409);
+      expect(existsSync(file)).toBe(false);
+    });
   });
 
   it('rejects a save that would not satisfy the runtime config', async () => {
@@ -481,8 +769,8 @@ describe('settings server seed/save', () => {
     const body = await getJson(res);
     expect(body.ok).toBe(false);
     expect(body.error).toContain('Configuration validation failed');
-    expect(body.error).toContain('navidromeUrl: Navidrome URL must be a valid URL');
-    expect(body.error).toContain('navidromeUsername: Navidrome username is required');
+    expect(body.error).toContain('navidrome.url: Navidrome URL must be a valid URL');
+    expect(body.error).toContain('navidrome.username: Navidrome username is required');
   });
 
   // fetch rejects a URL with credentials before any network I/O and echoes it in the error.
@@ -603,6 +891,9 @@ describe('settings server seed/save', () => {
 });
 
 describe('settings server admin password', () => {
+  const PLAYER_RESTART =
+    "The Jukebox Remote applies these changes after Shut down player in the player's gear menu and a new start. " +
+    'A new start is the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`.';
   const NAV = { url: 'http://h:4533', username: 'u', password: 'secret' };
   const STORED_HASH = '$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
   let dir: string;
@@ -626,7 +917,7 @@ describe('settings server admin password', () => {
   });
 
   async function start(): Promise<string> {
-    server = await startConfigServer();
+    server = await startConfigServer({ host: 'settings-command' });
     return server.url.replace(/\/$/, '');
   }
 
@@ -651,46 +942,27 @@ describe('settings server admin password', () => {
     expect(seed.webui.auth).toEqual({ mode: 'jukebox', adminPasswordSet });
   });
 
-  it('names the apply rules without the admin password rule when no new password is saved', async () => {
+  it('names only the Jukebox Remote restart for an Access change', async () => {
     writeFileSync(file, JSON.stringify({ navidrome: NAV }));
     const base = await start();
 
     const { message } = (await (await save(base, { mode: 'none' })).json()) as { message: string };
 
-    expect(message).toContain(`Settings saved to ${file}.`);
-    expect(message).toContain('MCP server settings apply after the MCP server restarts. A stdio server restarts with its MCP client.');
-    expect(message).toContain('Shut down player');
-    expect(message).toContain('the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`');
-    expect(message).not.toContain('admin password');
-    expect(message).not.toMatch(/navidrome-web|navidrome-config|re-run/);
+    expect(message).toBe(`Settings saved to ${file}. ${PLAYER_RESTART}`);
   });
 
-  it('says a new admin password applies to a running player without a restart', async () => {
-    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+  it('names only the live-apply lines for a new admin password over an unchanged Access', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, webui: { auth: { mode: 'password', adminPasswordHash: STORED_HASH } } }));
     const base = await start();
 
     const res = await save(base, { mode: 'password', adminPassword: 'correct horse battery' });
+    const { message } = (await res.json()) as { message: string };
 
-    expect(((await res.json()) as { message: string }).message).toContain(
+    expect(message).toContain(
       'A new admin password applies to a running player within about 10 seconds and signs out every admin session.',
     );
-  });
-
-  it('repeats every apply rule of the save message in the page header', async () => {
-    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
-    const base = await start();
-    const header = readFileSync(new URL('../../../src/config-app/public/index.html', import.meta.url), 'utf8')
-      .replace(/<\/?code[^>]*>/g, '')
-      .replace(/\s+/g, ' ');
-
-    const { message } = (await (await save(base, { mode: 'password', adminPassword: 'correct horse battery' })).json()) as { message: string };
-    const rules = message
-      .replace(/^Settings saved to .*?\.json\. /, '')
-      .replace(/ You can keep changing settings.*$/, '')
-      .replaceAll('`', '');
-
-    expect(rules).toContain('A change of Access');
-    expect(header).toContain(rules);
+    expect(message).not.toContain('Shut down player');
+    expect(message).not.toContain('MCP server');
   });
 
   it('hashes a new password with Argon2id and stores only the hash', async () => {
@@ -717,14 +989,24 @@ describe('settings server admin password', () => {
     expect(storedAuth()?.['adminPasswordHash']).toBe(STORED_HASH);
   });
 
-  it('refuses mode password when the stored value is not an Argon2id hash and no new password is given', async () => {
+  it('saves mode password over a stored value that is not an Argon2id hash, with no new password', async () => {
     writeFileSync(file, JSON.stringify({ navidrome: NAV, webui: { auth: { mode: 'none', adminPasswordHash: 'hand-edited' } } }));
     const base = await start();
 
     const res = await save(base, { mode: 'password', adminPassword: '' });
 
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('Access with the admin password needs an admin password');
+    expect(res.status).toBe(200);
+    expect(storedAuth()).toMatchObject({ mode: 'password', adminPasswordHash: 'hand-edited' });
+  });
+
+  it('stores the choice to skip the admin password on this computer', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'jukebox', adminPassword: '', askPasswordOnThisComputer: false });
+
+    expect(res.status).toBe(200);
+    expect(storedAuth()).toMatchObject({ mode: 'jukebox', askPasswordOnThisComputer: false });
   });
 
   it('opens without Argon2 and reports the cause when a new password needs hashing', async () => {
@@ -742,7 +1024,7 @@ describe('settings server admin password', () => {
   });
 
   it.each([
-    ['11 characters', 'x'.repeat(11)],
+    ['7 characters', 'x'.repeat(7)],
     ['129 characters', 'x'.repeat(129)],
   ])('refuses a new password of %s', async (_label, adminPassword) => {
     writeFileSync(file, JSON.stringify({ navidrome: NAV }));
@@ -751,18 +1033,29 @@ describe('settings server admin password', () => {
     const res = await save(base, { mode: 'password', adminPassword });
 
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('12 to 128 characters');
+    expect(((await res.json()) as { error: string }).error).toContain('8 to 128 characters');
     expect(storedAuth()).toBeUndefined();
   });
 
-  it.each(['password', 'jukebox'])('refuses mode %s with no stored hash and no new password', async (mode) => {
+  it('saves a new password of 8 characters', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'password', adminPassword: '8 chars!' });
+
+    expect(res.status).toBe(200);
+    expect(await verifyPassword('8 chars!', String(storedAuth()?.['adminPasswordHash']))).toBe(true);
+  });
+
+  it.each(['password', 'jukebox'])('saves mode %s with no stored hash and no new password', async (mode) => {
     writeFileSync(file, JSON.stringify({ navidrome: NAV }));
     const base = await start();
 
     const res = await save(base, { mode, adminPassword: '' });
 
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('Access with the admin password needs an admin password');
+    expect(res.status).toBe(200);
+    expect(storedAuth()).toMatchObject({ mode });
+    expect(storedAuth()).not.toHaveProperty('adminPasswordHash');
   });
 
   it('refuses a password field that is not a string', async () => {
@@ -772,5 +1065,251 @@ describe('settings server admin password', () => {
     const res = await save(base, { mode: 'none', adminPassword: 12345678901234 });
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe('settings server save replies', () => {
+  const NAV = { url: 'http://h:4533', username: 'u', password: 'secret' };
+  let dir: string;
+  let file: string;
+  let savedPath: string | undefined;
+  let server: { url: string; close: () => Promise<void> } | null = null;
+
+  beforeEach(() => {
+    savedPath = process.env['NAVIDROME_CONFIG_PATH'];
+    dir = mkdtempSync(join(tmpdir(), 'nd-srv-reply-'));
+    file = join(dir, 'settings.json');
+    process.env['NAVIDROME_CONFIG_PATH'] = file;
+  });
+
+  afterEach(async () => {
+    if (server) { await server.close(); server = null; }
+    if (savedPath === undefined) delete process.env['NAVIDROME_CONFIG_PATH'];
+    else process.env['NAVIDROME_CONFIG_PATH'] = savedPath;
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function start(options: Partial<Parameters<typeof startConfigServer>[0]> = {}): Promise<string> {
+    server = await startConfigServer({ host: 'mcp-setup', ...options });
+    return server.url.replace(/\/$/, '');
+  }
+
+  const save = async (base: string, body: unknown): Promise<any> =>
+    (await fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })).json();
+
+  it('lists the next steps with the saved Jukebox Remote address on a first save', async () => {
+    const base = await start();
+
+    const reply = await save(base, { navidrome: NAV, webui: { enabled: true, port: 9911, tls: { certPath: '/c.pem', keyPath: '/k.pem' } } });
+
+    expect(reply.message).toBe(`Settings saved to ${file}.`);
+    expect(reply.nextSteps).toEqual([
+      { text: 'Quit your AI app fully and open it again.' },
+      { text: 'The Jukebox Remote runs after your AI app restarts. It needs mpv. Open it at', url: 'https://127.0.0.1:9911/admin' },
+    ]);
+  });
+
+  it('lists the next steps over a store that had no Navidrome URL', async () => {
+    writeFileSync(file, JSON.stringify({ webui: { port: 9912 } }));
+    const base = await start();
+
+    const reply = await save(base, { navidrome: NAV });
+
+    expect(reply.nextSteps?.[1]?.url).toBe('http://127.0.0.1:9912/admin');
+  });
+
+  it('names the AI app restart on every save in MCP setup mode, over a usable store too', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, features: { radio: true, lyrics: true } }));
+    const base = await start();
+
+    const first = await save(base, { transport: { port: 3999 } });
+    const repeated = await save(base, { transport: { port: 3999 } });
+
+    expect(first.message).toBe(`Settings saved to ${file}.`);
+    expect(repeated.message).toBe('No changes to save.');
+    for (const reply of [first, repeated]) {
+      expect(reply.nextSteps?.[0]).toEqual({ text: 'Quit your AI app fully and open it again.' });
+      expect(reply.pageClosed).toBeUndefined();
+    }
+  });
+
+  it('names the player restart in MCP setup mode over a usable store a running player may have read', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, features: { radio: true, lyrics: true } }));
+    const base = await start();
+
+    const reply = await save(base, { navidrome: { ...NAV, password: 'fixed' } });
+
+    expect(reply.message).toBe(
+      `Settings saved to ${file}. The Jukebox Remote applies these changes after Shut down player in the player's gear menu and a new start. ` +
+        'A new start is the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`.',
+    );
+    expect(reply.nextSteps?.[0]).toEqual({ text: 'Quit your AI app fully and open it again.' });
+  });
+
+  it('adds the player restart for a player that runs from environment variables', async () => {
+    const base = await start({ host: 'jukebox-settings' });
+
+    const reply = await save(base, { navidrome: NAV, webui: { enabled: false, port: 9914 } });
+
+    expect(reply.nextSteps).toEqual([
+      { text: 'Quit your AI app fully and open it again.' },
+      { text: expect.stringContaining("Shut down player in the player's gear menu") },
+      { text: 'Open it again at', url: 'http://127.0.0.1:9914/admin' },
+    ]);
+  });
+
+  it('names the restarts of the changed sections on a later save, and no change on a repeat', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, features: { radio: true, lyrics: true } }));
+    const base = await start({ host: 'settings-command' });
+
+    const changed = await save(base, { transport: { port: 3999 } });
+    const repeated = await save(base, { transport: { port: 3999 } });
+
+    expect(changed.nextSteps).toBeUndefined();
+    expect(changed.message).toBe(
+      `Settings saved to ${file}. The MCP server applies these changes after it restarts. A stdio server restarts with its MCP client.`,
+    );
+    expect(repeated.message).toBe('No changes to save.');
+  });
+
+  it('reports the write and names no restart on a later save that only pruned an empty value', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, features: { radio: true, lyrics: true }, playback: { mpvPath: '' } }));
+    const base = await start({ host: 'settings-command' });
+
+    const reply = await save(base, {});
+
+    expect(reply.message).toBe(`Settings saved to ${file}.`);
+    expect(readFileSync(file, 'utf8')).not.toContain('mpvPath');
+  });
+
+  it('reports the write and names no restart on a later save that only rewrote a quoted number', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, features: { radio: true, lyrics: true }, webui: { port: '8808' } }));
+    const base = await start({ host: 'settings-command' });
+
+    const reply = await save(base, {});
+
+    expect(reply.message).toBe(`Settings saved to ${file}.`);
+    expect(reply.storeNotices).toEqual([]);
+    expect(readFileSync(file, 'utf8')).toContain('"port": 8808');
+  });
+
+  it('runs onSaved after the write, says the Jukebox Remote is starting and closes once the reply is sent', async () => {
+    let storedWhenCalled = '';
+    const base = await start({
+      host: 'jukebox-setup',
+      onSaved: () => {
+        storedWhenCalled = readFileSync(file, 'utf8');
+        return Promise.resolve({ mode: 'started' as const, url: 'http://127.0.0.1:9913' });
+      },
+    });
+
+    const reply = await save(base, { navidrome: NAV, webui: { port: 9913 } });
+
+    expect(storedWhenCalled).toContain('http://h:4533');
+    expect(reply.ok).toBe(true);
+    expect(reply.nextSteps).toEqual([
+      { text: 'The Jukebox Remote is starting.' },
+      { text: 'It needs mpv to play music. Open it at', url: 'http://127.0.0.1:9913/admin' },
+      { text: "This page closes now. To change settings later, use All settings in the player's gear menu." },
+    ]);
+    expect(reply.pageClosed).toBe(true);
+    await vi.waitFor(async () => {
+      await expect(fetch(`${base}/api/settings/seed`)).rejects.toThrow();
+    });
+  });
+
+  it('names the running player, its restart and its own scheme when the host found another player on the saved port', async () => {
+    const base = await start({ host: 'jukebox-setup', onSaved: () => Promise.resolve({ mode: 'attached' as const, url: 'https://127.0.0.1:9917' }) });
+
+    const reply = await save(base, { navidrome: NAV, webui: { port: 9917 } });
+
+    expect(reply.nextSteps?.[0]).toEqual({ text: 'A Jukebox Remote already runs on this port. It did not read these settings.' });
+    expect(reply.nextSteps?.[1]?.text).toContain("Shut down player in the player's gear menu");
+    expect(reply.nextSteps?.[2]).toEqual({ text: 'Open it at', url: 'https://127.0.0.1:9917/admin' });
+    expect(reply.pageClosed).toBe(true);
+    await vi.waitFor(async () => {
+      await expect(fetch(`${base}/api/settings/seed`)).rejects.toThrow();
+    });
+  });
+
+  it('refuses a second tab\'s Save during a start without writing it', async () => {
+    let finishStart: () => void = () => undefined;
+    const onSaved = vi.fn(() => new Promise<SaveTakeover>((resolve) => { finishStart = () => resolve({ mode: 'started', url: 'http://127.0.0.1:9915' }); }));
+    const base = await start({ host: 'jukebox-setup', onSaved });
+
+    const first = save(base, { navidrome: NAV, webui: { port: 9915 } });
+    await vi.waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const second = await fetch(`${base}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ navidrome: NAV, webui: { port: 9916 } }),
+    });
+    finishStart();
+
+    expect(second.status).toBe(409);
+    expect(((await second.json()) as { error: string }).error).toBe(
+      "Another tab's Save is starting the Jukebox Remote. Save here again only if that start fails.",
+    );
+    expect((await first).nextSteps?.[1]?.url).toBe('http://127.0.0.1:9915/admin');
+    expect(readFileSync(file, 'utf8')).toContain('9915');
+    expect(onSaved).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes the next Save after a start fails', async () => {
+    const onSaved = vi.fn()
+      .mockRejectedValueOnce(new Error('Authentication failed: 401 Unauthorized'))
+      .mockResolvedValueOnce({ mode: 'started', url: 'http://127.0.0.1:8808' });
+    const base = await start({ host: 'jukebox-setup', onSaved });
+
+    const failed = await save(base, { navidrome: NAV });
+    const started = await save(base, { navidrome: NAV });
+
+    expect(failed.startFailed).toBe(true);
+    expect(started.pageClosed).toBe(true);
+    expect(onSaved).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps serving the page with the reason when the host cannot start', async () => {
+    const base = await start({
+      host: 'jukebox-setup',
+      onSaved: () => Promise.reject(new Error('Authentication failed: 401 Unauthorized')),
+    });
+
+    const reply = await save(base, { navidrome: NAV });
+
+    expect(reply.ok).toBe(true);
+    expect(reply.startFailed).toBe(true);
+    expect(reply.message).toBe(
+      `Settings saved to ${file}. The Jukebox Remote could not start. Fix the settings and save again. Error: Authentication failed: 401 Unauthorized`,
+    );
+    expect(reply.nextSteps).toBeUndefined();
+    expect(existsSync(file)).toBe(true);
+    expect((await fetch(`${base}/api/settings/seed`)).status).toBe(200);
+  });
+
+  it('shows only the host\'s own remedy for a start failure that no settings change fixes', async () => {
+    const base = await start({
+      host: 'jukebox-setup',
+      onSaved: () => Promise.reject(new HostStartError('Run `navidrome-mcp jukebox` to start the Jukebox Remote.')),
+    });
+
+    const reply = await save(base, { navidrome: NAV });
+
+    expect(reply.startFailed).toBe(true);
+    expect(reply.message).toBe(`Settings saved to ${file}. Run \`navidrome-mcp jukebox\` to start the Jukebox Remote.`);
+  });
+
+  it('does not run onSaved for a save that fails validation', async () => {
+    const onSaved = vi.fn(() => Promise.resolve({ mode: 'started' as const, url: 'http://127.0.0.1:8808' }));
+    const base = await start({ host: 'jukebox-setup', onSaved });
+
+    const reply = await save(base, { navidrome: { ...NAV, url: '' } });
+
+    expect(reply.error).toEqual(expect.stringContaining('navidrome.url'));
+    expect(onSaved).not.toHaveBeenCalled();
   });
 });

@@ -5,40 +5,73 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Config } from '../../config.js';
 import { AdminLoginSchema, GuestJoinSchema } from '../../schemas/index.js';
 import { logger } from '../../utils/logger.js';
 import type { AuthService, BrowserDevice, MintedSession } from '../auth/auth-service.js';
 import type { GuestSession, SessionRecord } from '../auth/auth-store.js';
-import { outsideLevelMessage, principalRole, resolvePrincipal, sourcePassesLevel, type Principal } from '../auth/principal.js';
+import {
+  isPasswordlessHere,
+  outsideLevelMessage,
+  principalRole,
+  resolvePrincipal,
+  sourcePassesLevel,
+  type Principal,
+} from '../auth/principal.js';
 import { readValidBody, writeError, writeJson, writeTooManyRequests } from '../http-helpers.js';
 import type { GuestQueue } from '../jukebox/guest-queue.js';
 import type { QueuedNames } from '../jukebox/jukebox-names.js';
 import { isLocalRequest } from '../loopback.js';
+import { loopbackUrl } from '../network.js';
+import { adminPageUrl } from '../page-paths.js';
 import { classifySource, networkKey, sourceAddress } from '../source-address.js';
+import { isTlsEnabled } from '../tls.js';
 
 const WRONG_PASSWORD = 'Wrong password';
 const INVALID_JUKEBOX_CODE = 'This jukebox code is not valid, closed or expired.';
 const JUKEBOX_FULL = 'The jukebox is full. Ask the host to free a place.';
 const BANNED_FROM_JUKEBOX = 'The host removed you from the jukebox.';
-const NO_ADMIN_PASSWORD =
-  'No admin password is set. Set one on the settings page (`navidrome-mcp settings`), or set WEBUI_ADMIN_PASSWORD when the ' +
-  'player runs from environment variables, then restart the player.';
+const NO_ADMIN_PASSWORD = 'No admin password is set.';
+const OTHER_DEVICES_CANNOT_LOG_IN = 'Other devices cannot log in.';
+const SET_ENV_ADMIN_PASSWORD = 'Set WEBUI_ADMIN_PASSWORD and restart the player.';
+const SET_IN_ALL_SETTINGS = 'Set one in All settings.';
+const ONLY_THIS_COMPUTER = 'Only this computer can log in as admin.';
+
+/**
+ * An env-run player reads its password only from WEBUI_ADMIN_PASSWORD, so All settings cannot set it.
+ * The player's computer shows the text in its gear menu. Another device needs the loopback address.
+ * At level `localhost` a saved password lets no other device in, so that text names no step to set one.
+ */
+function noAdminPasswordMessage(req: IncomingMessage, auth: AuthService, config: Config): string {
+  const isLocal = isLocalRequest(req);
+  const isEnv = auth.source === 'env';
+  if (isLocal && auth.adminAccess === 'localhost') return `${NO_ADMIN_PASSWORD} ${ONLY_THIS_COMPUTER}`;
+  if (isLocal) return `${NO_ADMIN_PASSWORD} ${OTHER_DEVICES_CANNOT_LOG_IN} ${isEnv ? SET_ENV_ADMIN_PASSWORD : SET_IN_ALL_SETTINGS}`;
+  if (isEnv) return `${NO_ADMIN_PASSWORD} ${SET_ENV_ADMIN_PASSWORD}`;
+  const localUrl = adminPageUrl(loopbackUrl(config.webui.port, isTlsEnabled(config.webui.tls)));
+  return `${NO_ADMIN_PASSWORD} Open ${localUrl} on the player's computer to set one.`;
+}
 
 /**
  * Public in every mode, so the page learns whether to show the login view before any gated call. An
  * admin session outside the access level reads as anonymous, with the refusal its owner can act on.
  * `isLocal` lets the page hide the system settings and Shut down, which only a local request holds.
  * `jukeboxOpen` tells an admin session's guest page whether the host can queue, or shows the closed card.
+ * `noAdminPasswordMessage` reaches only a source that may log in. `passwordlessHere` tells the page to
+ * post the login itself, and stays free of side effects, so a read mints no session.
  */
-export function handleAuthSession(req: IncomingMessage, res: ServerResponse, auth: AuthService): void {
+export function handleAuthSession(req: IncomingMessage, res: ServerResponse, auth: AuthService, config: Config): void {
   const principal = resolvePrincipal(req, auth);
+  const adminLoginAvailable = auth.mode !== 'none' && sourcePassesLevel(req, auth.adminAccess);
   writeJson(res, 200, {
     mode: auth.mode,
     role: principalRole(principal),
     ...(principal.kind === 'admin' || principal.kind === 'guest' ? { csrfToken: principal.session.csrfToken } : {}),
     ...(principal.kind === 'outside-level' ? { outsideLevelMessage: outsideLevelMessage(principal.level) } : {}),
     ...(principal.kind === 'admin' && auth.mode === 'jukebox' ? { jukeboxOpen: auth.hasJukeboxCode() } : {}),
-    adminLoginAvailable: auth.mode !== 'none' && sourcePassesLevel(req, auth.adminAccess),
+    adminLoginAvailable,
+    ...(adminLoginAvailable && !auth.hasAdminPassword() ? { noAdminPasswordMessage: noAdminPasswordMessage(req, auth, config) } : {}),
+    ...(isPasswordlessHere(req, auth) ? { passwordlessHere: true } : {}),
     isLocal: isLocalRequest(req),
     yourAddress: sourceAddress(req.socket.remoteAddress),
   });
@@ -46,22 +79,35 @@ export function handleAuthSession(req: IncomingMessage, res: ServerResponse, aut
 
 /**
  * A source outside the admin access level gets 404, so the internet never sees an admin login at
- * the default level. The body is read before the throttle starts an attempt, so a client that
- * trickles its body cannot hold the one attempt slot.
+ * the default level. A source that cannot log in while no password is saved gets 503 before its body
+ * is read. The body is read before the throttle starts an attempt, so a client that trickles its body
+ * cannot hold the one attempt slot. The passwordless rule is checked again after the read, since the
+ * heartbeat may load a newly saved password meanwhile. A request it admits skips the password and the throttle,
+ * and spends from its own budget instead.
  */
-export async function handleLogin(req: IncomingMessage, res: ServerResponse, auth: AuthService): Promise<void> {
+export async function handleLogin(req: IncomingMessage, res: ServerResponse, auth: AuthService, config: Config): Promise<void> {
   if (auth.mode === 'none' || !sourcePassesLevel(req, auth.adminAccess)) {
     writeError(res, 404, 'Not found');
     return;
   }
-  if (!auth.hasAdminPassword()) {
-    writeError(res, 503, NO_ADMIN_PASSWORD);
+  if (!isPasswordlessHere(req, auth) && !auth.hasAdminPassword()) {
+    writeError(res, 503, noAdminPasswordMessage(req, auth, config));
     return;
   }
   const input = await readValidBody(req, res, AdminLoginSchema);
   if (input === null) return;
 
   const requester = networkKey(req.socket.remoteAddress);
+  if (isPasswordlessHere(req, auth)) {
+    const passwordlessWaitMs = auth.takePasswordlessLoginToken(requester);
+    if (passwordlessWaitMs > 0) {
+      writeTooManyRequests(res, passwordlessWaitMs, 'passwordless logins');
+      return;
+    }
+    writeAdminLogin(req, res, auth, auth.createPasswordlessSession(sourceAddress(req.socket.remoteAddress)));
+    logger.info(`webui: admin login with no password from ${requester} on the player's computer`);
+    return;
+  }
   const waitMs = auth.throttle.tryBegin(requester, isLocalRequest(req));
   if (waitMs > 0) {
     writeTooManyRequests(res, waitMs, 'login attempts');
@@ -80,10 +126,14 @@ export async function handleLogin(req: IncomingMessage, res: ServerResponse, aut
     return;
   }
 
+  writeAdminLogin(req, res, auth, login);
+  logger.info(`webui: admin login from ${requester}`);
+}
+
+function writeAdminLogin(req: IncomingMessage, res: ServerResponse, auth: AuthService, login: MintedSession): void {
   // The admin cookie replaces a guest cookie in this browser, so that guest session would idle on and fill a guest place.
   const replaced = resolvePrincipal(req, auth);
   if (replaced.kind === 'guest') auth.deleteSession(replaced.session.id);
-  logger.info(`webui: admin login from ${requester}`);
   res.setHeader('Set-Cookie', auth.sessionCookie(login.token));
   writeJson(res, 200, { role: login.session.role, csrfToken: login.session.csrfToken });
 }

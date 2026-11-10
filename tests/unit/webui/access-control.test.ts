@@ -2,7 +2,7 @@
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -53,7 +53,7 @@ import { AuthService, type GuestStatus } from '../../../src/webui/auth/auth-serv
 import type { QueuedNames } from '../../../src/webui/jukebox/jukebox-names.js';
 import { outsideLevelMessage } from '../../../src/webui/auth/principal.js';
 import { GuestQueue } from '../../../src/webui/jukebox/guest-queue.js';
-import { adminView, guestEndCard, guestView, hostPollView, keyFromHash } from '../../../src/webui/public/page-view.js';
+import { adminView, guestEndCard, guestView, hostPollView, keyFromHash, needsPasswordlessLogin } from '../../../src/webui/public/page-view.js';
 import {
   MAX_GUEST_STREAMS,
   MAX_HOST_STREAMS,
@@ -104,7 +104,7 @@ function lanConfig(auth: Partial<Config['webui']['auth']> = {}): Config {
       ...base.webui,
       host: '0.0.0.0',
       expose: true,
-      auth: { mode: 'jukebox', adminPasswordHash: adminHash, adminAccess: 'localhost', ...auth },
+      auth: { mode: 'jukebox', adminPasswordHash: adminHash, adminAccess: 'localhost', askPasswordOnThisComputer: true, ...auth },
     },
   });
 }
@@ -158,6 +158,8 @@ interface RequestOptions {
   guests?: GuestQueue;
   /** A stream cap spans requests, so a test that counts open streams reuses one server. */
   server?: Server;
+  /** Runs once the handler waits for the body, so a test can change state between a route's checks and its body read. */
+  beforeBody?: () => void;
 }
 
 function buildServer(config: Config, auth: AuthService, guests: GuestQueue = new GuestQueue()): Server {
@@ -192,12 +194,18 @@ async function dispatch(config: Config, auth: AuthService, path: string, options
     rawHeaders: Object.entries(headers).flat(),
     socket: { remoteAddress: options.peer ?? LOOPBACK },
   });
-  queueMicrotask(() => {
+  const sendBody = (): void => {
     if (method === 'POST') req.emit('data', Buffer.from(JSON.stringify(options.body ?? {})));
     req.emit('end');
-  });
+  };
+  if (options.beforeBody === undefined) queueMicrotask(sendBody);
   const res = new FakeResponse();
   (options.server ?? buildServer(config, auth, options.guests)).emit('request', req, res as unknown as ServerResponse);
+  if (options.beforeBody !== undefined) {
+    await vi.waitFor(() => expect(req.listenerCount('data')).toBeGreaterThan(0));
+    options.beforeBody();
+    sendBody();
+  }
   await vi.waitFor(() => expect(res.status).toBeDefined());
   return { status: res.status, headers: res.headers, body: res.body, res };
 }
@@ -327,7 +335,7 @@ describe('route access table', () => {
   });
 
   it.each(cases)('$key answers each principal as its access says', async ({ method, request, expected }) => {
-    const open = makeTestConfig({ webui: { ...lanConfig().webui, auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' } } });
+    const open = makeTestConfig({ webui: { ...lanConfig().webui, auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost', askPasswordOnThisComputer: true } } });
     const openAuth = new AuthService(open);
     const password = lanConfig({ mode: 'password' });
     const passwordAuth = new AuthService(password);
@@ -649,13 +657,58 @@ describe('auth routes', () => {
     });
   });
 
-  it('answers 503 and points to the settings page when no admin password is set', async () => {
-    const config = lanConfig({ adminPasswordHash: null });
+  it.each([
+    ['store', "No admin password is set. Open http://127.0.0.1:8808/admin on the player's computer to set one."],
+    ['env', 'No admin password is set. Set WEBUI_ADMIN_PASSWORD and restart the player.'],
+  ] as const)('refuses another device while no admin password is set, with the %s recovery step', async (source, message) => {
+    const config = lanConfig({ adminPasswordHash: null, adminAccess: 'lan' });
+    const auth = new AuthService(config, { source });
+    const fromLan = { peer: LAN_PEER, host: '192.168.1.20:8808' };
 
-    const reply = await login(config, new AuthService(config), PASSWORD);
+    const reply = await login(config, auth, '', fromLan);
+    const session: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', fromLan)).body);
 
     expect(reply.status).toBe(503);
-    expect(JSON.parse(reply.body).error).toContain('settings page');
+    expect(JSON.parse(reply.body)).toEqual({ error: message });
+    expect(session).toMatchObject({ role: 'anonymous', adminLoginAvailable: true, noAdminPasswordMessage: message });
+    expect(session).not.toHaveProperty('passwordlessHere');
+    expect(adminView(session)).toBe('no-password');
+  });
+
+  it.each([
+    ['a number', 5],
+    ['an object', { nested: true }],
+  ])('refuses another device with 503, not 400, while no admin password is set and the password is %s', async (_shape, password) => {
+    const config = lanConfig({ adminPasswordHash: null, adminAccess: 'lan' });
+    const auth = new AuthService(config);
+
+    const reply = await login(config, auth, password, { peer: LAN_PEER, host: '192.168.1.20:8808' });
+
+    expect(reply.status).toBe(503);
+  });
+
+  it.each([
+    ['store', 'No admin password is set. Other devices cannot log in. Set one in All settings.'],
+    ['env', 'No admin password is set. Other devices cannot log in. Set WEBUI_ADMIN_PASSWORD and restart the player.'],
+  ] as const)("tells the player's computer the %s recovery step while no admin password is set", async (source, message) => {
+    const config = lanConfig({ adminPasswordHash: null, adminAccess: 'lan' });
+    const auth = new AuthService(config, { source });
+
+    const session: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', { host: '127.0.0.1:8808' })).body);
+
+    expect(session).toMatchObject({ passwordlessHere: true, noAdminPasswordMessage: message });
+  });
+
+  it.each(['store', 'env'] as const)('names no step to set a password at level localhost, with source %s, since no other device can log in', async (source) => {
+    const config = lanConfig({ adminPasswordHash: null, adminAccess: 'localhost' });
+    const auth = new AuthService(config, { source });
+
+    const session: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', { host: '127.0.0.1:8808' })).body);
+
+    expect(session).toMatchObject({
+      passwordlessHere: true,
+      noAdminPasswordMessage: 'No admin password is set. Only this computer can log in as admin.',
+    });
   });
 
   it('reports the open principal in mode none', async () => {
@@ -698,6 +751,147 @@ describe('auth routes', () => {
     expect(logout.status).toBe(200);
     expect(logout.headers['set-cookie']).toMatch(/^ndmcp-web-8808=; .*Max-Age=0$/);
     expect(after.status).toBe(401);
+  });
+});
+
+describe("passwordless login on the player's computer", () => {
+  const login = (config: Config, auth: AuthService, password: unknown, options: RequestOptions = {}): Promise<Reply> =>
+    dispatch(config, auth, '/api/auth/login', { method: 'POST', host: '127.0.0.1:8808', body: { password }, ...options });
+  const LOCAL: RequestOptions = { host: '127.0.0.1:8808' };
+  const FROM_LAN: RequestOptions = { peer: LAN_PEER, host: '192.168.1.20:8808' };
+  const FORWARDED: RequestOptions = { host: '127.0.0.1:8808', headers: { 'x-forwarded-for': INTERNET_PEER } };
+  const TUNNEL_HOST: RequestOptions = { host: 'jukebox.example.org' };
+
+  const ASK_OFF = { askPasswordOnThisComputer: false };
+  const NO_PASSWORD = { adminPasswordHash: null };
+  const ROWS = [
+    { mode: 'password', state: 'the ask off', settings: ASK_OFF, source: 'local', from: LOCAL, admitted: true },
+    { mode: 'jukebox', state: 'the ask off', settings: ASK_OFF, source: 'local', from: LOCAL, admitted: true },
+    { mode: 'password', state: 'no password', settings: NO_PASSWORD, source: 'local', from: LOCAL, admitted: true },
+    { mode: 'jukebox', state: 'no password', settings: NO_PASSWORD, source: 'local', from: LOCAL, admitted: true },
+    { mode: 'jukebox', state: 'the ask on and a password', settings: {}, source: 'local', from: LOCAL, admitted: false },
+    { mode: 'jukebox', state: 'the ask off', settings: ASK_OFF, source: 'LAN', from: FROM_LAN, admitted: false },
+    { mode: 'jukebox', state: 'no password', settings: NO_PASSWORD, source: 'LAN', from: FROM_LAN, admitted: false },
+    { mode: 'jukebox', state: 'the ask off', settings: ASK_OFF, source: 'forwarded', from: FORWARDED, admitted: false },
+    { mode: 'jukebox', state: 'no password', settings: NO_PASSWORD, source: 'forwarded', from: FORWARDED, admitted: false },
+    { mode: 'jukebox', state: 'the ask off', settings: ASK_OFF, source: 'non-loopback Host', from: TUNNEL_HOST, admitted: false },
+    { mode: 'jukebox', state: 'no password', settings: NO_PASSWORD, source: 'non-loopback Host', from: TUNNEL_HOST, admitted: false },
+  ] as const;
+
+  it.each(ROWS)('mode $mode with $state, a $source request: admitted $admitted', async ({ mode, settings, from, admitted }) => {
+    const config = lanConfig({ mode, adminAccess: 'lan', ...settings });
+    const auth = new AuthService(config);
+
+    const session: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', from)).body);
+    const reply = await login(config, auth, '', from);
+
+    expect((session as { passwordlessHere?: boolean }).passwordlessHere === true).toBe(admitted);
+    expect(needsPasswordlessLogin(session)).toBe(admitted);
+    expect(reply.status === 200).toBe(admitted);
+  });
+
+  it('reads the session with no side effect, and the empty-password login mints a full admin session', async () => {
+    const config = lanConfig({ adminPasswordHash: null });
+    const auth = new AuthService(config);
+
+    const sessionReply = await dispatch(config, auth, '/api/auth/session', LOCAL);
+    const before: unknown = JSON.parse(sessionReply.body);
+    const reply = await login(config, auth, '');
+    const { csrfToken } = JSON.parse(reply.body) as { csrfToken: string };
+    const cookie = cookiePair(reply, 'ndmcp-web-8808');
+    const after: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', { ...LOCAL, headers: { cookie } })).body);
+    const pause = await dispatch(config, auth, '/api/controls/pause', { method: 'POST', ...LOCAL, headers: { cookie, 'x-csrf-token': csrfToken } });
+
+    expect(setCookies(sessionReply)).toEqual([]);
+    expect(before).toMatchObject({ role: 'anonymous', passwordlessHere: true, noAdminPasswordMessage: expect.any(String) });
+    expect(setCookies(reply)[0]).toMatch(/HttpOnly; SameSite=Strict/);
+    expect(after).toMatchObject({ role: 'admin', csrfToken, passwordlessHere: true, noAdminPasswordMessage: expect.any(String) });
+    expect(needsPasswordlessLogin(after)).toBe(false);
+    expect(adminView(after)).toBe('player');
+    expect(pause.status).toBe(200);
+  });
+
+  it('never counts a passwordless login against the throttle', async () => {
+    const config = lanConfig({ askPasswordOnThisComputer: false });
+    const auth = new AuthService(config);
+
+    const statuses: Array<number | undefined> = [];
+    for (let attempt = 0; attempt < 12; attempt += 1) statuses.push((await login(config, auth, '')).status);
+
+    expect(statuses.every((status) => status === 200)).toBe(true);
+  });
+
+  it('caps passwordless logins at 60 an hour, then answers 429 with Retry-After', async () => {
+    const config = lanConfig({ askPasswordOnThisComputer: false });
+    const startedAt = Date.now();
+    const auth = new AuthService(config, { now: () => startedAt });
+
+    const statuses: Array<number | undefined> = [];
+    for (let attempt = 0; attempt < 60; attempt += 1) statuses.push((await login(config, auth, '')).status);
+    const capped = await login(config, auth, '');
+
+    expect(statuses.every((status) => status === 200)).toBe(true);
+    expect(capped.status).toBe(429);
+    expect(capped.headers['retry-after']).toBe('60');
+    expect(setCookies(capped)).toEqual([]);
+  });
+
+  it('still asks a LAN browser for the password at level lan while the ask is off', async () => {
+    const config = lanConfig({ adminAccess: 'lan', askPasswordOnThisComputer: false });
+    const auth = new AuthService(config);
+
+    const session: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', FROM_LAN)).body);
+    const empty = await login(config, auth, '', FROM_LAN);
+
+    expect(adminView(session)).toBe('login');
+    expect(empty.status).toBe(401);
+  });
+
+  it('ends the passwordless sessions when a first password is saved, and a LAN login with it works', async () => {
+    const config = lanConfig({ adminPasswordHash: null, adminAccess: 'lan' });
+    const auth = new AuthService(config);
+    const cookie = cookiePair(await login(config, auth, ''), 'ndmcp-web-8808');
+    const stream = await dispatch(config, auth, '/api/visualizer', { ...LOCAL, headers: { cookie } });
+
+    writeFileSync(process.env['NAVIDROME_CONFIG_PATH'] ?? '', JSON.stringify({ webui: { auth: { mode: 'jukebox', adminPasswordHash: adminHash } } }));
+    auth.sweep();
+    const ended = await dispatch(config, auth, '/api/player-state', { ...LOCAL, headers: { cookie } });
+    const lanLogin = await login(config, auth, PASSWORD, FROM_LAN);
+    const local: unknown = JSON.parse((await dispatch(config, auth, '/api/auth/session', LOCAL)).body);
+
+    expect(stream.res.destroyed).toBe(true);
+    expect(ended.status).toBe(401);
+    expect(lanLogin.status).toBe(200);
+    expect(local).toMatchObject({ role: 'anonymous' });
+    expect(local).not.toHaveProperty('passwordlessHere');
+    expect(local).not.toHaveProperty('noAdminPasswordMessage');
+  });
+
+  it('refuses the empty password when a first password is saved while the login body is in flight', async () => {
+    const config = lanConfig({ adminPasswordHash: null });
+    let saved: string | null = null;
+    const auth = new AuthService(config, { readSavedAdminHash: () => saved });
+    const savePassword = (): void => {
+      saved = adminHash;
+      auth.sweep();
+    };
+
+    const reply = await login(config, auth, '', { beforeBody: savePassword });
+
+    expect(auth.hasAdminPassword()).toBe(true);
+    expect(reply.status).toBe(401);
+    expect(setCookies(reply)).toEqual([]);
+  });
+
+  it('sends the passwordless host to the player from / in mode jukebox', async () => {
+    const config = lanConfig({ askPasswordOnThisComputer: false });
+    const auth = new AuthService(config);
+
+    const local = await dispatch(config, auth, '/', LOCAL);
+    const lan = await dispatch(config, auth, '/', FROM_LAN);
+
+    expect(local.headers['location']).toBe('/admin');
+    expect(lan.headers['location']).toBe('/guest');
   });
 });
 

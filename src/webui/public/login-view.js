@@ -15,6 +15,7 @@ const address = byId('login-address');
 
 // Guests can open this page too, so the refusal never points at the settings page.
 const UNAVAILABLE_HELP = 'The admin page is not available from this device.';
+const LOGIN_FAILED = 'Login failed. Check the connection and try again.';
 const LOGIN_HELP = help.textContent;
 
 export function bindLoginForm() {
@@ -31,18 +32,23 @@ export function bindLoginForm() {
     }
     submit.disabled = false;
     password.value = '';
-    status.textContent = data?.error ?? 'Login failed. Check the connection and try again.';
+    status.textContent = data?.error ?? LOGIN_FAILED;
   });
 }
 
 // An admin session outside the access level carries its own refusal, since only the owner holds one.
+// The no-password text comes from the server, since only the server knows the player's address and config source.
+// A refused passwordless login shows its refusal first, since it names the cause and the wait.
 function loginHelp(card, session) {
+  if (session?.loginError !== undefined) return session.loginError ?? LOGIN_FAILED;
   if (card === 'outside-level') return session.outsideLevelMessage;
+  if (card === 'no-password') return session.noAdminPasswordMessage;
   return card === 'unavailable' ? UNAVAILABLE_HELP : LOGIN_HELP;
 }
 
 // The stream closes first, so it stops reconnecting with the ended session. The open dialogs and the
 // lyrics overlay close next, since they would cover the login card.
+// A passwordless source gets no password field, since the login route ignores its password.
 export function showLoginView(session) {
   stopConnection();
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
@@ -51,7 +57,8 @@ export function showLoginView(session) {
   view.hidden = false;
   address.textContent = session === null ? '' : `Your address as the player sees it: ${session.yourAddress}`;
   const card = loginCard(session);
-  setHidden(fields, card !== 'login');
+  const showsFields = card === 'login' && session?.passwordlessHere !== true;
+  setHidden(fields, !showsFields);
   help.textContent = loginHelp(card, session);
-  if (card === 'login') password.focus();
+  if (showsFields) password.focus();
 }

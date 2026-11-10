@@ -214,7 +214,6 @@ describe('LibraryManager.initialize JWT decoding', () => {
       mockClient.getCurrentToken.mockResolvedValue(token);
       mockClient.request.mockRejectedValue(new Error('HTTP 500'));
 
-      // The outer wrapper's name replaces the loadUserLibraries prefix, so one prefix remains.
       await expect(
         libraryManager.initialize(mockClient as unknown as NavidromeClient, makeConfig()),
       ).rejects.toThrow("Tool 'LibraryManager.initialize' failed: HTTP 500");

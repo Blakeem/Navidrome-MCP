@@ -44,6 +44,54 @@ interface UserInfo {
   libraries: LibraryInfo[];
 }
 
+/** A name and ID pair for a library picker. */
+interface LibraryChoice {
+  id: number;
+  name: string;
+}
+
+/**
+ * Null when the JWT does not decode to a uid or the payload has no libraries array. The payload
+ * is unvalidated, so an unexpected shape degrades to null, not a TypeError. A rejected
+ * /user/{uid} lookup throws.
+ */
+async function fetchUserInfo(client: NavidromeClient): Promise<UserInfo | null> {
+  const token = await client.getCurrentToken();
+  const claims = decodeJwtPayload(token);
+  if (claims === null) {
+    // decodeJwtPayload already logged the specific failure mode.
+    return null;
+  }
+
+  const userInfo = await client.request<UserInfo>(`/user/${encodeURIComponent(claims.uid)}`);
+
+  if (!Array.isArray(userInfo.libraries)) {
+    logger.warn(
+      `User payload for ${claims.uid} has no libraries array; skipping library initialization`,
+    );
+    return null;
+  }
+  return userInfo;
+}
+
+/**
+ * The libraries the logged-in user can see, for the settings page. It reads no library stats, so a
+ * non-admin user gets the list too. Throws when Navidrome gives no usable list.
+ */
+export async function listUserLibraries(client: NavidromeClient): Promise<LibraryChoice[]> {
+  const userInfo = await fetchUserInfo(client);
+  if (userInfo === null) {
+    throw new Error('Navidrome gave no library list for this user.');
+  }
+  // The payload is unvalidated, so each entry is read as unknown fields, not as the LibraryInfo type.
+  const entries: ReadonlyArray<{ id: unknown; name?: unknown }> = userInfo.libraries;
+  return entries.flatMap(({ id, name }) => {
+    if (typeof id !== 'number' || !Number.isInteger(id)) return [];
+    const label = typeof name === 'string' && name.trim() !== '' ? name : `Library ${String(id)}`;
+    return [{ id, name: label }];
+  });
+}
+
 class LibraryManager {
   private static instance: LibraryManager | null = null;
   
@@ -106,29 +154,8 @@ class LibraryManager {
    * zeroed library stats and timestamps, so the real values come from /api/library.
    */
   private async loadUserLibraries(client: NavidromeClient): Promise<boolean> {
-    const token = await client.getCurrentToken();
-    const claims = decodeJwtPayload(token);
-    if (claims === null) {
-      // decodeJwtPayload already logged the specific failure mode.
-      return false;
-    }
-
-    let userInfo: UserInfo;
-    try {
-      userInfo = await client.request<UserInfo>(
-        `/user/${encodeURIComponent(claims.uid)}`,
-      );
-    } catch (error) {
-      throw new Error(ErrorFormatter.toolExecution('loadUserLibraries', error));
-    }
-
-    // The payload is unvalidated, so an unexpected shape degrades to not loaded, not a TypeError.
-    if (!Array.isArray(userInfo.libraries)) {
-      logger.warn(
-        `User payload for ${claims.uid} has no libraries array; skipping library initialization`,
-      );
-      return false;
-    }
+    const userInfo = await fetchUserInfo(client);
+    if (userInfo === null) return false;
 
     const enrichment = await this.enrichLibraryStats(client, userInfo.libraries);
     this.userInfo = { ...userInfo, libraries: enrichment.libraries };
@@ -322,7 +349,7 @@ class LibraryManager {
     return this.enrichedLibraryIds.has(id);
   }
 
-  /** Test isolation only. */
+  /** Lets a new runtime load another user's libraries, and isolates tests. */
   reset(): void {
     this.userInfo = null;
     this.activeLibraryIds = [];

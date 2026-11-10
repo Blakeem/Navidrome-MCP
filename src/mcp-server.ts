@@ -81,7 +81,7 @@ function installExitHandlers(cleanup: () => Promise<void>, watchStdin: boolean):
 
 /** An unreachable Navidrome skips the browser auto-open, since its settings are not at fault. */
 async function runSetupMode(failure?: StartupFailure): Promise<void> {
-  const settings = await startConfigServer();
+  const settings = await startConfigServer({ host: 'mcp-setup' });
   logger.warn(buildSetupNotice(settings.url, failure));
   if (failure?.unreachable !== true) {
     openBrowser(settings.url);

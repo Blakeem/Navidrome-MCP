@@ -1,6 +1,6 @@
 # Web UI Auth + Roles
 
-**Status (2026-10-17):** Release 1. The decisions in [README.md](README.md#web-ui-auth--roles) override this file where they differ: an access mode setting with `none` as the default, device access and username-and-password access, a login for every browser when access control is on (no trusted loopback browser), an admin account, and Argon2id. Read its flags before planning.
+**Status (2026-10-17):** Release 1. The decisions in [README.md](README.md#web-ui-auth--roles) override this file where they differ: an access mode setting with `none` as the default, device access and username-and-password access, a login for every browser when access control is on (the host computer's browser skips it only when the admin password ask is off or no admin password is saved), an admin account, and Argon2id. Read its flags before planning.
 
 ## Verdict
 
@@ -36,7 +36,7 @@ BOUNDARY CASE: an MCP tool that mints a guest invite → OUT (Party Mode), but t
 | One place in the web remote HTTP server can gate every request | Verified | `ROUTES` in `src/webui/server.ts` is one flat route table, and each route names its permission. Every request passes the host gate and the JSON gate in `handleRequest` before any route runs [DIRECT: code] |
 | Browser streams and images can carry a credential | Verified for cookies. Refuted for header tokens | `public/connection.js:19` and `public/visualizer.js:86` call `new EventSource(path)`. `public/cover.js:12` sets `img.src`. The `EventSource` constructor takes only `withCredentials`, and a same-origin stream sends cookies by default [DIRECT: WHATWG HTML, 2026-10-16] |
 | Tokens and passwords can be hashed with no new dependency | Verified | `randomBytes`, `createHash`, `timingSafeEqual` and `scrypt` are in `node:crypto` for the entire supported range (`package.json:70-72`, `engines.node >=24.19.0`) [DIRECT: Node docs] |
-| Grants survive a web player restart | Verified | The web player process stops with its last MCP by default (`src/web/main.ts:116-124`), so in-memory sessions would log phones out often. A file beside `settings.json` is writable: `navidrome-web.log` already lives there (`src/web/file-logging.ts:10`), and the Docker `/config` volume belongs to `node` (`Dockerfile:29-30`) [DIRECT: code] |
+| Grants survive a web player restart | Verified | The web player process stops with its last MCP by default (`src/web/main.ts:116-124`), so in-memory sessions would log phones out often. A file beside `settings.json` is writable: `jukebox-remote.log` already lives there (`src/web/log-path.ts:11`), and the Docker `/config` volume belongs to `node` (`Dockerfile:29-30`) [DIRECT: code] |
 | A loopback caller can be told apart from a LAN caller | Verified, with one flaw | `isLocalRequest` requires a loopback peer and a loopback `Host` (`src/webui/loopback.ts:32-34`). nginx sets `Host $proxy_host` by default, so a same-host nginx passes both checks for every proxied request [DIRECT: nginx docs] [DERIVED] |
 | Navidrome can back a login provider | Verified | `POST /auth/login` on the live Navidrome 0.62.0 returns `id`, `isAdmin`, `name`, `username`, `token`, `subsonicSalt` and `subsonicToken`. The token is an HS256 JWT with a measured 48-hour lifetime [DIRECT: live probe, 2026-10-17]. That matches the `SessionTimeout` default in v0.64.2 source (`consts/consts.go:36`) [DIRECT] |
 
@@ -152,7 +152,7 @@ the reverse-proxy scenario  a proxy publishes the remote on the internet. Reache
 └──────────────┬────────────────────────────────────────────────▲──────────────────────────────┘
                │ read and write                                  │ POST /api/auth/invites via 127.0.0.1
                ▼                                                 │
-  the grant store (new, src/webui/auth/grant-store.ts,      the invite command (new, `navidrome-web invite`)
+  the grant store (new, src/webui/auth/grant-store.ts,      the invite command (not built, replaced by the Jukebox dialog's code and QR code)
      file webui-auth.json beside settings.json, mode 0600)
   the settings store: new webui.auth block ◄── the config app (new form fields)
 ```
@@ -436,7 +436,7 @@ Steps in dependency order. Each names the parts it adds or changes.
 7. The auth routes and the redeem limiter: session, redeem, logout, invites, devices, revoke. Requires steps 3, 5 and 6.
 8. The stream registry: tag SSE clients with the grant id, and close them on revoke and on expiry. Requires steps 5 and 7.
 9. The browser client: the join view, 401 handling in `public/api.js`, permission-driven controls in place of `isLocal`, and the devices panel with a QR image from `uqr`. Requires step 7.
-10. The invite command: `navidrome-web invite [--role] [--expires] [--base-url]`, which calls the running web player over loopback and prints a link and a terminal QR. Requires step 7.
+10. The invite command (not built, replaced by the Jukebox dialog's code and QR code), which calls the running web player over loopback and prints a link and a terminal QR. Requires step 7.
 11. Tests and docs: one table-driven test that walks every dispatcher route against every role, plus a rewrite of the README security note (`README.md:425-433`). Requires all earlier steps.
 
 ## Edge cases
@@ -444,7 +444,7 @@ Steps in dependency order. Each names the parts it adds or changes.
 | Edge case | Part | Intended behavior |
 |---|---|---|
 | A same-host nginx rewrites `Host` to `127.0.0.1:8808` | the principal resolver | A request with `Forwarded`, `X-Forwarded-For` or `X-Real-IP` never becomes the loopback principal |
-| A headless host with `webui.expose` upgrades | the join view, the invite command | Phones see enrollment steps. `navidrome-web invite`, or `docker exec <container> node dist/web/main.js invite`, prints a link and a terminal QR. The web player logs one line on start when it has a LAN bind and zero grants |
+| A headless host with `webui.expose` upgrades | the join view, the invite command | Phones see enrollment steps. The invite command (not built, replaced by the Jukebox dialog's code and QR code) was to print a link and a terminal QR. The Jukebox dialog shows a guest link and QR code in its place. The web player logs one line on start when it has a LAN bind and zero grants |
 | `settings.json` is mounted read-only in Docker | the grant store | The grant store writes `webui-auth.json` in the writable `/config` volume. If that write fails, the auth routes answer 503 with the path and reason, and loopback trust keeps working |
 | The host browser is on 127.0.0.1 and phones need a LAN URL | the devices panel | The invite link is built from `listLanInterfaces` (`src/webui/network.ts:22`) with an interface picker, not from the page's own origin |
 | The invite command runs in a container | the invite command | It accepts `--base-url`, since container IPs are not the host's LAN address |
@@ -460,7 +460,7 @@ Steps in dependency order. Each names the parts it adds or changes.
 | A reverse proxy rewrites `Host`, so `Origin` never equals it | the origin gate | The gate also accepts an `Origin` that matches `X-Forwarded-Host` or `Forwarded: host=`, as code-server does. A cross-site page cannot add those headers without a preflight, which the server never approves |
 | One device or many guests open SSE streams in bulk | the stream registry | Each session holds at most 3 streams per stream route, and the oldest closes first. A stream without a session counts against a cap of 6 per source address across the stream routes, and the oldest closes first. The server holds at most 200 streams, and a stream over that cap receives an empty stream with a retry interval, since a non-200 answer would leave `EventSource` closed for good |
 | A listener calls an owner route | the permission check | 403 with a code. `GET /healthz` keeps its 404 off-host, so the version fingerprint stays hidden |
-| The owner loses every owner device | the principal resolver, the invite command | Loopback trust or `navidrome-web invite --role owner` from a host shell restores access. With `trustLoopback` off on a headless host, moving `webui-auth.json` to the Recycle Bin resets every grant |
+| The owner loses every owner device | the principal resolver, the invite command | The host computer's admin login with no password restores access when **Ask for the admin password on this computer** is off or no admin password is saved. The invite command (not built, replaced by the Jukebox dialog's code and QR code) was to restore access from a host shell. A Jukebox dialog code admits only guests, so it does not restore owner access. With `trustLoopback` off on a headless host, moving `webui-auth.json` to the Recycle Bin resets every grant |
 | Two devices redeem the last use of an invite at once | the grant store | The web player process serializes writes, so the first redeem wins and the second gets 410 |
 | The env fallback runs with no `settings.json` | the settings fields | The `WEBUI_AUTH_*` env vars apply. The grant store still lives beside the default settings path |
 | New secret fields reach the logger | the logger redaction (`src/utils/logger.ts:37-38`) | `tokenDigest` and `codeDigest` do not match the redacted suffixes. The plan extends the suffix list with `digest` and `cookie`, and the auth code never logs the `Cookie` header |

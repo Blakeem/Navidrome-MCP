@@ -4,11 +4,12 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { runCommand } from './run-command.js';
 
 export const APP_NAME = 'Jukebox Remote';
 
@@ -33,19 +34,19 @@ const DESKTOP_QUERIES: Partial<Record<NodeJS.Platform, { command: string; args: 
   linux: { command: 'xdg-user-dir', args: ['DESKTOP'] },
 };
 
-function queryPlatformDesktop(): string | null {
+async function queryPlatformDesktop(): Promise<string | null> {
   const query = DESKTOP_QUERIES[process.platform];
   if (query === undefined) return null;
-  const res = spawnSync(query.command, query.args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  if (res.status !== 0 || typeof res.stdout !== 'string') return null;
+  const res = await runCommand(query.command, query.args);
+  if (res.status !== 0) return null;
   const reported = res.stdout.trim();
   // xdg-user-dir reports the home dir when no Desktop is configured.
   if (reported === '' || reported === homedir() || !existsSync(reported)) return null;
   return reported;
 }
 
-export function desktopDir(): string {
-  const reported = queryPlatformDesktop();
+export async function desktopDir(): Promise<string> {
+  const reported = await queryPlatformDesktop();
   if (reported !== null) return reported;
   const candidate = join(homedir(), 'Desktop');
   return existsSync(candidate) ? candidate : homedir();

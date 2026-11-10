@@ -43,6 +43,15 @@ export function sourcePassesLevel(req: IncomingMessage, level: WebuiAdminAccess)
   return level === 'lan' && classifySource(req.socket.remoteAddress) === 'lan';
 }
 
+/**
+ * The player's computer is the root of trust, so it logs in with no password when the owner turned the
+ * ask off or no password is saved. Every admin access level admits a local request.
+ */
+export function isPasswordlessHere(req: IncomingMessage, auth: AuthService): boolean {
+  if (auth.mode === 'none' || !isLocalRequest(req)) return false;
+  return !auth.askPasswordOnThisComputer || !auth.hasAdminPassword();
+}
+
 export function resolvePrincipal(req: IncomingMessage, auth: AuthService): Principal {
   if (auth.mode === 'none') return { kind: 'open', isLocal: isLocalRequest(req) };
   const session = auth.findSession(req);

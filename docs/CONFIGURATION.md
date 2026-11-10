@@ -10,9 +10,11 @@ The settings page shows where it saves the file. The default location depends on
 - **macOS:** `~/Library/Application Support/navidrome-mcp/settings.json`
 - **Linux:** `~/.config/navidrome-mcp/settings.json`, or `$XDG_CONFIG_HOME/navidrome-mcp/settings.json` when that variable is set
 
-The `NAVIDROME_CONFIG_PATH` environment variable moves the file to another path. [`settings.example.json`](../settings.example.json) shows the file's shape.
+The `NAVIDROME_CONFIG_PATH` environment variable moves the file to another path. [`settings.example.json`](../settings.example.json) shows a short file with the keys people change most, and the tables below list every key.
 
 ## When Changes Apply
+
+After **Save settings**, the settings page names the restarts the change needs. The first Save of a new install names the next step and the Jukebox Remote address instead. A Jukebox Remote started with no usable settings, such as from the desktop shortcut, opens the settings page and starts once a Save makes the settings usable.
 
 These settings apply live.
 
@@ -28,7 +30,7 @@ A new admin password applies to a running player within about 10 seconds and sig
 
 ## Settings
 
-Each table covers one section of `settings.json`. The settings page column names the field label, or "none" with the place that sets the key instead. The environment variable column names the variable the [env fallback](#without-a-settings-page) reads.
+Each table covers one section of `settings.json`. The settings page column names the field label, or "none" with the place that sets the key instead. The top of the settings page holds the three Navidrome fields, the Last.fm **API key**, the radio and lyrics boxes, **Audio output**, **Run the Jukebox Remote**, **Open the player in your browser automatically**, **Expose on LAN**, **Access**, **Admin password**, and **Ask for the admin password on this computer**. Every other field sits under **Advanced settings**. The environment variable column names the variable the [env fallback](#without-a-settings-page) reads.
 
 ### navidrome
 
@@ -54,7 +56,7 @@ Each table covers one section of `settings.json`. The settings page column names
 
 | Settings page | `settings.json` key | Environment variable | Default | Effect |
 |---|---|---|---|---|
-| **Default libraries** | `library.defaultLibraryIds` | `NAVIDROME_DEFAULT_LIBRARIES` | `[]` | The library IDs that are active at startup. Empty means all. `set_active_libraries` changes them until the server restarts. |
+| **Default libraries** | `library.defaultLibraryIds` | `NAVIDROME_DEFAULT_LIBRARIES` | `[]` | The library IDs that are active at startup. Empty means all. The settings page lists the libraries by name once the connection works, and shows no field for a single library. `set_active_libraries` changes them until the server restarts. |
 | **Cache filter/tag values at startup** | `library.filterCacheEnabled` | `NAVIDROME_FILTER_CACHE_ENABLED` | `true` | Loads the genre and tag values once at startup. `false` fetches them on each filtered search, so new tag values show at once. |
 
 ### features
@@ -62,14 +64,23 @@ Each table covers one section of `settings.json`. The settings page column names
 | Settings page | `settings.json` key | Environment variable | Default | Effect |
 |---|---|---|---|---|
 | **API key** (Last.fm) | `features.lastFmApiKey` | `LASTFM_API_KEY` | `null` | Turns on the Last.fm tools. A key is free at [last.fm/api](https://www.last.fm/api/account/create). |
-| **MusicBrainz user agent** | `features.musicBrainzUserAgent` | `MUSICBRAINZ_USER_AGENT` | `Navidrome-MCP (https://github.com/Blakeem/Navidrome-MCP)` | Identifies the server to MusicBrainz for discography lookups. |
-| **Radio Browser user agent** | `features.radioBrowserUserAgent` | `RADIO_BROWSER_USER_AGENT` | `null` | Turns on radio discovery and identifies the server to Radio Browser. |
-| **Radio Browser base URL** | `features.radioBrowserBase` | `RADIO_BROWSER_BASE` | `null` | A Radio Browser server. Blank picks a mirror automatically. |
-| **Provider** (Lyrics) | `features.lyricsProvider` | `LYRICS_PROVIDER` | `null` | `lrclib` turns on LRCLIB lyrics when an LRCLIB user agent is set. |
-| **LRCLIB user agent** | `features.lrclibUserAgent` | `LRCLIB_USER_AGENT` | `null` | Identifies the server to LRCLIB. LRCLIB lyrics need it. |
-| **LRCLIB base URL** | `features.lrclibBase` | `LRCLIB_BASE` | `https://lrclib.net` | The LRCLIB server. |
+| **Find internet radio stations** | `features.radio` | none | `false` | `true` turns on radio discovery through Radio Browser. |
+| **Look up lyrics online from LRCLIB** | `features.lyrics` | none | `false` | `true` turns on LRCLIB lyrics. Lyrics stored in your music files show without it. |
+| **Radio Browser user agent** | `features.radioBrowserUserAgent` | `RADIO_BROWSER_USER_AGENT` | `Navidrome-MCP` | Optional override of the name the server sends to Radio Browser. |
+| **Radio Browser base URL** | `features.radioBrowserBase` | `RADIO_BROWSER_BASE` | `null` | Optional override of the Radio Browser server. Blank picks a mirror automatically. |
+| **LRCLIB user agent** | `features.lrclibUserAgent` | `LRCLIB_USER_AGENT` | `Navidrome-MCP` | Optional override of the name the server sends to LRCLIB. |
+| **LRCLIB base URL** | `features.lrclibBase` | `LRCLIB_BASE` | `https://lrclib.net` | Optional override of the LRCLIB server. |
+| none | `features.musicBrainzUserAgent` | `MUSICBRAINZ_USER_AGENT` | `Navidrome-MCP (https://github.com/Blakeem/Navidrome-MCP)` | Optional override of the name the server sends to MusicBrainz for discography lookups. |
+| none | `features.lyricsProvider` | `LYRICS_PROVIDER` | `null` | Read only from a file with no `features.lyrics`, as the next paragraphs describe. |
 
-The first run of the settings page fills in `Navidrome-MCP` for both user agents and `lrclib` for the provider, so radio discovery and LRCLIB lyrics start on. The env fallback leaves them off until you set their variables.
+The first run of the settings page checks both boxes, so radio discovery and LRCLIB lyrics start on. A file written before `features.radio` and `features.lyrics` existed keeps its earlier state through the older keys. A file that names neither the booleans nor the older keys turns both off.
+
+- With no `features.radio`, radio is on when `features.radioBrowserUserAgent` holds a value.
+- With no `features.lyrics`, lyrics are on when `features.lyricsProvider` is `lrclib` and `features.lrclibUserAgent` holds a value.
+
+The next Save writes both booleans and removes `features.lyricsProvider`.
+
+The env fallback has no variable for the two boxes. `RADIO_BROWSER_USER_AGENT` turns radio on. `LYRICS_PROVIDER=lrclib` with `LRCLIB_USER_AGENT` turns lyrics on. The provider name matches in any letter case. Any other non-blank `LYRICS_PROVIDER` or `features.lyricsProvider` turns lyrics off and logs a warning.
 
 ### playback
 
@@ -91,12 +102,13 @@ The first run of the settings page fills in `Navidrome-MCP` for both user agents
 | **Allowed hosts** | `webui.allowedHosts` | `WEBUI_ALLOWED_HOSTS` | `[]` | Extra host names the player accepts on a LAN bind, such as `music.home.lan`. An IP address, `localhost`, this computer's name, and the Public URL host always work. Other host names get `403`, which blocks DNS rebinding. |
 | **Public URL** | `webui.publicUrl` | `WEBUI_PUBLIC_URL` | `null` | The address internet guests use, with no path, such as `https://jukebox.duckdns.org:8808`. It starts with `https://` when the HTTPS files are set. The **Jukebox** dialog adds a join code for it. |
 | **Open the player in your browser automatically** | `webui.autoOpenBrowser` | `WEBUI_AUTO_OPEN_BROWSER` | `false` | Opens the player when the MCP server starts it. `navidrome-mcp jukebox` always opens a browser. |
-| **Keep playing after the MCP server closes** | `webui.persistAfterMcpExit` | `WEBUI_PERSIST_AFTER_MCP_EXIT` | `false` | Keeps a player the MCP server started running after the last MCP server closes. The gear menu also sets it. |
-| **Show a music visualizer in the player** | `webui.visualizer` | `WEBUI_VISUALIZER` | `true` | `false` removes the visualizer and the audio analysis it adds to mpv. The analysis uses about 2.5% of one CPU core while music plays. The gear menu also sets it. |
+| none (the gear menu's **Keep playing after the MCP server closes**) | `webui.persistAfterMcpExit` | `WEBUI_PERSIST_AFTER_MCP_EXIT` | `false` | Keeps a player the MCP server started running after the last MCP server closes. |
+| none (the gear menu's **Show the visualizer beside the track info**) | `webui.visualizer` | `WEBUI_VISUALIZER` | `true` | `false` removes the visualizer and the audio analysis it adds to mpv. The analysis uses about 2.5% of one CPU core while music plays. |
 | **HTTPS certificate file** | `webui.tls.certPath` | `WEBUI_TLS_CERT` | `null` | The PEM certificate chain, such as `fullchain.pem` from Let's Encrypt. Set both HTTPS files to serve HTTPS. |
 | **HTTPS key file** | `webui.tls.keyPath` | `WEBUI_TLS_KEY` | `null` | The PEM private key, such as `privkey.pem`. The player loads a renewed pair within a minute. A missing or invalid file stops the player from starting. |
 | **Access** | `webui.auth.mode` | `WEBUI_AUTH_MODE` | `none` | `none` (Open), `password` (Admin password), or `jukebox` (Admin password and jukebox). [Internet Access](INTERNET-ACCESS.md) describes what each mode exposes. |
-| **Admin password** | `webui.auth.adminPasswordHash` | `WEBUI_ADMIN_PASSWORD` | `null` | The settings page stores only the hash of the password you type. Passwords are 12 to 128 characters. |
+| **Admin password** | `webui.auth.adminPasswordHash` | `WEBUI_ADMIN_PASSWORD` | `null` | The settings page stores only the hash of the password you type. Passwords are 8 to 128 characters. With no password set in mode `password` or `jukebox`, this computer opens the player as admin with no login, and no other device can log in as admin. |
+| **Ask for the admin password on this computer** | `webui.auth.askPasswordOnThisComputer` | none | `true` | `false` opens the player as admin with no login on this computer in mode `password` or `jukebox`. Other devices still need the password. This computer counts only at a `localhost`, `127.0.0.1`, or `[::1]` address with no proxy header, such as `X-Forwarded-For`. The env fallback always asks. |
 | **Admin login allowed from** | `webui.auth.adminAccess` | `WEBUI_ADMIN_ACCESS` | `localhost` | Where an admin can log in, one of `localhost` (this computer), `lan`, or `anywhere`. |
 | none (the gear menu's **Theme**) | `webui.theme` | none | unset | Forces `light` or `dark` on every device viewing the player. When unset, each device follows its own setting. **System** in the gear menu clears it. |
 
@@ -104,7 +116,7 @@ The first run of the settings page fills in `Navidrome-MCP` for both user agents
 
 | Settings page | `settings.json` key | Environment variable | Default | Effect |
 |---|---|---|---|---|
-| **Guest song limit** | `jukebox.guestQueueLimit` | `JUKEBOX_GUEST_QUEUE_LIMIT` | `3` | How many songs each jukebox guest can have waiting, from 1 to 20. The **Guests** dialog also sets it. |
+| none (the **Guests** dialog's **Song limit**) | `jukebox.guestQueueLimit` | `JUKEBOX_GUEST_QUEUE_LIMIT` | `3` | How many songs each jukebox guest can have waiting, from 1 to 20. |
 | none (the **Jukebox** dialog) | `jukebox.shareLink` | none | `lan` | Which link the jukebox code holds, `lan` or `internet`. The **Local network** and **Internet** buttons set it. |
 
 ### advanced
@@ -112,7 +124,26 @@ The first run of the settings page fills in `Navidrome-MCP` for both user agents
 | Settings page | `settings.json` key | Environment variable | Default | Effect |
 |---|---|---|---|---|
 | **Verbose debug logging** | `advanced.debug` | `DEBUG` | `false` | `true` turns on verbose logs. |
-| **Token expiry (seconds)** | `advanced.tokenExpiry` | `TOKEN_EXPIRY` | `86400` | How long the server keeps a Navidrome login token. |
+| none | `advanced.tokenExpiry` | `TOKEN_EXPIRY` | `86400` | The lifetime in seconds of a Navidrome login token that carries no expiry. The server renews any other token 60 seconds before the expiry the token carries. |
+
+## Editing settings.json by Hand
+
+The server log and the settings page show a notice for each problem in a hand edit, with the key and the fix. When the file stops the MCP server from starting, setup mode's reason lists the notices too.
+
+- A key this version does not know stays in the file, and the notice names the nearest known key, such as `webui.prot is not a setting this version knows. Did you mean webui.port?`
+- A `webui.auth.adminPassword` key is never read, since it would hold the password as plain text. Set the password on the settings page, then delete the key.
+
+The server reads past these slips with a notice. The `webui.auth` keys get no such pass.
+
+- A number in quotes, such as `"port": "8808"`, is read as the number.
+- `"true"` or `"false"` in quotes is read as the boolean.
+- A number in `playback.transcodeBitrate`, such as `192`, is read as the text `"192"`.
+
+Any other wrong value makes the server ignore the entire file, and the log and the settings page name the key and what is wrong. The settings page then shows each value of the file it can accept, so a Save keeps them.
+
+When `webui.host` binds another address than `webui.expose` asks for, the server logs a warning at startup that names both keys. `webui.host` wins. `transport.host` and `transport.expose` get the same check.
+
+A Save writes only keys that hold a value. It drops `null`, `""`, `[]`, and empty objects. It keeps every unknown key and every value equal to its default.
 
 ## Without a Settings Page
 

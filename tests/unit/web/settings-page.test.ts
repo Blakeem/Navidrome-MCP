@@ -36,12 +36,12 @@ afterEach(() => {
 });
 
 describe('createSettingsPageHolder', () => {
-  it('starts the settings server with the settings page idle timeout', async () => {
+  it("starts the settings server as the running player's page, with the settings page idle timeout", async () => {
     const { start, options } = fakeStart();
 
     await createSettingsPageHolder(start).open();
 
-    expect(options[0]?.idleTimeoutMs).toBe(SETTINGS_PAGE_IDLE_TIMEOUT_MS);
+    expect(options[0]).toMatchObject({ host: 'jukebox-settings', idleTimeoutMs: SETTINGS_PAGE_IDLE_TIMEOUT_MS });
   });
 
   it('starts one server for concurrent opens and answers each with its URL', async () => {
@@ -120,7 +120,7 @@ describe('createSettingsPageHolder', () => {
         idleTimeoutMs: 50,
         onIdleTimeout: () => {
           idleCloses += 1;
-          options?.onIdleTimeout?.();
+          options.onIdleTimeout?.();
         },
       }),
     );

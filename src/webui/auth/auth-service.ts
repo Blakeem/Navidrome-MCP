@@ -51,6 +51,8 @@ const SESSION_ID_BYTES = 16;
 const SESSION_SECRET_BYTES = 32;
 const CSRF_TOKEN_BYTES = 32;
 const CREDENTIAL_EPOCH_HEX_CHARS = 16;
+const NO_PASSWORD_EPOCH = 'no-password';
+const ASK_OFF_EPOCH_SUFFIX = ':ask-off';
 /** A guest session idles out after a day and never outlives its jukebox code. */
 const GUEST_IDLE_MS = DAY_MS;
 const JUKEBOX_CODE_BYTES = 32;
@@ -60,6 +62,8 @@ export const MAX_GUESTS_PER_CODE = 100;
 const PUBLIC_JOINS_PER_HOUR = 10;
 const LOCAL_JOINS_PER_HOUR = 60;
 const NICKNAME_CHANGES_PER_HOUR = 10;
+// The login throttle skips a passwordless login, so this budget alone bounds the sessions it persists.
+const PASSWORDLESS_LOGINS_PER_HOUR = 60;
 const BAN_ID_BYTES = 16;
 const DEVICE_ID_BYTES = 16;
 // The base64url form of DEVICE_ID_BYTES, so a forged cookie of any other shape never reaches the store.
@@ -190,13 +194,16 @@ function usableHash(raw: string | null | undefined, origin: string): string | nu
   const hash = raw?.trim() ?? '';
   if (hash === '') return null;
   if (isPasswordHash(hash)) return hash;
-  logger.warn(`webui: ${origin} is not an Argon2id hash, so the admin login stays off until the admin password is set again`);
+  logger.warn(`webui: ${origin} is not an Argon2id hash, so it counts as no admin password until the admin password is set again`);
   return null;
 }
 
-/** A password change gives the hash a new epoch, which ends every admin session minted under the old one. */
-function credentialEpochOf(hash: string | null): string | null {
-  return hash === null ? null : sha256Hex(hash).slice(0, CREDENTIAL_EPOCH_HEX_CHARS);
+/**
+ * A password change gives the hash a new epoch, which ends every admin session minted under the old one.
+ * No hex digest equals the no-password epoch, so saving a first password ends the sessions minted without one.
+ */
+function credentialEpochOf(hash: string | null): string {
+  return hash === null ? NO_PASSWORD_EPOCH : sha256Hex(hash).slice(0, CREDENTIAL_EPOCH_HEX_CHARS);
 }
 
 /**
@@ -236,8 +243,9 @@ export function endGuestStream(res: ServerResponse, reason: GuestEndReason): voi
 export class AuthService {
   readonly mode: WebuiAuthMode;
   readonly adminAccess: WebuiAdminAccess;
+  readonly askPasswordOnThisComputer: boolean;
   readonly throttle: LoginThrottle;
-  private readonly source: ConfigSource;
+  readonly source: ConfigSource;
   private readonly port: number;
   private readonly cookieName: string;
   private readonly deviceCookieName: string;
@@ -250,12 +258,13 @@ export class AuthService {
   private readonly publicJoins: TokenBuckets;
   private readonly localJoins: TokenBuckets;
   private readonly nicknameChanges: TokenBuckets;
+  private readonly passwordlessLogins: TokenBuckets;
   private jukeboxCode: JukeboxCode | null = null;
   private bans: Ban[] = [];
   private readonly envAdminHash: string | null;
   private configuredHash: string | null;
   private adminHash: string | null;
-  private credentialEpoch: string | null;
+  private credentialEpoch: string;
   private dirty = false;
   private lastWriteAt: number;
 
@@ -263,12 +272,14 @@ export class AuthService {
     const auth = config.webui.auth;
     this.mode = auth.mode;
     this.adminAccess = auth.adminAccess;
+    this.askPasswordOnThisComputer = auth.askPasswordOnThisComputer;
     this.source = options.source ?? 'store';
     this.now = options.now ?? Date.now;
     this.throttle = new LoginThrottle(this.now);
     this.publicJoins = new TokenBuckets(PUBLIC_JOINS_PER_HOUR, HOUR_MS, this.now);
     this.localJoins = new TokenBuckets(LOCAL_JOINS_PER_HOUR, HOUR_MS, this.now);
     this.nicknameChanges = new TokenBuckets(NICKNAME_CHANGES_PER_HOUR, HOUR_MS, this.now);
+    this.passwordlessLogins = new TokenBuckets(PASSWORDLESS_LOGINS_PER_HOUR, HOUR_MS, this.now);
     this.secureCookie = isTlsEnabled(config.webui.tls);
     this.port = config.webui.port;
     this.cookieName = sessionCookieName(this.port, this.secureCookie);
@@ -362,7 +373,15 @@ export class AuthService {
 
   /** Returns the token, which only the cookie carries. The store keeps the secret's digest. */
   createSession(address: string): MintedSession {
-    if (this.credentialEpoch === null) throw new Error('No admin password is set, so no admin session can start.');
+    return this.mintAdminSession(address, this.credentialEpoch);
+  }
+
+  /** A session minted while the ask is off carries its own epoch, so turning the ask back on ends it. */
+  createPasswordlessSession(address: string): MintedSession {
+    return this.mintAdminSession(address, this.askOffEpoch() ?? this.credentialEpoch);
+  }
+
+  private mintAdminSession(address: string, credentialEpoch: string): MintedSession {
     const now = this.now();
     const secret = randomToken(SESSION_SECRET_BYTES);
     const session: AdminSession = {
@@ -372,7 +391,7 @@ export class AuthService {
       createdAt: now,
       lastSeenAt: now,
       expiresAt: now + ADMIN_IDLE_MS,
-      credentialEpoch: this.credentialEpoch,
+      credentialEpoch,
       csrfToken: randomToken(CSRF_TOKEN_BYTES),
       lastAddress: address,
       hostNickname: null,
@@ -481,6 +500,11 @@ export class AuthService {
   /** Spends one name change from the guest or host session's budget. Returns 0 then, or the wait in milliseconds. */
   takeNicknameToken(sessionId: string): number {
     return this.nicknameChanges.tryTake(sessionId);
+  }
+
+  /** Spends one passwordless login from the network's budget. Returns 0 then, or the wait in milliseconds. */
+  takePasswordlessLoginToken(networkKey: string): number {
+    return this.passwordlessLogins.tryTake(networkKey);
   }
 
   /**
@@ -708,6 +732,7 @@ export class AuthService {
     this.publicJoins.prune();
     this.localJoins.prune();
     this.nicknameChanges.prune();
+    this.passwordlessLogins.prune();
     if (removed || (this.dirty && now - this.lastWriteAt >= LAST_SEEN_FLUSH_MS)) this.persist();
   }
 
@@ -727,7 +752,12 @@ export class AuthService {
   private isLive(session: SessionRecord, now: number): boolean {
     if (session.expiresAt <= now) return false;
     if (session.role === 'guest') return this.onLiveCode(session, now);
-    return this.credentialEpoch !== null && session.credentialEpoch === this.credentialEpoch;
+    return session.credentialEpoch === this.credentialEpoch || session.credentialEpoch === this.askOffEpoch();
+  }
+
+  // No hex digest holds the suffix, so an ask-off epoch never equals a password epoch.
+  private askOffEpoch(): string | null {
+    return this.askPasswordOnThisComputer ? null : `${this.credentialEpoch}${ASK_OFF_EPOCH_SUFFIX}`;
   }
 
   private liveJukeboxCode(now: number): JukeboxCode | null {

@@ -62,10 +62,11 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 
 | Path | Purpose |
 |---|---|
-| `src/index.ts`, `src/cli/` | The `navidrome-mcp` bin. `src/index.ts` hands `process.argv` to `src/cli/dispatch.ts`, whose table lists the subcommands `serve`, `jukebox`, `settings`, `shortcut` and `help`. No argument runs the MCP server (`src/mcp-server.ts`), or prints the help when stdin is a terminal. Use `serve` to start the server from a terminal. Each target runs on import, so a test that imports one starts it |
-| `src/shortcut/` | `navidrome-mcp shortcut`: the Jukebox Remote desktop shortcut generator and the cleanup of the old Navidrome Player files |
+| `src/index.ts`, `src/cli/` | The `navidrome-mcp` bin. `src/index.ts` hands `process.argv` to `src/cli/dispatch.ts`, whose table lists the subcommands `serve`, `jukebox`, `settings`, `shortcut`, `connect` and `help`. No argument runs the MCP server (`src/mcp-server.ts`), or prints the help when stdin is a terminal. Use `serve` to start the server from a terminal. Each target runs on import, so a test that imports one starts it |
+| `src/connect/` | `navidrome-mcp connect`: merges the `mcpServers.navidrome` entry into the Claude Desktop config file, with a `.bak` copy first |
+| `src/shortcut/` | The Jukebox Remote desktop shortcut generator (`create.ts`), which `navidrome-mcp shortcut` and the settings page's Create desktop shortcut button call, and the cleanup of the old Navidrome Player files |
 | `src/client/` | `NavidromeClient` (REST + Subsonic, single-flight auth, retry-on-401, JSON-sniff for `text/plain` bodies), `AuthManager` (JWT) |
-| `src/tools/` | Tool implementations grouped by surface (`media-library.ts`, `playlist-management/`, `radio.ts`, `radio-discovery.ts`, `radio-validation/`, `user-preferences.ts`, `listening-history.ts`, `lastfm-discovery.ts`, `artist-discography.ts`, `lyrics.ts`, `tags.ts`, `library.ts`, `search/`, `playback.ts` with `queue-sources.ts` and `queue-order.ts`, `queue-management.ts`, `test.ts`) |
+| `src/tools/` | Tool implementations grouped by surface (`media-library.ts`, `playlist-management/`, `radio.ts`, `radio-discovery.ts`, `radio-validation/`, `user-preferences.ts`, `listening-history.ts`, `lastfm-discovery.ts`, `artist-discography.ts`, `lyrics.ts`, `tags.ts`, `library.ts`, `search/`, `playback.ts` with `queue-sources.ts` and `queue-order.ts`, `queue-management.ts`, `jukebox-remote.ts`, `test.ts`) |
 | `src/tools/handlers/` | MCP tool category factories — wire impl functions into `name` + `inputSchema` + `handleToolCall`. `registry.ts` composes all categories. |
 | `src/schemas/` | `common.ts` (reusable patterns + `IdSchema`/`createIdSchema` with `[A-Za-z0-9_-]+` regex), `pagination.ts`, `validation.ts` (input schemas, e.g. `SetActiveLibrariesSchema`, `StarItemSchema`) |
 | `src/transformers/` | Raw Navidrome API rows → DTOs (`song`, `album`, `artist`, `playlist`, `tag`, `shared-transformers`), plus `lyrics-tag` (parses lyrics stored in file tags) |
@@ -127,10 +128,13 @@ Store path:
 - Windows: `%APPDATA%\navidrome-mcp\settings.json`
 
 `NAVIDROME_CONFIG_PATH` overrides the location (used by tests + portable installs).
-Shape: see `settings.example.json`. Required: `navidrome.{url,username,password}`.
-Feature-gated: `features.lastFmApiKey` (Last.fm), `features.radioBrowserUserAgent`
-(radio), `features.lyricsProvider=lrclib` + `features.lrclibUserAgent` (lyrics),
-`playback.mpvPath` / auto-detect (playback). `advanced.debug=true` for verbose logs.
+Shape: `settings.example.json` holds the commonly changed keys, and `docs/CONFIGURATION.md`
+lists every key. Required: `navidrome.{url,username,password}`.
+Feature-gated: `features.lastFmApiKey` (Last.fm), `features.radio` (radio), `features.lyrics`
+(lyrics), `playback.mpvPath` / auto-detect (playback). A file without `features.radio` or
+`features.lyrics` falls back to the legacy user-agent and `lyricsProvider` rule in
+`src/config/feature-switches.ts`. The env path keeps `RADIO_BROWSER_USER_AGENT` and
+`LYRICS_PROVIDER=lrclib` + `LRCLIB_USER_AGENT` as its switches. `advanced.debug=true` for verbose logs.
 
 Edit it via the GUI: run `navidrome-mcp settings` (opens a loopback browser page), or it
 auto-opens on first run of an unconfigured MCP server. The form pre-fills from any

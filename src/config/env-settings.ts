@@ -7,16 +7,19 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { readSettings, type SettingsFile } from './store.js';
+import { mergeOntoStored, readSalvagedSettings, readSettings, type SettingsFile } from './store.js';
+import {
+  isLrclibProvider,
+  readNamedFeatureSwitches,
+  resolveFeatureSwitches,
+  type FeatureSwitches,
+} from './feature-switches.js';
 import {
   DEFAULT_GUEST_QUEUE_LIMIT,
-  DEFAULT_LRCLIB_BASE,
   DEFAULT_MCP_HTTP_PORT,
-  DEFAULT_MUSICBRAINZ_USER_AGENT,
   DEFAULT_TOKEN_EXPIRY_SECONDS,
   DEFAULT_TRANSCODE_BITRATE,
   DEFAULT_TRANSCODE_FORMAT,
-  DEFAULT_USER_AGENT,
   DEFAULT_WEBUI_PORT,
   WEBUI_ADMIN_ACCESS_LEVELS,
   WEBUI_AUTH_MODES,
@@ -25,28 +28,30 @@ import {
 } from '../constants/defaults.js';
 import { logger } from '../utils/logger.js';
 
-/**
- * A first run pre-fills these. Later runs only hint them beside blank fields, so a deliberate blank
- * stays. `radioBrowserBase` has no entry, since a blank value selects a mirror by SRV.
- */
-export const FORM_SUGGESTIONS = {
-  'features.musicBrainzUserAgent': DEFAULT_MUSICBRAINZ_USER_AGENT,
-  'features.radioBrowserUserAgent': DEFAULT_USER_AGENT,
-  'features.lyricsProvider': 'lrclib',
-  'features.lrclibUserAgent': DEFAULT_USER_AGENT,
-  'features.lrclibBase': DEFAULT_LRCLIB_BASE,
-} as const;
+/** A first run checks both boxes, so a new install finds radio stations and lyrics once it saves. */
+const FORM_SUGGESTIONS = { radio: true, lyrics: true } as const;
 
 /**
  * Without a usable settings.json, the seed imports `process.env` and a legacy `.env`, so an
- * upgrading user verifies instead of retyping. It returns real secrets, which the routes mask.
+ * upgrading user verifies instead of retyping. Each value of a schema-rejected file that passes its
+ * own schema wins over that import. It returns real secrets, which the routes mask.
  */
 export function buildFormSeed(): SettingsFile {
   const existing = readSettings();
   if (existing !== null) {
-    return existing;
+    return withFeatureSwitches(existing, resolveFeatureSwitches(existing.features ?? {}));
   }
-  return importFromLegacyEnv();
+  const imported = importFromLegacyEnv();
+  const salvaged = readSalvagedSettings();
+  if (salvaged === null) return imported;
+  // A switch the file does not name keeps the imported state, since the file holds no value for it to win with.
+  const salvagedSwitches = readNamedFeatureSwitches(salvaged.features ?? {});
+  return mergeOntoStored(imported, withFeatureSwitches(salvaged, salvagedSwitches)) as SettingsFile;
+}
+
+// The page shows the radio and lyrics state of a file that predates the booleans, and its Save writes them.
+function withFeatureSwitches(settings: SettingsFile, switches: FeatureSwitches): SettingsFile {
+  return { ...settings, features: { ...settings.features, ...switches } };
 }
 
 /**
@@ -88,15 +93,22 @@ function importFromLegacyEnv(): SettingsFile {
 }
 
 /**
- * `applySuggestions` is true only for the form seed, which the user reviews before saving.
- * MusicBrainz keeps its default either way, since it gates no feature.
+ * `applySuggestions` is true only for the form seed, which the user reviews before saving. Env keeps
+ * the legacy switches. A radio user agent turns radio on, and `LYRICS_PROVIDER=lrclib` with an
+ * LRCLIB user agent turns lyrics on.
  */
 function settingsFromEnvSource(
   get: (key: string) => string | undefined,
   applySuggestions: boolean,
 ): SettingsFile {
-  const suggest = (key: keyof typeof FORM_SUGGESTIONS): string | null =>
-    applySuggestions ? FORM_SUGGESTIONS[key] : null;
+  const suggest = (key: keyof typeof FORM_SUGGESTIONS): boolean => applySuggestions && FORM_SUGGESTIONS[key];
+
+  const radioBrowserUserAgent = get('RADIO_BROWSER_USER_AGENT');
+  const lyricsProvider = get('LYRICS_PROVIDER');
+  const lrclibUserAgent = get('LRCLIB_USER_AGENT');
+  const lyricsProviderAllows = lyricsProvider === undefined
+    ? suggest('lyrics')
+    : isLrclibProvider(lyricsProvider, 'LYRICS_PROVIDER');
 
   const defaultLibraryIds = toLibraryIds(get('NAVIDROME_DEFAULT_LIBRARIES'));
 
@@ -129,12 +141,13 @@ function settingsFromEnvSource(
     },
     features: {
       lastFmApiKey: get('LASTFM_API_KEY') ?? null,
-      musicBrainzUserAgent: get('MUSICBRAINZ_USER_AGENT') ?? FORM_SUGGESTIONS['features.musicBrainzUserAgent'],
-      radioBrowserUserAgent: get('RADIO_BROWSER_USER_AGENT') ?? suggest('features.radioBrowserUserAgent'),
+      radio: radioBrowserUserAgent !== undefined || suggest('radio'),
+      lyrics: lyricsProviderAllows && (lrclibUserAgent !== undefined || suggest('lyrics')),
+      musicBrainzUserAgent: get('MUSICBRAINZ_USER_AGENT') ?? null,
+      radioBrowserUserAgent: radioBrowserUserAgent ?? null,
       radioBrowserBase: get('RADIO_BROWSER_BASE') ?? null,
-      lyricsProvider: get('LYRICS_PROVIDER') ?? suggest('features.lyricsProvider'),
-      lrclibUserAgent: get('LRCLIB_USER_AGENT') ?? suggest('features.lrclibUserAgent'),
-      lrclibBase: get('LRCLIB_BASE') ?? suggest('features.lrclibBase'),
+      lrclibUserAgent: lrclibUserAgent ?? null,
+      lrclibBase: get('LRCLIB_BASE') ?? null,
     },
     playback: {
       mpvPath: get('MPV_PATH') ?? null,

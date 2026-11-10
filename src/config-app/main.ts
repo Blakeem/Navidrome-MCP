@@ -9,7 +9,7 @@ import { openBrowser } from '../utils/open-browser.js';
 import { logger } from '../utils/logger.js';
 
 async function main(): Promise<void> {
-  const { url, close } = await startConfigServer();
+  const { url, close } = await startConfigServer({ host: 'settings-command' });
 
   // This CLI is not an MCP stdio server, so stdout can carry the URL for a host where no
   // browser opens.

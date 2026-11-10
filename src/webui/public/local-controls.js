@@ -9,6 +9,7 @@ const logoutBtn = byId('logout-btn');
 // The groups and the button that change the player on this computer, so a remote browser never sees them.
 const localOnlyControls = [byId('settings-theme-group'), byId('settings-player-group'), powerBtn];
 const remoteNote = byId('settings-remote-note');
+const noAdminPasswordNotice = byId('no-admin-password-notice');
 
 // Whether this browser may read and change the player settings. The settings dialog reads it.
 let canChangeSettings = false;
@@ -54,7 +55,10 @@ export function setLocalPeer(isLocal) {
   setHidden(remoteNote, isLocal);
 }
 
-// A mode with a login boots the player only for an admin session.
-export function showAdminControls() {
-  setHidden(logoutBtn, false);
+// A passwordless session hides Log out, since the page would log straight back in. The server writes
+// the notice text, since only it knows the config source. The notice sits in the local-only Player group.
+export function showAdminControls(session) {
+  setHidden(logoutBtn, session.passwordlessHere === true);
+  noAdminPasswordNotice.textContent = session.noAdminPasswordMessage ?? '';
+  setHidden(noAdminPasswordNotice, session.noAdminPasswordMessage === undefined);
 }

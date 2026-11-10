@@ -22,8 +22,14 @@ export function isLoginMode(session) {
 
 // An unread session leaves the login form, so a failed read never hides the way back in.
 export function loginCard(session) {
-  if (session === null || session.adminLoginAvailable === true) return 'login';
+  if (session === null) return 'login';
+  if (session.adminLoginAvailable === true) return session.noAdminPasswordMessage === undefined ? 'login' : 'no-password';
   return session.outsideLevelMessage === undefined ? 'unavailable' : 'outside-level';
+}
+
+// The player's computer posts the login itself when the server admits it with no password.
+export function needsPasswordlessLogin(session) {
+  return session?.passwordlessHere === true && session.role !== 'admin';
 }
 
 export function adminView(session) {

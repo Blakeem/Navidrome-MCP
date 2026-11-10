@@ -1,8 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readSettings, readSettingsForStartup, writeSettings, type SettingsFile } from '../../../src/config/store.js';
+import {
+  readRawSettings,
+  readSalvagedSettings,
+  readSettings,
+  readSettingsForStartup,
+  readStoreNotices,
+  readStoreProblem,
+  writeSettings,
+  type SettingsFile,
+} from '../../../src/config/store.js';
 import { logger } from '../../../src/utils/logger.js';
 
 describe('settings store read/write', () => {
@@ -13,6 +22,8 @@ describe('settings store read/write', () => {
     savedCfg = process.env['NAVIDROME_CONFIG_PATH'];
     dir = mkdtempSync(join(tmpdir(), 'nd-store-'));
     process.env['NAVIDROME_CONFIG_PATH'] = join(dir, 'settings.json');
+    // An absent-file read clears the store's once-per-state log memory, so each test's first read logs.
+    readSettings();
   });
 
   afterEach(() => {
@@ -88,7 +99,7 @@ describe('settings store read/write', () => {
     const path = (): string => process.env['NAVIDROME_CONFIG_PATH']!;
 
     it('reports no auth request and no problem for an absent file', () => {
-      expect(readSettingsForStartup()).toEqual({ settings: null, requestsWebuiAuth: false, problem: null });
+      expect(readSettingsForStartup()).toEqual({ settings: null, requestsWebuiAuth: false, problem: null, notices: [] });
     });
 
     // A file that cannot be parsed cannot prove it names no auth mode, so the open env config must not replace it.
@@ -124,6 +135,115 @@ describe('settings store read/write', () => {
     });
   });
 
+  describe('hand-edit slips', () => {
+    const path = (): string => process.env['NAVIDROME_CONFIG_PATH']!;
+
+    it('loads a file with an unknown key, logs the notice once and keeps the key in the raw settings', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      writeFileSync(path(), JSON.stringify({ webui: { prot: 1 } }));
+      try {
+        expect(readSettings()).toEqual({ webui: {} });
+        expect(readSettings()).not.toBeNull();
+        const notice = 'webui.prot is not a setting this version knows. Did you mean webui.port?';
+        expect(readStoreNotices()).toEqual([notice]);
+        expect(warn.mock.calls).toEqual([[`settings.json: ${notice}`]]);
+        expect(readRawSettings()).toEqual({ webui: { prot: 1 } });
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('logs a notice list again once it changes', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      try {
+        writeFileSync(path(), JSON.stringify({ webui: { expsoe: true } }));
+        readSettings();
+        writeFileSync(path(), JSON.stringify({ webui: { visualiser: true } }));
+        readSettings();
+        writeFileSync(path(), JSON.stringify({ webui: { expsoe: true } }));
+        readSettings();
+        expect(warn).toHaveBeenCalledTimes(3);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('names an unknown key and a coerced value of a file the schema rejects', () => {
+      writeFileSync(path(), JSON.stringify({ navidrome: { ulr: 'http://h:4533' }, webui: { port: 'abc', expose: 'true' } }));
+
+      expect(readSettings()).toBeNull();
+      expect(readStoreNotices()).toEqual([
+        'webui.expose holds the text "true", so it is read as true. Remove the quotes to fix the file.',
+        'navidrome.ulr is not a setting this version knows. Did you mean navidrome.url?',
+      ]);
+    });
+
+    it('logs the problem of a rejected file and its notices once until the file changes', () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      try {
+        writeFileSync(path(), JSON.stringify({ webui: { port: 'abc', prot: 1 } }));
+        readSettings();
+        readStoreProblem();
+        readSalvagedSettings();
+        expect(warn.mock.calls).toEqual([
+          [expect.stringMatching(/^settings\.json failed validation .*webui\.port.*\. Its values are ignored\.$/)],
+          ['settings.json: webui.prot is not a setting this version knows. Did you mean webui.port?'],
+        ]);
+        writeFileSync(path(), JSON.stringify({ webui: { enabled: 'yes' } }));
+        readSettings();
+        expect(warn).toHaveBeenCalledTimes(3);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('loads quoted numbers and booleans and a numeric bitrate with one notice per key', () => {
+      writeFileSync(path(), JSON.stringify({
+        webui: { port: '8808', enabled: 'true' },
+        playback: { transcodeBitrate: 192 },
+      }));
+
+      expect(readSettings()).toEqual({ webui: { port: 8808, enabled: true }, playback: { transcodeBitrate: '192' } });
+      expect(readStoreNotices()).toEqual([
+        expect.stringMatching(/^webui\.port holds the text "8808"/),
+        expect.stringMatching(/^webui\.enabled holds the text "true"/),
+        expect.stringMatching(/^playback\.transcodeBitrate holds the number 192/),
+      ]);
+      // A save merges onto the raw settings, so it writes each value back in its proper type.
+      expect(readRawSettings()).toEqual({ webui: { port: 8808, enabled: true }, playback: { transcodeBitrate: '192' } });
+    });
+
+    it.each([
+      ['text that is no number', { webui: { port: 'abc' } }],
+      ['a quoted boolean in the auth block', { webui: { auth: { askPasswordOnThisComputer: 'true' } } }],
+      ['a number as the MCP auth token', { transport: { authToken: 1234 } }],
+    ])('still voids the store for %s', (_label, input) => {
+      writeFileSync(path(), JSON.stringify(input));
+      expect(readSettings()).toBeNull();
+    });
+
+    it('salvages the valid values of a voided store', () => {
+      writeFileSync(path(), JSON.stringify({
+        navidrome: { url: 'http://h:4533', username: 'u' },
+        webui: { port: 'abc', expose: 'true', auth: { mode: 'pasword' } },
+      }));
+
+      expect(readSettings()).toBeNull();
+      expect(readSalvagedSettings()).toEqual({
+        navidrome: { url: 'http://h:4533', username: 'u' },
+        webui: { expose: true, auth: {} },
+      });
+    });
+
+    it('salvages nothing from a usable, absent or non-JSON store', () => {
+      expect(readSalvagedSettings()).toBeNull();
+      writeFileSync(path(), JSON.stringify({ navidrome: { url: 'http://h:4533' } }));
+      expect(readSalvagedSettings()).toBeNull();
+      writeFileSync(path(), '{ broken');
+      expect(readSalvagedSettings()).toBeNull();
+    });
+  });
+
   describe('writeSettings', () => {
     const sample: SettingsFile = {
       navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
@@ -136,6 +256,23 @@ describe('settings store read/write', () => {
       expect(back?.navidrome?.url).toBe('http://h:4533');
       expect(back?.navidrome?.password).toBe('p');
       expect(back?.webui?.port).toBe(9001);
+    });
+
+    it('writes no empty value, and keeps each unknown key and default-equal value', () => {
+      writeSettings({
+        ...sample,
+        transport: { host: null, allowedHosts: [] },
+        features: { radio: true, lrclibUserAgent: '' },
+        webui: { port: 8808, tls: { certPath: null }, note: null },
+        newSection: { flag: true },
+      } as SettingsFile);
+
+      expect(JSON.parse(readFileSync(process.env['NAVIDROME_CONFIG_PATH']!, 'utf8'))).toEqual({
+        navidrome: sample.navidrome,
+        features: { radio: true },
+        webui: { port: 8808, note: null },
+        newSection: { flag: true },
+      });
     });
 
     it('creates missing parent directories', () => {

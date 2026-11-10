@@ -20,6 +20,7 @@ function mockTargets(): void {
     '../../../src/web/main.js': 'jukebox',
     '../../../src/config-app/main.js': 'settings',
     '../../../src/shortcut/main.js': 'shortcut',
+    '../../../src/connect/main.js': 'connect',
   };
   for (const [path, name] of Object.entries(targets)) {
     vi.doMock(path, () => {
@@ -60,6 +61,10 @@ describe('help text', () => {
     const help = buildHelpText();
 
     expect(help).toContain('navidrome-mcp settings   Open the settings page.');
+    expect(help).toContain(
+      'navidrome-mcp connect    Add Navidrome MCP to Claude Desktop.\n' +
+        '                         Add --absolute to write the full paths of node and the server.\n',
+    );
     expect(help).toContain(
       'navidrome-mcp jukebox    Start the Jukebox Remote and open it in your browser.\n' +
         '                         Started here, it keeps running after your AI client closes.\n' +
@@ -111,6 +116,7 @@ describe('runCli', () => {
     ['jukebox', 'jukebox'],
     ['settings', 'settings'],
     ['shortcut', 'shortcut'],
+    ['connect', 'connect'],
   ])('loads only the %s target', async (arg, moduleName) => {
     const { io, stdout } = captureIo(false);
 

@@ -57,6 +57,14 @@ describe('ErrorFormatter.httpRequest', () => {
   });
 });
 
+describe('ErrorFormatter.featureOff', () => {
+  it('names the feature, the store switch and the env switch', () => {
+    expect(ErrorFormatter.featureOff('LRCLIB lyrics lookup', 'features.lyrics', 'LYRICS_PROVIDER=lrclib')).toBe(
+      'LRCLIB lyrics lookup is off. Set features.lyrics to true in settings.json. When the server runs from environment variables, set LYRICS_PROVIDER=lrclib.',
+    );
+  });
+});
+
 describe('ErrorFormatter.configMissing', () => {
   it('includes service name and config key', () => {
     const msg = ErrorFormatter.configMissing('Last.fm', 'LASTFM_API_KEY');

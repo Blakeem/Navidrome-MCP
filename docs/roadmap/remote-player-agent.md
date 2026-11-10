@@ -4,7 +4,7 @@
 
 ## Verdict
 
-BUILD, once Web UI Auth + Roles ships its machine grant. The web player process (`navidrome-web`) already holds Navidrome credentials, spawns mpv, builds stream URLs and scrobbles. A remote agent is that process plus an authenticated, versioned agent API. The MCP server needs one new seam, the player target, and Music Assistant Bridge can reuse it. MVP effort is 2 to 3 weeks and the full roadmap 6 to 9 weeks for one developer [INFERRED].
+BUILD, once Web UI Auth + Roles ships its machine grant. The web player process (`navidrome-mcp jukebox`) already holds Navidrome credentials, spawns mpv, builds stream URLs and scrobbles. A remote agent is that process plus an authenticated, versioned agent API. The MCP server needs one new seam, the player target, and Music Assistant Bridge can reuse it. MVP effort is 2 to 3 weeks and the full roadmap 6 to 9 weeks for one developer [INFERRED].
 
 ## Scope
 
@@ -38,7 +38,7 @@ BOUNDARY CASE: the browser web remote served by each agent → IN as it exists t
 
 Each statement below must hold for the feature to work.
 
-1. **The web player process can run with no MCP server and stay up.** Holds. `shouldStopForMcpExit` stops the process only when it was launched by an MCP server (`src/web/player-runtime.ts:42-49`). A direct `navidrome-web` run has no IPC channel, so `launchedByMcp` is false (`src/web/main.ts:44`) [DIRECT: code].
+1. **The web player process can run with no MCP server and stay up.** Holds. `shouldStopForMcpExit` stops the process only when it was launched by an MCP server (`src/web/player-runtime.ts:42-49`). A direct `navidrome-mcp jukebox` run has no IPC channel, so `launchedByMcp` is false (`src/web/main.ts:44`) [DIRECT: code].
 2. **The web player process can start mpv by itself.** Holds. `POST /api/library/play` reaches `playbackEngine.enqueue`, which calls `ensureRunning` and spawns mpv when none answers (`src/tools/playback.ts:543`, `src/services/playback/playback-engine.ts:226-237`, `:739-760`) [DIRECT: code].
 3. **The web player process can build stream URLs without help.** Holds. It runs `createRuntime` with the full config (`src/web/main.ts:199`), which configures the engine (`src/bootstrap.ts:37-43`). The engine signs each URL with the configured password (`playback-engine.ts:711-730`). An agent therefore needs only song IDs [DIRECT: code].
 4. **The web player process scrobbles by itself.** Holds. It attaches its own `ScrobbleTracker` (`src/web/main.ts:236-237`) [DIRECT: code].
@@ -80,7 +80,7 @@ Starting-list claims:
        │                                     │   POST /api/mcp-lease, kept open (src/web/lease.ts)
        │                                     │   or spawn a detached child (src/web/spawn.ts)
        ▼                                     ▼
-   ┌───────┐   JSON-IPC    ┌──── web player process (src/web/main.ts, `navidrome-web`) ────┐
+   ┌───────┐   JSON-IPC    ┌──── web player (src/web/main.ts, `navidrome-mcp jukebox`) ────┐
    │  mpv  │ ◄──────────── │ own playback engine singleton + own scrobble tracker         │
    └───┬───┘               │ HTTP server src/webui/server.ts, port-as-lock                │
        │                   │ routes: /api/controls/*, /api/library/*, /api/events (SSE),  │
@@ -118,7 +118,7 @@ Facts about the parts in this diagram:
                              ▼                        │ /api/agent/v1/*  carries song IDs, station IDs,
                          local mpv                    │ control ops and state reads, never URLs
                                                       ▼
-                  ┌──── web player process in agent mode (garage Pi, `navidrome-web` as a service) ────┐
+                  ┌──── web player in agent mode (garage Pi, `navidrome-mcp jukebox` as a service) ────┐
                   │ agent API routes  src/webui/routes/agent.ts  → existing tool impls and engine ops   │
                   │ playback engine → JSON-IPC → garage mpv (socket stays on the Pi)                   │
                   │ scrobble tracker with the agent's own Navidrome credentials                        │
@@ -378,7 +378,7 @@ Criteria: maintainability 30, match with comparable tools 25, image size for MCP
 | effort (10) | 4 | 5 | 5 |
 | **Weighted total** | **4.20** | **3.60** | **4.05** |
 
-- The separate agent image tag is a second target in the same `Dockerfile`, such as `ghcr.io/blakeem/navidrome-mcp:<version>-agent`, on a trixie base for mpv 0.40. Its command is `navidrome-web`.
+- The separate agent image tag is a second target in the same `Dockerfile`, such as `ghcr.io/blakeem/navidrome-mcp:<version>-agent`, on a trixie base for mpv 0.40. Its command is `navidrome-mcp jukebox`.
 - mpv in the main image makes every MCP-only user pull mpv's dependency closure. In Debian, mpv hard-depends on FFmpeg, X11, Wayland, Vulkan, SDL2 and libplacebo, and `--no-install-recommends` cannot drop them [DIRECT: packages.debian.org bookworm mpv]. The added size is unmeasured [ABSENT].
 - The native install (npm, `apt install mpv`, a systemd user unit) is needed in any case, since a user unit reaches the user's PipeWire session without a socket mount.
 
@@ -409,7 +409,7 @@ Comparable tools: Lyrion keeps sync groups on the server [INFERRED]. Roon aims "
 
 ## Recommendation
 
-**Agent runtime.** Use the web player agent mode. Run `navidrome-web` standalone on the agent machine with `webui.expose` and an `agent` settings section. The lifecycle, the engine, the tracker and the per-room web remote come with it.
+**Agent runtime.** Use the web player agent mode. Run `navidrome-mcp jukebox` standalone on the agent machine with `webui.expose` and an `agent` settings section. The lifecycle, the engine, the tracker and the per-room web remote come with it.
 
 **Remote seam.** Use the queue-op API. The MCP server keeps every Navidrome read and its active-library scope. The agent receives song IDs with metadata, station IDs and control operations, and never a URL.
 

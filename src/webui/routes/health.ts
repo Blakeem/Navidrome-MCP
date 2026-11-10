@@ -24,5 +24,7 @@ export function handleHealth(req: IncomingMessage, res: ServerResponse, config: 
   writeJson(res, 200, {
     app: HEALTH_APP_ID,
     version: getPackageVersion(),
+    // A Save does not rebind a running player, so open_jukebox_remote reads the bind from here, not settings.json.
+    lan: isLanReachable(config.webui.host),
   });
 }

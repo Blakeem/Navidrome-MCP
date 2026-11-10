@@ -25,6 +25,7 @@ export function createSettingsPageHolder(start: StartSettingsServer = startConfi
 
   const startServer = (): Promise<SettingsServer> => {
     const starting = start({
+      host: 'jukebox-settings',
       idleTimeoutMs: SETTINGS_PAGE_IDLE_TIMEOUT_MS,
       onIdleTimeout: () => {
         logger.info('settings page: idle, so its server closed');

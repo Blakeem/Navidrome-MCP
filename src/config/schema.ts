@@ -80,7 +80,6 @@ export const ConfigSchema = z.object({
   // An explicit base pins one mirror and bypasses SRV resolution.
   radioBrowserBaseOverride: z.url({ protocol: /^https?$/ }).optional(),
 
-  lyricsProvider: z.string().optional(),
   lrclibUserAgent: z.string().optional(),
   lrclibBase: z.url({ protocol: /^https?$/ }),
 
@@ -125,11 +124,13 @@ export const ConfigSchema = z.object({
       message: 'Set both certPath and keyPath to serve HTTPS, or neither to serve HTTP.',
     }),
     // A null hash in a mode with a login is valid, since the env fallback supplies the password apart
-    // from the store and the login route answers 503 while neither source holds one.
+    // from the store, and while neither source holds one, only the player's computer logs in as admin.
     auth: z.object({
       mode: z.enum(WEBUI_AUTH_MODES),
       adminPasswordHash: z.string().nullable(),
       adminAccess: z.enum(WEBUI_ADMIN_ACCESS_LEVELS),
+      // False lets the player's computer in as admin with no password. Other devices always need it.
+      askPasswordOnThisComputer: z.boolean(),
     }),
   }).refine(publicUrlMatchesTls, {
     path: ['publicUrl'],

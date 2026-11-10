@@ -15,7 +15,7 @@ import { nullIfGoZeroTime } from '../utils/go-time.js';
 import { fetchActiveLibraryCounts } from './library.js';
 import { LASTFM_TOOL_NAMES } from './handlers/lastfm-handlers.js';
 import { LRCLIB_TOOL_NAMES } from './handlers/lyrics-handlers.js';
-import { PLAYBACK_TOOL_NAMES } from './handlers/playback-handlers.js';
+import { playbackToolNames } from './handlers/playback-handlers.js';
 import { RADIO_BROWSER_TOOL_NAMES, RADIO_PLAYBACK_TOOL_NAMES } from './handlers/radio-handlers.js';
 
 /** Older Navidrome releases omit the OpenSubsonic fields, so every field is optional. */
@@ -128,14 +128,14 @@ export async function testConnection(
             enabled: hasRadioBrowser,
             description: hasRadioBrowser
               ? 'Radio Browser integration enabled - internet radio station discovery available'
-              : 'Radio Browser integration disabled - set features.radioBrowserUserAgent in settings.json. To edit it, open the settings page (`navidrome-mcp settings`).',
+              : 'Radio Browser integration disabled - set features.radio to true in settings.json. To edit it, open the settings page (`navidrome-mcp settings`). When the server runs from environment variables, set RADIO_BROWSER_USER_AGENT.',
             tools: hasRadioBrowser ? [...RADIO_BROWSER_TOOL_NAMES] : []
           },
           lyrics: {
             enabled: hasLyrics,
             description: hasLyrics
               ? 'Lyrics integration enabled via LRCLIB - synced and unsynced lyrics available'
-              : 'Lyrics integration disabled - get_lyrics still reads the lyrics stored in the audio file. Set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json. To edit it, open the settings page (`navidrome-mcp settings`).',
+              : 'Lyrics integration disabled - get_lyrics still reads the lyrics stored in the audio file. Set features.lyrics to true in settings.json. To edit it, open the settings page (`navidrome-mcp settings`). When the server runs from environment variables, set LYRICS_PROVIDER=lrclib and LRCLIB_USER_AGENT.',
             tools: hasLyrics ? [...LRCLIB_TOOL_NAMES] : []
           },
           playback: {
@@ -143,7 +143,7 @@ export async function testConnection(
             description: hasPlayback
               ? 'Local playback enabled - mpv was found, so the play tools drive the local speakers'
               : 'Local playback disabled - mpv was not found. Install mpv or set playback.mpvPath in settings.json. To edit it, open the settings page (`navidrome-mcp settings`).',
-            tools: hasPlayback ? [...PLAYBACK_TOOL_NAMES, ...RADIO_PLAYBACK_TOOL_NAMES] : []
+            tools: hasPlayback ? [...playbackToolNames(config), ...RADIO_PLAYBACK_TOOL_NAMES] : []
           }
         }
       };

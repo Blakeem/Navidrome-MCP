@@ -5,28 +5,8 @@ Each section names a symptom and gives the fix for each platform it affects.
 ## The MCP Client Cannot Start the Server
 
 - **Invalid JSON.** Check the MCP client config file. A trailing comma or a single quote breaks it.
-- **Windows.** Claude Code and other clients that start the server without a shell need `"command": "cmd"` and `"args": ["/c", "npx", "navidrome-mcp"]`.
-- **macOS.** A client started from the Dock or Finder may not have Homebrew on its `PATH`, so it can't find `npx` or `node`. The Claude Desktop log then shows `spawn npx ENOENT` or `spawn node ENOENT`. Point the config at full paths instead of `npx`.
-
-On macOS, print the two paths in a terminal.
-
-```bash
-which node                                  # such as /opt/homebrew/bin/node
-echo "$(npm root -g)/navidrome-mcp/dist/index.js"
-```
-
-Then set `"command"` to the first path and `"args"` to the second.
-
-```json
-{
-  "mcpServers": {
-    "navidrome": {
-      "command": "/opt/homebrew/bin/node",
-      "args": ["/opt/homebrew/lib/node_modules/navidrome-mcp/dist/index.js"]
-    }
-  }
-}
-```
+- **Windows.** Claude Code and other clients that start the server without a shell need `"command": "cmd"` and `"args": ["/c", "npx", "navidrome-mcp"]`. `navidrome-mcp connect` writes this form on Windows.
+- **macOS.** A client started from the Dock or Finder may not have Homebrew on its `PATH`, so it can't find `npx` or `node`. The Claude Desktop log then shows `spawn npx ENOENT` or `spawn node ENOENT`. Run `navidrome-mcp connect --absolute`, which writes the full paths of `node` and the installed server. Run it again after you update, move, or reinstall navidrome-mcp.
 
 Run `node --version` to check the version. The server needs Node.js 24.19 or later.
 
@@ -59,6 +39,14 @@ The server looks for mpv when it starts, and it registers the playback tools onl
 The Jukebox Remote writes its log to `jukebox-remote.log` beside `settings.json`. Run `navidrome-mcp help` to print both paths. Read the end of the log, fix the settings with `navidrome-mcp settings`, and launch the shortcut again.
 
 Run `navidrome-mcp shortcut` again after you move or reinstall navidrome-mcp, since the shortcut stores the paths to `node` and the installed package. On GNOME, right-click the desktop icon and choose **Allow Launching** the first time.
+
+## Locked Out of the Jukebox Remote
+
+The player asks for an admin password that nobody knows.
+
+1. In `settings.json`, set `webui.auth.adminPasswordHash` to `null`. A running player reads the change within about 10 seconds. Another way is to turn off **Ask for the admin password on this computer** with `navidrome-mcp settings`, which applies after the player restarts.
+2. Open the Jukebox Remote on the host computer, such as by asking the AI. It opens as admin with no login.
+3. Set a new password in **All settings** in the gear menu.
 
 ## Logs and Debug Mode
 

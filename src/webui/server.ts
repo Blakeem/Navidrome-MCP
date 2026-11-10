@@ -17,7 +17,7 @@ import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { SseBroadcaster } from './broadcaster.js';
 import { endGuestStream, MAX_GUESTS_PER_CODE, type AuthService } from './auth/auth-service.js';
-import { authorize, resolvePrincipal, type Principal } from './auth/principal.js';
+import { authorize, isPasswordlessHere, resolvePrincipal, type Principal } from './auth/principal.js';
 import { JOIN_ROUTE_PATH } from './auth/session-cookie.js';
 import type { SessionRecord } from './auth/auth-store.js';
 import type { Permission } from './auth/roles.js';
@@ -409,9 +409,10 @@ function labelsHostAdds(auth: Pick<AuthService, 'mode'>, principal: Principal): 
   return auth.mode === 'jukebox' && principal.kind === 'admin';
 }
 
-// Page routing only picks a page, since every `/api/` route checks its own access.
-function routeRoot({ res, deps, principal }: RouteContext): void {
-  const guestLanding = deps.auth.mode === 'jukebox' && principal.kind !== 'admin';
+// Page routing only picks a page, since every `/api/` route checks its own access. The player's
+// computer lands on the player when it logs in with no password.
+function routeRoot({ req, res, deps, principal }: RouteContext): void {
+  const guestLanding = deps.auth.mode === 'jukebox' && principal.kind !== 'admin' && !isPasswordlessHere(req, deps.auth);
   writeRedirect(res, guestLanding ? GUEST_PAGE_PATH : ADMIN_PAGE_PATH);
 }
 
@@ -436,8 +437,8 @@ function handlePathParamRoute(
 const ROUTES: readonly Route[] = [
   { method: 'GET',  path: '/healthz',                   access: 'public',          handle: ({ req, res, deps }) => handleHealth(req, res, deps.config) },
   { method: 'POST', path: MCP_LEASE_PATH,               access: 'public',          handle: ({ req, res, deps }) => handleMcpLease(req, res, deps.leases) },
-  { method: 'GET',  path: '/api/auth/session',          access: 'public',          handle: ({ req, res, deps }) => handleAuthSession(req, res, deps.auth) },
-  { method: 'POST', path: '/api/auth/login',            access: 'public',          handle: ({ req, res, deps }) => handleLogin(req, res, deps.auth) },
+  { method: 'GET',  path: '/api/auth/session',          access: 'public',          handle: ({ req, res, deps }) => handleAuthSession(req, res, deps.auth, deps.config) },
+  { method: 'POST', path: '/api/auth/login',            access: 'public',          handle: ({ req, res, deps }) => handleLogin(req, res, deps.auth, deps.config) },
   { method: 'POST', path: '/api/auth/logout',           access: 'auth.self',       handle: ({ req, res, deps, principal }) => handleLogout(req, res, deps.auth, principal) },
   { method: 'GET',  path: '/',                          access: 'public',          handle: routeRoot },
   { method: 'GET',  path: '/index.html',                access: 'public',          handle: redirectToAdminPage },

@@ -6,7 +6,7 @@
 
 import { getSettingsStorePath } from '../config/store-path.js';
 import { jukeboxLogPath } from '../web/log-path.js';
-import { REINSTALL_HINT, STOP_HINT } from './texts.js';
+import { ABSOLUTE_FLAG, REINSTALL_HINT, STOP_HINT } from './texts.js';
 
 export interface CliIo {
   /** Read lazily, so a run that names a command never touches process.stdin. */
@@ -62,6 +62,15 @@ export const COMMANDS: readonly CliCommand[] = [
       `Run it again ${REINSTALL_HINT}`,
     ],
     action: { kind: 'load', load: () => import('../shortcut/main.js') },
+  },
+  {
+    name: 'connect',
+    aliases: [],
+    description: [
+      'Add Navidrome MCP to Claude Desktop.',
+      `Add ${ABSOLUTE_FLAG} to write the full paths of node and the server.`,
+    ],
+    action: { kind: 'load', load: () => import('../connect/main.js') },
   },
   {
     name: 'help',

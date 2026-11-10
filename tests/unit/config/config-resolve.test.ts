@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig, readSavedAudioDevice, resolveConfigState, saveAudioDevice, saveJukeboxSettings } from '../../../src/config.js';
+import { logger } from '../../../src/utils/logger.js';
 
 // The node binary stands in for a valid mpv path, since it exists and is executable on every host.
 const EXEC = process.execPath;
@@ -166,12 +167,21 @@ describe('config resolution', () => {
 
     it('defaults the web remote to access mode none with the localhost admin level', async () => {
       write(BASE);
-      expect((await loadConfig()).webui.auth).toEqual({ mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' });
+      expect((await loadConfig()).webui.auth).toEqual({
+        mode: 'none', adminPasswordHash: null, adminAccess: 'localhost', askPasswordOnThisComputer: true,
+      });
     });
 
-    it('maps the stored access settings and trims the hash', async () => {
+    it('maps the stored access settings and trims the hash, and reads a missing ask as on', async () => {
       write({ ...BASE, webui: { auth: { mode: 'jukebox', adminPasswordHash: ' $argon2id$hash ', adminAccess: 'anywhere' } } });
-      expect((await loadConfig()).webui.auth).toEqual({ mode: 'jukebox', adminPasswordHash: '$argon2id$hash', adminAccess: 'anywhere' });
+      expect((await loadConfig()).webui.auth).toEqual({
+        mode: 'jukebox', adminPasswordHash: '$argon2id$hash', adminAccess: 'anywhere', askPasswordOnThisComputer: true,
+      });
+    });
+
+    it('maps a stored choice to skip the admin password on this computer', async () => {
+      write({ ...BASE, webui: { auth: { mode: 'password', askPasswordOnThisComputer: false } } });
+      expect((await loadConfig()).webui.auth.askPasswordOnThisComputer).toBe(false);
     });
 
     it('voids the store for an unknown access mode, so a typo never opens the remote', async () => {
@@ -324,6 +334,69 @@ describe('config resolution', () => {
       expect(c.features.lastfm).toBe(true);
       expect(c.features.radioBrowser).toBe(true);
     });
+
+    // Each row is the features object of a file that predates features.radio and features.lyrics.
+    it.each([
+      [{}, false, false],
+      [{ radioBrowserUserAgent: 'UA/1.0' }, true, false],
+      [{ radioBrowserUserAgent: '   ' }, false, false],
+      [{ radioBrowserUserAgent: null }, false, false],
+      [{ lyricsProvider: 'lrclib', lrclibUserAgent: 'UA/1.0' }, false, true],
+      [{ lyricsProvider: 'LRCLIB', lrclibUserAgent: 'UA/1.0' }, false, true],
+      [{ lyricsProvider: 'lrclib', lrclibUserAgent: null }, false, false],
+      [{ lyricsProvider: 'lrclib', lrclibUserAgent: '' }, false, false],
+      [{ lyricsProvider: null, lrclibUserAgent: 'UA/1.0' }, false, false],
+      [{ lrclibUserAgent: 'UA/1.0' }, false, false],
+    ])('migrates the legacy features %j to radio %s and lyrics %s', async (features, radio, lyrics) => {
+      write({ ...BASE, features });
+      const c = await loadConfig();
+      expect(c.features.radioBrowser).toBe(radio);
+      expect(c.features.lyrics).toBe(lyrics);
+    });
+
+    it.each(['none', 'off', 'genius'])('turns lyrics off with a warning naming the key for lyricsProvider %s', async (provider) => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      write({ ...BASE, features: { lyricsProvider: provider, lrclibUserAgent: 'UA/1.0' } });
+      expect((await loadConfig()).features.lyrics).toBe(false);
+      expect(warn).toHaveBeenCalledWith(`features.lyricsProvider "${provider}" is not supported (use lrclib), so LRCLIB lyrics are off.`);
+      warn.mockRestore();
+    });
+
+    it('warns once for an unsupported lyricsProvider that each store read finds again', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      write({ ...BASE, features: { lyricsProvider: 'musixmatch', lrclibUserAgent: 'UA/1.0' } });
+      await loadConfig();
+      await loadConfig();
+      const message = 'features.lyricsProvider "musixmatch" is not supported (use lrclib), so LRCLIB lyrics are off.';
+      expect(warn.mock.calls.filter(([line]) => line === message)).toHaveLength(1);
+      warn.mockRestore();
+    });
+
+    it('turns radio on with no user agent, so the call site sends the default', async () => {
+      write({ ...BASE, features: { radio: true } });
+      const c = await loadConfig();
+      expect(c.features.radioBrowser).toBe(true);
+      expect(c.radioBrowserUserAgent).toBeUndefined();
+    });
+
+    it('lets the booleans win over the legacy keys, with no lyricsProvider warning', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      write({
+        ...BASE,
+        features: { radio: false, lyrics: false, radioBrowserUserAgent: 'UA/1.0', lyricsProvider: 'disabled', lrclibUserAgent: 'UA/1.0' },
+      });
+      const c = await loadConfig();
+      expect(c.features.radioBrowser).toBe(false);
+      expect(c.features.lyrics).toBe(false);
+      expect(c.radioBrowserUserAgent).toBe('UA/1.0');
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('lyricsProvider'));
+      warn.mockRestore();
+    });
+
+    it('turns lyrics on with features.lyrics alone', async () => {
+      write({ ...BASE, features: { lyrics: true } });
+      expect((await loadConfig()).features.lyrics).toBe(true);
+    });
   });
 
   describe('loadConfig errors', () => {
@@ -339,6 +412,16 @@ describe('config resolution', () => {
     it('throws when the URL has no http or https scheme', async () => {
       write({ navidrome: { url: 'navidrome:4533', username: 'u', password: 'p' } });
       await expect(loadConfig()).rejects.toThrow(/starting with http:\/\/ or https:\/\//);
+    });
+
+    it.each([
+      ['navidrome.url', { ...BASE, navidrome: { ...BASE.navidrome, url: 'navidrome:4533' } }],
+      ['features.radioBrowserBase', { ...BASE, features: { radioBrowserBase: 'not a url' } }],
+      ['advanced.tokenExpiry', { ...BASE, advanced: { tokenExpiry: -1 } }],
+      ['webui.port', { ...BASE, webui: { port: 0 } }],
+    ])('names the settings.json key %s, not the Config field', async (key, store) => {
+      write(store);
+      await expect(loadConfig()).rejects.toThrow(`\n${key}: `);
     });
   });
 
@@ -365,6 +448,61 @@ describe('config resolution', () => {
     it('rejects the store when present-but-invalid (bad URL)', async () => {
       write({ navidrome: { url: 'not-a-url', username: 'u', password: 'p' } });
       expect(await resolveConfigState()).toEqual(storeRejected(/Configuration validation failed/));
+    });
+
+    it('adds the hand-edit notices to a rejected store reason', async () => {
+      write({ navidrome: { url: 'not-a-url', username: 'u', password: 'p' }, webui: { prot: 1 } });
+      expect(await resolveConfigState()).toEqual(storeRejected(
+        /^Configuration validation failed:\nnavidrome\.url: [^\n]+\nsettings\.json notices:\nwebui\.prot is not a setting this version knows\. Did you mean webui\.port\?$/,
+      ));
+    });
+
+    it('adds the coercion notices to a voided store reason', async () => {
+      write({ navidrome: { url: 'http://h:4533' }, webui: { port: '8808', auth: { mode: 'pasword' } } });
+      expect(await resolveConfigState()).toEqual(storeRejected(
+        /failed validation[^\n]+webui\.auth\.mode[^\n]+\nsettings\.json notices:\nwebui\.port holds the text "8808"/,
+      ));
+    });
+
+    it.each([
+      [
+        { webui: { host: '127.0.0.1', expose: true } },
+        'webui.host "127.0.0.1" keeps the Jukebox Remote on this computer, but webui.expose is true. webui.host wins. Clear webui.host to let webui.expose decide.',
+      ],
+      [
+        { webui: { host: '0.0.0.0', expose: false } },
+        'webui.host "0.0.0.0" opens the Jukebox Remote to the network, but webui.expose is false. webui.host wins. Clear webui.host to let webui.expose decide.',
+      ],
+      [
+        { transport: { type: 'http', host: 'localhost', expose: true } },
+        'transport.host "localhost" keeps the MCP HTTP server on this computer, but transport.expose is true. transport.host wins. Clear transport.host to let transport.expose decide.',
+      ],
+    ])('warns at startup when a stored host contradicts expose (%j)', async (bind, message) => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      write({ ...BASE, ...bind });
+      try {
+        expect(await resolveConfigState()).toMatchObject({ configured: true });
+        expect(warn).toHaveBeenCalledWith(message);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it.each([
+      { webui: { host: '0.0.0.0', expose: true } },
+      { webui: { host: '127.0.0.1' } },
+      { webui: { host: '', expose: true } },
+      { transport: { type: 'stdio', host: '127.0.0.1', expose: true } },
+      { transport: { type: 'http', host: '0.0.0.0', expose: true } },
+    ])('does not warn when the stored host agrees with expose or one key is unset (%j)', async (bind) => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      write({ ...BASE, ...bind });
+      try {
+        expect(await resolveConfigState()).toMatchObject({ configured: true });
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('wins'));
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 
@@ -482,6 +620,28 @@ describe('config resolution', () => {
       });
     });
 
+    it('adds the hand-edit notices to a schema-rejected store reason when no env URL is set', async () => {
+      write({ ...BASE, webui: { port: 'abc', prot: 1 } });
+      expect(await resolveConfigState()).toEqual(storeRejected(
+        /^settings\.json failed validation [^\n]+webui\.port[^\n]+\nsettings\.json notices:\nwebui\.prot is not a setting this version knows\. Did you mean webui\.port\?$/,
+      ));
+    });
+
+    it('adds the hand-edit notices when a schema-rejected store falls back to an invalid env config', async () => {
+      write({ ...BASE, webui: { port: 'abc', prot: 1 } });
+      process.env['NAVIDROME_URL'] = 'http://env-host:4533';
+      expect(await resolveConfigState()).toEqual({
+        configured: false,
+        failure: {
+          reason: expect.stringMatching(
+            /^settings\.json failed validation .*\. Its values are ignored\. The environment-derived config is invalid: [\s\S]+\nsettings\.json notices:\nwebui\.prot is not a setting this version knows\. Did you mean webui\.port\?$/,
+          ),
+          unreachable: false,
+          source: 'env',
+        },
+      });
+    });
+
     it('ignores a blank NAVIDROME_URL', async () => {
       process.env['NAVIDROME_URL'] = '   ';
       expect(await resolveConfigState()).toEqual({ configured: false });
@@ -509,6 +669,18 @@ describe('config resolution', () => {
         expect(state.config.features.radioBrowser).toBe(true);
         expect(state.config.features.lyrics).toBe(true);
       }
+    });
+
+    it('keeps lyrics off for a LYRICS_PROVIDER other than lrclib, and warns with the env key', async () => {
+      const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+      setEnvCreds();
+      process.env['LYRICS_PROVIDER'] = 'none';
+      process.env['LRCLIB_USER_AGENT'] = 'MyAgent/1.0';
+      const state = await resolveConfigState();
+      expect(state.configured).toBe(true);
+      if (state.configured) expect(state.config.features.lyrics).toBe(false);
+      expect(warn).toHaveBeenCalledWith('LYRICS_PROVIDER "none" is not supported (use lrclib), so LRCLIB lyrics are off.');
+      warn.mockRestore();
     });
 
     it('maps PLAYBACK_AUDIO_DEVICE to a device with no name', async () => {
@@ -551,10 +723,10 @@ describe('config resolution', () => {
       });
     });
 
-    it('writes null to return to the default output', () => {
+    it('removes the device to return to the default output', () => {
       write({ ...BASE, playback: { audioDevice: DEVICE } });
       expect(saveAudioDevice(null)).toBe(true);
-      expect(readStore()['playback']).toEqual({ audioDevice: null });
+      expect(readStore()).not.toHaveProperty('playback');
       expect(readSavedAudioDevice()).toBeNull();
     });
 
@@ -584,6 +756,12 @@ describe('config resolution', () => {
       expect(saveJukeboxSettings({ shareLink: 'internet' })).toBe(true);
       expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ ...BASE, jukebox: { guestQueueLimit: 5, shareLink: 'internet' } });
       expect((await loadConfig()).jukebox).toEqual({ guestQueueLimit: 5, shareLink: 'internet' });
+    });
+
+    it('saves over a store with a coerced value and writes that value back in its type', () => {
+      write({ ...BASE, webui: { port: '9001' } });
+      expect(saveJukeboxSettings({ guestQueueLimit: 4 })).toBe(true);
+      expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ ...BASE, webui: { port: 9001 }, jukebox: { guestQueueLimit: 4 } });
     });
 
     it('returns false and writes nothing when no store file exists', () => {

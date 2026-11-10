@@ -121,7 +121,7 @@ shared mpv process (one per OS user, detached, --no-config, --idle=yes)
          ▼
 OS audio device (speakers, HDMI, USB DAC, connected Bluetooth speaker)
 
-config app (navidrome-config, or hosted by either process)   src/config-app/
+config app (navidrome-mcp settings, or hosted by either process)   src/config-app/
   form FIELDS table, public/app.js:7-39 ──► POST /api/settings ──► settings store
   (the save merges the posted FIELDS keys onto the stored file and keeps every other key, routes.ts:63-132)
 

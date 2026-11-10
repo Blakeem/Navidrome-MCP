@@ -149,7 +149,7 @@ function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: bo
       theme: null,
       visualizer: true,
       tls: { certPath: null, keyPath: null },
-      auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' },
+      auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost', askPasswordOnThisComputer: true },
     },
   });
 }
@@ -216,11 +216,17 @@ describe('handleHealth loopback gate (resolved bind host matrix)', () => {
     expect(cap.status()).toBe(200);
   });
 
-  it('serves only the app signature and the version', () => {
+  it('serves only the app signature, the version and the LAN bind state', () => {
     const cap = fakeRes();
     handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: false, host: '127.0.0.1' }));
-    expect(Object.keys(cap.json() as object).sort()).toEqual(['app', 'version']);
-    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID });
+    expect(Object.keys(cap.json() as object).sort()).toEqual(['app', 'lan', 'version']);
+    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID, lan: false });
+  });
+
+  it('reports a LAN-reachable bind to a loopback peer', () => {
+    const cap = fakeRes();
+    handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: true, host: '0.0.0.0' }));
+    expect(cap.json()).toMatchObject({ lan: true });
   });
 });
 
@@ -1382,7 +1388,7 @@ describe('createConnectionLimiter', () => {
     ['jukebox', 'anywhere', false],
   ] as const)('in mode %s at level %s, a ninth internet socket is refused: %s', (mode, adminAccess, refused) => {
     const config = configWith({ expose: true, host: '0.0.0.0' });
-    config.webui.auth = { mode, adminPasswordHash: null, adminAccess };
+    config.webui.auth = { mode, adminPasswordHash: null, adminAccess, askPasswordOnThisComputer: true };
     const limit = testServer(config).listeners('connection').at(-1) as (socket: Socket) => void;
 
     const sockets = openSockets(limit, Array.from({ length: 9 }, (_, index) => `203.0.113.${String(index + 1)}`));
@@ -1392,7 +1398,7 @@ describe('createConnectionLimiter', () => {
 
   it('in mode password at level anywhere, one internet network cannot take every internet slot', () => {
     const config = configWith({ expose: true, host: '0.0.0.0' });
-    config.webui.auth = { mode: 'password', adminPasswordHash: null, adminAccess: 'anywhere' };
+    config.webui.auth = { mode: 'password', adminPasswordHash: null, adminAccess: 'anywhere', askPasswordOnThisComputer: true };
     const limit = testServer(config).listeners('connection').at(-1) as (socket: Socket) => void;
 
     const flood = openSockets(limit, Array.from({ length: 17 }, () => '203.0.113.5'));

@@ -11,6 +11,7 @@ import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 import { ALBUM_FILTER_PROPERTIES, SONG_FILTER_PROPERTIES } from './search-handlers.js';
 import { respawnWebForPlay } from './respawn-on-play.js';
+import { openJukeboxRemote } from '../jukebox-remote.js';
 
 /**
  * Tools that load new content respawn the web player first, since powering it off also quits mpv.
@@ -403,11 +404,29 @@ const tools: Tool[] = [
   },
 ];
 
-export const PLAYBACK_TOOL_NAMES = tools.map((tool) => tool.name);
+const OPEN_JUKEBOX_REMOTE_TOOL: Tool = {
+  name: 'open_jukebox_remote',
+  description: 'Open the Jukebox Remote, the browser player for this server, on this computer. Starts it when it is not running. Returns its address, and the addresses other devices on the network use.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+};
+
+/** The browser opens on the computer that runs this server, which only a stdio client shares. */
+function playbackTools(config: Config): Tool[] {
+  const opensJukeboxRemote = config.transport.type === 'stdio' && config.webui.enabled;
+  return opensJukeboxRemote ? [...tools, OPEN_JUKEBOX_REMOTE_TOOL] : tools;
+}
+
+export function playbackToolNames(config: Config): string[] {
+  return playbackTools(config).map((tool) => tool.name);
+}
 
 export function createPlaybackToolCategory(client: NavidromeClient, config: Config): ToolCategory {
   return {
-    tools,
+    tools: playbackTools(config),
     async handleToolCall(name: string, args: unknown): Promise<unknown> {
       if (PLAYBACK_STARTERS.has(name)) {
         await respawnWebForPlay(config);
@@ -455,6 +474,8 @@ export function createPlaybackToolCategory(client: NavidromeClient, config: Conf
           return removeFromPlayQueue(args);
         case 'play_queue_index':
           return playQueueIndex(args);
+        case 'open_jukebox_remote':
+          return openJukeboxRemote(config);
         default:
           throw new Error(ErrorFormatter.toolUnknown(name));
       }

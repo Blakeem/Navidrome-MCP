@@ -127,22 +127,27 @@ describe('app.js', () => {
   })).filter((module) => !REAL_MODULES.has(module.file));
 
   const setLocalPeer = vi.fn();
+  const postLogin = vi.fn();
   let session: Record<string, unknown> | null = null;
 
   beforeEach(() => {
     setLocalPeer.mockReset();
+    postLogin.mockReset();
     vi.resetModules();
     for (const module of mockedModules) {
       vi.doMock(`${MODULE_DIR}${module.file}`, () => ({
         ...Object.fromEntries(module.names.map((name) => [name, vi.fn()])),
         ...(module.file === 'local-controls.js' ? { setLocalPeer } : {}),
-        ...(module.file === 'api.js' ? { getJson: vi.fn((url: string) => Promise.resolve(url === '/api/auth/session' ? session : null)) } : {}),
+        ...(module.file === 'api.js'
+          ? { getJson: vi.fn((url: string) => Promise.resolve(url === '/api/auth/session' ? session : null)), postLogin }
+          : {}),
       }));
     }
   });
 
   afterEach(() => {
     for (const module of mockedModules) vi.doUnmock(`${MODULE_DIR}${module.file}`);
+    vi.unstubAllGlobals();
   });
 
   const boot = async (): Promise<void> => {
@@ -166,6 +171,53 @@ describe('app.js', () => {
     expect(setLocalPeer).toHaveBeenCalledWith(isLocal);
   });
 
+  it("logs the player's computer in with no password when the session says it may, then boots the player", async () => {
+    const adminSession = { mode: 'jukebox', role: 'admin', isLocal: true, passwordlessHere: true, csrfToken: 'token' };
+    session = { mode: 'jukebox', role: 'anonymous', isLocal: true, adminLoginAvailable: true, passwordlessHere: true };
+    postLogin.mockImplementation(() => {
+      session = adminSession;
+      return Promise.resolve({ ok: true, data: null });
+    });
+
+    await boot();
+
+    expect(postLogin).toHaveBeenCalledWith('');
+    expect(setLocalPeer).toHaveBeenCalledWith(true);
+  });
+
+  it.each([
+    ['the refusal', { error: 'Too many passwordless logins. Try again in 60 seconds.' }, 'Too many passwordless logins. Try again in 60 seconds.'],
+    ['null for an answer with no error', null, null],
+  ])("passes %s to the login view when the player's computer is refused a passwordless login", async (_label, data, loginError) => {
+    session = { mode: 'jukebox', role: 'anonymous', isLocal: true, adminLoginAvailable: true, passwordlessHere: true };
+    postLogin.mockResolvedValue({ ok: false, data });
+
+    await import('../../../src/webui/public/app.js');
+    const loginView = await import('../../../src/webui/public/login-view.js');
+
+    await vi.waitFor(() => expect(loginView.showLoginView).toHaveBeenCalledWith({ ...session, loginError }));
+    expect(setLocalPeer).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['reloads to log in again for a passwordless session', { mode: 'jukebox', role: 'anonymous', passwordlessHere: true }, true],
+    ['shows the login view for any other session', { mode: 'jukebox', role: 'anonymous', adminLoginAvailable: true }, false],
+  ])('after a 401, %s', async (_label, ended, reloads) => {
+    const reload = vi.fn();
+    vi.stubGlobal('window', { location: { reload } });
+    session = { mode: 'jukebox', role: 'admin', isLocal: true, csrfToken: 'token' };
+    await boot();
+    const api = await import('../../../src/webui/public/api.js');
+    const loginView = await import('../../../src/webui/public/login-view.js');
+    const onLoginRequired = vi.mocked(api.setLoginRequiredHandler).mock.calls[0]?.[0] as () => void;
+    session = ended;
+
+    onLoginRequired();
+
+    await vi.waitFor(() => expect(reloads ? reload : loginView.showLoginView).toHaveBeenCalled());
+    expect(reloads ? loginView.showLoginView : reload).not.toHaveBeenCalled();
+  });
+
   it('treats an unread session as remote', async () => {
     session = null;
 
@@ -179,6 +231,7 @@ describe('app.js', () => {
 describe('local-controls.js', () => {
   interface FakeElement {
     hidden: boolean;
+    textContent?: string;
     setAttribute: (name: string) => void;
     removeAttribute: (name: string) => void;
     addEventListener: () => void;
@@ -186,7 +239,7 @@ describe('local-controls.js', () => {
   }
   type LocalControls = {
     setLocalPeer: (isLocal: boolean) => void;
-    showAdminControls: () => void;
+    showAdminControls: (session: Record<string, unknown>) => void;
     canChangePlayerSettings: () => boolean;
   };
 
@@ -255,13 +308,26 @@ describe('local-controls.js', () => {
     const controls = await load();
 
     controls.setLocalPeer(false);
-    controls.showAdminControls();
+    controls.showAdminControls({});
 
     expect(element('logout-btn').hidden).toBe(false);
+    expect(element('no-admin-password-notice').hidden).toBe(true);
     for (const id of ['settings-theme-group', 'settings-player-group', 'power-btn']) {
       expect(element(id).hidden, id).toBe(true);
     }
     expect(controls.canChangePlayerSettings()).toBe(false);
+  });
+
+  it("hides Log out from a passwordless session and shows the server's notice while no admin password is set", async () => {
+    const controls = await load();
+    const message = 'No admin password is set. Other devices cannot log in. Set WEBUI_ADMIN_PASSWORD and restart the player.';
+
+    controls.setLocalPeer(true);
+    controls.showAdminControls({ passwordlessHere: true, noAdminPasswordMessage: message });
+
+    expect(element('logout-btn').hidden).toBe(true);
+    expect(element('no-admin-password-notice').hidden).toBe(false);
+    expect(element('no-admin-password-notice').textContent).toBe(message);
   });
 });
 
@@ -525,5 +591,87 @@ describe('network-info.js hints', () => {
     });
 
     expect(children).toEqual(['']);
+  });
+});
+
+describe('login-view.js', () => {
+  const MOCKED = ['api.js', 'connection.js', 'lyrics-view.js'];
+  type FakeElement = { hidden: boolean; textContent: string; setAttribute: () => void; removeAttribute: () => void; focus: () => void };
+  type LoginView = { showLoginView: (session: Record<string, unknown> | null) => void };
+
+  let elements = new Map<string, FakeElement>();
+  const element = (id: string): FakeElement => elements.get(id) as FakeElement;
+
+  beforeEach(() => {
+    elements = new Map();
+    const fake = (): FakeElement => {
+      const el: FakeElement = {
+        hidden: false,
+        textContent: '',
+        setAttribute: () => { el.hidden = true; },
+        removeAttribute: () => { el.hidden = false; },
+        focus: () => undefined,
+      };
+      return el;
+    };
+    vi.stubGlobal('document', {
+      getElementById: (id: string) => {
+        if (!elements.has(id)) elements.set(id, fake());
+        return elements.get(id);
+      },
+      querySelectorAll: () => [],
+      body: { classList: { add: () => undefined } },
+    });
+    vi.resetModules();
+    for (const file of MOCKED) {
+      vi.doMock(`../../../src/webui/public/${file}`, () => ({ postLogin: vi.fn(), stopConnection: vi.fn(), closeLyrics: vi.fn() }));
+    }
+  });
+
+  afterEach(() => {
+    for (const file of MOCKED) vi.doUnmock(`../../../src/webui/public/${file}`);
+    vi.unstubAllGlobals();
+  });
+
+  const load = async (): Promise<LoginView> => (await import('../../../src/webui/public/login-view.js')) as unknown as LoginView;
+  const NO_PASSWORD_SESSION = {
+    mode: 'jukebox',
+    role: 'anonymous',
+    adminLoginAvailable: true,
+    passwordlessHere: true,
+    yourAddress: '127.0.0.1',
+    noAdminPasswordMessage: 'No admin password is set. Other devices cannot log in. Set one in All settings.',
+  };
+
+  it.each([
+    ['the refusal', 'Too many passwordless logins. Try again in 60 seconds.', 'Too many passwordless logins. Try again in 60 seconds.'],
+    ['the connection failure', null, 'Login failed. Check the connection and try again.'],
+  ])('shows %s of a passwordless login in place of the card text', async (_label, loginError, help) => {
+    const view = await load();
+
+    view.showLoginView({ ...NO_PASSWORD_SESSION, loginError });
+
+    expect(element('login-help').textContent).toBe(help);
+    expect(element('login-fields').hidden).toBe(true);
+  });
+
+  it.each([
+    ['hides', true, true],
+    ['shows', false, false],
+  ])('%s the password field for a saved password when passwordlessHere is %s', async (_label, passwordlessHere, hidden) => {
+    const view = await load();
+    const savedPasswordSession = { mode: 'jukebox', role: 'anonymous', adminLoginAvailable: true, yourAddress: '127.0.0.1' };
+
+    view.showLoginView({ ...savedPasswordSession, passwordlessHere, loginError: 'Too many passwordless logins. Try again in 60 seconds.' });
+
+    expect(element('login-fields').hidden).toBe(hidden);
+  });
+
+  it('shows the card text when no passwordless login was refused', async () => {
+    const view = await load();
+
+    view.showLoginView(NO_PASSWORD_SESSION);
+
+    expect(element('login-help').textContent).toBe(NO_PASSWORD_SESSION.noAdminPasswordMessage);
   });
 });

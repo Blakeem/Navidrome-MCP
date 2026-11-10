@@ -77,7 +77,8 @@ export function buildHeadlessStartupError(failure?: StartupFailure): string {
   const remedy = failure.source === 'env'
     ? 'Fix the environment variable that holds the named setting, then restart.'
     : `Fix or remove settings.json at ${getSettingsStorePath()}, and make sure this server's user can read it, then restart.`;
-  return `Navidrome MCP could not start with the current configuration: ${reason} ${exits} ${remedy}`;
+  // A reason may end in a list of lines, such as validation messages, so the exit text starts its own line.
+  return `Navidrome MCP could not start with the current configuration: ${reason}\n${exits} ${remedy}`;
 }
 
 /**

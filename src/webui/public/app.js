@@ -1,7 +1,7 @@
 // Production serves the copy that pnpm build places in dist/webui/public and reads it on every
 // request, so an edit to this folder needs a build and a page reload.
 
-import { getJson, setCsrfToken, setLoginRequiredHandler } from './api.js';
+import { getJson, postLogin, setCsrfToken, setLoginRequiredHandler } from './api.js';
 import { bindAudioDevice, renderAudioDevice } from './audio-device.js';
 import { connect } from './connection.js';
 import { bindGuestsDialog, showGuestsButton } from './guests.js';
@@ -13,7 +13,7 @@ import { setLrclibEnabled } from './lyrics-content.js';
 import { bindLyricsView, syncLyricsToSnapshot } from './lyrics-view.js';
 import { bindNetworkInfo } from './network-info.js';
 import { renderNowPlaying } from './now-playing.js';
-import { adminView, isLoginMode } from './page-view.js';
+import { adminView, isLoginMode, needsPasswordlessLogin } from './page-view.js';
 import { bindPlayDialog } from './play-dialog.js';
 import { rebaseClock } from './playback-clock.js';
 import { bindQueue, renderQueue, revealCurrentRow } from './queue.js';
@@ -49,22 +49,37 @@ async function loadPlayerState() {
   applyTheme(state.theme);
 }
 
+// The player's computer logs in with no password when the server admits it. A failed login keeps the
+// session it read and adds the refusal, since the login view's own card may point at All settings, which needs a login.
+async function readSession() {
+  const session = await getJson('/api/auth/session');
+  if (!needsPasswordlessLogin(session)) return session;
+  const { ok, data } = await postLogin('');
+  return ok ? getJson('/api/auth/session') : { ...session, loginError: data?.error ?? null };
+}
+
+// A passwordless session that ended, such as by a password change while the ask is off, boots again to log in again.
+function leavePlayer(session) {
+  if (needsPasswordlessLogin(session)) window.location.reload();
+  else showLoginView(session);
+}
+
 // A 401 means the session ended. A failed session read still shows the login form.
 async function returnToLogin() {
-  showLoginView(await getJson('/api/auth/session'));
+  leavePlayer(await getJson('/api/auth/session'));
 }
 
 // Runs when the event stream gives up, so a session that ended elsewhere returns to the login view.
 async function checkSessionEnded() {
   const session = await getJson('/api/auth/session');
-  if (adminView(session) !== 'player') showLoginView(session);
+  if (adminView(session) !== 'player') leavePlayer(session);
 }
 
 // An unread session reads as remote, so a failed read hides the system settings and Shut down and keeps Network info.
 function bootPlayer(session) {
   setLocalPeer(session?.isLocal === true);
   if (isLoginMode(session)) {
-    showAdminControls();
+    showAdminControls(session);
     bindLogoutButton();
   }
   if (session?.mode === 'jukebox') {
@@ -100,7 +115,7 @@ async function bootstrap() {
   applyThemeHint();
   bindLoginForm();
   setLoginRequiredHandler(() => void returnToLogin());
-  const session = await getJson('/api/auth/session');
+  const session = await readSession();
   if (adminView(session) !== 'player') {
     showLoginView(session);
     return;

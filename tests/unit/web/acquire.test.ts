@@ -186,6 +186,18 @@ describe('/healthz probe verdicts', () => {
     expect(await webOwnerPresent(loopback(port), noSavedEndpoint)).toBe(true);
   });
 
+  it('carries the owner LAN bind state through to the web owner probe', async () => {
+    const port = await serveHealthz({ app: HEALTH_APP_ID, lan: true });
+
+    expect(await probeWebOwner(loopback(port), noSavedEndpoint)).toEqual({ outcome: 'ours', port, secure: false, lan: true });
+  });
+
+  it('drops a LAN field that is not a boolean', async () => {
+    const port = await serveHealthz({ app: HEALTH_APP_ID, lan: 'yes' });
+
+    expect(await probeHealthz(port, '127.0.0.1', false)).toStrictEqual({ outcome: 'ours' });
+  });
+
   it('reports foreign for a foreign signature', async () => {
     const port = await serveHealthz({ app: 'something-else' });
 
@@ -195,7 +207,7 @@ describe('/healthz probe verdicts', () => {
   it.each(['0.0.0.0', '::'])('probes a wildcard bind host %s at loopback', async (bindHost) => {
     const port = await serveHealthz({ app: HEALTH_APP_ID });
 
-    expect(await probeHealthz(port, bindHost, false)).toBe('ours');
+    expect(await probeHealthz(port, bindHost, false)).toEqual({ outcome: 'ours' });
   });
 
   it('settles foreign for a listener that never answers', async () => {
@@ -203,7 +215,7 @@ describe('/healthz probe verdicts', () => {
       // Never responds, so only the probe timeout can settle.
     });
 
-    expect(await probeHealthz(port, '127.0.0.1', false)).toBe('foreign');
+    expect(await probeHealthz(port, '127.0.0.1', false)).toEqual({ outcome: 'foreign' });
   });
 
   // The stream never ends and never idles, so only the body size cap can settle it.
@@ -215,7 +227,7 @@ describe('/healthz probe verdicts', () => {
       res.on('close', () => { clearInterval(timer); });
     });
 
-    expect(await probeHealthz(port, '127.0.0.1', false)).toBe('foreign');
+    expect(await probeHealthz(port, '127.0.0.1', false)).toEqual({ outcome: 'foreign' });
   });
 });
 
@@ -247,13 +259,13 @@ describe('owner probe over HTTPS', () => {
   it('reports ours for an HTTPS player with a certificate for another name', async () => {
     const port = await serveSecureHealthz();
 
-    expect(await probeHealthz(port, '127.0.0.1', true)).toBe('ours');
+    expect(await probeHealthz(port, '127.0.0.1', true)).toEqual({ outcome: 'ours' });
   });
 
   it('reports foreign for a plain HTTP probe of an HTTPS player', async () => {
     const port = await serveSecureHealthz();
 
-    expect(await probeHealthz(port, '127.0.0.1', false)).toBe('foreign');
+    expect(await probeHealthz(port, '127.0.0.1', false)).toEqual({ outcome: 'foreign' });
   });
 
   it('finds an HTTPS owner when the saved endpoint differs from the startup endpoint only in scheme', async () => {

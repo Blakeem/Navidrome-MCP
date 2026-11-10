@@ -17,14 +17,11 @@ import {
   WEBUI_BIND_HOSTS,
 } from '../constants/defaults.js';
 import { logger } from '../utils/logger.js';
+import { isLanReachable } from '../webui/network.js';
+import { resolveFeatureSwitches } from './feature-switches.js';
+import { nonEmpty } from './non-empty.js';
 import type { RawConfigInput } from './schema.js';
 import type { SettingsFile } from './store.js';
-
-function nonEmpty(value: string | null | undefined): string | undefined {
-  if (value === null || value === undefined) return undefined;
-  const trimmed = value.trim();
-  return trimmed === '' ? undefined : trimmed;
-}
 
 function cleanList(value: readonly (string | null | undefined)[] | null | undefined): string[] | undefined {
   if (value === null || value === undefined) return undefined;
@@ -50,6 +47,75 @@ function mapAudioDevice(
   return { id, name: nonEmpty(device?.name) ?? null };
 }
 
+/** A typed table, so a new Config field fails to compile until it names its settings.json key. */
+const STORE_PATH_BY_CONFIG_KEY: Record<keyof RawConfigInput, string> = {
+  navidromeUrl: 'navidrome.url',
+  navidromeUsername: 'navidrome.username',
+  navidromePassword: 'navidrome.password',
+  debug: 'advanced.debug',
+  tokenExpiry: 'advanced.tokenExpiry',
+  transport: 'transport',
+  defaultLibraryIds: 'library.defaultLibraryIds',
+  features: 'features',
+  lastFmApiKey: 'features.lastFmApiKey',
+  musicBrainzUserAgent: 'features.musicBrainzUserAgent',
+  radioBrowserUserAgent: 'features.radioBrowserUserAgent',
+  radioBrowserBaseOverride: 'features.radioBrowserBase',
+  lrclibUserAgent: 'features.lrclibUserAgent',
+  lrclibBase: 'features.lrclibBase',
+  mpvPath: 'playback.mpvPath',
+  playbackTranscodeFormat: 'playback.transcodeFormat',
+  playbackTranscodeBitrate: 'playback.transcodeBitrate',
+  playbackAudioDevice: 'playback.audioDevice',
+  filterCacheEnabled: 'library.filterCacheEnabled',
+  webui: 'webui',
+  jukebox: 'jukebox',
+};
+
+/**
+ * A Config issue path starts with a projection key such as `navidromeUrl`, and a person editing
+ * settings.json needs the file's key, such as `navidrome.url`. Nested keys share their store names.
+ */
+export function storePathOf(issuePath: readonly PropertyKey[]): string {
+  const [first, ...rest] = issuePath.map(String);
+  if (first === undefined) return '(root)';
+  const head = Object.hasOwn(STORE_PATH_BY_CONFIG_KEY, first)
+    ? STORE_PATH_BY_CONFIG_KEY[first as keyof RawConfigInput]
+    : first;
+  return [head, ...rest].join('.');
+}
+
+/**
+ * An explicit host wins over `expose`, so a stored pair that disagrees binds where `expose` does not
+ * say. Only a pair with both keys set counts, and the transport pair only for an http transport.
+ */
+export function findBindConflicts(settings: SettingsFile): string[] {
+  const conflicts: string[] = [];
+  const webuiHost = nonEmpty(settings.webui?.host);
+  const webuiExpose = settings.webui?.expose;
+  if (webuiHost !== undefined && WEBUI_BIND_HOSTS.includes(webuiHost) && webuiExpose !== undefined) {
+    const conflict = bindConflict('webui', 'the Jukebox Remote', webuiHost, webuiExpose);
+    if (conflict !== null) conflicts.push(conflict);
+  }
+  const transportHost = nonEmpty(settings.transport?.host);
+  const transportExpose = settings.transport?.expose;
+  if (settings.transport?.type === 'http' && transportHost !== undefined && transportExpose !== undefined) {
+    const conflict = bindConflict('transport', 'the MCP HTTP server', transportHost, transportExpose);
+    if (conflict !== null) conflicts.push(conflict);
+  }
+  return conflicts;
+}
+
+function bindConflict(section: string, listener: string, host: string, expose: boolean): string | null {
+  const hostExposes = isLanReachable(host);
+  if (hostExposes === expose) return null;
+  const binds = hostExposes ? `opens ${listener} to the network` : `keeps ${listener} on this computer`;
+  return (
+    `${section}.host "${host}" ${binds}, but ${section}.expose is ${String(expose)}. ` +
+    `${section}.host wins. Clear ${section}.host to let ${section}.expose decide.`
+  );
+}
+
 /** `mpvPath` is the caller's resolved mpv binary, and null turns playback off. */
 export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null): RawConfigInput {
   const nav = settings.navidrome ?? {};
@@ -61,9 +127,7 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
   const library = settings.library ?? {};
 
   const lastFmApiKey = nonEmpty(features.lastFmApiKey);
-  const radioBrowserUserAgent = nonEmpty(features.radioBrowserUserAgent);
-  const lyricsProvider = nonEmpty(features.lyricsProvider);
-  const lrclibUserAgent = nonEmpty(features.lrclibUserAgent);
+  const switches = resolveFeatureSwitches(features);
 
   // An empty array means all libraries, the same as unset.
   const libIds = library.defaultLibraryIds;
@@ -98,8 +162,8 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
 
     features: {
       lastfm: lastFmApiKey !== undefined,
-      radioBrowser: radioBrowserUserAgent !== undefined,
-      lyrics: lyricsProvider !== undefined && lrclibUserAgent !== undefined,
+      radioBrowser: switches.radio,
+      lyrics: switches.lyrics,
       playback: mpvPath !== null,
     },
 
@@ -107,11 +171,10 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
     // No features.* flag, since MusicBrainz needs no API key. An absent value falls back to
     // DEFAULT_MUSICBRAINZ_USER_AGENT at the call site.
     musicBrainzUserAgent: nonEmpty(features.musicBrainzUserAgent),
-    radioBrowserUserAgent,
+    radioBrowserUserAgent: nonEmpty(features.radioBrowserUserAgent),
     radioBrowserBaseOverride: nonEmpty(features.radioBrowserBase),
 
-    lyricsProvider,
-    lrclibUserAgent,
+    lrclibUserAgent: nonEmpty(features.lrclibUserAgent),
     lrclibBase: nonEmpty(features.lrclibBase) ?? DEFAULT_LRCLIB_BASE,
 
     ...(mpvPath !== null ? { mpvPath } : {}),
@@ -140,6 +203,7 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
         mode: webui.auth?.mode ?? 'none',
         adminPasswordHash: nonEmpty(webui.auth?.adminPasswordHash) ?? null,
         adminAccess: webui.auth?.adminAccess ?? 'localhost',
+        askPasswordOnThisComputer: webui.auth?.askPasswordOnThisComputer ?? true,
       },
     },
 

@@ -26,7 +26,8 @@ The player treats an address as local when it is the host itself or on one of th
 
 These rules cover the admin login.
 
-- **Password:** set it in the settings page as **Admin password**, or with `WEBUI_ADMIN_PASSWORD` on a headless host. [Changing Settings](../README.md#changing-settings) says when a new password applies.
+- **Password:** set it in the settings page as **Admin password**, or with `WEBUI_ADMIN_PASSWORD` on a headless host. [When Changes Apply](CONFIGURATION.md#when-changes-apply) says when a new password applies.
+- **This computer:** with no admin password set, or with **Ask for the admin password on this computer** off, the host computer opens the player as admin with no login. The **Ask for the admin password on this computer** row in [Configuration](CONFIGURATION.md#webui) says which addresses count. A TCP tunnel on the host, such as `ssh -R`, can pass for this computer, so keep the ask on and set a password while one runs.
 - **Where:** **Admin login allowed from** picks this computer only (the default), the local network, or anywhere. A browser outside that range sees no login page.
 - **Sessions:** a login lasts 7 days without use, and 30 days at most. Changing the password signs out every admin session.
 - **Wrong passwords:** each failure doubles the wait before the next attempt, from 1 second up to 1 hour. Each network also gets 10 attempts per 15 minutes. A login from this computer skips the doubling wait, so a guest can't lock you out.
@@ -37,7 +38,7 @@ Allow the admin login from anywhere only with HTTPS, since over HTTP the passwor
 
 1. Forward the player's port on your router to the host.
 2. Set **Public URL** in the settings page to the address guests reach, such as `http://203.0.113.7:8808`. A DuckDNS name stays valid when your home IP address changes.
-3. Shut down the player and start it again, as [Changing Settings](../README.md#changing-settings) describes. Then open the jukebox and pick **Internet** to show the code for the public URL.
+3. Shut down the player and start it again, as [When Changes Apply](CONFIGURATION.md#when-changes-apply) describes. Then open the jukebox and pick **Internet** to show the code for the public URL.
 
 Internet guests reach the player only while the jukebox is open. Each internet address can join 10 times per hour, and each code admits at most 100 guests.
 

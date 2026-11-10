@@ -23,7 +23,6 @@ function makeMockConfig(overrides: Partial<Config> = {}): Config {
       playback: false,
     },
     lastFmApiKey: 'test-api-key',
-    lyricsProvider: 'lrclib',
     lrclibUserAgent: 'TestAgent/1.0',
     lrclibBase: 'https://lrclib.net',
     playbackTranscodeFormat: 'mp3',

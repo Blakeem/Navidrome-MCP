@@ -35,7 +35,7 @@ function jukeboxConfig(overrides: Partial<Config['webui']['auth']> = {}, tls = f
     webui: {
       ...base.webui,
       tls: tls ? { certPath: '/c.pem', keyPath: '/k.pem' } : { certPath: null, keyPath: null },
-      auth: { mode: 'jukebox', adminPasswordHash: adminHash, adminAccess: 'localhost', ...overrides },
+      auth: { mode: 'jukebox', adminPasswordHash: adminHash, adminAccess: 'localhost', askPasswordOnThisComputer: true, ...overrides },
     },
   });
 }
@@ -257,12 +257,66 @@ describe('AuthService credential', () => {
     expect(service.findSession(requestWithCookie(cookieFor(service, token)))).not.toBeNull();
   });
 
-  it('treats a hash that is not Argon2id as unset, so the login stays off', async () => {
+  it('treats a hash that is not Argon2id as unset, so no password logs in', async () => {
     const service = new AuthService(jukeboxConfig({ adminPasswordHash: 'plaintext-by-mistake' }));
 
     expect(service.hasAdminPassword()).toBe(false);
     expect(await service.verifyAdminPassword('plaintext-by-mistake')).toBe(false);
-    expect(() => service.createSession('127.0.0.1')).toThrow(/No admin password/);
+    expect(await service.login('plaintext-by-mistake', '127.0.0.1')).toBeNull();
+  });
+
+  it('keeps a session minted with no password until a first password is saved, then ends it', () => {
+    let stored: string | null = null;
+    const service = new AuthService(jukeboxConfig({ adminPasswordHash: null }), { readSavedAdminHash: () => stored });
+    const { token, session } = service.createPasswordlessSession('127.0.0.1');
+    const stream = new FakeStream();
+    service.trackStream(session.id, stream as unknown as ServerResponse, '127.0.0.1');
+
+    service.sweep();
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))?.id).toBe(session.id);
+    stored = adminHash;
+    service.sweep();
+
+    expect(stream.destroyed).toBe(true);
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
+    expect(service.hasAdminPassword()).toBe(true);
+  });
+
+  it('never keeps a session minted under a password once the password is cleared', () => {
+    let stored: string | null = adminHash;
+    const service = new AuthService(jukeboxConfig(), { readSavedAdminHash: () => stored });
+    const { token } = service.createSession('127.0.0.1');
+
+    stored = null;
+    service.sweep();
+
+    expect(service.hasAdminPassword()).toBe(false);
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
+  });
+
+  it('ends a session minted with the ask off once a restart turns the ask on, and keeps a password session', async () => {
+    const askOff = new AuthService(jukeboxConfig({ askPasswordOnThisComputer: false }));
+    askOff.claimStore();
+    const passwordless = askOff.createPasswordlessSession('127.0.0.1');
+    const withPassword = askOff.createSession('192.168.1.5');
+    expect(askOff.findSession(requestWithCookie(cookieFor(askOff, passwordless.token)))?.id).toBe(passwordless.session.id);
+
+    const askOn = await AuthService.load(jukeboxConfig(), 'store', null);
+    askOn.claimStore();
+
+    expect(askOn.findSession(requestWithCookie(cookieFor(askOn, passwordless.token)))).toBeNull();
+    expect(askOn.findSession(requestWithCookie(cookieFor(askOn, withPassword.token)))?.id).toBe(withPassword.session.id);
+  });
+
+  it('ends a session minted with the ask off when the password changes', () => {
+    let stored: string | null = adminHash;
+    const service = new AuthService(jukeboxConfig({ askPasswordOnThisComputer: false }), { readSavedAdminHash: () => stored });
+    const { token } = service.createPasswordlessSession('127.0.0.1');
+
+    stored = otherHash;
+    service.sweep();
+
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
   });
 
   it('verifies the admin password against the stored hash', async () => {
@@ -489,8 +543,13 @@ describe('AuthService env password', () => {
     expect(service.hasAdminPassword()).toBe(false);
   });
 
-  it('refuses a variable outside 12 to 128 characters', async () => {
-    await expect(AuthService.load(envConfig(), 'env', 'short')).rejects.toThrow(/12 to 128 characters/);
+  it('refuses a variable outside 8 to 128 characters, and accepts 8', async () => {
+    await expect(AuthService.load(envConfig(), 'env', '7 chars')).rejects.toThrow(/8 to 128 characters/);
+    await expect(AuthService.load(envConfig(), 'env', 'x'.repeat(129))).rejects.toThrow(/8 to 128 characters/);
+
+    const service = await AuthService.load(envConfig(), 'env', '8 chars!');
+
+    expect(await service.verifyAdminPassword('8 chars!')).toBe(true);
   });
 
   it('ignores envAdminHash when the player runs from the store', async () => {
