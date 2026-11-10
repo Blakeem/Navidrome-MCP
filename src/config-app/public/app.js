@@ -468,6 +468,11 @@ function storeProblemMessage(problem, unreadable) {
   return `${problem}. This form shows default and environment values instead of the file's values. ${remedy}`;
 }
 
+// A seed without the path keeps the generic name written in index.html.
+function showPath(elementId, path) {
+  if (typeof path === 'string' && path !== '') document.getElementById(elementId).textContent = path;
+}
+
 // The options go in before populate() picks one, so a slow probe cannot reset the field.
 async function loadForm() {
   const devicesRequest = loadAudioDevices();
@@ -480,6 +485,8 @@ async function loadForm() {
       return;
     }
     populate(seed);
+    showPath('storePath', seed.storePath);
+    showPath('logPath', seed.logPath);
     adminPasswordSet = getPath(seed, 'webui.auth.adminPasswordSet') === true;
     loadedAuthMode = document.getElementById('webuiAuthMode').value;
     if (typeof seed.storeProblem === 'string') {

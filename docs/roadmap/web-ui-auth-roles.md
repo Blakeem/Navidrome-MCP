@@ -166,7 +166,7 @@ the reverse-proxy scenario  a proxy publishes the remote on the internet. Reache
 | the principal resolver | `src/webui/auth/principal.ts` | It replaces the scattered `isLocalRequest` calls in `routes/player.ts` and `routes/health.ts` with one decision per request |
 | the role table | `src/webui/auth/roles.ts` | One static map from role to permission names. Party Mode and Remote Player Agent extend it in this one file |
 | the permission check | each dispatcher line in `src/webui/server.ts` | The dispatcher comment (`server.ts:67-70`) keeps every accepted path in plain sight. A permission on the same line keeps every access rule in plain sight too |
-| the grant store | `src/webui/auth/grant-store.ts`, file `webui-auth.json` | Grants change on every redeem and revoke. `settings.json` is GUI-managed config, may be mounted read-only in Docker (`docs/DOCKER.md:94`), and is rewritten from the form by the config app (`src/config-app/routes.ts:63-78`) |
+| the grant store | `src/webui/auth/grant-store.ts`, file `webui-auth.json` | Grants change on every redeem and revoke. `settings.json` is GUI-managed config, may be mounted read-only in Docker (`docs/HTTP-AND-DOCKER.md`, "Mounting a settings.json"), and is rewritten from the form by the config app (`src/config-app/routes.ts:63-78`) |
 | the auth routes | `src/webui/routes/auth.ts` | Same pattern as the other route modules |
 | the redeem limiter | `src/webui/auth/rate-limit.ts` | The auth routes use it in the MVP. Party Mode reuses it per principal |
 | the stream registry | `src/webui/broadcaster.ts`, `src/webui/visualizer-hub.ts` | `addClient` gains the principal |

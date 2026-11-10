@@ -22,7 +22,7 @@ OUT OF SCOPE:  synchronized multiroom playback (no part of this design keeps two
                the design of Music Assistant Bridge (only the shared player target is named here)
                the authentication system itself (Web UI Auth + Roles owns it)
                audio device listing and selection (Audio-Device Selector owns it)
-               agents in Docker Desktop on Windows or macOS (no audio device, DOCKER.md:75-77)
+               agents in Docker Desktop on Windows or macOS (no audio device, HTTP-AND-DOCKER.md)
                Navidrome /api/queue sync (rejected in PLAYBACK-SPEC.md:16)
 BOUNDARY CASE: an MCP server and an agent on one machine → OUT of the agent path, because the
                local player target already drives that mpv. Rule: a player whose mpv shares the MCP
@@ -52,7 +52,7 @@ Each statement below must hold for the feature to work.
 
 Starting-list claims:
 
-- "Add mpv to an optional Docker image." Holds, as a separate image tag. Audio passthrough works on Linux hosts only (DOCKER.md:71-77).
+- "Add mpv to an optional Docker image." Holds, as a separate image tag. Audio passthrough works on Linux hosts only (HTTP-AND-DOCKER.md, "Adding mpv to the image").
 - "Let one MCP server address multiple named agents." Holds, once playback tools can register without local mpv.
 - "Keep mpv's socket local and expose only the authenticated agent API." Holds. On an agent the browser routes are LAN-exposed too, so Web UI Auth + Roles must also guard them.
 - "1 to 2 weeks." Refuted as low. The MVP is 2 to 3 weeks and the full roadmap 6 to 9 weeks [INFERRED].
@@ -468,7 +468,7 @@ Steps in dependency order. Each step names the parts it adds or changes.
 | An agent that is the local mpv | the player registry | An agent URL that points at the MCP server's own machine would double-control one mpv. `/info` returns an instance ID, and the registry warns when it matches the local web player's ID. |
 | Duplicate or reserved names | the player registry | Names are case-insensitive and unique. `local` is reserved. Config validation rejects a clash at load. |
 | Token rotation | the agent player target | A 401 fails the tool with a message that names the player and the settings key to update. |
-| No audio output on the agent | the agent API `/info` | A Docker agent with no device plays nothing and reports success (DOCKER.md:79-82). `/info` and `list_players` report `current-ao` from Audio-Device Selector, so the assistant sees the missing output. |
+| No audio output on the agent | the agent API `/info` | A Docker agent with no device plays nothing and reports success (HTTP-AND-DOCKER.md, "Adding mpv to the image"). `/info` and `list_players` report `current-ao` from Audio-Device Selector, so the assistant sees the missing output. |
 | Navidrome player records | Navidrome's player table | Navidrome matches a player by user, client name and user agent (`core/players.go`, `FindMatch`). One shared client name would merge every room into one Navidrome player, so each agent sends its own client name. |
 | Queue in another room | the player targets | Each agent has its own mpv queue. Moving a queue between rooms is a later release. |
 
@@ -533,7 +533,7 @@ On new npm packages:
 
 Assume the feature shipped and failed.
 
-- **Agents play nothing and report success.** Violated assumption: mpv reports a missing audio device as an error. Docker agents without a device go idle in silence (DOCKER.md:79-82).
+- **Agents play nothing and report success.** Violated assumption: mpv reports a missing audio device as an error. Docker agents without a device go idle in silence (HTTP-AND-DOCKER.md, "Adding mpv to the image").
 - **An upgrade on one machine breaks control.** Violated assumption: the MCP server and its agents upgrade together.
 - **The seam refactor regresses local playback.** Violated assumption: moving engine calls behind the player target is mechanical. `src/tools/playback.ts` holds intricate queue and metadata repair logic.
 - **Music plays in the wrong room.** Violated assumption: the assistant names a player on each call, or the default fits.

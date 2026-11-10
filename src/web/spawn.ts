@@ -55,14 +55,14 @@ function spawnWebChild(): WebServerStatus {
     });
     // A late 'error' such as ENOENT fires after this function returns, so it can only be logged.
     child.on('error', (err) => {
-      logger.warn('navidrome-web child failed after spawn:', err);
+      logger.warn('Jukebox Remote child failed after spawn:', err);
     });
     child.unref();
     child.channel?.unref();
-    logger.debug(`spawned navidrome-web: ${target.command} ${target.args.join(' ')}`);
+    logger.debug(`spawned Jukebox Remote: ${target.command} ${target.args.join(' ')}`);
     return 'spawned';
   } catch (err) {
-    logger.warn('failed to spawn navidrome-web:', err);
+    logger.warn('failed to spawn Jukebox Remote:', err);
     return 'unavailable';
   }
 }
@@ -112,7 +112,7 @@ export async function ensureWebForPlayback(
       );
       return 'unavailable';
     }
-    logger.debug('web player not running, spawning');
+    logger.debug('Jukebox Remote not running, spawning');
     return deps.spawn();
   })();
 

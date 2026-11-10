@@ -63,6 +63,17 @@ describe('the settings dialog', () => {
     expect(settingsDialog).not.toMatch(/id="open-network-info"[^>]*\bhidden\b/);
   });
 
+  it('ends the local Player group with the All settings button and its hint', () => {
+    const playerGroup = between(settingsDialog, 'id="settings-player-group"', '</fieldset>');
+    const button = playerGroup.slice(playerGroup.lastIndexOf('<button'));
+
+    expect(button).toMatch(/^<button type="button" class="btn-secondary" id="open-all-settings" aria-describedby="all-settings-hint">/);
+    expect(button).toContain('All settings</button>');
+    expect(button.trimEnd()).toMatch(
+      /<p class="modal-hint" id="all-settings-hint">Navidrome connection, admin password, access and more\. Opens on this computer\.<\/p>$/,
+    );
+  });
+
   it('ends with the remote note, hidden until a remote browser shows it', () => {
     const note = '<p class="modal-hint" id="settings-remote-note" hidden>Player settings and Shut down are on the player\'s computer.</p>';
 
@@ -278,7 +289,7 @@ describe('settings.js', () => {
     });
     vi.stubGlobal('document', { getElementById: fake });
     vi.resetModules();
-    vi.doMock(API, () => ({ getJson, postJson: vi.fn() }));
+    vi.doMock(API, () => ({ FAILED_TEXT: 'That action failed. Try again.', getJson, postJson: vi.fn() }));
     vi.doMock(LOCAL_CONTROLS, () => ({ canChangePlayerSettings: () => mayChangeSettings }));
     vi.doMock(THEME, () => ({ applyTheme: vi.fn() }));
   });
@@ -311,5 +322,208 @@ describe('settings.js', () => {
     await open();
 
     expect(getJson).toHaveBeenCalledWith('/api/player/settings');
+  });
+});
+
+describe('openAllSettings in settings.js', () => {
+  const API = '../../../src/webui/public/api.js';
+  const LOCAL_CONTROLS = '../../../src/webui/public/local-controls.js';
+  const THEME = '../../../src/webui/public/theme.js';
+  const SETTINGS_URL = 'http://127.0.0.1:5555/';
+
+  type StatusLine = { textContent: string };
+  type OpenAllSettings = (statusLine: StatusLine) => Promise<void>;
+
+  const postJson = vi.fn();
+  const windowOpen = vi.fn();
+  let tab: { opener: unknown; location: { href: string }; close: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    tab = { opener: {}, location: { href: '' }, close: vi.fn() };
+    postJson.mockReset();
+    windowOpen.mockReset().mockReturnValue(tab);
+    vi.stubGlobal('document', {
+      getElementById: () => ({ textContent: '', addEventListener: () => undefined, querySelectorAll: () => [] }),
+    });
+    vi.stubGlobal('window', { open: windowOpen });
+    vi.resetModules();
+    vi.doMock(API, () => ({ FAILED_TEXT: 'That action failed. Try again.', getJson: vi.fn(), postJson }));
+    vi.doMock(LOCAL_CONTROLS, () => ({ canChangePlayerSettings: () => true }));
+    vi.doMock(THEME, () => ({ applyTheme: vi.fn() }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock(API);
+    vi.doUnmock(LOCAL_CONTROLS);
+    vi.doUnmock(THEME);
+    vi.unstubAllGlobals();
+  });
+
+  const load = async (): Promise<OpenAllSettings> =>
+    ((await import('../../../src/webui/public/settings.js')) as unknown as { openAllSettings: OpenAllSettings }).openAllSettings;
+
+  it('opens the tab before the request leaves, then points it at the settings page', async () => {
+    const openAllSettings = await load();
+    const statusLine = { textContent: 'old' };
+    let answer: (value: unknown) => void = () => undefined;
+    postJson.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+
+    const opening = openAllSettings(statusLine);
+
+    expect(windowOpen).toHaveBeenCalledWith('', '_blank');
+    expect(tab.opener).toBeNull();
+    expect(postJson).toHaveBeenCalledWith('/api/player/settings-page');
+    expect(windowOpen.mock.invocationCallOrder[0]).toBeLessThan(postJson.mock.invocationCallOrder[0] ?? 0);
+    answer({ ok: true, status: 200, data: { url: SETTINGS_URL } });
+    await opening;
+    expect(tab.location.href).toBe(SETTINGS_URL);
+    expect(tab.close).not.toHaveBeenCalled();
+    expect(statusLine.textContent).toBe('');
+  });
+
+  it('closes the tab and shows the server error when the request fails', async () => {
+    const openAllSettings = await load();
+    const statusLine = { textContent: '' };
+    postJson.mockResolvedValue({ ok: false, status: 500, data: { error: 'The settings page failed to start: listen EACCES' } });
+
+    await openAllSettings(statusLine);
+
+    expect(tab.close).toHaveBeenCalledTimes(1);
+    expect(tab.location.href).toBe('');
+    expect(statusLine.textContent).toBe('The settings page failed to start: listen EACCES');
+  });
+
+  it('closes the tab and shows the generic failure when no answer arrives', async () => {
+    const openAllSettings = await load();
+    const statusLine = { textContent: '' };
+    postJson.mockResolvedValue({ ok: false, status: null, data: null });
+
+    await openAllSettings(statusLine);
+
+    expect(tab.close).toHaveBeenCalledTimes(1);
+    expect(statusLine.textContent).toBe('That action failed. Try again.');
+  });
+
+  it('names the blocked tab and starts no settings server when the browser refuses the tab', async () => {
+    const openAllSettings = await load();
+    const statusLine = { textContent: '' };
+    windowOpen.mockReturnValue(null);
+
+    await openAllSettings(statusLine);
+
+    expect(postJson).not.toHaveBeenCalled();
+    expect(statusLine.textContent).toBe('The browser blocked the new tab. Allow pop-ups for this page, then try again.');
+  });
+});
+
+describe('network-info.js hints', () => {
+  const API = '../../../src/webui/public/api.js';
+  const LOCAL_CONTROLS = '../../../src/webui/public/local-controls.js';
+  const SETTINGS = '../../../src/webui/public/settings.js';
+  const RESTART = 'then shut down the player and start it again.';
+
+  interface FakeNode {
+    children: unknown[];
+    textContent: string;
+    handlers: Record<string, () => unknown>;
+    [key: string]: unknown;
+  }
+
+  const getJson = vi.fn();
+  const openAllSettings = vi.fn();
+  let isLocal = true;
+  let elements = new Map<string, FakeNode>();
+
+  const node = (): FakeNode => {
+    const el: FakeNode = {
+      children: [],
+      textContent: '',
+      handlers: {},
+      append: (...nodes: unknown[]) => { el.children.push(...nodes); },
+      replaceChildren: (...nodes: unknown[]) => { el.children = nodes; },
+      addEventListener: (event: string, handler: () => unknown) => { el.handlers[event] = handler; },
+      showModal: () => undefined,
+    };
+    return el;
+  };
+  const byId = (id: string): FakeNode => {
+    if (!elements.has(id)) elements.set(id, node());
+    return elements.get(id) as FakeNode;
+  };
+
+  beforeEach(() => {
+    elements = new Map();
+    getJson.mockReset();
+    openAllSettings.mockReset();
+    vi.stubGlobal('document', { getElementById: byId, createElement: () => node() });
+    vi.resetModules();
+    vi.doMock(API, () => ({ getJson }));
+    vi.doMock(LOCAL_CONTROLS, () => ({ canChangePlayerSettings: () => isLocal }));
+    vi.doMock(SETTINGS, () => ({ openAllSettings }));
+  });
+
+  afterEach(() => {
+    vi.doUnmock(API);
+    vi.doUnmock(LOCAL_CONTROLS);
+    vi.doUnmock(SETTINGS);
+    vi.unstubAllGlobals();
+  });
+
+  async function showNetworkInfo(info: Record<string, unknown>): Promise<unknown[]> {
+    getJson.mockResolvedValue({ localhostUrl: 'http://127.0.0.1:8808/', interfaces: [], ...info });
+    const module = (await import('../../../src/webui/public/network-info.js')) as unknown as { bindNetworkInfo: () => void };
+    module.bindNetworkInfo();
+    await byId('open-network-info').handlers['click']?.();
+    return byId('network-info-hint').children;
+  }
+
+  it('gives a local viewer of a loopback bind the Expose on LAN step and an All settings button', async () => {
+    isLocal = true;
+
+    const [text, , button] = await showNetworkInfo({ lanReachable: false, expose: false });
+
+    expect(text).toBe(`Turn on Expose on LAN in All settings, ${RESTART}`);
+    expect((button as FakeNode).textContent).toBe('All settings');
+    (button as FakeNode).handlers['click']?.();
+    expect(openAllSettings).toHaveBeenCalledWith(byId('network-info-status'));
+  });
+
+  it('gives a local viewer of a loopback bind host the Bind host step and an All settings button', async () => {
+    isLocal = true;
+
+    const [text, , button] = await showNetworkInfo({ lanReachable: false, expose: true });
+
+    expect(text).toBe(`The bind host is a loopback address, which overrides Expose on LAN. Clear Bind host in the Jukebox Remote section of All settings, ${RESTART}`);
+    expect((button as FakeNode).textContent).toBe('All settings');
+  });
+
+  it("names the player's computer to a remote viewer, with no button", async () => {
+    isLocal = false;
+
+    const children = await showNetworkInfo({ lanReachable: false, expose: false });
+
+    expect(children).toEqual([`Turn on Expose on LAN in the settings on the player's computer, ${RESTART}`]);
+  });
+
+  it("names the Bind host section on the player's computer to a remote viewer, with no button", async () => {
+    isLocal = false;
+
+    const children = await showNetworkInfo({ lanReachable: false, expose: true });
+
+    expect(children).toEqual([
+      `The bind host is a loopback address, which overrides Expose on LAN. Clear Bind host in the Jukebox Remote section of the settings on the player's computer, ${RESTART}`,
+    ]);
+  });
+
+  it('shows no button when the player is reachable on the LAN', async () => {
+    isLocal = true;
+
+    const children = await showNetworkInfo({
+      lanReachable: true,
+      expose: true,
+      interfaces: [{ iface: 'eth0', address: '192.168.1.20', url: 'http://192.168.1.20:8808/' }],
+    });
+
+    expect(children).toEqual(['']);
   });
 });

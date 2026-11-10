@@ -31,8 +31,8 @@ interface ConfigServer {
 
 interface ConfigServerOptions {
   /**
-   * The web player's setup mode sets this, since it may run without a terminal and has no power
-   * button to stop an abandoned settings page.
+   * The Jukebox Remote sets this for its setup mode and its All settings button, since it may run
+   * without a terminal and the settings page has no power button to stop an abandoned server.
    */
   idleTimeoutMs?: number;
   onIdleTimeout?: () => void;
@@ -40,7 +40,7 @@ interface ConfigServerOptions {
 
 /**
  * Settings carry credentials, so the server binds loopback and also checks each peer. An ephemeral
- * port never collides with the web player.
+ * port never collides with the Jukebox Remote.
  */
 export async function startConfigServer(options: ConfigServerOptions = {}): Promise<ConfigServer> {
   // A missing Argon2 blocks only a new admin password, so the page still opens and the save reports it.
@@ -63,7 +63,7 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
     });
 
   // Unref'd, since the listening server keeps the process alive and this timer only bounds how
-  // long an abandoned setup page lingers.
+  // long an abandoned settings page lingers.
   const bumpIdle = (): void => {
     const ms = options.idleTimeoutMs;
     if (ms === undefined) return;

@@ -355,6 +355,8 @@
           <span>Show the visualizer beside the track info <span class="modal-hint">Off also stops its audio analysis in mpv. A change during a song applies at the next song or pause.</span>
             <span class="modal-hint" id="set-visualizer-unsupported" hidden>mpv could not run the visualizer. The server log says why.</span></span>
         </label>
+        <button type="button" class="btn-secondary" id="open-all-settings" aria-describedby="all-settings-hint"><svg viewBox="0 -960 960 960" aria-hidden="true"><path fill="currentColor" d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z"/></svg>All settings</button>
+        <p class="modal-hint" id="all-settings-hint">Navidrome connection, admin password, access and more. Opens on this computer.</p>
       </fieldset>
       <p class="modal-hint" id="settings-status" aria-live="polite"></p>
       <fieldset class="settings-group">
@@ -446,6 +448,7 @@
       <p class="modal-help" id="network-info-help"></p>
       <ul class="network-list" id="network-info-list"></ul>
       <p class="modal-hint" id="network-info-hint"></p>
+      <p class="modal-hint" id="network-info-status" aria-live="polite"></p>
     </form>
   </dialog>
 

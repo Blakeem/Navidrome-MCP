@@ -11,7 +11,7 @@ import { writeError, writeJson } from '../http-helpers.js';
 import { isLocalRequest } from '../loopback.js';
 import { isLanReachable } from '../network.js';
 
-/** The port-as-lock probe tells a navidrome-web owner from a foreign process by this value. */
+/** The port-as-lock probe tells a Jukebox Remote owner from a foreign process by this value. The id keeps its old name, so a new MCP server still recognizes an old running player. */
 export const HEALTH_APP_ID = 'navidrome-mcp-web';
 
 export function handleHealth(req: IncomingMessage, res: ServerResponse, config: Config): void {

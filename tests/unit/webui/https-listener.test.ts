@@ -44,6 +44,7 @@ function makeServer(config: Config): Server {
     visualizer: { addClient: vi.fn() },
     shutdown: () => undefined,
     leases: { open: () => undefined, close: () => undefined },
+    settingsPage: { open: () => Promise.resolve('http://127.0.0.1:1/') },
     auth: new AuthService(config),
     guests: new GuestQueue(),
   });

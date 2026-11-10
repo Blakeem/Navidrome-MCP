@@ -112,6 +112,13 @@ describe('settings server seed/save', () => {
     expect(await getJson(await fetch(`${base}/api/settings/seed`))).toMatchObject({ storeProblem: null, storeUnreadable: false });
   });
 
+  it('reports the settings file and Jukebox Remote log paths in the seed response', async () => {
+    const base = await start();
+    const seed = await getJson(await fetch(`${base}/api/settings/seed`));
+    expect(seed.storePath).toBe(file);
+    expect(seed.logPath).toBe(join(dir, 'jukebox-remote.log'));
+  });
+
   it('masks the MCP auth token in the seed response', async () => {
     writeFileSync(file, JSON.stringify({
       navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
@@ -642,6 +649,48 @@ describe('settings server admin password', () => {
     const seed = await (await fetch(`${base}/api/settings/seed`)).json() as { webui: { auth: Record<string, unknown> } };
 
     expect(seed.webui.auth).toEqual({ mode: 'jukebox', adminPasswordSet });
+  });
+
+  it('names the apply rules without the admin password rule when no new password is saved', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const { message } = (await (await save(base, { mode: 'none' })).json()) as { message: string };
+
+    expect(message).toContain(`Settings saved to ${file}.`);
+    expect(message).toContain('MCP server settings apply after the MCP server restarts. A stdio server restarts with its MCP client.');
+    expect(message).toContain('Shut down player');
+    expect(message).toContain('the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`');
+    expect(message).not.toContain('admin password');
+    expect(message).not.toMatch(/navidrome-web|navidrome-config|re-run/);
+  });
+
+  it('says a new admin password applies to a running player without a restart', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+
+    const res = await save(base, { mode: 'password', adminPassword: 'correct horse battery' });
+
+    expect(((await res.json()) as { message: string }).message).toContain(
+      'A new admin password applies to a running player within about 10 seconds and signs out every admin session.',
+    );
+  });
+
+  it('repeats every apply rule of the save message in the page header', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV }));
+    const base = await start();
+    const header = readFileSync(new URL('../../../src/config-app/public/index.html', import.meta.url), 'utf8')
+      .replace(/<\/?code[^>]*>/g, '')
+      .replace(/\s+/g, ' ');
+
+    const { message } = (await (await save(base, { mode: 'password', adminPassword: 'correct horse battery' })).json()) as { message: string };
+    const rules = message
+      .replace(/^Settings saved to .*?\.json\. /, '')
+      .replace(/ You can keep changing settings.*$/, '')
+      .replaceAll('`', '');
+
+    expect(rules).toContain('A change of Access');
+    expect(header).toContain(rules);
   });
 
   it('hashes a new password with Argon2id and stores only the hash', async () => {

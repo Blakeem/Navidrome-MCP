@@ -32,6 +32,7 @@ import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { logger, redact } from '../utils/logger.js';
 import { describeFetchError } from '../utils/network-safety.js';
 import { hashPassword, isPasswordHash } from '../utils/secrets.js';
+import { jukeboxLogPath } from '../web/log-path.js';
 
 /**
  * Stands in for the Navidrome password, MCP auth token and Last.fm API key in the browser, so they
@@ -76,6 +77,8 @@ function handleSeed(res: ServerResponse): void {
       ...seedForBrowser(buildFormSeed()),
       storeProblem: problem?.text ?? null,
       storeUnreadable: problem?.unreadable === true,
+      storePath: getSettingsStorePath(),
+      logPath: jukeboxLogPath(),
     });
   } catch (err) {
     logger.warn('settings seed failed:', err);
@@ -158,17 +161,30 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
   const backupNotice = backupPath === null
     ? ''
     : `The previous settings.json could not be read, so it was kept as ${backupPath}. `;
-  writeJson(res, 200, {
-    ok: true,
-    // The settings server runs under the MCP server, the web player, or `navidrome-config`, so the
-    // message names every restart path.
-    message:
-      `${backupNotice}Settings saved. They load at startup and the server does not hot-reload, so restart ` +
-      "whatever you launched to apply them: your MCP client (e.g. quit and reopen Claude " +
-      'Desktop, the full toolset appears after a restart) and/or the web player (re-run ' +
-      '`navidrome-web`). A web player port or host change needs both restarted. ' +
-      'You can keep changing settings and saving again from this page.',
-  });
+  writeJson(res, 200, { ok: true, message: saveMessage(backupNotice, newAdminPassword !== null) });
+}
+
+/** The header of src/config-app/public/index.html repeats these rules, and a test keeps the two in step. */
+const APPLY_RULES = [
+  'MCP server settings apply after the MCP server restarts.',
+  'A stdio server restarts with its MCP client.',
+  "Jukebox Remote settings apply after Shut down player in the player's gear menu and a new start.",
+  'A new start is the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`.',
+] as const;
+
+const ADMIN_PASSWORD_RULES = [
+  'A new admin password applies to a running player within about 10 seconds and signs out every admin session.',
+  'This holds when the player runs from settings.json and Access already uses a password.',
+  'A change of Access, or a player started from environment variables, needs a restart.',
+] as const;
+
+function saveMessage(backupNotice: string, adminPasswordChanged: boolean): string {
+  return [
+    `${backupNotice}Settings saved to ${getSettingsStorePath()}.`,
+    ...APPLY_RULES,
+    ...(adminPasswordChanged ? ADMIN_PASSWORD_RULES : []),
+    'You can keep changing settings and saving again from this page.',
+  ].join(' ');
 }
 
 // The form never loaded a store that readRawSettings rejected, so overwriting it would lose every
@@ -271,7 +287,7 @@ function withAdminPasswordHash(settings: SettingsFile, adminPasswordHash: string
   return { ...settings, webui: { ...settings.webui, auth: { ...settings.webui?.auth, adminPasswordHash } } };
 }
 
-/** The web player ignores a stored value that is not an Argon2id hash, so the page counts it as unset too. */
+/** The Jukebox Remote ignores a stored value that is not an Argon2id hash, so the page counts it as unset too. */
 function isUsableAdminHash(hash: string | null): boolean {
   return hash !== null && isPasswordHash(hash);
 }

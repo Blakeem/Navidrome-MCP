@@ -87,7 +87,7 @@ At startup the engine uses `playback.mpvPath` from settings.json when it is set.
 | `playback.transcodeBitrate` | `192` | Max kbps, applied only when a codec is set |
 | `playback.audioDevice` | `null` | The output mpv plays to, saved by `set_audio_device`. `null` plays to the system default. |
 
-`MPV_PATH`, `PLAYBACK_TRANSCODE_FORMAT`, `PLAYBACK_TRANSCODE_BITRATE` and `PLAYBACK_AUDIO_DEVICE` are read only by the env fallback (settings.json absent, failing the settings schema, or with no Navidrome URL), and to pre-fill the first-run settings form.
+[CONFIGURATION.md](CONFIGURATION.md) lists the environment variable for each setting and when the server reads it.
 
 ## mpv Process Flags
 

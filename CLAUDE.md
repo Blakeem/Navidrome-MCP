@@ -62,6 +62,8 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 
 | Path | Purpose |
 |---|---|
+| `src/index.ts`, `src/cli/` | The `navidrome-mcp` bin. `src/index.ts` hands `process.argv` to `src/cli/dispatch.ts`, whose table lists the subcommands `serve`, `jukebox`, `settings`, `shortcut` and `help`. No argument runs the MCP server (`src/mcp-server.ts`), or prints the help when stdin is a terminal. Use `serve` to start the server from a terminal. Each target runs on import, so a test that imports one starts it |
+| `src/shortcut/` | `navidrome-mcp shortcut`: the Jukebox Remote desktop shortcut generator and the cleanup of the old Navidrome Player files |
 | `src/client/` | `NavidromeClient` (REST + Subsonic, single-flight auth, retry-on-401, JSON-sniff for `text/plain` bodies), `AuthManager` (JWT) |
 | `src/tools/` | Tool implementations grouped by surface (`media-library.ts`, `playlist-management/`, `radio.ts`, `radio-discovery.ts`, `radio-validation/`, `user-preferences.ts`, `listening-history.ts`, `lastfm-discovery.ts`, `artist-discography.ts`, `lyrics.ts`, `tags.ts`, `library.ts`, `search/`, `playback.ts` with `queue-sources.ts` and `queue-order.ts`, `queue-management.ts`, `test.ts`) |
 | `src/tools/handlers/` | MCP tool category factories — wire impl functions into `name` + `inputSchema` + `handleToolCall`. `registry.ts` composes all categories. |
@@ -73,8 +75,8 @@ Layout you'll need to navigate. Most tasks touch 1-2 of these.
 | `src/constants/` | `defaults.ts`, `timeouts.ts` |
 | `src/resources/` | MCP resource handlers |
 | `src/config/` | `settings.json` store (`store.ts`, `store-path.ts`), `ConfigSchema`, store-to-config mapping (`map-config.ts`), env fallback (`env-settings.ts`) |
-| `src/config-app/` | `navidrome-config` settings page server and routes, plus the setup-mode tools (`degraded-tools.ts`) |
-| `src/web/` | `navidrome-web` process: port acquire, owner lease, spawn from MCP, banner |
+| `src/config-app/` | `navidrome-mcp settings` page server and routes, plus the setup-mode tools (`degraded-tools.ts`) |
+| `src/web/` | `navidrome-mcp jukebox` process (the Jukebox Remote): port acquire, owner lease, spawn from MCP, banner, log path |
 | `src/webui/` | Web remote HTTP server: `auth/`, `jukebox/`, `routes/`, stream limits, and the browser UI in `public/` |
 | `src/transport/` | Streamable HTTP MCP transport |
 
@@ -130,7 +132,7 @@ Feature-gated: `features.lastFmApiKey` (Last.fm), `features.radioBrowserUserAgen
 (radio), `features.lyricsProvider=lrclib` + `features.lrclibUserAgent` (lyrics),
 `playback.mpvPath` / auto-detect (playback). `advanced.debug=true` for verbose logs.
 
-Edit it via the GUI: run `navidrome-config` (opens a loopback browser page), or it
+Edit it via the GUI: run `navidrome-mcp settings` (opens a loopback browser page), or it
 auto-opens on first run of an unconfigured MCP server. The form pre-fills from any
 legacy env/`.env`. After saving, **restart** the server to apply. A few low-level
 operational env vars remain env-only and out of the store: timeouts
@@ -138,7 +140,7 @@ operational env vars remain env-only and out of the store: timeouts
 `EXTERNAL_API_TIMEOUT_MS`), the proxy vars
 (`HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`, see below), `XDG_RUNTIME_DIR`,
 `NAVIDROME_CONFIG_PATH` (a *location* override, not a value override),
-`NAVIDROME_WEB_AUTO_OPEN=0` (stops `navidrome-web` from opening a browser, which tests use),
+`NAVIDROME_WEB_AUTO_OPEN=0` (stops `navidrome-mcp jukebox` from opening a browser, which tests use),
 and `NAVIDROME_DEV` (a dev-only launch-routing override that forces spawning
 `src/web/main.ts` via tsx instead of the compiled `dist/web/main.js` — not
 application config).

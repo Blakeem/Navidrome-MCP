@@ -53,18 +53,18 @@ const SETTINGS_URL = 'http://127.0.0.1:5000/';
 const FAILURE = 'Authentication failed: 401 Unauthorized';
 const PROCESS_EVENTS = ['SIGINT', 'SIGTERM', 'SIGHUP', 'unhandledRejection'];
 const STDIN_EVENTS = ['end', 'close'];
-// Each scenario imports src/index.ts afresh, and the first cold import can pass the 10 s default under full-suite load.
+// Each scenario imports src/mcp-server.ts afresh, and the first cold import can pass the 10 s default under full-suite load.
 const STARTUP_TEST_TIMEOUT_MS = 30_000;
 const processEvents = process as unknown as NodeJS.EventEmitter;
 let listenersBefore = new Map<string, unknown[]>();
 let stdinListenersBefore = new Map<string, unknown[]>();
 
-/** src/index.ts runs main() on import, so each scenario imports a fresh copy. */
+/** src/mcp-server.ts runs main() on import, so each scenario imports a fresh copy. */
 async function startServer(transportType: 'stdio' | 'http', source: 'store' | 'env' = 'store'): Promise<void> {
   const config = makeTestConfig({ transport: { type: transportType, host: '127.0.0.1', port: 3000, expose: false } });
   mocks.resolveConfigState.mockResolvedValue({ configured: true, config, source });
   vi.resetModules();
-  await import('../../../src/index.js');
+  await import('../../../src/mcp-server.js');
 }
 
 beforeEach(() => {
@@ -136,7 +136,7 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
     mocks.resolveConfigState.mockResolvedValue({ configured: false, failure });
     vi.resetModules();
 
-    await import('../../../src/index.js');
+    await import('../../../src/mcp-server.js');
 
     await vi.waitFor(() => {
       expect(mocks.registerDegradedTools).toHaveBeenCalledWith(expect.anything(), SETTINGS_URL, failure);
@@ -153,7 +153,7 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
     vi.resetModules();
 
     try {
-      await import('../../../src/index.js');
+      await import('../../../src/mcp-server.js');
       await vi.waitFor(() => {
         expect(exit).toHaveBeenCalledWith(1);
       });
@@ -168,7 +168,7 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
     expect(message).toContain('make sure this server\'s user can read it');
   });
 
-  it('still exits on HTTP, with a fatal log line that names navidrome-config', async () => {
+  it('still exits on HTTP, with a fatal log line that names the settings command', async () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
     await startServer('http');
@@ -179,11 +179,11 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
     expect(mocks.startConfigServer).not.toHaveBeenCalled();
     const fatal = mocks.logger.error.mock.calls.find((call) => call[0] === 'Failed to start server:');
     expect(fatal?.[1]).toBeInstanceOf(Error);
-    expect((fatal?.[1] as Error).message).toContain('navidrome-config');
+    expect((fatal?.[1] as Error).message).toContain('navidrome-mcp settings');
   });
 
-  // navidrome-config binds loopback only, so a container that runs from env vars cannot use it.
-  it('names the environment variables instead of navidrome-config when HTTP runs from env', async () => {
+  // The settings page binds loopback only, so a container that runs from env vars cannot use it.
+  it('names the environment variables instead of the settings command when HTTP runs from env', async () => {
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
     await startServer('http', 'env');
@@ -194,6 +194,6 @@ describe('startup failure fallback', { timeout: STARTUP_TEST_TIMEOUT_MS }, () =>
     const fatal = mocks.logger.error.mock.calls.find((call) => call[0] === 'Failed to start server:');
     const message = (fatal?.[1] as Error).message;
     expect(message).toContain('fix the environment variable that holds the named setting, then restart');
-    expect(message).not.toContain('navidrome-config');
+    expect(message).not.toContain('navidrome-mcp settings');
   });
 });

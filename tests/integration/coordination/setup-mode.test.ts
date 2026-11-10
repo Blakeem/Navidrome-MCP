@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - navidrome-web first-run setup mode test
+ * Navidrome MCP Server - Jukebox Remote first-run setup mode test
  * Copyright (C) 2025
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
@@ -35,7 +35,7 @@ function readSettingsUrl(child: ChildProcess): Promise<string> {
   });
 }
 
-describeCoordination('navidrome-web setup mode', () => {
+describeCoordination('Jukebox Remote setup mode', () => {
   let web: ChildProcess | null = null;
   let storeDir: string | null = null;
 

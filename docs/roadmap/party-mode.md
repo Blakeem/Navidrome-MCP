@@ -29,7 +29,7 @@ BOUNDARY CASE: autofill when requests and the background queue run out → IN as
 BOUNDARY CASE: the TV display page → IN as a later release. Rule: it shows only data a guest
                can already see.
 BOUNDARY CASE: Docker with the HTTP MCP transport → OUT. Rule: Party Mode lives in the web player
-               process, which never starts without mpv (docs/DOCKER.md:17).
+               process, which never starts without mpv (docs/HTTP-AND-DOCKER.md, deployment table).
 BOUNDARY CASE: lyrics-based explicit screening → IN as a later experiment. Rule: it reads only
                lyrics the lyrics feature already fetches.
 ```
@@ -502,7 +502,7 @@ Steps in dependency order. Each step names the parts it adds or changes.
 - Parts: the channel notifier, a party-events stream from the web player process to the MCP server process over loopback.
 - Acceptance check: with Claude Code started with `--dangerously-load-development-channels server:navidrome`, a new request in host approval mode starts a turn, and the LLM approves or rejects it with no user prompt.
 - Effort: 3 to 5 working days [INFERRED].
-- Limits: channels are a research preview that needs claude.ai or Console authentication [DIRECT: code.claude.com channels.md]. Claude Code does not register a channel server that negotiates revision 2026-07-28 [DIRECT: same page]. The planned MCP 2.0 migration (`docs/MCP-2.0-MIGRATION.md`) must keep its 2025-era protocol path for this release to work.
+- Limits: channels are a research preview that needs claude.ai or Console authentication [DIRECT: code.claude.com channels.md]. Claude Code does not register a channel server that negotiates revision 2026-07-28 [DIRECT: same page]. The planned MCP 2.0 migration (`docs/roadmap/mcp-2.0-migration.md`) must keep its 2025-era protocol path for this release to work.
 
 ### Autofill and stats hygiene
 

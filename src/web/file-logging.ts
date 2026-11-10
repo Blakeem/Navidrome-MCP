@@ -1,19 +1,19 @@
 /**
- * Navidrome MCP Server - File log sink for the standalone web player
+ * Navidrome MCP Server - File log sink for the Jukebox Remote
  * Copyright (C) 2025
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 import { appendFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { inspect } from 'node:util';
 
-import { getSettingsStorePath } from '../config/store-path.js';
 import { logger, type LogLevel } from '../utils/logger.js';
+import { jukeboxLogPath } from './log-path.js';
 
 /** The spawned child's stdio is ignored, so the sink must exist before any imported module logs. */
 function setupFileLogging(): string {
-  const logPath = join(dirname(getSettingsStorePath()), 'navidrome-web.log');
+  const logPath = jukeboxLogPath();
   try {
     mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
   } catch {
@@ -36,7 +36,7 @@ function setupFileLogging(): string {
       if (!sinkFailed) {
         sinkFailed = true;
         try {
-          process.stderr.write(`navidrome-web: file logging to ${logPath} failed (${String(err)}); logging to stderr\n`);
+          process.stderr.write(`Jukebox Remote: file logging to ${logPath} failed (${String(err)}). Logging to stderr instead.\n`);
         } catch {
           /* nothing more we can do */
         }

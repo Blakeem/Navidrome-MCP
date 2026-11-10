@@ -76,7 +76,7 @@ function deps(
 }
 
 describe('acquireOrAttach', () => {
-  it('attaches when a navidrome-web already owns the port (ours)', async () => {
+  it('attaches when a Jukebox Remote already owns the port (ours)', async () => {
     const d = deps(['ours'], 'ok');
     const make = vi.fn(fakeServer);
     const result: AcquireResult = await acquireOrAttach(config, make, d);

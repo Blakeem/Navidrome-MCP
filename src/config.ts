@@ -45,7 +45,7 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
     throw new Error(
       ErrorFormatter.configValidation([
         `No usable settings found at ${getSettingsStorePath()}.`,
-        'Run `navidrome-config` (or start the server unconfigured) to create it.',
+        'Run `navidrome-mcp settings` (or start the server unconfigured) to create it.',
       ])
     );
   }

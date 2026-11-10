@@ -198,7 +198,7 @@ export async function acquireOrAttach(
   if (bound === 'ok') return { mode: 'owner', url, server };
 
   // EADDRINUSE after a refused probe means another process bound first. It is either a
-  // navidrome-web that won a cold-start race or a foreign process.
+  // Jukebox Remote that won a cold-start race or a foreign process.
   const second = await deps.probe(port, host, secure);
   if (second.outcome === 'ours') return { mode: 'attached', url: loopbackUrl(port, second.secure) };
   throw conflictError(port);

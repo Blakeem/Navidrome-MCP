@@ -54,6 +54,12 @@ export const MPV_STALE_SOCKET_PROBE_MS = 100;
 /** An mpv the MCP process spawned plays untracked by the web owner for at most this long. */
 export const WEB_OWNER_ATTACH_INTERVAL_MS = 5000;
 
+/**
+ * Generous, because reaping mid-config is worse than a harmless idle loopback server, and its own
+ * ephemeral port means a lingering one never blocks a freshly launched player.
+ */
+export const SETTINGS_PAGE_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
 /** An echo is a local IPC round trip of milliseconds, so only a wedged or gone mpv hits this. */
 export const SCROBBLE_CLAIM_ECHO_TIMEOUT_MS = 5000;
 

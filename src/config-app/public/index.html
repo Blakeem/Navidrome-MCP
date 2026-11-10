@@ -10,7 +10,8 @@
   <main class="app">
     <header class="head">
       <h1>Navidrome MCP Settings</h1>
-      <p class="sub">Stored locally in <code>settings.json</code>. After saving, restart the server to apply.</p>
+      <p class="sub">Saved to <code id="storePath">settings.json</code>.</p>
+      <p class="sub">MCP server settings apply after the MCP server restarts. A stdio server restarts with its MCP client. Jukebox Remote settings apply after Shut down player in the player's gear menu and a new start. A new start is the next play from the AI, a restart of the MCP client, or <code>navidrome-mcp jukebox</code>. A new admin password applies to a running player within about 10 seconds and signs out every admin session. This holds when the player runs from <code>settings.json</code> and Access already uses a password. A change of Access, or a player started from environment variables, needs a restart.</p>
     </header>
 
     <form id="settings-form" autocomplete="off">
@@ -117,7 +118,7 @@
             <option value="" data-name="">System default</option>
           </select>
         </label>
-        <label>Transcode format <span class="hint"><code>raw</code> = original file; or a codec like <code>mp3</code>, <code>opus</code></span>
+        <label>Transcode format <span class="hint"><code>raw</code> keeps the original quality and reliable seeking. Pick a codec such as <code>mp3</code> or <code>opus</code> for slow or metered links.</span>
           <input id="transcodeFormat" type="text" placeholder="raw" />
         </label>
         <label>Transcode bitrate (kbps) <span class="hint">ignored when format is raw</span>
@@ -126,12 +127,13 @@
       </section>
 
       <section class="card">
-        <h2>Web Player</h2>
+        <h2>Jukebox Remote</h2>
+        <p class="card-note">The gear menu changes the theme, visualizer and keep-playing setting without a restart. The Guests dialog changes the guest limit, and the Jukebox dialog changes the share link. The player writes its log to <code id="logPath">jukebox-remote.log</code>.</p>
         <label class="check">
           <input id="webuiEnabled" type="checkbox" />
-          <span>Run the web player <span class="hint">The web player controls playback from any browser and hosts the jukebox. When off, the AI still plays music through mpv.</span></span>
+          <span>Run the Jukebox Remote <span class="hint">The Jukebox Remote controls playback from any browser and hosts the jukebox. When off, the AI still plays music through mpv.</span></span>
         </label>
-        <label>Port
+        <label>Port <span class="hint">Change it when another program uses 8808.</span>
           <input id="webuiPort" type="number" min="1" max="65535" placeholder="8808" />
         </label>
         <label class="check">
@@ -173,7 +175,7 @@
           </select>
           <span class="warn" id="webuiAdminAccessWarn" hidden></span>
         </label>
-        <label id="jukeboxGuestQueueLimitRow">Guest song limit <span class="hint">songs each jukebox guest may have waiting, from 1 to 20. The player's Guests dialog changes it live</span>
+        <label id="jukeboxGuestQueueLimitRow">Guest song limit <span class="hint">songs each jukebox guest may have waiting, from 1 to 20</span>
           <input id="jukeboxGuestQueueLimit" type="number" min="1" max="20" placeholder="3" />
         </label>
         <label>Public URL <span class="hint">The internet address of this player, such as <code>https://jukebox.duckdns.org:8808</code>. Use https:// when the HTTPS files are set.</span>
@@ -201,7 +203,7 @@
         <label>Bind host <span class="hint">usually leave blank. An explicit host overrides Expose on LAN. <code>0.0.0.0</code> or <code>::</code> exposes the player to your network, with no login when Access is Open</span>
           <input id="webuiHost" type="text" placeholder="127.0.0.1" />
         </label>
-        <label>Allowed hosts <span class="hint">extra host names the player accepts on a LAN bind (comma-separated, e.g. <code>music.home.lan</code>). An IP address, <code>localhost</code> and this computer's name always work</span>
+        <label>Allowed hosts <span class="hint">extra host names the player accepts on a LAN bind (comma-separated, e.g. <code>music.home.lan</code>). An IP address, <code>localhost</code>, this computer's name and the Public URL host always work. Other host names get 403.</span>
           <input id="webuiAllowedHosts" type="text" placeholder="(none)" />
         </label>
       </section>

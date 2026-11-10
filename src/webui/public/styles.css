@@ -996,7 +996,7 @@ body.stream-evicted::after {
   font-size: 0.9rem;
 }
 body.player-stopped::after {
-  content: 'Player stopped. Relaunch navidrome-web or restart the MCP server to use it again.';
+  content: 'Player stopped. Run navidrome-mcp jukebox again or restart the MCP server to use it again.';
 }
 /* The connection label is hidden at phone width, so the notice names the cause. It sits above the lyrics overlay. */
 body.stream-evicted::after {

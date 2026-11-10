@@ -121,28 +121,28 @@ export async function testConnection(
             enabled: hasLastFm,
             description: hasLastFm
               ? 'Last.fm integration enabled - music discovery and recommendations available'
-              : 'Last.fm integration disabled - set features.lastFmApiKey in settings.json (run navidrome-config to edit)',
+              : 'Last.fm integration disabled - set features.lastFmApiKey in settings.json. To edit it, open the settings page (`navidrome-mcp settings`).',
             tools: hasLastFm ? [...LASTFM_TOOL_NAMES] : []
           },
           radioBrowser: {
             enabled: hasRadioBrowser,
             description: hasRadioBrowser
               ? 'Radio Browser integration enabled - internet radio station discovery available'
-              : 'Radio Browser integration disabled - set features.radioBrowserUserAgent in settings.json (run navidrome-config to edit)',
+              : 'Radio Browser integration disabled - set features.radioBrowserUserAgent in settings.json. To edit it, open the settings page (`navidrome-mcp settings`).',
             tools: hasRadioBrowser ? [...RADIO_BROWSER_TOOL_NAMES] : []
           },
           lyrics: {
             enabled: hasLyrics,
             description: hasLyrics
               ? 'Lyrics integration enabled via LRCLIB - synced and unsynced lyrics available'
-              : 'Lyrics integration disabled - get_lyrics still reads the lyrics stored in the audio file. Set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json (run navidrome-config to edit)',
+              : 'Lyrics integration disabled - get_lyrics still reads the lyrics stored in the audio file. Set features.lyricsProvider (lrclib) and features.lrclibUserAgent in settings.json. To edit it, open the settings page (`navidrome-mcp settings`).',
             tools: hasLyrics ? [...LRCLIB_TOOL_NAMES] : []
           },
           playback: {
             enabled: hasPlayback,
             description: hasPlayback
               ? 'Local playback enabled - mpv was found, so the play tools drive the local speakers'
-              : 'Local playback disabled - mpv was not found. Install mpv or set playback.mpvPath in settings.json (run navidrome-config to edit)',
+              : 'Local playback disabled - mpv was not found. Install mpv or set playback.mpvPath in settings.json. To edit it, open the settings page (`navidrome-mcp settings`).',
             tools: hasPlayback ? [...PLAYBACK_TOOL_NAMES, ...RADIO_PLAYBACK_TOOL_NAMES] : []
           }
         }

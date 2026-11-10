@@ -180,8 +180,8 @@ export const TrendingMusicSchema = z.object({
   verbose: VerboseSchema,
 });
 
-// MusicBrainz release-group types (docs/musicbrainz-api.md §8). Lowercase, since MB's `type=`
-// browse filter accepts lowercase and the parser lowercases secondary types.
+// MusicBrainz release-group types (docs/musicbrainz/official/musicbrainz-api.md, "Release (Group) Type and Status").
+// Lowercase, since MB's `type=` browse filter accepts lowercase and the parser lowercases secondary types.
 const MbPrimaryTypeSchema = z.enum(['album', 'ep', 'single']);
 const MbSecondaryTypeSchema = z.enum([
   'live',

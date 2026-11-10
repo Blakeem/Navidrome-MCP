@@ -5,9 +5,9 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch src/index.ts serve",
     "build": "tsc && node scripts/build-webui.mjs",
-    "start": "node dist/index.js",
+    "start": "node dist/index.js serve",
     "test": "vitest",
     "test:run": "vitest run",
     "test:playback": "pnpm build && vitest run --config vitest.playback.config.ts",
@@ -27,8 +27,7 @@
     "check:all": "pnpm lint && pnpm typecheck && pnpm typecheck:tests && pnpm check:dead-code",
     "prepare": "pnpm build",
     "inspector": "npx @modelcontextprotocol/inspector node dist/index.js",
-    "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts",
-    "make:launcher": "node scripts/make-launcher.mjs"
+    "inspector:dev": "npx @modelcontextprotocol/inspector tsx src/index.ts"
   },
   "keywords": [
     "mcp",
@@ -53,19 +52,15 @@
   },
   "files": [
     "dist",
-    "scripts/make-launcher.mjs",
-    "assets/navidrome-player.png",
-    "assets/navidrome-player.ico",
-    "assets/navidrome-player.icns",
+    "assets/jukebox-remote.png",
+    "assets/jukebox-remote.ico",
+    "assets/jukebox-remote.icns",
     "README.md",
     "LICENSE",
     "package.json"
   ],
   "bin": {
-    "navidrome-mcp": "./dist/index.js",
-    "navidrome-config": "./dist/config-app/main.js",
-    "navidrome-web": "./dist/web/main.js",
-    "navidrome-web-shortcut": "./scripts/make-launcher.mjs"
+    "navidrome-mcp": "./dist/index.js"
   },
   "packageManager": "pnpm@10.15.0",
   "engines": {

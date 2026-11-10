@@ -105,7 +105,7 @@ describe('waitForHealthy', () => {
 
   it('names the exit code and the last log lines when the child exits during startup', async () => {
     logDir = mkdtempSync(join(tmpdir(), 'ndmcp-e2e-test-'));
-    const logPath = join(logDir, 'navidrome-web.log');
+    const logPath = join(logDir, 'jukebox-remote.log');
     writeFileSync(logPath, `${Array.from({ length: 25 }, (_, i) => `line ${String(i + 1)}`).join('\n')}\n`);
     const lastLines = Array.from({ length: 20 }, (_, i) => `line ${String(i + 6)}`).join('\n');
 

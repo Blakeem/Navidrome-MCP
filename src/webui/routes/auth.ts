@@ -21,7 +21,7 @@ const INVALID_JUKEBOX_CODE = 'This jukebox code is not valid, closed or expired.
 const JUKEBOX_FULL = 'The jukebox is full. Ask the host to free a place.';
 const BANNED_FROM_JUKEBOX = 'The host removed you from the jukebox.';
 const NO_ADMIN_PASSWORD =
-  'No admin password is set. Set one on the settings page (navidrome-config), or set WEBUI_ADMIN_PASSWORD when the ' +
+  'No admin password is set. Set one on the settings page (`navidrome-mcp settings`), or set WEBUI_ADMIN_PASSWORD when the ' +
   'player runs from environment variables, then restart the player.';
 
 /**

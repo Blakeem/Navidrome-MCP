@@ -76,11 +76,13 @@ import {
 import {
   handleGetPlayerSettings,
   handleMcpLease,
+  handleOpenSettingsPage,
   handlePlayerState,
   handleSetPlayerSettings,
   handleShutdown,
   MCP_LEASE_PATH,
   type McpLeaseCounter,
+  type SettingsPageOpener,
 } from './routes/player.js';
 import { handleStatic, PUBLIC_DIR } from './routes/static-files.js';
 import { handleVisualizerModes } from './routes/visualizer-modes.js';
@@ -96,6 +98,7 @@ interface ServerDeps {
   visualizer: Pick<VisualizerHub, 'addClient'>;
   shutdown: () => void;
   leases: McpLeaseCounter;
+  settingsPage: SettingsPageOpener;
   auth: AuthService;
   guests: GuestQueue;
 }
@@ -490,6 +493,7 @@ const ROUTES: readonly Route[] = [
   { method: 'GET',  path: '/api/network-info',          access: 'host.info',       handle: ({ res, deps }) => handleNetworkInfo(res, deps.config) },
   { method: 'GET',  path: '/api/player/settings',       access: 'player.settings', handle: ({ res, deps }) => handleGetPlayerSettings(res, deps.config) },
   { method: 'POST', path: '/api/player/settings',       access: 'player.settings', handle: ({ req, res, deps }) => handleSetPlayerSettings(req, res, deps.config, deps.broadcaster) },
+  { method: 'POST', path: '/api/player/settings-page',  access: 'player.settings', handle: ({ res, deps }) => handleOpenSettingsPage(res, deps.settingsPage) },
   { method: 'POST', path: '/api/shutdown',              access: 'player.power',    handle: ({ res, deps }) => handleShutdown(res, deps.shutdown) },
 
   {

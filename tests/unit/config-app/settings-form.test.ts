@@ -45,6 +45,7 @@ interface FormApi {
   bindRevealButton: (button: StubElement) => void;
   markPasswordStored: () => void;
   storeProblemMessage: (problem: string, unreadable: boolean) => string;
+  showPath: (elementId: string, path: unknown) => void;
 }
 
 function stubElement(): StubElement {
@@ -94,7 +95,7 @@ function loadForm(): { api: FormApi; byId: (id: string) => StubElement } {
     fetch: () => Promise.reject(new Error('offline')),
     crypto: globalThis.crypto,
   });
-  runInContext(`${APP_SOURCE}\nglobalThis.api = { collectChecked, renderAuthMode, renderAdminPasswordConfirm, renderExposeWarning, bindRevealButton, storeProblemMessage, markPasswordStored: () => { adminPasswordSet = true; } };`, context);
+  runInContext(`${APP_SOURCE}\nglobalThis.api = { collectChecked, renderAuthMode, renderAdminPasswordConfirm, renderExposeWarning, bindRevealButton, storeProblemMessage, showPath, markPasswordStored: () => { adminPasswordSet = true; } };`, context);
   return { api: (context as { api: FormApi }).api, byId };
 }
 
@@ -212,6 +213,26 @@ describe('guest song limit row', () => {
   });
 });
 
+describe('settings path display', () => {
+  it('replaces the generic name with the path the seed reports', () => {
+    const form = loadForm();
+    form.byId('storePath').textContent = 'settings.json';
+
+    form.api.showPath('storePath', '/home/x/settings.json');
+
+    expect(form.byId('storePath').textContent).toBe('/home/x/settings.json');
+  });
+
+  it.each([undefined, null, ''])('keeps the generic name for a seed path of %j', (path) => {
+    const form = loadForm();
+    form.byId('storePath').textContent = 'settings.json';
+
+    form.api.showPath('storePath', path);
+
+    expect(form.byId('storePath').textContent).toBe('settings.json');
+  });
+});
+
 describe('store problem notice', () => {
   it('promises the backup for a store the server could read', () => {
     const message = loadForm().api.storeProblemMessage('settings.json is not valid JSON (x)', false);
@@ -301,17 +322,40 @@ describe('settings page markup', () => {
     'id="webuiAllowedHosts"',
   ];
 
-  it('lists the Web Player fields in order, with the advanced fields last', () => {
+  it('lists the Jukebox Remote fields in order, with the advanced fields last', () => {
     const positions = FIELD_ORDER.map((marker) => HTML.indexOf(marker));
 
     expect(positions.every((position) => position !== -1)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
   });
 
-  it('uses the Web Player wording', () => {
-    expect(HTML).toContain('<h2>Web Player</h2>');
-    expect(HTML).toContain('Run the web player');
-    expect(HTML).not.toContain('companion control panel');
+  it('uses the Jukebox Remote wording', () => {
+    expect(HTML).toContain('<h2>Jukebox Remote</h2>');
+    expect(HTML).toContain('Run the Jukebox Remote');
+    expect(HTML).not.toMatch(/web player|Web Player|companion control panel/);
+  });
+
+  it('names no retired command', () => {
+    expect(HTML + APP_SOURCE).not.toMatch(/navidrome-web|navidrome-config/);
+  });
+
+  it('states the apply rules and the settings path in the header', () => {
+    expect(HTML).toContain('Saved to <code id="storePath">');
+    expect(HTML).toContain('MCP server settings apply after the MCP server restarts. A stdio server restarts with its MCP client.');
+    expect(HTML).toContain('A new start is the next play from the AI, a restart of the MCP client, or <code>navidrome-mcp jukebox</code>.');
+    expect(HTML).toContain('Shut down player');
+    expect(HTML).toContain('<code>navidrome-mcp jukebox</code>');
+    expect(HTML).toContain('within about 10 seconds');
+  });
+
+  it('gives the Port, Transcode and Allowed hosts hints and the live-change line', () => {
+    expect(HTML).toContain('Change it when another program uses 8808.');
+    expect(HTML).toContain('keeps the original quality and reliable seeking');
+    expect(HTML).toContain("this computer's name and the Public URL host always work. Other host names get 403.");
+    expect(HTML).toContain(
+      'The gear menu changes the theme, visualizer and keep-playing setting without a restart. ' +
+        'The Guests dialog changes the guest limit, and the Jukebox dialog changes the share link.',
+    );
   });
 
   it('gives both password fields an eye button', () => {

@@ -172,6 +172,7 @@ function buildServer(config: Config, auth: AuthService, guests: GuestQueue = new
     visualizer: { addClient: (stream: ServerResponse) => { (stream as unknown as FakeResponse).writeHead(200); } },
     shutdown: () => undefined,
     leases: { open: () => undefined, close: () => undefined },
+    settingsPage: { open: () => Promise.resolve('http://127.0.0.1:1/') },
     auth,
     guests,
   });
@@ -308,6 +309,7 @@ describe('route access table', () => {
     'GET /api/network-info': GATED,
     'GET /api/player/settings': LOCAL_ONLY,
     'POST /api/player/settings': LOCAL_ONLY,
+    'POST /api/player/settings-page': LOCAL_ONLY,
     'POST /api/shutdown': LOCAL_ONLY,
     'GET /api/cover/': { ...MEDIA, request: '/api/cover/al-1' },
     'GET /api/lyrics/': { ...MEDIA, request: '/api/lyrics/so-1' },
@@ -1396,7 +1398,7 @@ describe('jukebox code routes', () => {
     const view = JSON.parse(reply.body) as CodeView;
     expect(view.active).toBe(true);
     expect(view.links).toEqual({ lan: [], internet: null });
-    expect(view.problem).toContain('Turn on Expose on LAN');
+    expect(view.problem).toContain("Turn on Expose on LAN in All settings in the gear menu on the player's computer, then shut down the player and start it again.");
   });
 
   it('names the bind host as the cause when it overrides Expose on LAN', async () => {
@@ -1414,7 +1416,7 @@ describe('jukebox code routes', () => {
 
     expect(refused.status).toBe(409);
     for (const text of [JSON.parse(refused.body).error as string, view.problem]) {
-      expect(text).toContain('Clear Bind host');
+      expect(text).toContain("Clear Bind host in the Jukebox Remote section of All settings in the gear menu on the player's computer, then shut down the player and start it again.");
       expect(text).not.toContain('Turn on Expose on LAN');
     }
   });
@@ -1466,7 +1468,8 @@ describe('jukebox code routes', () => {
 
     expect(reply.status).toBe(409);
     expect(JSON.parse(reply.body).error).toBe(
-      'No LAN IPv4 address was found. Connect this computer to the network, or set webui.publicUrl in navidrome-config.',
+      'No LAN IPv4 address was found. Connect this computer to the network. ' +
+        "For guests on the internet, set Public URL in All settings in the gear menu on the player's computer, then shut down the player and start it again.",
     );
     expect(auth.hasJukeboxCode()).toBe(false);
   });

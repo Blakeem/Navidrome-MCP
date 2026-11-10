@@ -17,6 +17,7 @@ import {
 } from '../../config/store.js';
 import { PlayerSettingsPatchSchema } from '../../schemas/index.js';
 import { playbackEngine } from '../../services/playback/playback-engine.js';
+import { errorMessage } from '../../utils/error-formatter.js';
 import { logger } from '../../utils/logger.js';
 import { getPersist, getTheme, getVisualizer, setPersist, setTheme, setVisualizer } from '../../web/player-runtime.js';
 import type { SseBroadcaster } from '../broadcaster.js';
@@ -143,6 +144,27 @@ export function handleMcpLease(req: IncomingMessage, res: ServerResponse, leases
   res.flushHeaders();
   leases.open();
   res.once('close', () => leases.close());
+}
+
+/** The entry point owns the settings server's lifetime, so the route only asks for its URL. */
+export interface SettingsPageOpener {
+  open(): Promise<string>;
+}
+
+/**
+ * The dispatcher admits only a principal holding `player.settings`, which only a local request holds.
+ * The settings server binds loopback, so the URL opens only on the player's computer.
+ */
+export async function handleOpenSettingsPage(res: ServerResponse, settingsPage: SettingsPageOpener): Promise<void> {
+  let url: string;
+  try {
+    url = await settingsPage.open();
+  } catch (err) {
+    logger.error('settings page: failed to start:', err);
+    writeError(res, 500, `The settings page failed to start: ${errorMessage(err)}`);
+    return;
+  }
+  writeJson(res, 200, { url });
 }
 
 /** The dispatcher admits only a principal holding `player.power`, which only a local request holds. */

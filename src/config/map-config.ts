@@ -36,7 +36,7 @@ function cleanList(value: readonly (string | null | undefined)[] | null | undefi
 function resolveWebuiHost(host: string | undefined): string | undefined {
   if (host === undefined || WEBUI_BIND_HOSTS.includes(host)) return host;
   logger.warn(
-    `webui.host "${host}" is not supported (use one of ${WEBUI_BIND_HOSTS.join(', ')}), so the web player binds 127.0.0.1.`,
+    `webui.host "${host}" is not supported (use one of ${WEBUI_BIND_HOSTS.join(', ')}), so the Jukebox Remote binds 127.0.0.1.`,
   );
   return '127.0.0.1';
 }

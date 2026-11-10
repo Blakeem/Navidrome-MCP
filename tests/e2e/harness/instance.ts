@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - e2e navidrome-web instance
+ * Navidrome MCP Server - e2e Jukebox Remote instance
  * Copyright (C) 2025
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
@@ -117,12 +117,12 @@ export async function waitForHealthy(baseUrl: string, child: ChildProcess, logPa
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null) {
       const exit = child.signalCode === null ? `with code ${String(child.exitCode)}` : `on signal ${child.signalCode}`;
-      throw new Error(`e2e: navidrome-web exited ${exit} during startup. Log tail:\n${logTail(logPath)}`);
+      throw new Error(`e2e: Jukebox Remote exited ${exit} during startup. Log tail:\n${logTail(logPath)}`);
     }
     if (await answersHealthz(baseUrl)) return;
     await delay(POLL_INTERVAL_MS);
   }
-  throw new Error(`e2e: navidrome-web did not answer ${baseUrl}/healthz within ${String(STARTUP_TIMEOUT_MS)} ms. Log tail:\n${logTail(logPath)}`);
+  throw new Error(`e2e: Jukebox Remote did not answer ${baseUrl}/healthz within ${String(STARTUP_TIMEOUT_MS)} ms. Log tail:\n${logTail(logPath)}`);
 }
 
 /** Resolves true when the child has exited, or false at the timeout. */

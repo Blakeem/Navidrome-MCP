@@ -132,7 +132,7 @@ export function redact(value: unknown, depth: number = 0): unknown {
 
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
-// The spawned navidrome-web process has its stdio ignored, so it logs to a file through this
+// The spawned Jukebox Remote process has its stdio ignored, so it logs to a file through this
 // sink. Records reach the sink already redacted.
 type LogSink = (level: LogLevel, args: unknown[]) => void;
 

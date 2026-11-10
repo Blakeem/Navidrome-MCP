@@ -157,3 +157,7 @@ Later, undecided. Roadmap: [music-assistant-bridge.md](music-assistant-bridge.md
 ## Commercialization
 
 Later. `commercialization.md` is ignored by git and stays private. Its open questions are unanswered.
+
+## MCP 2.0 Migration
+
+Later, in a future major release. Roadmap: [mcp-2.0-migration.md](mcp-2.0-migration.md).

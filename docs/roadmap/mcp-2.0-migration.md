@@ -1,9 +1,9 @@
 # MCP 2.0 migration review — `navidrome-mcp` v2.2.0 → spec revision `2026-07-28`
 
-**Status:** planning document. M9 and F5 have landed. Every other item is still planned.
+**Status:** planning document. M9, F1, F5 and F8 have landed. F1 landed as `SETUP_CAPABILITIES` in `src/capabilities.ts`, and F8 as `nextOffset` and `hasMore` in `src/types/radio.ts`. Every other item is still planned. Version 3.0.0 shipped on SDK v1 without this migration, so the migration targets a future major whose number is not assigned.
 **Citations:** `file.ts:line` citations refer to tag `v2.2.0`. Claims that changed after that tag say so.
 **Written:** 2026-08-12
-**Doc set this is built against:** [`docs/mcp-2.0/INDEX.md`](mcp-2.0/INDEX.md) — 102 verbatim spec/SDK/blog files, fidelity spot-check 5/5 passed.
+**Doc set this is built against:** [`docs/mcp-2.0/INDEX.md`](../mcp-2.0/INDEX.md) — 102 verbatim spec/SDK/blog files, fidelity spot-check 5/5 passed.
 **Repo facts** come from three independent read-only audits of `src/` (protocol surface, server state, tool schemas). Every claim below cites either `file.ts:line` (repo) or a doc-set path (spec).
 
 ---
@@ -22,7 +22,7 @@ The migration is **feasible and worth doing**, but it is not a port — three th
 | **Blocker 3** | `isInitializeRequest` is the sole session gate in the HTTP transport. `initialize` is **removed**. Left alone, every POST 400s. §3.3 |
 | **Caveat** | The SDK docs captured are **v2.0.0-beta.1**, explicitly "can still change before the stable release". Every signature quoted here must be re-verified against stable v2 before code lands. |
 
-**Recommended shape:** ship `3.0.0-next.N` on the `next` dist-tag, dual-era enabled, with playback restricted to stdio + single-owner deployments. Keep 2.x on `latest` until client support is real.
+**Recommended shape:** ship the future major as `<major>.0.0-next.N` on the `next` dist-tag, dual-era enabled, with playback restricted to stdio + single-owner deployments. Keep 3.x on `latest` until client support is real.
 
 ---
 
@@ -164,10 +164,10 @@ The radio station name (`S16`) is not lost. Since v2.2.0, `now_playing` finds it
 |---|---|---|---|
 | P1 | Document playback as requiring host affinity | Low | Honest; not conformant if deployed multi-node |
 | P2 | Gate playback off for HTTP transport; stdio only | Low | Conformant by removal; loses functionality for local-HTTP users |
-| P4 | **`navidrome-web` becomes sole mpv owner; MCP replicas proxy to it** | High, but **half-built already** | The only design where "any process serves any request" is true |
+| P4 | **The Jukebox Remote process (`navidrome-mcp jukebox`) becomes sole mpv owner; MCP replicas proxy to it** | High, but **half-built already** | The only design where "any process serves any request" is true |
 | P3/P5 | Externalize queue to Navidrome `/queue`, or state to Redis | Very high | **Reject** — neither fixes the audio-device problem |
 
-**Recommendation: P2 for 3.0.0-next, P4 as the 3.x goal.** Restrict playback registration to stdio (extend the existing `config.features.playback` gate at `registry.ts:122`) plus an explicit opt-in for single-owner HTTP deployments. Then build P4 — the web child (`web/spawn.ts:130`) and the `/healthz` probe (`web/acquire.ts:48`) already exist. The MCP process only probes the web player to hold an owner lease. P4 also fixes the N-scrobblers problem for free. Since v2.2.0, an mpv `script-message` claim alone picks one submitter per play across any number of processes.
+**Recommendation: P2 for the future major's first `next` release, P4 as that major's goal.** Restrict playback registration to stdio (extend the existing `config.features.playback` gate at `registry.ts:122`) plus an explicit opt-in for single-owner HTTP deployments. Then build P4 — the web child (`web/spawn.ts:130`) and the `/healthz` probe (`web/acquire.ts:48`) already exist. The MCP process only probes the web player to hold an owner lease. P4 also fixes the N-scrobblers problem for free. Since v2.2.0, an mpv `script-message` claim alone picks one submitter per play across any number of processes.
 
 **Do not attempt P3/P5.** `S15` metadata and `S16` station name are re-fetchable from Navidrome anyway; externalizing them buys nothing the audio-device constraint doesn't immediately take back.
 
@@ -205,7 +205,7 @@ Flagged separately because getting these wrong harms someone else.
 | `vote_station` / `click_station` dedup | `radio-browser-rate-limit.ts:39-40`, explicitly no TTL | Radio Browser banning the project's **shared User-Agent** (`:24-26`) | N processes ⇒ up to N votes upstream per action |
 | MusicBrainz throttle | `musicbrainz.ts:59-60`, 1 req/1.1s | MusicBrainz's **per-IP** 1 req/s policy | N replicas behind one egress IP ⇒ N× the rate |
 
-Both are per-**process** limiters guarding per-**IP** or per-**identity** upstream policy. No per-call parameter fixes this. **Recommendation:** persist the vote/click dedup to the settings store; for MusicBrainz, require a per-deployment `musicBrainzUserAgent` when running multi-replica so a violation cannot tar the shared default (`defaults.ts:84`). Neither blocks 3.0 on stdio.
+Both are per-**process** limiters guarding per-**IP** or per-**identity** upstream policy. No per-call parameter fixes this. **Recommendation:** persist the vote/click dedup to the settings store; for MusicBrainz, require a per-deployment `musicBrainzUserAgent` when running multi-replica so a violation cannot tar the shared default (`defaults.ts:84`). Neither blocks the migration major on stdio.
 
 ---
 
@@ -250,7 +250,7 @@ This is currently harmless *because* clients treat `inputSchema` as advisory. Mi
 
 **Recommendation: generate `inputSchema` from the zod schemas as part of the migration.** zod ≥4.2 (already required by M2) exposes `~standard.jsonSchema`, and v2's `registerTool` accepts Standard Schema directly (`sdk-v2/servers-tools.md`, `sdk-v2/advanced-schema-libraries.md`). This deletes the second artifact entirely rather than fixing 12 instances of drift in a system that will drift again.
 
-**Structured output (`outputSchema` / `structuredContent`) — defer.** All 72 configured tools funnel through one encoder that JSON-stringifies into a single `text` block; nothing declares `outputSchema` or `structuredContent`. Adopting it is 72 new schemas, and the `verbose` flag flips `SongDTO` between 7 and 20 fields on the same tool name (`song-transformer.ts:60-141`), so a single schema per tool would mark 13 of 20 fields optional and be nearly non-discriminating. Not required by the revision. **Out of scope for 3.0.0.**
+**Structured output (`outputSchema` / `structuredContent`) — defer.** All 72 configured tools funnel through one encoder that JSON-stringifies into a single `text` block; nothing declares `outputSchema` or `structuredContent`. Adopting it is 72 new schemas, and the `verbose` flag flips `SongDTO` between 7 and 20 fields on the same tool name (`song-transformer.ts:60-141`), so a single schema per tool would mark 13 of 20 fields optional and be nearly non-discriminating. Not required by the revision. **Out of scope for the migration major.**
 
 **Cacheable lists — default to `ttlMs: 0`.** Seven hazards make a naive args-keyed cache silently wrong: `sort:'random'` without `randomSeed`; the one-time `tip` on the first `list_radio_stations` (`radio.ts:213-224`); the process-global library filter; mutation invalidation with no dependency edge; `list_top_rated`'s `partial:true` lower-bound totals; and `click_station`'s per-session message. Opt individual tools in later, deliberately.
 
@@ -258,18 +258,18 @@ This is currently harmless *because* clients treat `inputSchema` as advisory. Mi
 
 ## 6. Pre-migration fixes — bugs that exist today, independent of MCP 2.0
 
-These are wrong on 2.2.0 now. Fix them on `main` before or alongside the 3.0 branch.
+These are wrong on 2.2.0 now. Fix them on `main` before or alongside the migration branch.
 
 | | Bug | Location | Note |
 |---|---|---|---|
-| **F1** | Degraded mode advertises the `resources` capability but registers **no** resource handlers — `resources/list` passes the SDK capability assertion, then fails "Method not found" | `src/index.ts:98-102` vs `src/capabilities.ts:23-26` | Found independently by two audits. Gets worse when `server/discover` becomes the authoritative server description. Fix = split `MCP_CAPABILITIES` into full + degraded |
+| **F1** | Degraded mode advertises the `resources` capability but registers **no** resource handlers — `resources/list` passes the SDK capability assertion, then fails "Method not found" | `src/index.ts:98-102` vs `src/capabilities.ts:23-26` | **Done.** Setup mode advertises `SETUP_CAPABILITIES` (`src/capabilities.ts`), which holds tools only |
 | **F2** | JWT expiry is **guessed** from `config.tokenExpiry` (24h default) instead of read from the token's `exp` claim — which `jwt-decode.ts:151` already decodes | `auth-manager.ts:117` | If Navidrome's real TTL is shorter, every process serves 401s until the retry-once path repairs it. ~5 lines |
 | **F3** | The `now_playing` repair cache is module-level state, correct only because exactly one process exists. At v2.2.0 it was `durationRepairedForKey` / `notRadioConfirmedForKey`. Today it is one `repairCache` `let` in `src/tools/playback.ts` | `playback.ts:1247,1253` | Move onto `PlaybackEngine` next to `queueGeneration` (`playback-engine.ts:190`). ~20 lines. Do this regardless of which playback option wins |
 | **F4** | `get_radio_station` returns "not found" for a station that demonstrably exists, when the 300s cache is stale | `radio.ts:517-521` | On cache-miss failure, retry via the uncached path the create flow already uses (`:396`). ~5 lines |
 | **F5** | `test_connection` returned `{success:false}` at protocol-success | `src/tools/test.ts` | **Done** with M9. A failed check is now an `isError` result |
 | **F6** | mpv IPC socket path interpolated into an error reaching LLM context | `mpv-ipc.ts:124` | Low severity; internal infrastructure detail |
 | **F7** | `filterCacheManager.initialize()` failure leaves the process permanently throwing on filtered searches | `filter-cache-manager.ts:119` vs `:322` | Make it soft-fail with lazy retry, matching `LibraryManager` (`library-manager.ts:112-117`) |
-| **F8** | `discover_radio_stations` accepts `offset`/`limit` but returns no total or more-pages signal | `src/types/radio.ts:115-131` | Caller cannot distinguish a full page from the last one |
+| **F8** | `discover_radio_stations` accepts `offset`/`limit` but returns no total or more-pages signal | `src/types/radio.ts:115-131` | **Done.** The result carries `nextOffset` and `hasMore` (`src/types/radio.ts`) |
 
 ---
 
@@ -279,11 +279,11 @@ These are wrong on 2.2.0 now. Fix them on `main` before or alongside the 3.0 bra
 
 ```
    npm dist-tags
-   ├── latest  →  2.2.x        MCP 2025-era, SDK v1, unchanged, bugfix-only
-   └── next    →  3.0.0-next.N MCP 2026-07-28 + 2025-era fallback (dual)
+   ├── latest  →  3.x                    MCP 2025-era, SDK v1, unchanged, bugfix-only
+   └── next    →  <major>.0.0-next.N     MCP 2026-07-28 + 2025-era fallback (dual)
 ```
 
-**What actually breaks for a user upgrading to 3.0.0-next:**
+**What actually breaks for a user upgrading to the future major's `next` release:**
 
 1. `set_active_libraries` **is removed** — the single user-visible tool removal (§3.1).
 2. Playback tools are **stdio-only by default** (§3.2); HTTP users must opt in as single-owner.
@@ -322,7 +322,7 @@ Answered by the doc set:
 3. **No client support matrix for extensions** — the `extensions/client-matrix` page is not in the set, so "will any client we target actually negotiate this?" has no evidence. (Doc-set gap 3.)
 4. **Should the four optional integrations become spec extensions?** Deferred: the gating boundaries do **not** align with code categories. `radio` spans three provenances (5 Navidrome-native, 1 mpv-gated, 5 Radio-Browser-gated), and `get_artist_albums` composes Last.fm + MusicBrainz (ungated) + Navidrome. Modeling these as extensions means re-cutting categories, not relabeling.
 
-**Doc-set caveats to carry forward:** all `sdk-v2/` files are `v2.0.0-beta.1`; the `ext-tasks/` group is draft from a repo that calls itself "not an official extension"; SEP-2663 names the base revision `2026-06-30` (read as `2026-07-28`); and the RC blog's `InputRequiredResult` example predates the final spec — use the spec shape. Full list in `mcp-2.0/INDEX.md` §Coverage notes.
+**Doc-set caveats to carry forward:** all `sdk-v2/` files are `v2.0.0-beta.1`; the `ext-tasks/` group is draft from a repo that calls itself "not an official extension"; SEP-2663 names the base revision `2026-06-30` (read as `2026-07-28`); and the RC blog's `InputRequiredResult` example predates the final spec — use the spec shape. Full list in `../mcp-2.0/INDEX.md` §Coverage notes.
 
 ---
 
@@ -331,7 +331,7 @@ Answered by the doc set:
 Dependency order. Each phase is independently shippable.
 
 ```
-  Phase 0 — on main, 2.2.x            F1 … F8 (pre-existing bugs)
+  Phase 0 — on main, 3.x              F2 … F4, F6, F7 (pre-existing bugs)
      │                                 no protocol change, no breakage
      ▼
   Phase 1 — branch, toolchain          M1 M2 (packages, zod 4.2)
@@ -350,7 +350,7 @@ Dependency order. Each phase is independently shippable.
      │                                 B2 (playback → stdio-only + opt-in)
      │                                 B4 (persist vote/click dedup)
      ▼
-  Phase 6 — tests + publish            M14, then 3.0.0-next.1 on `next`
+  Phase 6 — tests + publish            M14, then <major>.0.0-next.1 on `next`
 ```
 
 Phases 0–2 carry no protocol risk and can land on `main` today. The branch point is Phase 3.

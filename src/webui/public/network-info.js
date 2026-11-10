@@ -1,18 +1,27 @@
 import { getJson } from './api.js';
 import { byId } from './dom.js';
+import { canChangePlayerSettings } from './local-controls.js';
+import { openAllSettings } from './settings.js';
 
 const openBtn = byId('open-network-info');
 const dialog = byId('network-info-dialog');
 const help = byId('network-info-help');
 const list = byId('network-info-list');
 const hint = byId('network-info-hint');
+const status = byId('network-info-status');
+
+// The settings page opens only on the player's computer, so a remote viewer gets the place named instead.
+const LOCAL_SETTINGS = 'All settings';
+const REMOTE_SETTINGS = "the settings on the player's computer";
+const RESTART_STEP = 'then shut down the player and start it again';
 
 export function bindNetworkInfo() {
   openBtn.addEventListener('click', async () => {
     const info = await getJson('/api/network-info');
+    status.textContent = '';
     if (info === null) {
       list.replaceChildren();
-      hint.textContent = '';
+      hint.replaceChildren();
       help.textContent = 'Could not load network info.';
     } else {
       renderNetworkInfo(info);
@@ -28,7 +37,23 @@ function renderNetworkInfo(info) {
     ? 'The panel is reachable from devices on the same network.'
     : 'Currently only reachable from this device.';
   list.replaceChildren(...entries.map(buildAddressRow));
-  hint.textContent = networkHint(info, interfaces.length);
+  renderHint(info, interfaces.length);
+}
+
+function renderHint(info, interfaceCount) {
+  const isLocal = canChangePlayerSettings();
+  const text = networkHint(info, interfaceCount, isLocal ? LOCAL_SETTINGS : REMOTE_SETTINGS);
+  hint.replaceChildren(text);
+  if (isLocal && !info.lanReachable) hint.append(' ', buildAllSettingsButton());
+}
+
+function buildAllSettingsButton() {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn-secondary small';
+  button.textContent = LOCAL_SETTINGS;
+  button.addEventListener('click', () => void openAllSettings(status));
+  return button;
 }
 
 function buildAddressRow(entry) {
@@ -45,11 +70,11 @@ function buildAddressRow(entry) {
   return li;
 }
 
-function networkHint(info, interfaceCount) {
+function networkHint(info, interfaceCount, settingsPlace) {
   if (!info.lanReachable && info.expose) {
-    return 'The web player bind host is a loopback address, which overrides Expose on LAN. Clear Bind host in the Web Player section of navidrome-config, then restart the server.';
+    return `The bind host is a loopback address, which overrides Expose on LAN. Clear Bind host in the Jukebox Remote section of ${settingsPlace}, ${RESTART_STEP}.`;
   }
-  if (!info.lanReachable) return 'Tip: run navidrome-config, check Expose on LAN in the Web Player section, then restart the server.';
+  if (!info.lanReachable) return `Turn on Expose on LAN in ${settingsPlace}, ${RESTART_STEP}.`;
   if (interfaceCount === 0) return 'No LAN interfaces detected (only localhost is reachable).';
   return '';
 }

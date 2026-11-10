@@ -35,7 +35,7 @@ def png_bytes(base, size):
 
 
 def write_png(base):
-    out = ASSETS / "navidrome-player.png"
+    out = ASSETS / "jukebox-remote.png"
     out.write_bytes(png_bytes(base, 512))
     print(f"  wrote {out.relative_to(ROOT)}  (512x512)")
 
@@ -63,7 +63,7 @@ def write_ico(base):
         data += blob
         offset += len(blob)
 
-    out = ASSETS / "navidrome-player.ico"
+    out = ASSETS / "jukebox-remote.ico"
     out.write_bytes(header + bytes(entries) + bytes(data))
     print(f"  wrote {out.relative_to(ROOT)}  ({', '.join(str(s) for s in sizes)})")
 
@@ -87,7 +87,7 @@ def write_icns(base):
         blob = png_bytes(base, size)
         body += ostype + struct.pack(">I", len(blob) + 8) + blob
 
-    out = ASSETS / "navidrome-player.icns"
+    out = ASSETS / "jukebox-remote.icns"
     out.write_bytes(b"icns" + struct.pack(">I", len(body) + 8) + bytes(body))
     print(f"  wrote {out.relative_to(ROOT)}  (16..1024)")
 

@@ -69,6 +69,7 @@ label { display: block; margin-bottom: 12px; font-size: 0.9rem; }
 label:last-child { margin-bottom: 0; }
 label .hint { display: block; color: var(--muted); font-weight: 400; font-size: 0.78rem; margin-top: 2px; }
 label .hint a { color: var(--accent); }
+.card-note { color: var(--muted); font-size: 0.78rem; margin: 0 0 12px; }
 label .suggest { display: block; color: var(--muted); font-size: 0.78rem; margin-top: 4px; }
 .suggest-use {
   background: none; border: none; padding: 0 0 0 2px;

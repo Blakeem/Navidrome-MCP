@@ -26,14 +26,14 @@ export function writeTempStore({ runDir, port, adminPasswordHash }: TempStoreInp
   const userStore = readSettings();
   const storeProblem = userStore === null ? readStoreProblem() : null;
   if (storeProblem !== null) {
-    throw new Error(`e2e: the settings store is unusable: ${storeProblem.text}. Fix it with navidrome-config first.`);
+    throw new Error(`e2e: the settings store is unusable: ${storeProblem.text}. Fix it with navidrome-mcp settings first.`);
   }
   const navidrome = userStore?.navidrome;
   const url = navidrome?.url ?? '';
   const username = navidrome?.username ?? '';
   const password = navidrome?.password ?? '';
   if (url === '' || username === '' || password === '') {
-    throw new Error(`e2e: no Navidrome url, username and password in the settings store at ${userStorePath}. Save them with navidrome-config first.`);
+    throw new Error(`e2e: no Navidrome url, username and password in the settings store at ${userStorePath}. Save them with navidrome-mcp settings first.`);
   }
   const mpvPath = userStore?.playback?.mpvPath ?? null;
   if (resolveMpvBinary(mpvPath) === null) {

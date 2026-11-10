@@ -1,12 +1,11 @@
-#!/usr/bin/env node
 /**
- * Navidrome MCP Server - Standalone web player entry (`navidrome-web`)
+ * Navidrome MCP Server - Jukebox Remote entry (`navidrome-mcp jukebox`)
  * Copyright (C) 2025
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
 /**
- * Entry for the `navidrome-web` binary and for the IPC child the MCP server spawns. The port owner
+ * Entry for `navidrome-mcp jukebox`, for the desktop shortcut and for the IPC child the MCP server spawns. The port owner
  * is responsible for mpv's lifetime, so every owner shutdown path quits mpv.
  */
 
@@ -19,7 +18,7 @@ import { createRuntime } from '../bootstrap.js';
 import { resolveConfigState, type Config, type StartupFailure } from '../config.js';
 import { readEnvAdminPassword } from '../config/env-settings.js';
 import { startConfigServer } from '../config-app/server.js';
-import { WEB_OWNER_ATTACH_INTERVAL_MS } from '../constants/timeouts.js';
+import { SETTINGS_PAGE_IDLE_TIMEOUT_MS, WEB_OWNER_ATTACH_INTERVAL_MS } from '../constants/timeouts.js';
 import { playbackEngine } from '../services/playback/playback-engine.js';
 import { ScrobbleTracker } from '../services/playback/scrobble-tracker.js';
 import { errorMessage } from '../utils/error-formatter.js';
@@ -36,7 +35,7 @@ import { isAddressRewritingHost } from '../webui/source-address.js';
 import { VisualizerHub } from '../webui/visualizer-hub.js';
 import { isTlsEnabled } from '../webui/tls.js';
 import { acquireOrAttach } from './acquire.js';
-import { buildBannerLines, buildSetupHeadline, TLS_LOCAL_ADDRESS_WARNING } from './banner.js';
+import { buildAttachLines, buildBannerLines, buildSetupHeadline } from './banner.js';
 import {
   getPersist,
   getVisualizer,
@@ -47,6 +46,7 @@ import {
   setVisualizer,
   shouldStopForMcpExit,
 } from './player-runtime.js';
+import { createSettingsPageHolder } from './settings-page.js';
 
 // Node exits on an unhandled rejection by default, and an MCP-spawned child's stderr is ignored, so
 // the reason goes to the log file instead.
@@ -72,7 +72,7 @@ function maybeOpenBrowser(url: string, autoOpenBrowser: boolean): void {
 
 /** Also printed to stdout, since a direct terminal run sees nothing the file logger writes. */
 function logBanner(webui: Config['webui']): void {
-  const lines = buildBannerLines(webui);
+  const lines = buildBannerLines(webui, !launchedByMcp);
   for (const line of lines) logger.info(line);
   process.stdout.write(`\n  ${lines.join('\n  ')}\n\n`);
 }
@@ -85,15 +85,20 @@ let authRef: AuthService | null = null;
 let shuttingDown = false;
 // Every MCP whose probe finds this player running holds one lease, the spawner included.
 let openMcpLeases = 0;
+// Starts on the first All settings click, so the player runs no settings server until an admin asks for one.
+const settingsPage = createSettingsPageHolder();
 
 function shutdownPlayer(reason: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  logger.info(`navidrome-web shutting down (${reason})`);
+  logger.info(`Jukebox Remote shutting down (${reason})`);
   broadcasterRef?.stop();
   visualizerHubRef?.stop();
   authRef?.flush();
   serverRef?.close();
+  settingsPage.close().catch((err: unknown) => {
+    logger.warn('shutdown: settings page close failed', err);
+  });
   const hardExit = setTimeout(() => process.exit(0), SHUTDOWN_HARD_EXIT_MS);
   hardExit.unref();
   void (async (): Promise<void> => {
@@ -162,22 +167,16 @@ function keepPlaybackAttached(): void {
 }
 
 /**
- * Generous, because reaping mid-config is worse than a harmless idle loopback process,
- * and its own ephemeral port means a lingering one never blocks a freshly launched player.
- */
-const SETUP_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-
-/**
  * A user who launched the player first, even from the terminal-less desktop shortcut, needs a
  * visible path to configure. The settings page has no power button, so the server exits when idle.
  */
 async function runSetupMode(failure?: StartupFailure): Promise<void> {
   const headline = buildSetupHeadline(failure);
   const settings = await startConfigServer({
-    idleTimeoutMs: SETUP_IDLE_TIMEOUT_MS,
+    idleTimeoutMs: SETTINGS_PAGE_IDLE_TIMEOUT_MS,
     onIdleTimeout: () => {
       logger.info(
-        'navidrome-web: settings page idle — leaving setup mode. Re-launch navidrome-web when ready.',
+        'Jukebox Remote: settings page idle. Leaving setup mode. Run `navidrome-mcp jukebox` again when ready.',
       );
       process.exit(0);
     },
@@ -187,7 +186,7 @@ async function runSetupMode(failure?: StartupFailure): Promise<void> {
   // The logger writes to a file, so stdout carries the URL for a terminal run and for a host where
   // no browser opens.
   process.stdout.write(
-    `\n  ${headline}\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, re-launch navidrome-web.\n\n`,
+    `\n  ${headline}\n  Open this in your browser to set it up:  ${settings.url}\n  (attempting to open it for you…)  After you Save, run \`navidrome-mcp jukebox\` again.\n\n`,
   );
   if (process.env['NAVIDROME_WEB_AUTO_OPEN'] !== '0') openBrowser(settings.url);
 
@@ -202,7 +201,7 @@ async function runSetupMode(failure?: StartupFailure): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  logger.info('navidrome-web starting');
+  logger.info('Jukebox Remote starting');
 
   const state = await resolveConfigState();
   if (!state.configured) {
@@ -225,7 +224,7 @@ async function main(): Promise<void> {
 
   // Startup can outlast the spawning MCP, and a player bound then would stop at once.
   if (launchedByMcp && !process.connected && !getPersist()) {
-    logger.info('navidrome-web: the spawning MCP exited during startup. Standing down.');
+    logger.info('Jukebox Remote: the spawning MCP exited during startup. Standing down.');
     return;
   }
 
@@ -234,17 +233,16 @@ async function main(): Promise<void> {
   const broadcaster = new SseBroadcaster(client, guests);
   const visualizer = new VisualizerHub();
   const makeServer = (): Server =>
-    createServer({ config, client, broadcaster, visualizer, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases, auth, guests });
+    createServer({ config, client, broadcaster, visualizer, shutdown: () => shutdownPlayer('power-button'), leases: mcpLeases, settingsPage, auth, guests });
 
   const result = await acquireOrAttach(config, makeServer);
   if (result.mode === 'attached') {
     // A user who launched a second copy still expects the player, so point them at the running one.
     // An MCP-spawned copy lost a start race, and the owner already handled auto-open.
     const adminUrl = adminPageUrl(result.url);
-    const runningMessage = `navidrome-web already running at ${adminUrl}`;
-    const tlsNote = result.url.startsWith('https:') ? `\n  ${TLS_LOCAL_ADDRESS_WARNING}` : '';
-    logger.info(`${runningMessage}. Standing down.`);
-    process.stdout.write(`\n  ${runningMessage}${tlsNote}\n\n`);
+    const attachLines = buildAttachLines(adminUrl, result.url.startsWith('https:'));
+    logger.info(`${attachLines.join(' ')} Standing down.`);
+    process.stdout.write(`\n  ${attachLines.join('\n  ')}\n\n`);
     if (!launchedByMcp) maybeOpenBrowser(adminUrl, config.webui.autoOpenBrowser);
     return;
   }
@@ -274,24 +272,24 @@ async function main(): Promise<void> {
   }
 
   if (config.webui.auth.mode !== 'none' && config.webui.auth.adminAccess === 'anywhere' && !isTlsEnabled(config.webui.tls)) {
-    logger.warn('navidrome-web admits admin logins from anywhere over plain HTTP, so the admin password crosses the network in clear text. Turn on HTTPS on the settings page.');
+    logger.warn('Jukebox Remote admits admin logins from anywhere over plain HTTP, so the admin password crosses the network in clear text. Turn on HTTPS on the settings page.');
   }
   if (isAddressRewritingHost()) {
-    logger.warn('navidrome-web runs in a container or WSL, where port forwarding may rewrite source addresses. LAN checks may then treat internet clients as local.');
+    logger.warn('Jukebox Remote runs in a container or WSL, where port forwarding may rewrite source addresses. LAN checks may then treat internet clients as local.');
   }
   logBanner(config.webui);
   maybeOpenBrowser(adminPageUrl(result.url), config.webui.autoOpenBrowser);
   installShutdownTriggers();
 
-  logger.info('navidrome-web started successfully (port owner)');
+  logger.info('Jukebox Remote started successfully (port owner)');
 }
 
 main().catch((error: unknown) => {
-  logger.error('navidrome-web failed to start:', error);
+  logger.error('Jukebox Remote failed to start:', error);
   // A direct terminal run would otherwise exit with no visible reason.
   const message = errorMessage(error);
   try {
-    process.stderr.write(`navidrome-web failed to start: ${message} (log: ${logPath})\n`);
+    process.stderr.write(`Jukebox Remote failed to start: ${message} (log: ${logPath})\n`);
   } catch {
     /* best-effort */
   }
