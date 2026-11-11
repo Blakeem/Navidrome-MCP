@@ -1416,13 +1416,6 @@ body.stream-evicted::after {
   color: var(--text);
 }
 .lyrics-placard-note { display: block; margin-top: 6px; }
-.lyrics-placard-link {
-  display: inline-block;
-  margin-top: 12px;
-  color: var(--accent);
-  text-decoration: none;
-}
-.lyrics-placard-link:hover { text-decoration: underline; }
 
 .lyrics-lines {
   list-style: none;
