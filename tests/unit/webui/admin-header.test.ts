@@ -408,26 +408,58 @@ describe('settings.js', () => {
   const LOCAL_CONTROLS = '../../../src/webui/public/local-controls.js';
   const THEME = '../../../src/webui/public/theme.js';
 
-  let openHandler: () => void = () => undefined;
+  const SESSION_ONLY = 'Applied for this session only. settings.json was not saved.';
+  const STORED = { theme: null, persistAfterMcpExit: false, autoOpenBrowser: false, visualizer: true };
+
+  interface FakeControl {
+    checked: boolean;
+    textContent: string;
+    dataset: Record<string, string>;
+    handlers: Record<string, () => void>;
+    [key: string]: unknown;
+  }
+
   const showModal = vi.fn();
   const getJson = vi.fn();
+  const postJson = vi.fn();
   let mayChangeSettings = false;
+  let elements = new Map<string, FakeControl>();
+  let form = { inert: false, busy: false };
+
+  const element = (id: string): FakeControl => {
+    if (!elements.has(id)) {
+      const el: FakeControl = {
+        hidden: false,
+        checked: false,
+        textContent: '',
+        dataset: {},
+        handlers: {},
+        addEventListener: (event: string, handler: () => void) => { el.handlers[event] = handler; },
+        querySelectorAll: () => [],
+        querySelector: () => form,
+        showModal,
+      };
+      elements.set(id, el);
+    }
+    return elements.get(id) as FakeControl;
+  };
 
   beforeEach(() => {
+    vi.useFakeTimers();
+    elements = new Map();
+    form = {
+      inert: false,
+      busy: false,
+      setAttribute: () => { form.busy = true; },
+      removeAttribute: () => { form.busy = false; },
+      contains: () => false,
+    } as typeof form;
     showModal.mockReset();
     getJson.mockReset().mockResolvedValue(null);
-    const fake = (id: string): Record<string, unknown> => ({
-      hidden: false,
-      textContent: '',
-      addEventListener: (_event: string, handler: () => void) => {
-        if (id === 'open-settings') openHandler = handler;
-      },
-      querySelectorAll: () => [],
-      showModal,
-    });
-    vi.stubGlobal('document', { getElementById: fake });
+    postJson.mockReset();
+    vi.stubGlobal('document', { getElementById: element });
     vi.resetModules();
-    vi.doMock(API, () => ({ FAILED_TEXT: 'That action failed. Try again.', getJson, postJson: vi.fn() }));
+    vi.doMock(API, () => ({ FAILED_TEXT: 'That action failed. Try again.', getJson, postJson }));
     vi.doMock(LOCAL_CONTROLS, () => ({ canChangePlayerSettings: () => mayChangeSettings }));
     vi.doMock(THEME, () => ({ applyTheme: vi.fn() }));
   });
@@ -436,14 +468,28 @@ describe('settings.js', () => {
     vi.doUnmock(API);
     vi.doUnmock(LOCAL_CONTROLS);
     vi.doUnmock(THEME);
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
   const open = async (): Promise<void> => {
     const settings = (await import('../../../src/webui/public/settings.js')) as unknown as { bindSettings: () => void };
     settings.bindSettings();
-    openHandler();
+    element('open-settings').handlers['click']?.();
     await vi.waitFor(() => expect(showModal).toHaveBeenCalled());
+  };
+
+  // Toggles Keep playing and resolves once the save's answer has been applied.
+  const toggleKeepPlaying = async (answer: { ok: boolean; status: number; data: unknown }): Promise<void> => {
+    let reply: (value: unknown) => void = () => undefined;
+    postJson.mockReturnValue(new Promise((resolve) => { reply = resolve; }));
+    element('set-persist').checked = true;
+    element('set-persist').handlers['change']?.();
+    await vi.waitFor(() => expect(postJson).toHaveBeenCalled());
+    expect(form.inert).toBe(true);
+    expect(form.busy).toBe(true);
+    reply(answer);
+    await vi.waitFor(() => expect(form.inert).toBe(false));
   };
 
   it('opens for a remote browser without reading the player settings', async () => {
@@ -461,6 +507,46 @@ describe('settings.js', () => {
 
     expect(getJson).toHaveBeenCalledWith('/api/player/settings');
   });
+
+  it('blocks the form during a toggle save, then shows Saved. and clears it after its reading time', async () => {
+    mayChangeSettings = true;
+    getJson.mockResolvedValue(STORED);
+    await open();
+
+    await toggleKeepPlaying({ ok: true, status: 200, data: { ...STORED, persistAfterMcpExit: true, persisted: true } });
+
+    expect(postJson).toHaveBeenCalledWith('/api/player/settings', { persistAfterMcpExit: true });
+    expect(form.busy).toBe(false);
+    expect(element('settings-status').textContent).toBe('Saved.');
+    expect(element('settings-status').dataset.tone).toBe('success');
+    vi.advanceTimersByTime(2500 + 150);
+    expect(element('settings-status').textContent).toBe('');
+  });
+
+  it('keeps the session-only warning on the line', async () => {
+    mayChangeSettings = true;
+    getJson.mockResolvedValue(STORED);
+    await open();
+
+    await toggleKeepPlaying({ ok: true, status: 200, data: { ...STORED, persistAfterMcpExit: true, persisted: false } });
+    vi.advanceTimersByTime(60_000);
+
+    expect(element('settings-status').textContent).toBe(SESSION_ONLY);
+    expect(element('settings-status').dataset.tone).toBe('warning');
+  });
+
+  it('puts the control back and keeps the error when a save fails', async () => {
+    mayChangeSettings = true;
+    getJson.mockResolvedValue(STORED);
+    await open();
+
+    await toggleKeepPlaying({ ok: false, status: 500, data: null });
+    vi.advanceTimersByTime(60_000);
+
+    expect(element('set-persist').checked).toBe(false);
+    expect(element('settings-status').textContent).toBe('Could not save settings.');
+    expect(element('settings-status').dataset.tone).toBe('error');
+  });
 });
 
 describe('openAllSettings in settings.js', () => {
@@ -469,7 +555,7 @@ describe('openAllSettings in settings.js', () => {
   const THEME = '../../../src/webui/public/theme.js';
   const SETTINGS_URL = 'http://127.0.0.1:5555/';
 
-  type StatusLine = { textContent: string };
+  type StatusLine = { textContent: string; dataset: Record<string, string> };
   type OpenAllSettings = (statusLine: StatusLine) => Promise<void>;
 
   const postJson = vi.fn();
@@ -481,7 +567,7 @@ describe('openAllSettings in settings.js', () => {
     postJson.mockReset();
     windowOpen.mockReset().mockReturnValue(tab);
     vi.stubGlobal('document', {
-      getElementById: () => ({ textContent: '', addEventListener: () => undefined, querySelectorAll: () => [] }),
+      getElementById: () => ({ textContent: '', addEventListener: () => undefined, querySelectorAll: () => [], querySelector: () => ({}) }),
     });
     vi.stubGlobal('window', { open: windowOpen });
     vi.resetModules();
@@ -502,7 +588,7 @@ describe('openAllSettings in settings.js', () => {
 
   it('opens the tab before the request leaves, then points it at the settings page', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: 'old' };
+    const statusLine = { textContent: 'old', dataset: {} };
     let answer: (value: unknown) => void = () => undefined;
     postJson.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
 
@@ -521,7 +607,7 @@ describe('openAllSettings in settings.js', () => {
 
   it('closes the tab and shows the server error when the request fails', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: '' };
+    const statusLine = { textContent: '', dataset: {} };
     postJson.mockResolvedValue({ ok: false, status: 500, data: { error: 'The settings page failed to start: listen EACCES' } });
 
     await openAllSettings(statusLine);
@@ -529,11 +615,12 @@ describe('openAllSettings in settings.js', () => {
     expect(tab.close).toHaveBeenCalledTimes(1);
     expect(tab.location.href).toBe('');
     expect(statusLine.textContent).toBe('The settings page failed to start: listen EACCES');
+    expect(statusLine.dataset).toEqual({ tone: 'error' });
   });
 
   it('closes the tab and shows the generic failure when no answer arrives', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: '' };
+    const statusLine = { textContent: '', dataset: {} };
     postJson.mockResolvedValue({ ok: false, status: null, data: null });
 
     await openAllSettings(statusLine);
@@ -544,7 +631,7 @@ describe('openAllSettings in settings.js', () => {
 
   it('names the blocked tab and starts no settings server when the browser refuses the tab', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: '' };
+    const statusLine = { textContent: '', dataset: {} };
     windowOpen.mockReturnValue(null);
 
     await openAllSettings(statusLine);
@@ -576,6 +663,7 @@ describe('network-info.js hints', () => {
     const el: FakeNode = {
       children: [],
       textContent: '',
+      dataset: {},
       handlers: {},
       append: (...nodes: unknown[]) => { el.children.push(...nodes); },
       replaceChildren: (...nodes: unknown[]) => { el.children = nodes; },

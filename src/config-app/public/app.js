@@ -527,17 +527,48 @@ function collectChecked(confirmPassword = false) {
   return payload;
 }
 
-function showStatus(message, kind, boxId = 'status') {
+// The reading time formula and the fade length match src/webui/public/messages.js, and FADE_MS matches `.status.leaving` in styles.css.
+const READING_BASE_MS = 1500;
+const READING_PER_CHAR_MS = 50;
+const READING_MIN_MS = 2500;
+const READING_MAX_MS = 6000;
+const FADE_MS = 150;
+
+// Status box id to its pending clear, so a new result in the box cancels it.
+const clearTimers = new Map();
+
+function readingTimeMs(text) {
+  return Math.min(READING_MAX_MS, Math.max(READING_MIN_MS, READING_BASE_MS + READING_PER_CHAR_MS * text.length));
+}
+
+function cancelStatusClear(boxId) {
+  clearTimeout(clearTimers.get(boxId));
+  clearTimers.delete(boxId);
+}
+
+function fadeOutStatus(box, boxId) {
+  box.className += ' leaving';
+  clearTimers.set(boxId, setTimeout(() => {
+    clearTimers.delete(boxId);
+    box.textContent = '';
+    box.className = 'status';
+  }, FADE_MS));
+}
+
+// A brief success clears after its reading time. Every other result stays until the next result in the same box.
+function showStatus(message, kind, boxId = 'status', brief = false) {
   const box = document.getElementById(boxId);
+  cancelStatusClear(boxId);
   box.textContent = message;
   box.className = `status show ${kind}`;
+  if (brief && kind === 'ok') clearTimers.set(boxId, setTimeout(() => fadeOutStatus(box, boxId), readingTimeMs(message)));
 }
 
 // A save that the Jukebox Remote could not start from still saved, so the form stays and names the field.
 // A first save lists the next steps, and the Jukebox Remote address is a link.
 function showSaveResult(data) {
   const startFailed = data.startFailed === true;
-  showStatus(data.message || 'Saved.', startFailed ? 'err' : 'ok');
+  showStatus(data.message || 'Saved.', startFailed ? 'err' : 'ok', 'status', data.brief === true);
   if (startFailed) openAdvancedForFieldsNamedIn(data.message);
   if (!Array.isArray(data.nextSteps)) return;
   const list = document.createElement('ol');
@@ -630,7 +661,7 @@ async function onTest() {
   try {
     const { data } = await postJson('/api/settings/test', payload);
     if (data.ok) {
-      showStatus(data.message || 'Connected.', 'ok');
+      showStatus(data.message || 'Connected.', 'ok', 'status', true);
       void refreshUserLibraries();
     } else {
       showStatus(data.error || 'Connection failed.', 'err');

@@ -1,5 +1,6 @@
 import { FAILED_TEXT, getJsonResult, postJson } from './api.js';
 import { byId } from './dom.js';
+import { clearMessage, showMessage } from './messages.js';
 import { bindOutputBanner, renderOutputBanner } from './output-banner.js';
 
 const openBtn = byId('btn-audio-device');
@@ -29,14 +30,14 @@ export function renderAudioDevice(status) {
 }
 
 async function loadDevices() {
-  statusLine.textContent = 'Loading outputs…';
+  showMessage(statusLine, 'Loading outputs…', 'info');
   list.replaceChildren();
   const { ok, data } = await getJsonResult('/api/audio-devices');
   if (!ok || data === null) {
-    statusLine.textContent = failureText(data);
+    showMessage(statusLine, failureText(data), 'error');
     return;
   }
-  statusLine.textContent = '';
+  clearMessage(statusLine);
   list.replaceChildren(...deviceEntries(data).map(buildDeviceRow));
 }
 
@@ -73,13 +74,13 @@ function buildDeviceRow(entry) {
 }
 
 async function chooseDevice(id) {
-  statusLine.textContent = '';
+  clearMessage(statusLine);
   const { ok, data } = await postJson('/api/controls/audio-device', { id });
   if (ok && data?.success === true) {
     dialog.close();
     return;
   }
-  statusLine.textContent = failureText(data);
+  showMessage(statusLine, failureText(data), 'error');
 }
 
 function failureText(data) {

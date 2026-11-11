@@ -17,8 +17,7 @@ const CHILD_SOURCES = {
 // aria-controls needs a page-unique id, and one album can be listed at two depths at once.
 let childListSeq = 0;
 
-// `status` is the pane's status line, so a row's play feedback stays in the pane that lists it.
-export function buildLibraryNode(kind, item, depth, status) {
+export function buildLibraryNode(kind, item, depth) {
   const fields = libraryRowFields(kind, item, depth);
   const childSource = CHILD_SOURCES[kind];
   const node = document.createElement('li');
@@ -43,14 +42,14 @@ export function buildLibraryNode(kind, item, depth, status) {
   action.dataset.name = fields.name;
   action.append(buildIcon('lib-icon-add', ICON_PLUS), buildIcon('lib-icon-play', ICON_PLAY));
   labelLibraryAction(action, playMode());
-  action.addEventListener('click', () => void playLibraryItem(action, kind, item.id, fields.name, status));
+  action.addEventListener('click', () => void playLibraryItem(action, kind, item.id, fields.name));
 
   text.append(name, meta);
   if (fields.thumb) main.appendChild(fields.glyph === undefined ? buildLibraryThumb(fields.coverId) : buildThumbPlaceholder(fields.glyph));
   main.appendChild(text);
   row.append(main, action);
   node.appendChild(row);
-  if (childSource !== undefined) bindLibraryExpander({ node, row, main, source: childSource, id: item.id, name: fields.name, depth, status });
+  if (childSource !== undefined) bindLibraryExpander({ node, row, main, source: childSource, id: item.id, name: fields.name, depth });
   return node;
 }
 
@@ -134,7 +133,7 @@ function labelLibraryToggle(toggle, noun, name, expanded) {
 }
 
 // The chevron is the keyboard control. A click on the row's main area is a pointer shortcut.
-function bindLibraryExpander({ node, row, main, source, id, name, depth, status }) {
+function bindLibraryExpander({ node, row, main, source, id, name, depth }) {
   const list = document.createElement('ul');
   const toggle = document.createElement('button');
   let loadState = 'idle';
@@ -145,7 +144,7 @@ function bindLibraryExpander({ node, row, main, source, id, name, depth, status 
     labelLibraryToggle(toggle, source.noun, name, expanded);
     if (!expanded || loadState !== 'idle') return;
     loadState = 'loading';
-    loadState = (await loadLibraryChildren({ node, list, source, id, depth, status })) ? 'loaded' : 'idle';
+    loadState = (await loadLibraryChildren({ node, list, source, id, depth })) ? 'loaded' : 'idle';
   };
 
   childListSeq += 1;
@@ -166,7 +165,7 @@ function bindLibraryExpander({ node, row, main, source, id, name, depth, status 
 }
 
 // Resolves true once the children are rendered, false when the next expand must fetch again.
-async function loadLibraryChildren({ node, list, source, id, depth, status }) {
+async function loadLibraryChildren({ node, list, source, id, depth }) {
   const url = `${source.url}?id=${encodeURIComponent(id)}`;
   let data = null;
   let items = null;
@@ -185,6 +184,6 @@ async function loadLibraryChildren({ node, list, source, id, depth, status }) {
     list.replaceChildren(buildLibraryNotice(`No ${source.noun}.`));
     return true;
   }
-  list.replaceChildren(...items.map((child) => buildLibraryNode(source.kind, child, depth + 1, status)));
+  list.replaceChildren(...items.map((child) => buildLibraryNode(source.kind, child, depth + 1)));
   return true;
 }

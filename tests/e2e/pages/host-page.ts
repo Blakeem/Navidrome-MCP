@@ -151,7 +151,8 @@ export class HostPage {
     this.banConfirmButton = this.signedInGroup.getByRole('button', { name: 'Ban', exact: true });
     this.banCancelButton = this.signedInGroup.getByRole('button', { name: 'Cancel', exact: true });
     this.guestLimitInput = this.guestsDialog.getByLabel('Songs each guest may have waiting');
-    this.guestLimitSaveButton = this.guestsDialog.getByRole('button', { name: 'Save', exact: true });
+    // The Save button's name follows its label (Save, Saving…, Saved), so its id locates it in every state.
+    this.guestLimitSaveButton = this.guestsDialog.locator('#jukebox-guest-limit-save');
     // The limit message is a live region with no role, so its id locates it.
     this.guestLimitMessage = this.guestsDialog.locator('#jukebox-guest-limit-message');
   }

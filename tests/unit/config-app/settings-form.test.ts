@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const PUBLIC_DIR = new URL('../../../src/config-app/public/', import.meta.url);
 const read = (file: string): string => readFileSync(new URL(file, PUBLIC_DIR), 'utf8');
@@ -212,6 +212,11 @@ async function loadForm(
     document: { getElementById: byId, querySelectorAll: () => [], createElement: stubElement },
     fetch: fetchStub,
     crypto: globalThis.crypto,
+    // The wrappers read the global timers at call time, so a test's fake timers reach app.js.
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay),
+    clearTimeout: (id: ReturnType<typeof setTimeout> | undefined) => {
+      clearTimeout(id);
+    },
   });
   runInContext(`${APP_SOURCE}\nglobalThis.api = { collectChecked, populate, renderAuthMode, renderAdminPasswordConfirm, renderAdminPasswordState, renderExposeWarning, renderTransport, renderTranscode, bindRevealButton, storeProblemMessage, showStoreNotices, showPath, onSave, onTest, onCreateShortcut, markPasswordStored: () => { adminPasswordSet = true; } };`, context);
   // A macrotask runs after every promise init() chains on the stub fetch.
@@ -582,6 +587,10 @@ describe('settings page markup', () => {
     expect(HTML).toMatch(/<details id="advancedSettings" class="advanced">\s*<summary>Advanced settings<\/summary>/);
     expect(HTML.match(/<details/g)).toHaveLength(1);
     expect(HTML.indexOf('</details>')).toBeLessThan(HTML.indexOf('id="save-btn"'));
+  });
+
+  it('puts the Save result box below the action buttons, so a result never moves them', () => {
+    expect(HTML.indexOf('id="status"')).toBeGreaterThan(HTML.indexOf('id="save-btn"'));
   });
 
   it('names no other part Advanced', () => {
@@ -1038,6 +1047,198 @@ describe('desktop shortcut button', () => {
     await form.api.onSave(SUBMIT);
 
     expect(form.byId('shortcut-btn').disabled).toBe(true);
+  });
+});
+
+describe('result box timing', () => {
+  const SAVED = 'Settings saved to /s/settings.json.';
+  // 1500 ms plus 50 ms for each of the 35 characters of SAVED.
+  const SAVED_READING_MS = 3250;
+  const FADE_MS = 150;
+  const LONG_AFTER_MS = 60_000;
+  const BRIEF_SAVE: SavedResponse = { ok: true, body: { ok: true, message: SAVED, brief: true } };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function loadAndFreeze(saveResponse: SavedResponse, usable = true): Promise<LoadedForm> {
+    const form = await loadForm({ storeUsable: usable, navidrome: NAVIDROME_SEED }, saveResponse);
+    vi.useFakeTimers();
+    return form;
+  }
+
+  it('clears a Save the server marks brief after its reading time, with a fade first', async () => {
+    const form = await loadAndFreeze(BRIEF_SAVE);
+    const status = form.byId('status');
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(SAVED_READING_MS - 1);
+    expect(status.className).toBe('status show ok');
+    expect(status.textContent).toBe(SAVED);
+
+    vi.advanceTimersByTime(1);
+    expect(status.className).toBe('status show ok leaving');
+    expect(status.textContent).toBe(SAVED);
+
+    vi.advanceTimersByTime(FADE_MS);
+    expect(status.className).toBe('status');
+    expect(status.textContent).toBe('');
+  });
+
+  it('keeps a Save that the server does not mark brief, such as one that names a restart', async () => {
+    const message = `${SAVED} The MCP server applies these changes after it restarts.`;
+    const form = await loadAndFreeze({ ok: true, body: { ok: true, message, brief: false } });
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+
+    expect(form.byId('status').className).toBe('status show ok');
+  });
+
+  it('keeps a first Save with next steps', async () => {
+    const body = { ok: true, message: SAVED, nextSteps: [{ text: 'Quit your AI app fully and open it again.' }] };
+    const form = await loadAndFreeze({ ok: true, body }, false);
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+
+    const status = form.byId('status');
+    expect(status.className).toBe('status show ok');
+    expect(status.added).toHaveLength(1);
+  });
+
+  it('keeps a Save error', async () => {
+    const form = await loadAndFreeze({ ok: false, body: { ok: false, error: 'Save failed.' } });
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+
+    expect(form.byId('status').className).toBe('status show err');
+  });
+
+  it('keeps a Save that could not start the Jukebox Remote, even when the reply carries the brief flag', async () => {
+    const form = await loadAndFreeze({ ok: true, body: { ok: true, message: SAVED, startFailed: true, brief: true } });
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+
+    expect(form.byId('status').className).toBe('status show err');
+  });
+
+  it('clears a connection Test success after its reading time', async () => {
+    const form = await loadAndFreeze({ ok: true, body: { ok: true } });
+
+    await form.api.onTest();
+    expect(form.byId('status').textContent).toBe('Connected.');
+    // 'Connected.' is 10 characters, which the 2500 ms minimum covers.
+    vi.advanceTimersByTime(2500 + FADE_MS);
+
+    expect(form.byId('status').className).toBe('status');
+  });
+
+  it('keeps a connection Test failure', async () => {
+    const form = await loadAndFreeze({ ok: false, body: { ok: false, error: 'Connection failed.' } });
+
+    await form.api.onTest();
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+
+    expect(form.byId('status').className).toBe('status show err');
+  });
+
+  it('keeps a validation error that no Save or Test has replaced', async () => {
+    const form = await loadAndFreeze(BRIEF_SAVE);
+    form.byId('webuiAuthMode').value = 'password';
+    form.byId('webuiAdminPassword').value = 'correct horse battery';
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+
+    const status = form.byId('status');
+    expect(status.className).toBe('status show err');
+    expect(status.textContent).toBe('The passwords do not match.');
+  });
+
+  it('keeps a shortcut result with its path list', async () => {
+    const body = { ok: true, message: 'Created the shortcut.', paths: ['/home/u/Desktop/jukebox-remote.desktop'] };
+    const form = await loadAndFreeze({ ok: true, body });
+
+    await form.api.onCreateShortcut();
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+
+    const status = form.byId('shortcutStatus');
+    expect(status.className).toBe('status show ok');
+    expect(status.added).toHaveLength(1);
+  });
+
+  it('cancels the pending clear when a new result lands in the same box', async () => {
+    const form = await loadAndFreeze(BRIEF_SAVE);
+    const status = form.byId('status');
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(SAVED_READING_MS - 1000);
+    const second = form.api.onSave(SUBMIT);
+    expect(status.className).toBe('status show info');
+    vi.advanceTimersByTime(LONG_AFTER_MS);
+    expect(status.className).toBe('status show info');
+
+    await second;
+    expect(status.className).toBe('status show ok');
+    vi.advanceTimersByTime(SAVED_READING_MS + FADE_MS);
+    expect(status.className).toBe('status');
+  });
+
+  it('cancels the fade when a new result lands while the box fades out', async () => {
+    const form = await loadAndFreeze(BRIEF_SAVE);
+    const status = form.byId('status');
+
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(SAVED_READING_MS);
+    expect(status.className).toBe('status show ok leaving');
+    const second = form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(FADE_MS * 2);
+
+    expect(status.className).toBe('status show info');
+    expect(status.textContent).toBe('Saving…');
+    await second;
+  });
+
+  it('leaves the other box alone when one box clears', async () => {
+    const form = await loadAndFreeze(BRIEF_SAVE);
+
+    await form.api.onCreateShortcut();
+    await form.api.onSave(SUBMIT);
+    vi.advanceTimersByTime(SAVED_READING_MS + FADE_MS);
+
+    expect(form.byId('status').className).toBe('status');
+    expect(form.byId('shortcutStatus').className).toBe('status show ok');
+  });
+});
+
+describe('result timing matches the Jukebox Remote', () => {
+  const REMOTE_MESSAGES = readFileSync(new URL('../../../src/webui/public/messages.js', import.meta.url), 'utf8');
+  const TIMING_CONSTANTS = ['READING_BASE_MS', 'READING_PER_CHAR_MS', 'READING_MIN_MS', 'READING_MAX_MS', 'FADE_MS'];
+  const constantValue = (source: string, name: string): string | undefined => new RegExp(`const ${name} = (\\d+);`).exec(source)?.[1];
+
+  it.each(TIMING_CONSTANTS)('%s has the same value on both pages', (name) => {
+    const settingsValue = constantValue(APP_SOURCE, name);
+
+    expect(settingsValue).toBeDefined();
+    expect(settingsValue).toBe(constantValue(REMOTE_MESSAGES, name));
+  });
+
+  it('has the same reading time formula on both pages', () => {
+    const formula = /return (Math\.min\(READING_MAX_MS[^;]+);/;
+    const settingsFormula = formula.exec(APP_SOURCE)?.[1];
+
+    expect(settingsFormula).toBeDefined();
+    expect(settingsFormula).toBe(formula.exec(REMOTE_MESSAGES)?.[1]);
+  });
+
+  it('fades the settings result box for FADE_MS', () => {
+    const leavingRule = /\.status\.leaving \{[^}]*transition: opacity (\d+)ms;/.exec(read('styles.css'));
+
+    expect(leavingRule?.[1]).toBe(constantValue(APP_SOURCE, 'FADE_MS'));
   });
 });
 

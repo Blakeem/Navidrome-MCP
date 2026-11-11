@@ -34,7 +34,7 @@ const STORED: SettingsFile = {
 const BOTH = `${SAVED_TO} ${MCP_RESTART} ${PLAYER_RESTART}`;
 
 function messageFor(stored: SettingsFile, saved: SettingsFile, adminPasswordChanged = false): string {
-  return laterSaveMessage(SAVED_TO, { storedFile: stored, storedSettings: stored, saved, adminPasswordChanged, clearedStoreNotice: false });
+  return laterSaveMessage(SAVED_TO, { storedFile: stored, storedSettings: stored, saved, adminPasswordChanged, clearedStoreNotice: false }).message;
 }
 
 describe('laterSaveMessage', () => {
@@ -57,7 +57,7 @@ describe('laterSaveMessage', () => {
   });
 
   it('reports the write and names no restart when the save only cleared a store notice, such as a quoted number', () => {
-    const message = laterSaveMessage(SAVED_TO, { storedFile: STORED, storedSettings: STORED, saved: STORED, adminPasswordChanged: false, clearedStoreNotice: true });
+    const { message } = laterSaveMessage(SAVED_TO, { storedFile: STORED, storedSettings: STORED, saved: STORED, adminPasswordChanged: false, clearedStoreNotice: true });
 
     expect(message).toBe(SAVED_TO);
   });
@@ -71,7 +71,7 @@ describe('laterSaveMessage', () => {
   it('reports the write and names no restart when the save only normalized a stored value', () => {
     const legacyTheme = { ...STORED, webui: { ...STORED.webui, theme: 'system' } } as SettingsFile;
 
-    const message = laterSaveMessage(SAVED_TO, { storedFile: legacyTheme, storedSettings: STORED, saved: STORED, adminPasswordChanged: false, clearedStoreNotice: false });
+    const { message } = laterSaveMessage(SAVED_TO, { storedFile: legacyTheme, storedSettings: STORED, saved: STORED, adminPasswordChanged: false, clearedStoreNotice: false });
 
     expect(message).toBe(SAVED_TO);
   });
@@ -79,7 +79,7 @@ describe('laterSaveMessage', () => {
   it('leaves out the restart that the next steps already name', () => {
     const saved: SettingsFile = { ...STORED, navidrome: { ...STORED.navidrome, password: 'new' } };
 
-    const message = laterSaveMessage(SAVED_TO, { storedFile: STORED, storedSettings: STORED, saved, adminPasswordChanged: false, clearedStoreNotice: false }, 'mcp');
+    const { message } = laterSaveMessage(SAVED_TO, { storedFile: STORED, storedSettings: STORED, saved, adminPasswordChanged: false, clearedStoreNotice: false }, 'mcp');
 
     expect(message).toBe(`${SAVED_TO} ${PLAYER_RESTART}`);
   });
@@ -139,6 +139,35 @@ describe('laterSaveMessage', () => {
 
   it('names no restart for a change only to a key no process reads', () => {
     expect(messageFor(STORED, { ...STORED, notes: 'kept by hand' })).toBe(SAVED_TO);
+  });
+});
+
+describe('laterSaveMessage brief flag', () => {
+  const briefFor = (stored: SettingsFile, saved: SettingsFile, adminPasswordChanged = false): boolean =>
+    laterSaveMessage(SAVED_TO, { storedFile: stored, storedSettings: stored, saved, adminPasswordChanged, clearedStoreNotice: false }).brief;
+
+  it('is set when nothing changed', () => {
+    expect(briefFor(STORED, structuredClone(STORED))).toBe(true);
+  });
+
+  it('is set when the save changes only a key no process reads', () => {
+    expect(briefFor(STORED, { ...STORED, notes: 'kept by hand' })).toBe(true);
+  });
+
+  it('is unset when the message names a restart', () => {
+    expect(briefFor(STORED, { ...STORED, transport: { type: 'http' } })).toBe(false);
+  });
+
+  it('is unset when the message holds a live-apply line', () => {
+    const saved: SettingsFile = { ...STORED, webui: { ...STORED.webui, auth: { ...STORED.webui?.auth, askPasswordOnThisComputer: false } } };
+
+    expect(briefFor(STORED, saved)).toBe(false);
+  });
+
+  it('is unset for a new admin password, which holds live-apply lines', () => {
+    const saved: SettingsFile = { ...STORED, webui: { ...STORED.webui, auth: { mode: 'password', adminPasswordHash: 'new-hash' } } };
+
+    expect(briefFor(STORED, saved, true)).toBe(false);
   });
 });
 

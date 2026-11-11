@@ -2,6 +2,7 @@
 
 import { getJson, postJson } from './api.js';
 import { byId, setHidden } from './dom.js';
+import { clearMessage, showMessage } from './messages.js';
 import { formatDateTime } from './time-format.js';
 
 // Music Assistant caps its guest links at 7 days, so a longer lifetime earns a warning.
@@ -47,7 +48,7 @@ let shareLink = 'lan';
 
 export function bindJukebox() {
   openBtn.addEventListener('click', () => {
-    message.textContent = '';
+    clearMessage(message);
     closeNewConfirm();
     void refresh();
     dialog.showModal();
@@ -92,7 +93,7 @@ async function refresh() {
 
 function render() {
   const active = view?.active === true;
-  if (view === null) message.textContent = 'Could not load the jukebox. Check the connection and try again.';
+  if (view === null) showMessage(message, 'Could not load the jukebox. Check the connection and try again.', 'error');
   setHidden(closedState, view === null || active);
   setHidden(openState, !active);
   if (!active) {
@@ -155,16 +156,17 @@ function qrDataUrl(link) {
 async function saveShareLink(link) {
   const previous = shareLink;
   shareLink = link;
+  clearMessage(message);
   renderLink();
   const { ok, data } = await postJson('/api/jukebox/settings', { shareLink: link });
   if (!ok) {
     shareLink = previous;
     renderShareSwitch();
     renderLink();
-    message.textContent = data?.error ?? 'The link choice was not saved. Check the connection and try again.';
+    showMessage(message, data?.error ?? 'The link choice was not saved. Check the connection and try again.', 'error');
     return;
   }
-  message.textContent = data.persisted ? '' : 'The link choice holds until the player restarts. settings.json was not written.';
+  if (data?.persisted === false) showMessage(message, 'The link choice holds until the player restarts. settings.json was not written.', 'warning');
 }
 
 function renderLifetimeWarning() {
@@ -186,12 +188,12 @@ function closeNewConfirm() {
 async function makeCode(signOutGuests) {
   openJukeboxBtn.disabled = true;
   newMakeBtn.disabled = true;
-  message.textContent = '';
+  clearMessage(message);
   const error = await makeNewCode(signOutGuests);
   openJukeboxBtn.disabled = false;
   newMakeBtn.disabled = false;
   if (error !== null) {
-    message.textContent = error;
+    showMessage(message, error, 'error');
     return;
   }
   closeNewConfirm();
@@ -200,14 +202,15 @@ async function makeCode(signOutGuests) {
 
 async function closeJukebox() {
   if (!window.confirm(CLOSE_CONFIRM)) return;
+  clearMessage(message);
   closeBtn.disabled = true;
   const { ok, data } = await postJson('/api/jukebox/key/revoke');
   closeBtn.disabled = false;
   if (!ok) {
-    message.textContent = data?.error ?? 'The jukebox did not close. Try again.';
+    showMessage(message, data?.error ?? 'The jukebox did not close. Try again.', 'error');
     return;
   }
-  message.textContent = 'The jukebox closed. Every guest was signed out.';
+  showMessage(message, 'The jukebox closed. Every guest was signed out.', 'success');
   closeNewConfirm();
   await refresh();
 }

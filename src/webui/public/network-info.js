@@ -1,6 +1,7 @@
 import { getJson } from './api.js';
 import { byId } from './dom.js';
 import { canChangePlayerSettings } from './local-controls.js';
+import { clearMessage } from './messages.js';
 import { openAllSettings } from './settings.js';
 
 const openBtn = byId('open-network-info');
@@ -18,7 +19,7 @@ const RESTART_STEP = 'then shut down the player and start it again';
 export function bindNetworkInfo() {
   openBtn.addEventListener('click', async () => {
     const info = await getJson('/api/network-info');
-    status.textContent = '';
+    clearMessage(status);
     if (info === null) {
       list.replaceChildren();
       hint.replaceChildren();

@@ -33,6 +33,7 @@ export function setProgressVar(el, percent) {
 
 // Material Icons paths use the 24 unit box, and Material Symbols paths use this one.
 export const SYMBOL_VIEWBOX = '0 -960 960 960';
+export const ICON_CHECK = 'M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z';
 
 export function buildIcon(className, pathData, viewBox = '0 0 24 24') {
   const svg = document.createElementNS(SVG_NS, 'svg');

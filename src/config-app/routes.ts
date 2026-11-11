@@ -238,11 +238,11 @@ async function saveSettings(req: IncomingMessage, res: ServerResponse, context: 
   } else if (context.host === 'mcp-setup') {
     // An MCP server in setup mode loads no store until the AI app restarts, so its next steps name that
     // restart. A running player may still have read the stored file, so the message names its restart.
-    const message = laterSaveMessage(savedTo, saveChange(storedConfig, settings, newAdminPassword, clearedStoreNotice), 'mcp');
+    const { message } = laterSaveMessage(savedTo, saveChange(storedConfig, settings, newAdminPassword, clearedStoreNotice), 'mcp');
     writeJson(res, 200, { ok: true, message, nextSteps: firstSaveSteps(context.host, webui, null), storeNotices });
   } else {
-    const message = laterSaveMessage(savedTo, saveChange(storedConfig, settings, newAdminPassword, clearedStoreNotice));
-    writeJson(res, 200, { ok: true, message, storeNotices });
+    const { message, brief } = laterSaveMessage(savedTo, saveChange(storedConfig, settings, newAdminPassword, clearedStoreNotice));
+    writeJson(res, 200, { ok: true, message, brief, storeNotices });
   }
   if (takeover !== null) finished(res, () => void context.close());
   return takeover !== null;

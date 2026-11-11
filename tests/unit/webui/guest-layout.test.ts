@@ -49,10 +49,29 @@ describe('guest header search button', () => {
     expect(read('styles.css')).toContain('.guest-page { overflow-anchor: none; }');
   });
 
-  it('reports add and remove results in a toast outside the page flow', () => {
-    expect(HTML.indexOf('id="guest-toast"')).toBeGreaterThan(HTML.indexOf('</main>'));
-    expect(HTML).toMatch(/<p class="guest-toast" id="guest-toast" role="status"><\/p>/);
-    expect(read('styles.css')).toMatch(/\.guest-toast \{\s*position: fixed;/);
+  it('reports add and remove results in a bottom status bar whose height the page reserves', () => {
+    const css = read('styles.css');
+    const add = read('guest-add.js');
+    expect(HTML.indexOf('id="guest-status-bar"')).toBeGreaterThan(HTML.indexOf('</main>'));
+    expect(HTML).toContain('<div class="msg-slot msg-lines-2 guest-status-bar" id="guest-status-bar"><p class="msg" id="guest-status" aria-live="polite"></p></div>');
+    expect(css).toMatch(/\.guest-status-bar \{\s*position: fixed;[^}]*background: var\(--bg\);/);
+    expect(css).toMatch(/\.guest-page \{ padding-bottom: var\(--status-bar-height,/);
+    expect(add).toContain("document.body.style.setProperty('--status-bar-height', `${statusBar.offsetHeight}px`)");
+    expect(add).toContain('showAnswer(ok, data, `Added ${songTitle(song)}.`);');
+    expect(add).toContain('showAnswer(ok, data, `Removed ${songTitle(item)}.`);');
+    expect(add).toMatch(/export function showGuestAdd[\s\S]*?clearMessage\(statusLine\);/);
+  });
+
+  it('clears the status bar when the guest starts the next add or remove', () => {
+    const add = read('guest-add.js');
+    expect(add).toMatch(/export async function removeSong\(item\) \{\s*const generation = sessionGeneration;\s*clearMessage\(statusLine\);/);
+    expect(add).toMatch(/function onButton\(song, button\) \{[\s\S]*?clearMessage\(statusLine\);\s*pending\.set\(song\.id, song\);/);
+  });
+
+  it('holds no toast', () => {
+    expect(HTML).not.toContain('guest-toast');
+    expect(read('styles.css')).not.toContain('.guest-toast');
+    expect(read('guest-add.js')).not.toMatch(/showToast|TOAST_MS|TOAST_FADE_MS|toastTimer/);
   });
 
   it('asks before an Added button removes the song', () => {
@@ -149,7 +168,7 @@ describe('guest nickname controls', () => {
   it('saves a typed nickname through the guest route before Got it closes the card', () => {
     expect(HTML).toMatch(/<button type="button"[^>]*id="guest-welcome-done">Got it</);
     const welcome = read('guest-welcome.js');
-    expect(welcome).toMatch(/async function closeAfterSave\(\) \{\s*if \(await saveTypedNickname\(\)\) dialog\.close\(\);/);
+    expect(welcome).toMatch(/async function closeAfterSave\(\) \{\s*if \(await saveTypedNickname\(false\)\) dialog\.close\(\);/);
     expect(read('api.js')).toContain("requestJson('/api/guest/nickname', { nickname })");
   });
 

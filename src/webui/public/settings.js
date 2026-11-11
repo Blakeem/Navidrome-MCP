@@ -1,11 +1,13 @@
 import { FAILED_TEXT, getJson, postJson } from './api.js';
 import { byId } from './dom.js';
 import { canChangePlayerSettings } from './local-controls.js';
+import { clearMessage, runDialogSave, showMessage } from './messages.js';
 import { applyTheme } from './theme.js';
 
 const openBtn = byId('open-settings');
 const allSettingsBtn = byId('open-all-settings');
 const dialog = byId('settings-dialog');
+const form = dialog.querySelector('form');
 const persist = byId('set-persist');
 const autoOpen = byId('set-autoopen');
 const visualizer = byId('set-visualizer');
@@ -15,6 +17,7 @@ const themeRadios = Array.from(dialog.querySelectorAll('input[name="theme"]'));
 // The System radio stands for a stored null, which lets each device follow its own setting.
 const SYSTEM_THEME = 'system';
 const POPUP_BLOCKED = 'The browser blocked the new tab. Allow pop-ups for this page, then try again.';
+const SESSION_ONLY = 'Applied for this session only. settings.json was not saved.';
 
 // The server's last answer, so a failed save puts the controls back to what is stored.
 let saved = null;
@@ -38,9 +41,9 @@ export function bindSettings() {
 // The tab opens before the request, since popup blockers drop a window.open that runs after an await.
 export async function openAllSettings(statusLine) {
   const tab = window.open('', '_blank');
-  statusLine.textContent = '';
+  clearMessage(statusLine);
   if (tab === null) {
-    statusLine.textContent = POPUP_BLOCKED;
+    showMessage(statusLine, POPUP_BLOCKED, 'error');
     return;
   }
   // The settings page never needs a handle back to this page.
@@ -48,14 +51,14 @@ export async function openAllSettings(statusLine) {
   const { ok, data } = await postJson('/api/player/settings-page');
   if (!ok || typeof data?.url !== 'string') {
     tab.close();
-    statusLine.textContent = typeof data?.error === 'string' && data.error !== '' ? data.error : FAILED_TEXT;
+    showMessage(statusLine, typeof data?.error === 'string' && data.error !== '' ? data.error : FAILED_TEXT, 'error');
     return;
   }
   tab.location.href = data.url;
 }
 
 async function openSettings() {
-  status.textContent = '';
+  clearMessage(status);
   if (!canChangePlayerSettings()) {
     dialog.showModal();
     return;
@@ -63,27 +66,24 @@ async function openSettings() {
   const settings = await getJson('/api/player/settings');
   // Controls left unloaded would save stale values over the stored settings.
   setControlsDisabled(settings === null);
-  if (settings === null) status.textContent = 'Could not load settings.';
+  if (settings === null) showMessage(status, 'Could not load settings.', 'error');
   else showSettings(settings);
   dialog.showModal();
 }
 
 function queueSave(patch) {
-  saveChain = saveChain.then(() => saveSettings(patch));
+  saveChain = saveChain.then(() => runDialogSave({ form, line: status, request: () => saveSettings(patch) }));
 }
 
 async function saveSettings(patch) {
-  status.textContent = 'Saving…';
   const { ok, data } = await postJson('/api/player/settings', patch);
   if (!ok || data === null) {
-    status.textContent = 'Could not save settings.';
     if (saved !== null) showSettings(saved);
-    return;
+    return { ok: false, error: 'Could not save settings.' };
   }
   showSettings(data);
   applyTheme(data.theme);
-  status.textContent =
-    data.persisted === false ? 'Applied for this session only. settings.json was not saved.' : 'Saved.';
+  return data.persisted === false ? { ok: true, warning: SESSION_ONLY } : { ok: true };
 }
 
 function showSettings(settings) {

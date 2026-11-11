@@ -76,20 +76,30 @@ export interface SaveChange {
   clearedStoreNotice: boolean;
 }
 
+interface LaterSave {
+  message: string;
+  /** True when the message adds no restart or live-apply line to the saved-to sentence, or says nothing changed. */
+  brief: boolean;
+}
+
 /**
  * Names only the restarts the changed sections need, leaving out one that the next steps already
  * name. writeSettings prunes empty values, and the runtime reads an empty value as an absent one.
+ * The brief flag ignores next steps, so a caller that sends some must not send the flag.
  */
-export function laterSaveMessage(savedTo: string, change: SaveChange, namedInNextSteps: Restart | null = null): string {
+export function laterSaveMessage(savedTo: string, change: SaveChange, namedInNextSteps: Restart | null = null): LaterSave {
   const { storedFile, storedSettings, saved, adminPasswordChanged, clearedStoreNotice } = change;
   // storedFile holds coerced values, so only the cleared notice shows that a save fixed a hand-edit slip.
   // A save that dropped an empty value differs from storedFile, so it reports the write too.
-  if (!clearedStoreNotice && isDeepStrictEqual(storedFile, pruned(saved))) return NO_CHANGES_MESSAGE;
+  if (!clearedStoreNotice && isDeepStrictEqual(storedFile, pruned(saved))) return { message: NO_CHANGES_MESSAGE, brief: true };
   const restarts = restartsFor(pruned(withoutLiveAuth(storedSettings)), pruned(withoutLiveAuth(saved)));
-  const lines = (['mcp', 'player'] as const)
-    .filter((restart) => restarts.has(restart) && restart !== namedInNextSteps)
-    .map((restart) => RESTART_LINES[restart]);
-  return [savedTo, ...lines, ...liveApplyLines(adminPasswordChanged, liveAuthChanged(storedSettings, saved))].join(' ');
+  const lines = [
+    ...(['mcp', 'player'] as const)
+      .filter((restart) => restarts.has(restart) && restart !== namedInNextSteps)
+      .map((restart) => RESTART_LINES[restart]),
+    ...liveApplyLines(adminPasswordChanged, liveAuthChanged(storedSettings, saved)),
+  ];
+  return { message: [savedTo, ...lines].join(' '), brief: lines.length === 0 };
 }
 
 /** The admin password and the live auth keys share one condition, so a Save that changes both states it once. */

@@ -544,12 +544,64 @@ main {
 .play-btn svg { width: 36px; height: 36px; }
 .play-btn svg path { fill: var(--on-fill); }
 
-.control-status {
-  margin: 0;
-  text-align: center;
+.control-status { text-align: center; }
+
+/* A message line (messages.js) sits in a slot that keeps its space while the line is empty, so a
+   message never moves a control. Each slot's line count fits the longest text its line shows today at
+   a 320 px wide viewport. A longer server text grows the slot's bottom edge. */
+.msg-slot {
+  --msg-lines: 1;
+  box-sizing: content-box;
+  min-height: calc(var(--msg-lines) * 1.4em);
   font-size: 0.85rem;
-  color: var(--bad);
+  line-height: 1.4;
 }
+.msg-slot.msg-lines-2 { --msg-lines: 2; }
+.msg-slot.msg-lines-3 { --msg-lines: 3; }
+.msg-slot.msg-lines-4 { --msg-lines: 4; }
+.msg {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.msg[data-tone] { animation: msg-in 150ms ease-out; }
+/* messages.js clears the text when this fade ends (FADE_MS). */
+.msg[data-leaving] { opacity: 0; transition: opacity 150ms; }
+.msg[data-tone="success"] {
+  --msg-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 -960 960 960'%3E%3Cpath d='M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z'/%3E%3C/svg%3E");
+  --msg-icon-color: var(--good);
+}
+.msg[data-tone="warning"],
+.msg[data-tone="error"] {
+  --msg-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 -960 960 960'%3E%3Cpath d='M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Z'/%3E%3C/svg%3E");
+  --msg-icon-color: var(--warn);
+}
+.msg[data-tone="error"] { --msg-icon-color: var(--bad); color: var(--bad); }
+/* The icon is a mask over the tone color, so one SVG serves both themes and the text stays the line's only content. */
+.msg[data-tone="success"]::before,
+.msg[data-tone="warning"]::before,
+.msg[data-tone="error"]::before {
+  content: '';
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.35em;
+  vertical-align: -0.22em;
+  background-color: var(--msg-icon-color);
+  -webkit-mask: var(--msg-icon) center / contain no-repeat;
+  mask: var(--msg-icon) center / contain no-repeat;
+}
+@keyframes msg-in { from { opacity: 0; } }
+/* messages.js marks a dialog form busy while its save runs, so a second submit cannot start. */
+form[aria-busy="true"] { opacity: 0.6; transition: opacity 150ms; }
+/* The minimum width fits the longest label, Saving… or Saved, so the row stays still while the label changes. */
+.save-btn { min-width: 7rem; }
+@media (prefers-reduced-motion: reduce) {
+  .msg[data-tone] { animation: none; }
+  .msg[data-leaving],
+  form[aria-busy="true"] { transition: none; }
+}
+
 /* An empty line leaves the flex flow so it adds no gap. It stays in the accessibility tree,
    so the live region still announces the next message. */
 [aria-live]:empty {
@@ -1046,8 +1098,9 @@ body.stream-evicted::after {
 .modal-full .modal-content { height: 100%; }
 .modal-full .modal-header,
 .modal-full .modal-tabs,
-.modal-full .play-toolbar { flex: none; }
-/* Only the active pane scrolls, so the header, tabs and toolbar stay put. */
+.modal-full .play-toolbar,
+.modal-full .play-status-bar { flex: none; }
+/* Only the active pane scrolls, so the header, tabs, toolbar and status bar stay put. */
 .modal-full .modal-pane {
   flex: 1 1 auto;
   min-height: 0;
@@ -1737,7 +1790,9 @@ body.stream-evicted::after {
 .nickname-fields { display: grid; gap: 6px; }
 .nickname-fields label .modal-hint { display: block; margin-top: 2px; }
 .guest-name-form .btn-secondary { flex: none; }
-.guest-name .guest-add-status { padding: 4px; }
+.guest-name-msg { padding: 4px 4px 0; }
+/* Only the open form writes this line, so its space opens and closes with the form. */
+.guest-name-form[hidden] + .guest-name-msg { display: none; }
 .guest-host-banner {
   margin: 0;
   padding: 10px 14px;
@@ -1785,28 +1840,17 @@ body.stream-evicted::after {
 .guest-add-btn[data-state="removing"]:disabled { opacity: 0.7; cursor: progress; }
 /* guest-add.js keeps Add songs in place by hand, so the browser's own anchoring must not shift it twice. */
 .guest-page { overflow-anchor: none; }
-.guest-toast {
+/* The status bar is page chrome over the page bottom, so the page reserves padding equal to its height,
+   which guest-add.js measures into --status-bar-height. The fallback is the empty bar's height. */
+.guest-page { padding-bottom: var(--status-bar-height, calc(2.38rem + 16px + env(safe-area-inset-bottom))); }
+.guest-status-bar {
   position: fixed;
-  left: 50%;
-  bottom: calc(16px + env(safe-area-inset-bottom));
+  inset: auto 0 0;
   z-index: 20;
-  max-width: min(480px, calc(100% - 32px));
-  margin: 0;
-  padding: 10px 16px;
-  border-radius: var(--radius-md);
-  background: var(--text);
-  color: var(--bg);
-  box-shadow: var(--shadow);
-  font-size: 0.9rem;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, 8px);
-  transition: opacity 160ms, transform 160ms;
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom));
+  background: var(--bg);
 }
-.guest-toast.is-shown { opacity: 1; transform: translate(-50%, 0); }
-@media (prefers-reduced-motion: reduce) {
-  .guest-toast { transition: none; }
-}
+.guest-status-bar .msg { max-width: 728px; margin-inline: auto; }
 .queue-list li.mine .qtitle { color: var(--accent); }
 .queue-list .qguest {
   align-self: flex-start;

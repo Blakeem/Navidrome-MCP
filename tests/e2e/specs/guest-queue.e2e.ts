@@ -158,7 +158,8 @@ test('the host changes the song limit in the Guests dialog and the guest count f
 
   await hostPage.setGuestLimit(RAISED_LIMIT);
 
-  await expect(hostPage.guestLimitMessage).toHaveText('Saved.');
+  await expect(hostPage.guestLimitSaveButton).toHaveText('Saved');
+  await expect(hostPage.guestLimitMessage).toBeEmpty();
   await expect(guest.songsLeft).toHaveText(songsLeft(RAISED_LIMIT, RAISED_LIMIT));
   expect(await jukebox.guestQueueLimit()).toBe(RAISED_LIMIT);
 });

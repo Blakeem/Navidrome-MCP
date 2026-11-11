@@ -125,6 +125,11 @@ label.check[hidden] { display: none; }
   white-space: pre-line;
 }
 .status.show { display: block; }
+/* app.js clears the box when this fade ends (FADE_MS). */
+.status.leaving { opacity: 0; transition: opacity 150ms; }
+@media (prefers-reduced-motion: reduce) {
+  .status.leaving { transition: none; }
+}
 .status.info { color: var(--muted); }
 .status.ok { color: var(--ok); border-color: var(--ok); background: rgba(26, 127, 55, 0.08); }
 .status.err { color: var(--err); border-color: var(--err); background: rgba(193, 56, 43, 0.08); }

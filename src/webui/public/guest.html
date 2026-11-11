@@ -74,10 +74,10 @@
       </div>
       <form class="lib-search guest-name-form" id="guest-name-form" hidden>
         <input type="text" id="guest-name-input" aria-label="Nickname" maxlength="24" autocomplete="nickname" required />
-        <button type="submit" class="primary-btn" id="guest-name-save">Save</button>
+        <button type="submit" class="primary-btn save-btn" id="guest-name-save">Save</button>
         <button type="button" class="btn-secondary" id="guest-name-cancel">Cancel</button>
       </form>
-      <p class="guest-add-status" id="guest-name-status" aria-live="polite"></p>
+      <div class="msg-slot msg-lines-2 guest-name-msg"><p class="msg" id="guest-name-status" aria-live="polite"></p></div>
     </div>
 
     <section class="queue" aria-label="Play queue">
@@ -113,7 +113,7 @@
     </section>
   </main>
 
-  <p class="guest-toast" id="guest-toast" role="status"></p>
+  <div class="msg-slot msg-lines-2 guest-status-bar" id="guest-status-bar"><p class="msg" id="guest-status" aria-live="polite"></p></div>
 
   <dialog id="guest-welcome" class="modal" aria-labelledby="guest-welcome-title">
     <form method="dialog" class="modal-content">
@@ -131,11 +131,11 @@
         <label class="modal-help" for="guest-nickname">Nickname (optional) <span class="modal-hint">1 to 24 letters, digits, spaces or . , ' ! ? - _</span></label>
         <div class="lib-search">
           <input type="text" id="guest-nickname" maxlength="24" autocomplete="nickname" />
-          <button type="button" class="primary-btn" id="guest-nickname-save">Save</button>
+          <button type="button" class="primary-btn save-btn" id="guest-nickname-save">Save</button>
         </div>
-        <p class="modal-hint" id="guest-nickname-status" aria-live="polite"></p>
       </div>
       <button type="button" class="btn-secondary" id="guest-welcome-done">Got it</button>
+      <div class="msg-slot msg-lines-2"><p class="msg" id="guest-nickname-status" aria-live="polite"></p></div>
     </form>
   </dialog>
 

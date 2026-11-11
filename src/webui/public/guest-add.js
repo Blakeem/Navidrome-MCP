@@ -2,17 +2,15 @@
 // song shows as selected at once, and the song count changes only when the server confirms.
 
 import { getJsonResult, postJson } from './api.js';
-import { buildIcon, byId, setHidden, SYMBOL_VIEWBOX } from './dom.js';
+import { buildIcon, byId, ICON_CHECK, setHidden, SYMBOL_VIEWBOX } from './dom.js';
 import { answerSettled, ANSWER_GRACE_MS, buttonState, queuedSongs, sendAdds } from './guest-add-state.js';
+import { clearMessage, showMessage } from './messages.js';
 import { removeConfirmText } from './queue-list.js';
 import { formatTime } from './time-format.js';
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const NO_ANSWER = 'The player did not answer. Check the connection and try again.';
-const TOAST_MS = 4000;
-const TOAST_FADE_MS = 200;
 const ICON_ADD = 'M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z';
-const ICON_CHECK = 'M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z';
 const BUTTON_TEXT = { add: 'Add', pending: 'Adding…', added: 'Added', removing: 'Removing…', queued: 'In queue' };
 const SELECTED_STATES = new Set(['pending', 'added', 'removing']);
 
@@ -23,7 +21,8 @@ const input = byId('guest-search-input');
 const slots = byId('guest-slots');
 const searchStatus = byId('guest-search-status');
 const results = byId('guest-results');
-const toast = byId('guest-toast');
+const statusBar = byId('guest-status-bar');
+const statusLine = byId('guest-status');
 
 // The last song count the server confirmed, from the stream or a request's answer.
 let remaining = 0;
@@ -39,7 +38,6 @@ const removing = new Set();
 // Song id to the server's answer, `{ added, entryId, at }`, held until a snapshot shows the same state.
 const answers = new Map();
 let queued = { mine: new Map(), others: new Set() };
-let toastTimer = null;
 let graceTimer = null;
 let lastTapInAdd = false;
 
@@ -53,6 +51,10 @@ export function bindGuestAdd() {
     event.preventDefault();
     void search(input.value);
   });
+  // A long song title wraps the status bar past its reserved height, so the page padding follows the bar.
+  new ResizeObserver(() => {
+    document.body.style.setProperty('--status-bar-height', `${statusBar.offsetHeight}px`);
+  }).observe(statusBar);
 }
 
 // Every join card hides the section and ends the session, so nothing the session started may show in a later one.
@@ -67,9 +69,7 @@ export function showGuestAdd(visible) {
   answers.clear();
   searchStatus.textContent = '';
   results.replaceChildren();
-  clearTimeout(toastTimer);
-  toast.classList.remove('is-shown');
-  toast.textContent = '';
+  clearMessage(statusLine);
 }
 
 /**
@@ -101,6 +101,7 @@ export function renderAddState(items) {
 /** The queue's remove button confirms first, so this only sends the removal. */
 export async function removeSong(item) {
   const generation = sessionGeneration;
+  clearMessage(statusLine);
   removing.add(item.songId);
   paintButtons();
   const { ok, status, data } = await postJson('/api/guest/queue/remove', { entryId: item.entryId });
@@ -108,9 +109,9 @@ export async function removeSong(item) {
   removing.delete(item.songId);
   if (ok) {
     answers.set(item.songId, { added: false, entryId: null, at: Date.now() });
-    applyRemaining(data.remaining);
+    applyRemaining(data?.remaining);
   }
-  if (status !== 401) showToast(ok ? `Removed ${songTitle(item)}.` : (data?.error ?? NO_ANSWER));
+  if (status !== 401) showAnswer(ok, data, `Removed ${songTitle(item)}.`);
   paintButtons();
 }
 
@@ -128,15 +129,9 @@ function applyRemaining(value) {
   paintSlots();
 }
 
-// The text leaves once the toast fades, so a screen reader never finds a stale message in the status region.
-function showToast(message) {
-  clearTimeout(toastTimer);
-  toast.textContent = message;
-  toast.classList.add('is-shown');
-  toastTimer = setTimeout(() => {
-    toast.classList.remove('is-shown');
-    toastTimer = setTimeout(() => { toast.textContent = ''; }, TOAST_FADE_MS);
-  }, TOAST_MS);
+function showAnswer(ok, data, successText) {
+  if (ok) showMessage(statusLine, successText, 'success');
+  else showMessage(statusLine, data?.error ?? NO_ANSWER, 'error');
 }
 
 // An answer that outlives its grace with no snapshot to clear it still needs a repaint.
@@ -221,6 +216,7 @@ function onButton(song, button) {
     void removeFromResults(song);
     return;
   }
+  clearMessage(statusLine);
   pending.set(song.id, song);
   paintButtons();
   void drainAdds();
@@ -248,9 +244,9 @@ async function drainAdds() {
 
 function applyAddAnswer(song, { ok, data }) {
   if (ok) {
-    answers.set(song.id, { added: true, entryId: data.entryId, at: Date.now() });
-    applyRemaining(data.remaining);
+    answers.set(song.id, { added: true, entryId: data?.entryId, at: Date.now() });
+    applyRemaining(data?.remaining);
   }
-  showToast(ok ? `Added ${songTitle(song)}.` : (data?.error ?? NO_ANSWER));
+  showAnswer(ok, data, `Added ${songTitle(song)}.`);
   paintButtons();
 }

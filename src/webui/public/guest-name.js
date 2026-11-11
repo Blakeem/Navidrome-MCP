@@ -2,6 +2,7 @@
 
 import { postGuestNickname } from './api.js';
 import { byId, setHidden } from './dom.js';
+import { clearMessage, runDialogSave, showMessage } from './messages.js';
 
 const SAVE_FAILED = 'The nickname was not saved. Check the connection and try again.';
 const NICKNAME_BLANK = 'Enter a nickname to save.';
@@ -53,7 +54,7 @@ export function bindChangeName(onNicknameSaved) {
 
 function openForm() {
   input.value = storedNickname ?? '';
-  status.textContent = '';
+  clearMessage(status);
   setHidden(form, false);
   setHidden(changeButton, true);
   input.focus();
@@ -62,18 +63,16 @@ function openForm() {
 function closeForm() {
   setHidden(form, true);
   setHidden(changeButton, !available);
-  status.textContent = '';
+  clearMessage(status);
 }
 
+// The form closes on success, which confirms the save, so the button skips its Saved state.
 async function submitForm() {
   const nickname = input.value.trim();
   if (nickname === '') {
-    status.textContent = NICKNAME_BLANK;
+    showMessage(status, NICKNAME_BLANK, 'error');
     return;
   }
-  saveButton.disabled = true;
-  const result = await saveNickname(nickname);
-  saveButton.disabled = false;
-  if (result.ok) closeForm();
-  else status.textContent = result.error;
+  const saved = await runDialogSave({ form, button: saveButton, line: status, request: () => saveNickname(nickname), confirm: false });
+  if (saved) closeForm();
 }

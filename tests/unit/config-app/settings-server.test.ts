@@ -1108,6 +1108,7 @@ describe('settings server save replies', () => {
     const reply = await save(base, { navidrome: NAV, webui: { enabled: true, port: 9911, tls: { certPath: '/c.pem', keyPath: '/k.pem' } } });
 
     expect(reply.message).toBe(`Settings saved to ${file}.`);
+    expect(reply).not.toHaveProperty('brief');
     expect(reply.nextSteps).toEqual([
       { text: 'Quit your AI app fully and open it again.' },
       { text: 'The Jukebox Remote runs after your AI app restarts. It needs mpv. Open it at', url: 'https://127.0.0.1:9911/admin' },
@@ -1135,6 +1136,7 @@ describe('settings server save replies', () => {
     for (const reply of [first, repeated]) {
       expect(reply.nextSteps?.[0]).toEqual({ text: 'Quit your AI app fully and open it again.' });
       expect(reply.pageClosed).toBeUndefined();
+      expect(reply).not.toHaveProperty('brief');
     }
   });
 
@@ -1174,7 +1176,19 @@ describe('settings server save replies', () => {
     expect(changed.message).toBe(
       `Settings saved to ${file}. The MCP server applies these changes after it restarts. A stdio server restarts with its MCP client.`,
     );
+    expect(changed.brief).toBe(false);
     expect(repeated.message).toBe('No changes to save.');
+    expect(repeated.brief).toBe(true);
+  });
+
+  it('sets the brief flag off on a later save that holds a live-apply line', async () => {
+    writeFileSync(file, JSON.stringify({ navidrome: NAV, features: { radio: true, lyrics: true } }));
+    const base = await start({ host: 'settings-command' });
+
+    const reply = await save(base, { webui: { auth: { askPasswordOnThisComputer: false } } });
+
+    expect(reply.message).toContain('apply to a running player the next time one of its pages loads');
+    expect(reply.brief).toBe(false);
   });
 
   it('reports the write and names no restart on a later save that only pruned an empty value', async () => {
@@ -1184,6 +1198,7 @@ describe('settings server save replies', () => {
     const reply = await save(base, {});
 
     expect(reply.message).toBe(`Settings saved to ${file}.`);
+    expect(reply.brief).toBe(true);
     expect(readFileSync(file, 'utf8')).not.toContain('mpvPath');
   });
 

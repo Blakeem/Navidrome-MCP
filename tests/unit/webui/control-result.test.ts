@@ -25,8 +25,13 @@ interface FakeBanner {
   removeAttribute: (name: string) => void;
   querySelector: (selector: string) => unknown;
 }
+interface FakeLine {
+  textContent: string;
+  dataset: Record<string, string>;
+}
 interface FakeDom {
-  status: { textContent: string };
+  status: FakeLine;
+  playStatus: FakeLine;
   main: FakeBanner;
   lyrics: FakeBanner;
   active: FakeButton | null;
@@ -70,13 +75,15 @@ function fakeBanner(getActive: () => FakeDom): FakeBanner {
 
 function installDom(): FakeDom {
   const dom: FakeDom = {
-    status: { textContent: '' },
+    status: { textContent: '', dataset: {} },
+    playStatus: { textContent: '', dataset: {} },
     main: fakeBanner(() => dom),
     lyrics: fakeBanner(() => dom),
     active: null,
   };
   const byId: Record<string, unknown> = {
     'control-status': dom.status,
+    'play-status': dom.playStatus,
     'output-banner': dom.main,
     'lyrics-output-banner': dom.lyrics,
   };
@@ -165,7 +172,7 @@ describe('showControlResult', () => {
     expect(dom.active).toBe(dom.main.button);
   });
 
-  it('shows page wording for any other refusal and clears it after the delay', async () => {
+  it('shows page wording for any other refusal and keeps it until the next control answers', async () => {
     const { dom, controls } = await loadPage();
 
     controls.showControlResult(true, {
@@ -174,8 +181,13 @@ describe('showControlResult', () => {
     });
 
     expect(dom.status.textContent).toBe(REFUSED_TEXT);
+    expect(dom.status.dataset.tone).toBe('error');
     expect(dom.main.hidden).toBe(true);
-    vi.advanceTimersByTime(4000);
+    vi.advanceTimersByTime(60_000);
+    expect(dom.status.textContent).toBe(REFUSED_TEXT);
+
+    controls.showControlResult(true, { success: true });
+
     expect(dom.status.textContent).toBe('');
   });
 
@@ -194,6 +206,7 @@ describe('showControlResult', () => {
     controls.showControlResult(false, { error: 'Not allowed', message: NAMED_REFUSAL });
 
     expect(dom.status.textContent).toBe('Not allowed');
+    expect(dom.status.dataset.tone).toBe('error');
     expect(dom.main.hidden).toBe(true);
   });
 
@@ -218,31 +231,83 @@ describe('playLibraryItem', () => {
     const { playLibraryItem } = await import('../../../src/webui/public/library-play.js');
     const dialog = { close: vi.fn() };
     const button = { disabled: false, focus: vi.fn(), closest: () => dialog };
-    const status = { textContent: '' };
-    return { ...page, playLibraryItem, dialog, button, status };
+    return { ...page, playLibraryItem, dialog, button };
+  }
+
+  function refuseWith(status: number, body: unknown) {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    return vi.fn().mockResolvedValue({ ok: false, status, text: () => Promise.resolve(JSON.stringify(body)) });
   }
 
   it.each(['replace', 'append'] as const)('shows the banner when a %s play stays paused for a missing output', async (mode) => {
-    const { dom, playLibraryItem, button, status } = await loadLibraryPlay(mode);
+    const { dom, playLibraryItem, button } = await loadLibraryPlay(mode);
     vi.stubGlobal(
       'fetch',
       answerWith({ success: true, paused: true, message: NAMED_REFUSAL, code: OUTPUT_MISSING_CODE }),
     );
 
-    await playLibraryItem(button, 'album', 'al-1', NAME, status);
+    await playLibraryItem(button, 'album', 'al-1', NAME);
 
     expect(dom.main.hidden).toBe(false);
     expect(dom.lyrics.hidden).toBe(false);
   });
 
   it('leaves the banner alone when the output is connected', async () => {
-    const { dom, playLibraryItem, button, status } = await loadLibraryPlay('append');
+    const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
     vi.stubGlobal('fetch', answerWith({ success: true }));
 
-    await playLibraryItem(button, 'album', 'al-1', NAME, status);
+    await playLibraryItem(button, 'album', 'al-1', NAME);
 
     expect(dom.main.hidden).toBe(true);
-    expect(status.textContent).toBe(`Added “${NAME}” to the queue.`);
+  });
+
+  it('shows an append in the status bar, clears it after its reading time and leaves the row usable', async () => {
+    const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
+    const { readingTimeMs } = (await import('../../../src/webui/public/messages.js')) as unknown as { readingTimeMs: (text: string) => number };
+    const text = `Added “${NAME}” to the queue.`;
+    vi.stubGlobal('fetch', answerWith({ success: true }));
+
+    await playLibraryItem(button, 'album', 'al-1', NAME);
+
+    expect(dom.playStatus.textContent).toBe(text);
+    expect(dom.playStatus.dataset.tone).toBe('success');
+    expect(button.disabled).toBe(false);
+    vi.advanceTimersByTime(readingTimeMs(text) + 150);
+    expect(dom.playStatus.textContent).toBe('');
+  });
+
+  it('keeps a failed add in the status bar until the next play action', async () => {
+    const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
+    vi.stubGlobal('fetch', refuseWith(500, { error: 'Navidrome did not answer.' }));
+
+    await playLibraryItem(button, 'album', 'al-1', NAME);
+    vi.advanceTimersByTime(60_000);
+
+    expect(dom.playStatus.textContent).toBe(`Could not add “${NAME}”.`);
+    expect(dom.playStatus.dataset.tone).toBe('error');
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+    void playLibraryItem(button, 'album', 'al-2', 'Album Two');
+    expect(dom.playStatus.textContent).toBe('');
+  });
+
+  it('shows an empty source as a warning', async () => {
+    const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
+    vi.stubGlobal('fetch', refuseWith(422, { error: 'Nothing to play.', code: 'empty-source' }));
+
+    await playLibraryItem(button, 'album', 'al-1', NAME);
+
+    expect(dom.playStatus.textContent).toBe(`Nothing to play in “${NAME}”.`);
+    expect(dom.playStatus.dataset.tone).toBe('warning');
+  });
+
+  it('closes the dialog with no message after a replace', async () => {
+    const { dom, playLibraryItem, button, dialog } = await loadLibraryPlay('replace');
+    vi.stubGlobal('fetch', answerWith({ success: true }));
+
+    await playLibraryItem(button, 'album', 'al-1', NAME);
+
+    expect(dialog.close).toHaveBeenCalledTimes(1);
+    expect(dom.playStatus.textContent).toBe('');
   });
 });
 
