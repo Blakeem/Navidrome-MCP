@@ -14,7 +14,11 @@ const MCP_RESTART = 'The MCP server applies these changes after it restarts. A s
 const PLAYER_RESTART =
   "The Jukebox Remote applies these changes after Shut down player in the player's gear menu and a new start. " +
   'A new start is the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`.';
+const LIVE_AUTH_LINE =
+  'Ask for the admin password on this computer and Admin login allowed from apply to a running player the next time one of its pages loads.';
 const ADMIN_PASSWORD_LINE = 'A new admin password applies to a running player within about 10 seconds and signs out every admin session.';
+const LIVE_APPLY_CONDITION = 'This holds when the player runs from settings.json and Access already uses a password.';
+const ADMIN_PASSWORD_RESTART_CASES = 'A change of Access, or a player started from environment variables, needs a restart.';
 
 const STORED: SettingsFile = {
   navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
@@ -98,6 +102,41 @@ describe('laterSaveMessage', () => {
     expect(message.startsWith(`${SAVED_TO} ${PLAYER_RESTART} ${ADMIN_PASSWORD_LINE}`)).toBe(true);
   });
 
+  it.each<[string, NonNullable<NonNullable<SettingsFile['webui']>['auth']>]>([
+    ['the ask', { askPasswordOnThisComputer: false }],
+    ['the admin access level', { adminAccess: 'lan' }],
+  ])('names no restart and adds the live-apply line for a change only to %s', (_label, auth) => {
+    const saved: SettingsFile = { ...STORED, webui: { ...STORED.webui, auth: { ...STORED.webui?.auth, ...auth } } };
+
+    expect(messageFor(STORED, saved)).toBe(`${SAVED_TO} ${LIVE_AUTH_LINE} ${LIVE_APPLY_CONDITION}`);
+  });
+
+  it('names the player restart and the live-apply line when the ask changes with another webui key', () => {
+    const saved: SettingsFile = { ...STORED, webui: { ...STORED.webui, port: 9000, auth: { ...STORED.webui?.auth, askPasswordOnThisComputer: false } } };
+
+    expect(messageFor(STORED, saved)).toBe(`${SAVED_TO} ${PLAYER_RESTART} ${LIVE_AUTH_LINE} ${LIVE_APPLY_CONDITION}`);
+  });
+
+  it('states the shared live-apply condition once for a new admin password with a new ask', () => {
+    const saved: SettingsFile = {
+      ...STORED,
+      webui: { ...STORED.webui, auth: { ...STORED.webui?.auth, adminPasswordHash: 'new-hash', askPasswordOnThisComputer: false } },
+    };
+
+    expect(messageFor(STORED, saved, true)).toBe(
+      `${SAVED_TO} ${ADMIN_PASSWORD_LINE} ${LIVE_AUTH_LINE} ${LIVE_APPLY_CONDITION} ${ADMIN_PASSWORD_RESTART_CASES}`,
+    );
+  });
+
+  it('adds no line when the save only writes the ask and level defaults the player already reads', () => {
+    const saved: SettingsFile = {
+      ...STORED,
+      webui: { ...STORED.webui, auth: { ...STORED.webui?.auth, askPasswordOnThisComputer: true, adminAccess: 'localhost' } },
+    };
+
+    expect(messageFor(STORED, saved)).toBe(SAVED_TO);
+  });
+
   it('names no restart for a change only to a key no process reads', () => {
     expect(messageFor(STORED, { ...STORED, notes: 'kept by hand' })).toBe(SAVED_TO);
   });
@@ -105,6 +144,8 @@ describe('laterSaveMessage', () => {
 
 describe('firstSaveSteps', () => {
   const webui = makeTestConfig().webui;
+  const LAUNCH_KEY = 'k'.repeat(43);
+  const STARTED = { mode: 'started', url: 'http://127.0.0.1:8808', launchKey: LAUNCH_KEY } as const;
 
   it('asks for an AI app restart and links the saved port and scheme', () => {
     const steps = firstSaveSteps('mcp-setup', { ...webui, port: 9911, tls: { certPath: '/c.pem', keyPath: '/k.pem' } }, null);
@@ -116,11 +157,27 @@ describe('firstSaveSteps', () => {
   });
 
   it('says the Jukebox Remote is starting when its setup mode started it, and that the page closes', () => {
-    expect(firstSaveSteps('jukebox-setup', webui, { mode: 'started', url: 'http://127.0.0.1:8808' })).toEqual([
+    expect(firstSaveSteps('jukebox-setup', webui, STARTED)).toEqual([
       { text: 'The Jukebox Remote is starting.' },
-      { text: 'It needs mpv to play music. Open it at', url: 'http://127.0.0.1:8808/admin' },
+      { text: 'It needs mpv to play music. Open it at', url: 'http://127.0.0.1:8808/admin', href: `http://127.0.0.1:8808/admin?launch=${LAUNCH_KEY}` },
       { text: "This page closes now. To change settings later, use All settings in the player's gear menu." },
     ]);
+  });
+
+  it("links the started player with its launch key as the target only, so the page text shows no key", () => {
+    const steps = firstSaveSteps('jukebox-setup', webui, STARTED);
+
+    expect(JSON.stringify(steps.map(({ text, url }) => ({ text, url })))).not.toContain(LAUNCH_KEY);
+  });
+
+  it.each([
+    ['another player on the port', 'jukebox-setup', { mode: 'attached', url: 'http://127.0.0.1:8808' }],
+    ['no host start', 'jukebox-settings', null],
+  ] as const)('keeps the plain link for %s, whose step names a start first', (_label, host, takeover) => {
+    const steps = firstSaveSteps(host, webui, takeover);
+
+    expect(steps.some((step) => 'href' in step)).toBe(false);
+    expect(JSON.stringify(steps)).not.toContain(LAUNCH_KEY);
   });
 
   it('links the running player at its own scheme when setup mode found another player on the port', () => {
@@ -145,6 +202,6 @@ describe('firstSaveSteps', () => {
   });
 
   it('keeps the address for a direct launch, which ignores webui.enabled', () => {
-    expect(firstSaveSteps('jukebox-setup', { ...webui, enabled: false }, { mode: 'started', url: 'http://127.0.0.1:8808' })[1]?.url).toBe('http://127.0.0.1:8808/admin');
+    expect(firstSaveSteps('jukebox-setup', { ...webui, enabled: false }, STARTED)[1]?.url).toBe('http://127.0.0.1:8808/admin');
   });
 });

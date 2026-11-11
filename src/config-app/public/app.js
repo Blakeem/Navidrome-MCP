@@ -547,7 +547,7 @@ function showSaveResult(data) {
     item.textContent = String(step.text);
     if (typeof step.url === 'string') {
       const link = document.createElement('a');
-      link.href = step.url;
+      link.href = typeof step.href === 'string' ? step.href : step.url;
       link.textContent = step.url;
       link.target = '_blank';
       link.rel = 'noopener noreferrer';

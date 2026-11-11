@@ -1070,6 +1070,7 @@ describe('settings server admin password', () => {
 
 describe('settings server save replies', () => {
   const NAV = { url: 'http://h:4533', username: 'u', password: 'secret' };
+  const LAUNCH_KEY = 'k'.repeat(43);
   let dir: string;
   let file: string;
   let savedPath: string | undefined;
@@ -1203,7 +1204,7 @@ describe('settings server save replies', () => {
       host: 'jukebox-setup',
       onSaved: () => {
         storedWhenCalled = readFileSync(file, 'utf8');
-        return Promise.resolve({ mode: 'started' as const, url: 'http://127.0.0.1:9913' });
+        return Promise.resolve({ mode: 'started' as const, url: 'http://127.0.0.1:9913', launchKey: LAUNCH_KEY });
       },
     });
 
@@ -1213,7 +1214,7 @@ describe('settings server save replies', () => {
     expect(reply.ok).toBe(true);
     expect(reply.nextSteps).toEqual([
       { text: 'The Jukebox Remote is starting.' },
-      { text: 'It needs mpv to play music. Open it at', url: 'http://127.0.0.1:9913/admin' },
+      { text: 'It needs mpv to play music. Open it at', url: 'http://127.0.0.1:9913/admin', href: `http://127.0.0.1:9913/admin?launch=${LAUNCH_KEY}` },
       { text: "This page closes now. To change settings later, use All settings in the player's gear menu." },
     ]);
     expect(reply.pageClosed).toBe(true);
@@ -1238,7 +1239,7 @@ describe('settings server save replies', () => {
 
   it('refuses a second tab\'s Save during a start without writing it', async () => {
     let finishStart: () => void = () => undefined;
-    const onSaved = vi.fn(() => new Promise<SaveTakeover>((resolve) => { finishStart = () => resolve({ mode: 'started', url: 'http://127.0.0.1:9915' }); }));
+    const onSaved = vi.fn(() => new Promise<SaveTakeover>((resolve) => { finishStart = () => resolve({ mode: 'started', url: 'http://127.0.0.1:9915', launchKey: LAUNCH_KEY }); }));
     const base = await start({ host: 'jukebox-setup', onSaved });
 
     const first = save(base, { navidrome: NAV, webui: { port: 9915 } });
@@ -1262,7 +1263,7 @@ describe('settings server save replies', () => {
   it('takes the next Save after a start fails', async () => {
     const onSaved = vi.fn()
       .mockRejectedValueOnce(new Error('Authentication failed: 401 Unauthorized'))
-      .mockResolvedValueOnce({ mode: 'started', url: 'http://127.0.0.1:8808' });
+      .mockResolvedValueOnce({ mode: 'started', url: 'http://127.0.0.1:8808', launchKey: LAUNCH_KEY });
     const base = await start({ host: 'jukebox-setup', onSaved });
 
     const failed = await save(base, { navidrome: NAV });
@@ -1304,7 +1305,7 @@ describe('settings server save replies', () => {
   });
 
   it('does not run onSaved for a save that fails validation', async () => {
-    const onSaved = vi.fn(() => Promise.resolve({ mode: 'started' as const, url: 'http://127.0.0.1:8808' }));
+    const onSaved = vi.fn(() => Promise.resolve({ mode: 'started' as const, url: 'http://127.0.0.1:8808', launchKey: LAUNCH_KEY }));
     const base = await start({ host: 'jukebox-setup', onSaved });
 
     const reply = await save(base, { navidrome: { ...NAV, url: '' } });

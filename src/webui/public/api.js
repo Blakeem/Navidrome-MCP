@@ -41,8 +41,10 @@ export function postJson(path, body = {}) {
 }
 
 // The login answers 401 for a wrong password, which must not trigger the login-required handler.
-export function postLogin(password) {
-  return requestJson('/api/auth/login', { password }, { notifyLoginRequired: false });
+// The strict login body refuses a null key, so a page with no key leaves it out.
+export function postLogin(password, launchKey = null) {
+  const body = launchKey === null ? { password } : { password, launchKey };
+  return requestJson('/api/auth/login', body, { notifyLoginRequired: false });
 }
 
 // A refused join never answers 401, since a join never ends a session, so it skips the handler too.

@@ -128,11 +128,18 @@ describe('app.js', () => {
 
   const setLocalPeer = vi.fn();
   const postLogin = vi.fn();
+  const replaceState = vi.fn();
+  const ADMIN_ADDRESS = 'http://127.0.0.1:8808/admin';
+  const LAUNCH_KEY = 'k'.repeat(43);
   let session: Record<string, unknown> | null = null;
+  let location: { href: string; reload: ReturnType<typeof vi.fn>; replace: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     setLocalPeer.mockReset();
     postLogin.mockReset();
+    replaceState.mockReset();
+    location = { href: ADMIN_ADDRESS, reload: vi.fn(), replace: vi.fn() };
+    vi.stubGlobal('window', { location, history: { state: null, replaceState } });
     vi.resetModules();
     for (const module of mockedModules) {
       vi.doMock(`${MODULE_DIR}${module.file}`, () => ({
@@ -171,18 +178,58 @@ describe('app.js', () => {
     expect(setLocalPeer).toHaveBeenCalledWith(isLocal);
   });
 
-  it("logs the player's computer in with no password when the session says it may, then boots the player", async () => {
+  it("logs the player's computer in with the launch key from its address, then boots the player", async () => {
     const adminSession = { mode: 'jukebox', role: 'admin', isLocal: true, passwordlessHere: true, csrfToken: 'token' };
     session = { mode: 'jukebox', role: 'anonymous', isLocal: true, adminLoginAvailable: true, passwordlessHere: true };
+    location.href = `${ADMIN_ADDRESS}?launch=${LAUNCH_KEY}`;
     postLogin.mockImplementation(() => {
       session = adminSession;
-      return Promise.resolve({ ok: true, data: null });
+      return Promise.resolve({ ok: true, status: 200, data: null });
     });
 
     await boot();
+    const api = await import('../../../src/webui/public/api.js');
 
-    expect(postLogin).toHaveBeenCalledWith('');
+    expect(replaceState).toHaveBeenCalledExactlyOnceWith(null, '', ADMIN_ADDRESS);
+    expect(replaceState.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.getJson).mock.invocationCallOrder[0] ?? 0);
+    expect(postLogin).toHaveBeenCalledWith('', LAUNCH_KEY);
     expect(setLocalPeer).toHaveBeenCalledWith(true);
+  });
+
+  it.each([
+    ['holds', `${ADMIN_ADDRESS}?launch=${LAUNCH_KEY}`, true],
+    ['holds no', ADMIN_ADDRESS, false],
+  ])('tells the admin controls the page %s launch key', async (_label, href, holdsLaunchKey) => {
+    session = { mode: 'jukebox', role: 'admin', isLocal: true, passwordlessHere: true, csrfToken: 'token' };
+    location.href = href;
+
+    await boot();
+    const controls = await import('../../../src/webui/public/local-controls.js');
+
+    expect(controls.showAdminControls).toHaveBeenCalledExactlyOnceWith(session, holdsLaunchKey);
+  });
+
+  it('leaves an address with no launch key unchanged and posts the login with no key', async () => {
+    session = { mode: 'jukebox', role: 'anonymous', isLocal: true, adminLoginAvailable: true, passwordlessHere: true };
+    postLogin.mockResolvedValue({ ok: false, status: 503, data: { error: 'No admin password is set.' } });
+
+    await import('../../../src/webui/public/app.js');
+    const loginView = await import('../../../src/webui/public/login-view.js');
+
+    await vi.waitFor(() => expect(loginView.showLoginView).toHaveBeenCalled());
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(postLogin).toHaveBeenCalledWith('', null);
+  });
+
+  it('shows the password field when the server answers the keyless passwordless login with 401', async () => {
+    session = { mode: 'jukebox', role: 'anonymous', isLocal: true, adminLoginAvailable: true, passwordlessHere: true };
+    postLogin.mockResolvedValue({ ok: false, status: 401, data: { error: 'Enter the admin password.' } });
+
+    await import('../../../src/webui/public/app.js');
+    const loginView = await import('../../../src/webui/public/login-view.js');
+
+    await vi.waitFor(() => expect(loginView.showLoginView).toHaveBeenCalledWith({ ...session, passwordlessHere: false }));
+    expect(setLocalPeer).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -190,7 +237,7 @@ describe('app.js', () => {
     ['null for an answer with no error', null, null],
   ])("passes %s to the login view when the player's computer is refused a passwordless login", async (_label, data, loginError) => {
     session = { mode: 'jukebox', role: 'anonymous', isLocal: true, adminLoginAvailable: true, passwordlessHere: true };
-    postLogin.mockResolvedValue({ ok: false, data });
+    postLogin.mockResolvedValue({ ok: false, status: 429, data });
 
     await import('../../../src/webui/public/app.js');
     const loginView = await import('../../../src/webui/public/login-view.js');
@@ -203,8 +250,7 @@ describe('app.js', () => {
     ['reloads to log in again for a passwordless session', { mode: 'jukebox', role: 'anonymous', passwordlessHere: true }, true],
     ['shows the login view for any other session', { mode: 'jukebox', role: 'anonymous', adminLoginAvailable: true }, false],
   ])('after a 401, %s', async (_label, ended, reloads) => {
-    const reload = vi.fn();
-    vi.stubGlobal('window', { location: { reload } });
+    const { reload } = location;
     session = { mode: 'jukebox', role: 'admin', isLocal: true, csrfToken: 'token' };
     await boot();
     const api = await import('../../../src/webui/public/api.js');
@@ -216,6 +262,23 @@ describe('app.js', () => {
 
     await vi.waitFor(() => expect(reloads ? reload : loginView.showLoginView).toHaveBeenCalled());
     expect(reloads ? loginView.showLoginView : reload).not.toHaveBeenCalled();
+  });
+
+  it('after a 401, opens the address with the launch key again for a passwordless session, so the new page logs in with it', async () => {
+    location.href = `${ADMIN_ADDRESS}?launch=${LAUNCH_KEY}`;
+    replaceState.mockImplementation((_state: unknown, _title: string, address: string) => {
+      location.href = address;
+    });
+    session = { mode: 'jukebox', role: 'admin', isLocal: true, csrfToken: 'token' };
+    await boot();
+    const api = await import('../../../src/webui/public/api.js');
+    const onLoginRequired = vi.mocked(api.setLoginRequiredHandler).mock.calls[0]?.[0] as () => void;
+    session = { mode: 'jukebox', role: 'anonymous', passwordlessHere: true };
+
+    onLoginRequired();
+
+    await vi.waitFor(() => expect(location.replace).toHaveBeenCalledWith(`${ADMIN_ADDRESS}?launch=${LAUNCH_KEY}`));
+    expect(location.reload).not.toHaveBeenCalled();
   });
 
   it('treats an unread session as remote', async () => {
@@ -239,7 +302,7 @@ describe('local-controls.js', () => {
   }
   type LocalControls = {
     setLocalPeer: (isLocal: boolean) => void;
-    showAdminControls: (session: Record<string, unknown>) => void;
+    showAdminControls: (session: Record<string, unknown>, holdsLaunchKey: boolean) => void;
     canChangePlayerSettings: () => boolean;
   };
 
@@ -308,7 +371,7 @@ describe('local-controls.js', () => {
     const controls = await load();
 
     controls.setLocalPeer(false);
-    controls.showAdminControls({});
+    controls.showAdminControls({}, false);
 
     expect(element('logout-btn').hidden).toBe(false);
     expect(element('no-admin-password-notice').hidden).toBe(true);
@@ -318,16 +381,25 @@ describe('local-controls.js', () => {
     expect(controls.canChangePlayerSettings()).toBe(false);
   });
 
-  it("hides Log out from a passwordless session and shows the server's notice while no admin password is set", async () => {
+  it("hides Log out from a passwordless page with the launch key and shows the server's notice while no admin password is set", async () => {
     const controls = await load();
     const message = 'No admin password is set. Other devices cannot log in. Set WEBUI_ADMIN_PASSWORD and restart the player.';
 
     controls.setLocalPeer(true);
-    controls.showAdminControls({ passwordlessHere: true, noAdminPasswordMessage: message });
+    controls.showAdminControls({ passwordlessHere: true, noAdminPasswordMessage: message }, true);
 
     expect(element('logout-btn').hidden).toBe(true);
     expect(element('no-admin-password-notice').hidden).toBe(false);
     expect(element('no-admin-password-notice').textContent).toBe(message);
+  });
+
+  it('shows Log out to a passwordless source whose page holds no launch key, such as a tunnel on the host', async () => {
+    const controls = await load();
+
+    controls.setLocalPeer(true);
+    controls.showAdminControls({ passwordlessHere: true }, false);
+
+    expect(element('logout-btn').hidden).toBe(false);
   });
 });
 

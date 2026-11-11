@@ -5,7 +5,6 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Config } from '../../config.js';
 import { AdminLoginSchema, GuestJoinSchema } from '../../schemas/index.js';
 import { logger } from '../../utils/logger.js';
 import type { AuthService, BrowserDevice, MintedSession } from '../auth/auth-service.js';
@@ -22,12 +21,10 @@ import { readValidBody, writeError, writeJson, writeTooManyRequests } from '../h
 import type { GuestQueue } from '../jukebox/guest-queue.js';
 import type { QueuedNames } from '../jukebox/jukebox-names.js';
 import { isLocalRequest } from '../loopback.js';
-import { loopbackUrl } from '../network.js';
-import { adminPageUrl } from '../page-paths.js';
 import { classifySource, networkKey, sourceAddress } from '../source-address.js';
-import { isTlsEnabled } from '../tls.js';
 
 const WRONG_PASSWORD = 'Wrong password';
+const ENTER_PASSWORD = 'Enter the admin password.';
 const INVALID_JUKEBOX_CODE = 'This jukebox code is not valid, closed or expired.';
 const JUKEBOX_FULL = 'The jukebox is full. Ask the host to free a place.';
 const BANNED_FROM_JUKEBOX = 'The host removed you from the jukebox.';
@@ -36,20 +33,31 @@ const OTHER_DEVICES_CANNOT_LOG_IN = 'Other devices cannot log in.';
 const SET_ENV_ADMIN_PASSWORD = 'Set WEBUI_ADMIN_PASSWORD and restart the player.';
 const SET_IN_ALL_SETTINGS = 'Set one in All settings.';
 const ONLY_THIS_COMPUTER = 'Only this computer can log in as admin.';
+const OPEN_FROM_SHORTCUT_HERE = 'Open the player from the Jukebox Remote desktop shortcut on this computer.';
+const OPEN_FROM_SHORTCUT_THERE = "Open the player from the Jukebox Remote desktop shortcut on the player's computer to set one.";
 
 /**
  * An env-run player reads its password only from WEBUI_ADMIN_PASSWORD, so All settings cannot set it.
- * The player's computer shows the text in its gear menu. Another device needs the loopback address.
+ * The player's computer shows the text in its gear menu. The text for another device names the desktop
+ * shortcut, since only a launcher's address carries the launch key the passwordless login needs.
  * At level `localhost` a saved password lets no other device in, so that text names no step to set one.
  */
-function noAdminPasswordMessage(req: IncomingMessage, auth: AuthService, config: Config): string {
+function noAdminPasswordMessage(req: IncomingMessage, auth: AuthService): string {
   const isLocal = isLocalRequest(req);
   const isEnv = auth.source === 'env';
   if (isLocal && auth.adminAccess === 'localhost') return `${NO_ADMIN_PASSWORD} ${ONLY_THIS_COMPUTER}`;
   if (isLocal) return `${NO_ADMIN_PASSWORD} ${OTHER_DEVICES_CANNOT_LOG_IN} ${isEnv ? SET_ENV_ADMIN_PASSWORD : SET_IN_ALL_SETTINGS}`;
   if (isEnv) return `${NO_ADMIN_PASSWORD} ${SET_ENV_ADMIN_PASSWORD}`;
-  const localUrl = adminPageUrl(loopbackUrl(config.webui.port, isTlsEnabled(config.webui.tls)));
-  return `${NO_ADMIN_PASSWORD} Open ${localUrl} on the player's computer to set one.`;
+  return `${NO_ADMIN_PASSWORD} ${OPEN_FROM_SHORTCUT_THERE}`;
+}
+
+/**
+ * The desktop shortcut runs with the desktop's environment, which may lack the variables of an env-run
+ * player, so the env text also names the env password.
+ */
+function keylessLoginMessage(auth: AuthService): string {
+  const message = `${NO_ADMIN_PASSWORD} ${OPEN_FROM_SHORTCUT_HERE}`;
+  return auth.source === 'env' ? `${message} ${SET_ENV_ADMIN_PASSWORD}` : message;
 }
 
 /**
@@ -60,7 +68,7 @@ function noAdminPasswordMessage(req: IncomingMessage, auth: AuthService, config:
  * `noAdminPasswordMessage` reaches only a source that may log in. `passwordlessHere` tells the page to
  * post the login itself, and stays free of side effects, so a read mints no session.
  */
-export function handleAuthSession(req: IncomingMessage, res: ServerResponse, auth: AuthService, config: Config): void {
+export function handleAuthSession(req: IncomingMessage, res: ServerResponse, auth: AuthService): void {
   const principal = resolvePrincipal(req, auth);
   const adminLoginAvailable = auth.mode !== 'none' && sourcePassesLevel(req, auth.adminAccess);
   writeJson(res, 200, {
@@ -70,7 +78,7 @@ export function handleAuthSession(req: IncomingMessage, res: ServerResponse, aut
     ...(principal.kind === 'outside-level' ? { outsideLevelMessage: outsideLevelMessage(principal.level) } : {}),
     ...(principal.kind === 'admin' && auth.mode === 'jukebox' ? { jukeboxOpen: auth.hasJukeboxCode() } : {}),
     adminLoginAvailable,
-    ...(adminLoginAvailable && !auth.hasAdminPassword() ? { noAdminPasswordMessage: noAdminPasswordMessage(req, auth, config) } : {}),
+    ...(adminLoginAvailable && !auth.hasAdminPassword() ? { noAdminPasswordMessage: noAdminPasswordMessage(req, auth) } : {}),
     ...(isPasswordlessHere(req, auth) ? { passwordlessHere: true } : {}),
     isLocal: isLocalRequest(req),
     yourAddress: sourceAddress(req.socket.remoteAddress),
@@ -82,33 +90,42 @@ export function handleAuthSession(req: IncomingMessage, res: ServerResponse, aut
  * the default level. A source that cannot log in while no password is saved gets 503 before its body
  * is read. The body is read before the throttle starts an attempt, so a client that trickles its body
  * cannot hold the one attempt slot. The passwordless rule is checked again after the read, since the
- * heartbeat may load a newly saved password meanwhile. A request it admits skips the password and the throttle,
- * and spends from its own budget instead.
+ * heartbeat or another request may load a newly saved password or ask meanwhile. A request it admits
+ * that carries the launch key skips the password and the throttle, and spends from its own budget instead.
+ * One without the key gets the password login, since a tunnel or proxy on the host also passes the rule.
+ * The level is checked again after the hash runs, since a newly saved level may have narrowed meanwhile.
  */
-export async function handleLogin(req: IncomingMessage, res: ServerResponse, auth: AuthService, config: Config): Promise<void> {
+export async function handleLogin(req: IncomingMessage, res: ServerResponse, auth: AuthService): Promise<void> {
   if (auth.mode === 'none' || !sourcePassesLevel(req, auth.adminAccess)) {
     writeError(res, 404, 'Not found');
     return;
   }
   if (!isPasswordlessHere(req, auth) && !auth.hasAdminPassword()) {
-    writeError(res, 503, noAdminPasswordMessage(req, auth, config));
+    writeError(res, 503, noAdminPasswordMessage(req, auth));
     return;
   }
   const input = await readValidBody(req, res, AdminLoginSchema);
   if (input === null) return;
 
   const requester = networkKey(req.socket.remoteAddress);
+  const address = sourceAddress(req.socket.remoteAddress);
+  const isLocal = isLocalRequest(req);
   if (isPasswordlessHere(req, auth)) {
-    const passwordlessWaitMs = auth.takePasswordlessLoginToken(requester);
-    if (passwordlessWaitMs > 0) {
-      writeTooManyRequests(res, passwordlessWaitMs, 'passwordless logins');
+    if (auth.isLaunchKey(input.launchKey)) {
+      writePasswordlessLogin(req, res, auth, requester);
       return;
     }
-    writeAdminLogin(req, res, auth, auth.createPasswordlessSession(sourceAddress(req.socket.remoteAddress)));
-    logger.info(`webui: admin login with no password from ${requester} on the player's computer`);
-    return;
+    if (!auth.hasAdminPassword()) {
+      writeError(res, 503, keylessLoginMessage(auth));
+      return;
+    }
+    // The page posts an empty password when it holds no valid key, and this 401 shows it the password form.
+    if (input.password === '') {
+      writeError(res, 401, ENTER_PASSWORD);
+      return;
+    }
   }
-  const waitMs = auth.throttle.tryBegin(requester, isLocalRequest(req));
+  const waitMs = auth.throttle.tryBegin(requester, isLocal);
   if (waitMs > 0) {
     writeTooManyRequests(res, waitMs, 'login attempts');
     return;
@@ -116,7 +133,7 @@ export async function handleLogin(req: IncomingMessage, res: ServerResponse, aut
 
   let login: MintedSession | null = null;
   try {
-    login = await auth.login(input.password, sourceAddress(req.socket.remoteAddress));
+    login = await auth.login(input.password, address, isLocal);
   } finally {
     auth.throttle.finish(login !== null);
   }
@@ -125,9 +142,24 @@ export async function handleLogin(req: IncomingMessage, res: ServerResponse, aut
     writeError(res, 401, WRONG_PASSWORD);
     return;
   }
+  if (!sourcePassesLevel(req, auth.adminAccess)) {
+    auth.deleteSession(login.session.id);
+    writeError(res, 404, 'Not found');
+    return;
+  }
 
   writeAdminLogin(req, res, auth, login);
   logger.info(`webui: admin login from ${requester}`);
+}
+
+function writePasswordlessLogin(req: IncomingMessage, res: ServerResponse, auth: AuthService, requester: string): void {
+  const waitMs = auth.takePasswordlessLoginToken(requester);
+  if (waitMs > 0) {
+    writeTooManyRequests(res, waitMs, 'passwordless logins');
+    return;
+  }
+  writeAdminLogin(req, res, auth, auth.createPasswordlessSession(sourceAddress(req.socket.remoteAddress), isLocalRequest(req)));
+  logger.info(`webui: admin login with no password from ${requester} on the player's computer`);
 }
 
 function writeAdminLogin(req: IncomingMessage, res: ServerResponse, auth: AuthService, login: MintedSession): void {

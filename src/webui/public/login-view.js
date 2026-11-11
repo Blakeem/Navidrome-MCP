@@ -37,7 +37,7 @@ export function bindLoginForm() {
 }
 
 // An admin session outside the access level carries its own refusal, since only the owner holds one.
-// The no-password text comes from the server, since only the server knows the player's address and config source.
+// The no-password text comes from the server, since only the server knows the config source and the admin access level.
 // A refused passwordless login shows its refusal first, since it names the cause and the wait.
 function loginHelp(card, session) {
   if (session?.loginError !== undefined) return session.loginError ?? LOGIN_FAILED;
@@ -48,7 +48,8 @@ function loginHelp(card, session) {
 
 // The stream closes first, so it stops reconnecting with the ended session. The open dialogs and the
 // lyrics overlay close next, since they would cover the login card.
-// A passwordless source gets no password field, since the login route ignores its password.
+// A passwordless source gets no password field, since the login route ignores its password once the launch key
+// admits it. readSession clears the flag when the route asks for the password.
 export function showLoginView(session) {
   stopConnection();
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();

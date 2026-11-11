@@ -30,7 +30,7 @@ import {
   writeJson,
   writeRedirect,
 } from './http-helpers.js';
-import { isLoopbackHostHeader, isRebindSafeHostHeader } from './loopback.js';
+import { isLocalRequest, isLoopbackHostHeader, isRebindSafeHostHeader } from './loopback.js';
 import { isLanReachable } from './network.js';
 import type { GuestQueue } from './jukebox/guest-queue.js';
 import { ADMIN_PAGE_PATH, GUEST_PAGE_PATH } from './page-paths.js';
@@ -437,8 +437,8 @@ function handlePathParamRoute(
 const ROUTES: readonly Route[] = [
   { method: 'GET',  path: '/healthz',                   access: 'public',          handle: ({ req, res, deps }) => handleHealth(req, res, deps.config) },
   { method: 'POST', path: MCP_LEASE_PATH,               access: 'public',          handle: ({ req, res, deps }) => handleMcpLease(req, res, deps.leases) },
-  { method: 'GET',  path: '/api/auth/session',          access: 'public',          handle: ({ req, res, deps }) => handleAuthSession(req, res, deps.auth, deps.config) },
-  { method: 'POST', path: '/api/auth/login',            access: 'public',          handle: ({ req, res, deps }) => handleLogin(req, res, deps.auth, deps.config) },
+  { method: 'GET',  path: '/api/auth/session',          access: 'public',          handle: ({ req, res, deps }) => handleAuthSession(req, res, deps.auth) },
+  { method: 'POST', path: '/api/auth/login',            access: 'public',          handle: ({ req, res, deps }) => handleLogin(req, res, deps.auth) },
   { method: 'POST', path: '/api/auth/logout',           access: 'auth.self',       handle: ({ req, res, deps, principal }) => handleLogout(req, res, deps.auth, principal) },
   { method: 'GET',  path: '/',                          access: 'public',          handle: routeRoot },
   { method: 'GET',  path: '/index.html',                access: 'public',          handle: redirectToAdminPage },
@@ -536,7 +536,7 @@ function admitGatedRequest(req: IncomingMessage, res: ServerResponse, deps: Serv
     writeError(res, 403, 'Missing or wrong X-CSRF-Token header. Reload the page and try again.');
     return false;
   }
-  deps.auth.touch(principal.session, sourceAddress(req.socket.remoteAddress));
+  deps.auth.touch(principal.session, sourceAddress(req.socket.remoteAddress), isLocalRequest(req));
   return true;
 }
 
@@ -546,6 +546,9 @@ async function handleRequest(
   deps: ServerDeps,
   streams: StreamLimiter,
 ): Promise<void> {
+  // The checks below read the saved admin login values, so a Save on the settings page applies to this request.
+  deps.auth.refreshSavedAuth();
+
   // A banned network learns nothing about the server, so the refusal comes before any other check.
   if (deps.auth.isNetworkBanned(req.socket.remoteAddress)) {
     writeError(res, 403, NETWORK_BAN_REFUSAL);

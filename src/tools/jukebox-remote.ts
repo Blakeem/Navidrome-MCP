@@ -10,6 +10,7 @@ import { ErrorFormatter } from '../utils/error-formatter.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { portConflictMessage, probeWebOwner, type WebOwnerProbe } from '../web/acquire.js';
 import { TLS_LOCAL_ADDRESS_WARNING } from '../web/banner.js';
+import { readLaunchKey, withLaunchKey } from '../web/launch-key.js';
 import { jukeboxLogPath } from '../web/log-path.js';
 import { ensureWebForPlayback } from '../web/spawn.js';
 import { isLanReachable, listLanInterfaces, loopbackUrl } from '../webui/network.js';
@@ -57,7 +58,8 @@ export async function openJukeboxRemote(config: Config): Promise<OpenJukeboxRemo
     const webui = playerWebui(probe.port, config.webui);
     const url = adminPageUrl(loopbackUrl(probe.port, probe.secure));
     // A player this MCP spawned opens its own tab when auto-open is on, so a second tab would duplicate it.
-    if (!(status === 'spawned' && webui.autoOpenBrowser)) openBrowser(url);
+    // Only the opened address carries the launch key, so the result never hands the key to the AI.
+    if (!(status === 'spawned' && webui.autoOpenBrowser)) openBrowser(withLaunchKey(url, readLaunchKey(probe.port)));
 
     // A player older than the health `lan` field leaves it out, so the settings playerWebui picks decide.
     const lanReachable = probe.lan ?? isLanReachable(webui.host);

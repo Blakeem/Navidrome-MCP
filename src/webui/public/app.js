@@ -13,7 +13,7 @@ import { setLrclibEnabled } from './lyrics-content.js';
 import { bindLyricsView, syncLyricsToSnapshot } from './lyrics-view.js';
 import { bindNetworkInfo } from './network-info.js';
 import { renderNowPlaying } from './now-playing.js';
-import { adminView, isLoginMode, needsPasswordlessLogin } from './page-view.js';
+import { adminView, isLoginMode, needsPasswordlessLogin, splitLaunchKey, withLaunchKey } from './page-view.js';
 import { bindPlayDialog } from './play-dialog.js';
 import { rebaseClock } from './playback-clock.js';
 import { bindQueue, renderQueue, revealCurrentRow } from './queue.js';
@@ -49,19 +49,35 @@ async function loadPlayerState() {
   applyTheme(state.theme);
 }
 
-// The player's computer logs in with no password when the server admits it. A failed login keeps the
-// session it read and adds the refusal, since the login view's own card may point at All settings, which needs a login.
+// Held for the page's lifetime, so a later passwordless login on this page sends it again.
+let launchKey = null;
+
+// The key leaves the address bar and the history entry at once, so a bookmark or a shared address never holds it.
+function takeLaunchKey() {
+  const { key, address } = splitLaunchKey(window.location.href);
+  if (address !== window.location.href) window.history.replaceState(window.history.state, '', address);
+  return key;
+}
+
+// The player's computer logs in with no password when the server admits it and the page holds the launch
+// key. A 401 means the server wants the password, since the page holds no valid key, so the login view shows
+// the password field. Any other refusal keeps the session it read and adds the refusal, since the login
+// view's own card may point at All settings, which needs a login.
 async function readSession() {
   const session = await getJson('/api/auth/session');
   if (!needsPasswordlessLogin(session)) return session;
-  const { ok, data } = await postLogin('');
-  return ok ? getJson('/api/auth/session') : { ...session, loginError: data?.error ?? null };
+  const { ok, status, data } = await postLogin('', launchKey);
+  if (ok) return getJson('/api/auth/session');
+  if (status === 401) return { ...session, passwordlessHere: false };
+  return { ...session, loginError: data?.error ?? null };
 }
 
-// A passwordless session that ended, such as by a password change while the ask is off, boots again to log in again.
+// A passwordless session that ended, such as by a password change while the ask is off, boots again at
+// the address with the launch key, so the new page logs in again with it.
 function leavePlayer(session) {
-  if (needsPasswordlessLogin(session)) window.location.reload();
-  else showLoginView(session);
+  if (!needsPasswordlessLogin(session)) showLoginView(session);
+  else if (launchKey === null) window.location.reload();
+  else window.location.replace(withLaunchKey(window.location.href, launchKey));
 }
 
 // A 401 means the session ended. A failed session read still shows the login form.
@@ -79,7 +95,7 @@ async function checkSessionEnded() {
 function bootPlayer(session) {
   setLocalPeer(session?.isLocal === true);
   if (isLoginMode(session)) {
-    showAdminControls(session);
+    showAdminControls(session, launchKey !== null);
     bindLogoutButton();
   }
   if (session?.mode === 'jukebox') {
@@ -111,7 +127,9 @@ function bootPlayer(session) {
 
 // A mode with a login shows the login view until an admin session exists, a guest session included.
 async function bootstrap() {
-  // First, so a forced theme replaces the system one before anything else renders.
+  // First, so the key leaves the address before any other work.
+  launchKey = takeLaunchKey();
+  // Next, so a forced theme replaces the system one before anything else renders.
   applyThemeHint();
   bindLoginForm();
   setLoginRequiredHandler(() => void returnToLogin());

@@ -2,6 +2,8 @@
 
 const JUKEBOX_MODE = 'jukebox';
 const KEY_PARAM = 'k';
+// src/web/launch-key.ts writes the key under the same name.
+const LAUNCH_KEY_PARAM = 'launch';
 const GUEST_END_TEXTS = {
   closed: 'The host closed the jukebox.',
   expired: 'The jukebox code expired.',
@@ -30,6 +32,22 @@ export function loginCard(session) {
 // The player's computer posts the login itself when the server admits it with no password.
 export function needsPasswordlessLogin(session) {
   return session?.passwordlessHere === true && session.role !== 'admin';
+}
+
+// A launcher on the player's computer opens the page with its launch key. `address` is the page address
+// without the key, which the page shows in its place. An empty key counts as none.
+export function splitLaunchKey(href) {
+  const url = new URL(href);
+  const key = url.searchParams.get(LAUNCH_KEY_PARAM);
+  url.searchParams.delete(LAUNCH_KEY_PARAM);
+  return { key: key === '' ? null : key, address: key === null ? href : url.href };
+}
+
+// The address a reload opens, so the reloaded page logs in with the same key.
+export function withLaunchKey(href, key) {
+  const url = new URL(href);
+  url.searchParams.set(LAUNCH_KEY_PARAM, key);
+  return url.href;
 }
 
 export function adminView(session) {

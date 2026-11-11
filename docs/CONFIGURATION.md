@@ -22,11 +22,11 @@ These settings apply live.
 - The guest song limit in the **Guests** dialog.
 - The share link in the **Jukebox** dialog.
 
+A new admin password applies to a running player within about 10 seconds and signs out every admin session. **Ask for the admin password on this computer** and **Admin login allowed from** apply to a running player the next time one of its pages loads. Turning the ask back on, or narrowing **Admin login allowed from**, signs out the affected admin sessions within about 10 seconds. This holds when the player runs from `settings.json` and **Access** already uses a password. A change of **Access**, or a player started from environment variables, needs a restart.
+
 Other Jukebox Remote settings apply after **Shut down player** in the gear menu and a new start. A new start is the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`.
 
 MCP server settings apply after the MCP server restarts. A stdio server restarts with its MCP client. An HTTP server started with `navidrome-mcp serve` needs its own restart.
-
-A new admin password applies to a running player within about 10 seconds and signs out every admin session. This holds when the player runs from `settings.json` and **Access** already uses a password. A change of **Access**, or a player started from environment variables, needs a restart.
 
 ## Settings
 
@@ -107,8 +107,8 @@ The env fallback has no variable for the two boxes. `RADIO_BROWSER_USER_AGENT` t
 | **HTTPS certificate file** | `webui.tls.certPath` | `WEBUI_TLS_CERT` | `null` | The PEM certificate chain, such as `fullchain.pem` from Let's Encrypt. Set both HTTPS files to serve HTTPS. |
 | **HTTPS key file** | `webui.tls.keyPath` | `WEBUI_TLS_KEY` | `null` | The PEM private key, such as `privkey.pem`. The player loads a renewed pair within a minute. A missing or invalid file stops the player from starting. |
 | **Access** | `webui.auth.mode` | `WEBUI_AUTH_MODE` | `none` | `none` (Open), `password` (Admin password), or `jukebox` (Admin password and jukebox). [Internet Access](INTERNET-ACCESS.md) describes what each mode exposes. |
-| **Admin password** | `webui.auth.adminPasswordHash` | `WEBUI_ADMIN_PASSWORD` | `null` | The settings page stores only the hash of the password you type. Passwords are 8 to 128 characters. With no password set in mode `password` or `jukebox`, this computer opens the player as admin with no login, and no other device can log in as admin. |
-| **Ask for the admin password on this computer** | `webui.auth.askPasswordOnThisComputer` | none | `true` | `false` opens the player as admin with no login on this computer in mode `password` or `jukebox`. Other devices still need the password. This computer counts only at a `localhost`, `127.0.0.1`, or `[::1]` address with no proxy header, such as `X-Forwarded-For`. The env fallback always asks. |
+| **Admin password** | `webui.auth.adminPasswordHash` | `WEBUI_ADMIN_PASSWORD` | `null` | The settings page stores only the hash of the password you type. Passwords are 8 to 128 characters. With no password set in mode `password` or `jukebox`, this computer opens the player as admin with no login, and no other device can log in as admin. The **Ask for the admin password on this computer** row says which launchers open it with no login. |
+| **Ask for the admin password on this computer** | `webui.auth.askPasswordOnThisComputer` | none | `true` | `false` opens the player as admin with no login on this computer in mode `password` or `jukebox`. Other devices still need the password. This computer counts only at a `localhost`, `127.0.0.1`, or `[::1]` address with no proxy header, such as `X-Forwarded-For`. The player must also be opened by the desktop shortcut, `navidrome-mcp jukebox`, the AI or the settings page link shown when a Save starts the player, since each adds a launch key to the address. The env fallback always asks. |
 | **Admin login allowed from** | `webui.auth.adminAccess` | `WEBUI_ADMIN_ACCESS` | `localhost` | Where an admin can log in, one of `localhost` (this computer), `lan`, or `anywhere`. |
 | none (the gear menu's **Theme**) | `webui.theme` | none | unset | Forces `light` or `dark` on every device viewing the player. When unset, each device follows its own setting. **System** in the gear menu clears it. |
 

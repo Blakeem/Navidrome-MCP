@@ -163,7 +163,7 @@ A host with no browser, such as a server or a Docker container, runs from enviro
 
 ## Jukebox Remote
 
-The Jukebox Remote is the web player at `http://localhost:8808/admin`. Its gear icon opens the gear menu, which holds the player settings, **All settings**, **Network info**, **Log out**, and **Shut down player**. **Log out** shows only after a login with the admin password.
+The Jukebox Remote is the web player at `http://localhost:8808/admin`. Its gear icon opens the gear menu, which holds the player settings, **All settings**, **Network info**, **Log out**, and **Shut down player**. In a mode with a login, **Log out** hides on a page that a launcher on the host computer opened with no login. A reload of that page shows **Log out** again.
 
 ### Commands
 
@@ -260,7 +260,7 @@ The settings page puts the less common fields in **Advanced settings** at the bo
 
 ### Admin Password
 
-An admin password has 8 to 128 characters. **Ask for the admin password on this computer** is on by default. Turn it off, and the host computer opens the player as admin with no login. With no admin password saved, the host computer also opens the player as admin, and no other device can log in as admin. Other devices always need the password. The AI and the shortcut open the player at an address that counts as the host computer. The **Ask for the admin password on this computer** row in [Configuration](https://github.com/Blakeem/Navidrome-MCP/blob/main/docs/CONFIGURATION.md#webui) lists the addresses that count.
+An admin password has 8 to 128 characters. **Ask for the admin password on this computer** is on by default. Turn it off, and the host computer opens the player as admin with no login. With no admin password saved, the host computer also opens the player as admin, and no other device can log in as admin. Other devices always need the password. The host computer skips the login only when the AI, the desktop shortcut, `navidrome-mcp jukebox` or the settings page link shown when a Save starts the player opens the player. Each of them adds a launch key to the address. A tunnel or proxy on the host cannot send that key. The **Ask for the admin password on this computer** row in [Configuration](https://github.com/Blakeem/Navidrome-MCP/blob/main/docs/CONFIGURATION.md#webui) lists the addresses that count.
 
 ## Tools
 

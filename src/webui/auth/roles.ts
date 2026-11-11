@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import type { WebuiAuthMode } from '../../constants/defaults.js';
+import type { WebuiAdminAccess, WebuiAuthMode } from '../../constants/defaults.js';
+import { classifySource } from '../source-address.js';
 
 /** Each dispatcher route in `src/webui/server.ts` names one of these, or `public`. */
 const PERMISSIONS = [
@@ -46,4 +47,13 @@ export function modeHasPermission(mode: WebuiAuthMode, permission: Permission): 
 
 export function sourceAdmits(permission: Permission, isLocal: boolean): boolean {
   return isLocal || !LOCAL_ONLY.has(permission);
+}
+
+/**
+ * `localhost` needs the same proof as the loopback-only routes, so a same-host proxy never counts as local.
+ * `isLocal` is that proof for the request, and `remoteAddress` its peer.
+ */
+export function levelAdmits(level: WebuiAdminAccess, isLocal: boolean, remoteAddress: string | undefined): boolean {
+  if (level === 'anywhere' || isLocal) return true;
+  return level === 'lan' && classifySource(remoteAddress) === 'lan';
 }

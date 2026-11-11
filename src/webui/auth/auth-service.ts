@@ -7,6 +7,7 @@
 import { statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config, ConfigSource } from '../../config.js';
+import { mapStoreWebuiAuth } from '../../config/map-config.js';
 import { readSettings } from '../../config/store.js';
 import { getSettingsStorePath } from '../../config/store-path.js';
 import {
@@ -14,12 +15,14 @@ import {
   ADMIN_PASSWORD_MIN_LENGTH,
   isAdminPasswordLengthValid,
   JUKEBOX_CODE_MAX_LIFETIME_HOURS,
+  WEBUI_ADMIN_ACCESS_LEVELS,
   type WebuiAdminAccess,
   type WebuiAuthMode,
 } from '../../constants/defaults.js';
 import { GUEST_ONLINE_WINDOW_MS } from '../../constants/timeouts.js';
 import { logger } from '../../utils/logger.js';
 import { constantTimeEqual, hashPassword, isPasswordHash, randomToken, sha256Hex, verifyPassword } from '../../utils/secrets.js';
+import { createLaunchKey } from '../../web/launch-key.js';
 import { endSseStream } from '../http-helpers.js';
 import { HOST_JUKEBOX_LABEL, type QueuedNames } from '../jukebox/jukebox-names.js';
 import { classifySource, networkKey } from '../source-address.js';
@@ -37,6 +40,7 @@ import {
 } from './auth-store.js';
 import { LoginThrottle } from './login-throttle.js';
 import { nameSkeleton } from './name-skeleton.js';
+import { levelAdmits } from './roles.js';
 import { deviceCookieName, readCookieValues, serializeDeviceCookie, serializeSessionCookie, sessionCookieName } from './session-cookie.js';
 import { TokenBuckets } from './token-bucket.js';
 
@@ -144,19 +148,23 @@ export interface BrowserDevice {
   presented: boolean;
 }
 
+/** The saved `webui.auth` values a store-run player applies while it runs. A mode change needs a restart. */
+export type SavedAuth = Pick<Config['webui']['auth'], 'adminPasswordHash' | 'adminAccess' | 'askPasswordOnThisComputer'>;
+
 interface AuthServiceOptions {
   source?: ConfigSource;
   envAdminHash?: string | null;
   now?: () => number;
-  /** Store mode only. Undefined means the store is unreadable, so the current credential stays. */
-  readSavedAdminHash?: () => string | null | undefined;
+  /** Store mode only. Undefined means the store is absent, unreadable or invalid, so the current values stay. */
+  readSavedAuth?: () => SavedAuth | undefined;
 }
 
-function readStoreAdminHash(): string | null | undefined {
+/** The store schema rejects an unknown access level or a non-boolean ask, so such a hand edit reads as undefined. */
+function readStoreSavedAuth(): SavedAuth | undefined {
   const settings = readSettings();
   if (settings === null) return undefined;
-  const hash = settings.webui?.auth?.adminPasswordHash?.trim() ?? '';
-  return hash === '' ? null : hash;
+  const { adminPasswordHash, adminAccess, askPasswordOnThisComputer } = mapStoreWebuiAuth(settings.webui?.auth);
+  return { adminPasswordHash, adminAccess, askPasswordOnThisComputer };
 }
 
 function storeStamp(): string | null {
@@ -169,12 +177,12 @@ function storeStamp(): string | null {
 }
 
 /**
- * The sweep runs on every heartbeat, and a malformed store logs a warning on each read, so the file
- * is read again only after it changes.
+ * The refresh runs on every heartbeat and every request, and a malformed store logs a warning on each
+ * read, so the file is read again only after it changes.
  */
-function createStoreAdminHashReader(): () => string | null | undefined {
+function createStoreSavedAuthReader(): () => SavedAuth | undefined {
   let lastStamp: string | null = null;
-  let lastHash: string | null | undefined;
+  let lastSaved: SavedAuth | undefined;
   return () => {
     const stamp = storeStamp();
     if (stamp === null) {
@@ -183,10 +191,14 @@ function createStoreAdminHashReader(): () => string | null | undefined {
     }
     if (stamp !== lastStamp) {
       lastStamp = stamp;
-      lastHash = readStoreAdminHash();
+      lastSaved = readStoreSavedAuth();
     }
-    return lastHash;
+    return lastSaved;
   };
+}
+
+function accessRank(level: WebuiAdminAccess): number {
+  return WEBUI_ADMIN_ACCESS_LEVELS.indexOf(level);
 }
 
 /** A hand-edited value that is not an Argon2id PHC string would fail every login with no hint, so it reads as unset. */
@@ -242,16 +254,18 @@ export function endGuestStream(res: ServerResponse, reason: GuestEndReason): voi
  */
 export class AuthService {
   readonly mode: WebuiAuthMode;
-  readonly adminAccess: WebuiAdminAccess;
-  readonly askPasswordOnThisComputer: boolean;
   readonly throttle: LoginThrottle;
   readonly source: ConfigSource;
+  /** Made at each start, so a key from an earlier start opens nothing. */
+  readonly launchKey = createLaunchKey();
   private readonly port: number;
   private readonly cookieName: string;
   private readonly deviceCookieName: string;
   private readonly secureCookie: boolean;
   private readonly now: () => number;
-  private readonly readSavedAdminHash: () => string | null | undefined;
+  private readonly readSavedAuth: () => SavedAuth | undefined;
+  private currentAdminAccess: WebuiAdminAccess;
+  private currentAskPassword: boolean;
   private readonly sessions = new Map<string, SessionRecord>();
   // Each open stream keeps its own source address, since a network ban closes the streams opened from it.
   private readonly streams = new Map<string, Map<ServerResponse, OpenStream>>();
@@ -271,8 +285,8 @@ export class AuthService {
   constructor(config: Config, options: AuthServiceOptions = {}) {
     const auth = config.webui.auth;
     this.mode = auth.mode;
-    this.adminAccess = auth.adminAccess;
-    this.askPasswordOnThisComputer = auth.askPasswordOnThisComputer;
+    this.currentAdminAccess = auth.adminAccess;
+    this.currentAskPassword = auth.askPasswordOnThisComputer;
     this.source = options.source ?? 'store';
     this.now = options.now ?? Date.now;
     this.throttle = new LoginThrottle(this.now);
@@ -284,7 +298,7 @@ export class AuthService {
     this.port = config.webui.port;
     this.cookieName = sessionCookieName(this.port, this.secureCookie);
     this.deviceCookieName = deviceCookieName(this.port);
-    this.readSavedAdminHash = options.readSavedAdminHash ?? createStoreAdminHashReader();
+    this.readSavedAuth = options.readSavedAuth ?? createStoreSavedAuthReader();
     this.envAdminHash = options.envAdminHash ?? null;
     this.configuredHash = auth.adminPasswordHash;
     this.adminHash = this.source === 'env' ? this.envAdminHash : usableHash(auth.adminPasswordHash, 'webui.auth.adminPasswordHash');
@@ -307,7 +321,8 @@ export class AuthService {
    * Called once the port is owned. The previous owner may have changed the sessions since `load`,
    * so they come from a fresh read, and the write drops the dead ones. The jukebox code loads first,
    * since a guest session and a guest ban live only while their code does. A start in another mode drops the code, its
-   * guests and their guest bans, so a later jukebox start never revives an old QR code.
+   * guests and their guest bans, so a later jukebox start never revives an old QR code. An admin session
+   * whose last request the admin access level does not admit ends, the rule a live narrowing applies.
    */
   claimStore(): void {
     const { file, droppedJukeboxCode } = readAuthFileWithStatus(this.port);
@@ -324,13 +339,27 @@ export class AuthService {
     this.jukeboxCode = keepsJukebox && storedCode !== null && storedCode.expiresAt > now ? storedCode : null;
     this.bans = file.bans.filter((ban) => ban.expiresAt > now && (this.jukeboxCode !== null || ban.kind !== 'guest'));
     for (const session of file.sessions) {
-      if (this.isLive(session, now)) this.sessions.set(session.id, session);
+      if (this.isLive(session, now) && this.levelAdmitsLastRequest(session)) this.sessions.set(session.id, session);
     }
     this.persist();
   }
 
+  /** A store-run player changes it while it runs, so a caller reads it at each use and never keeps a copy. */
+  get adminAccess(): WebuiAdminAccess {
+    return this.currentAdminAccess;
+  }
+
+  /** A store-run player changes it while it runs, so a caller reads it at each use and never keeps a copy. */
+  get askPasswordOnThisComputer(): boolean {
+    return this.currentAskPassword;
+  }
+
   hasAdminPassword(): boolean {
     return this.adminHash !== null;
+  }
+
+  isLaunchKey(presented: string | undefined): boolean {
+    return presented !== undefined && constantTimeEqual(presented, this.launchKey);
   }
 
   async verifyAdminPassword(password: string): Promise<boolean> {
@@ -339,14 +368,14 @@ export class AuthService {
   }
 
   /**
-   * A heartbeat can swap the credential while the hash runs, so a password that matched the old
+   * The heartbeat or another request can swap the credential while the hash runs, so a password that matched the old
    * credential starts no session under the new one.
    */
-  async login(password: string, address: string): Promise<MintedSession | null> {
+  async login(password: string, address: string, local: boolean): Promise<MintedSession | null> {
     const verifiedEpoch = this.credentialEpoch;
     const matched = await this.verifyAdminPassword(password);
     if (!matched || verifiedEpoch !== this.credentialEpoch) return null;
-    return this.createSession(address);
+    return this.createSession(address, local);
   }
 
   /** Every cookie of the session name is tried, since a stale one may come first. */
@@ -360,28 +389,34 @@ export class AuthService {
     return null;
   }
 
-  /** Slides the idle expiry, which never passes the admin absolute cap or the guest's jukebox code expiry. */
-  touch(session: SessionRecord, address: string): void {
+  /**
+   * Slides the idle expiry, which never passes the admin absolute cap or the guest's jukebox code expiry.
+   * `local` is whether the request passed `isLocalRequest`. Only an admin session keeps it.
+   */
+  touch(session: SessionRecord, address: string, local: boolean): void {
     const now = this.now();
     session.lastSeenAt = now;
-    session.expiresAt = session.role === 'admin'
-      ? Math.min(now + ADMIN_IDLE_MS, session.createdAt + ADMIN_ABSOLUTE_MS)
-      : Math.min(now + GUEST_IDLE_MS, this.jukeboxCode?.expiresAt ?? now);
+    if (session.role === 'admin') {
+      session.expiresAt = Math.min(now + ADMIN_IDLE_MS, session.createdAt + ADMIN_ABSOLUTE_MS);
+      session.lastLocal = local;
+    } else {
+      session.expiresAt = Math.min(now + GUEST_IDLE_MS, this.jukeboxCode?.expiresAt ?? now);
+    }
     session.lastAddress = address;
     this.markDirty(now);
   }
 
   /** Returns the token, which only the cookie carries. The store keeps the secret's digest. */
-  createSession(address: string): MintedSession {
-    return this.mintAdminSession(address, this.credentialEpoch);
+  createSession(address: string, local: boolean): MintedSession {
+    return this.mintAdminSession(address, local, this.credentialEpoch);
   }
 
   /** A session minted while the ask is off carries its own epoch, so turning the ask back on ends it. */
-  createPasswordlessSession(address: string): MintedSession {
-    return this.mintAdminSession(address, this.askOffEpoch() ?? this.credentialEpoch);
+  createPasswordlessSession(address: string, local: boolean): MintedSession {
+    return this.mintAdminSession(address, local, this.askOffEpoch() ?? this.credentialEpoch);
   }
 
-  private mintAdminSession(address: string, credentialEpoch: string): MintedSession {
+  private mintAdminSession(address: string, local: boolean, credentialEpoch: string): MintedSession {
     const now = this.now();
     const secret = randomToken(SESSION_SECRET_BYTES);
     const session: AdminSession = {
@@ -395,6 +430,7 @@ export class AuthService {
       csrfToken: randomToken(CSRF_TOKEN_BYTES),
       lastAddress: address,
       hostNickname: null,
+      lastLocal: local,
     };
     this.sessions.set(session.id, session);
     this.persist();
@@ -706,12 +742,12 @@ export class AuthService {
   }
 
   /**
-   * Runs on the SSE heartbeat, so an expired session, an expired jukebox code or a changed password
-   * ends its streams within one beat.
+   * Runs on the SSE heartbeat, so an expired session, an expired jukebox code, a changed password, an ask
+   * turned back on or a narrowed admin access level ends the affected streams within one beat.
    */
   sweep(): void {
     if (this.mode === 'none') return;
-    this.refreshCredential();
+    this.refreshSavedAuth();
     const now = this.now();
     let removed = false;
     if (this.jukeboxCode !== null && this.jukeboxCode.expiresAt <= now) {
@@ -736,6 +772,40 @@ export class AuthService {
     if (removed || (this.dirty && now - this.lastWriteAt >= LAST_SEEN_FLUSH_MS)) this.persist();
   }
 
+  /**
+   * The settings page writes these values to the store, and only a store-run player reads them back.
+   * The heartbeat and each request run this, so a page load after a Save sees the new values. The
+   * admin sessions that the new values end are removed at once, with their streams, so changing a
+   * value back before the next heartbeat never revives them.
+   */
+  refreshSavedAuth(): void {
+    if (this.source !== 'store' || this.mode === 'none') return;
+    const saved = this.readSavedAuth();
+    if (saved === undefined) return;
+    const epochChanged = this.applySavedHash(saved.adminPasswordHash);
+    const askTurnedOn = this.applySavedAsk(saved.askPasswordOnThisComputer);
+    const narrowed = this.applySavedAdminAccess(saved.adminAccess);
+    if (!epochChanged && !askTurnedOn && !narrowed) return;
+    const now = this.now();
+    let removed = false;
+    for (const session of [...this.sessions.values()]) {
+      if (session.role !== 'admin') continue;
+      const admitted = !narrowed || this.levelAdmitsLastRequest(session);
+      if (admitted && this.isLive(session, now)) continue;
+      removed = this.removeSession(session.id, null) || removed;
+    }
+    if (removed) this.persist();
+  }
+
+  /** The admin password crosses the network in clear text when a login from anywhere runs over plain HTTP. */
+  warnOnPlainHttpLogin(): void {
+    if (this.mode === 'none' || this.currentAdminAccess !== 'anywhere' || this.secureCookie) return;
+    logger.warn(
+      'Jukebox Remote admits admin logins from anywhere over plain HTTP, so the admin password crosses the network in clear text. ' +
+        'Turn on HTTPS on the settings page.',
+    );
+  }
+
   /** Called at shutdown, to keep the last `lastSeenAt` values. */
   flush(): void {
     if (this.mode !== 'none' && this.dirty) this.persist();
@@ -753,6 +823,11 @@ export class AuthService {
     if (session.expiresAt <= now) return false;
     if (session.role === 'guest') return this.onLiveCode(session, now);
     return session.credentialEpoch === this.credentialEpoch || session.credentialEpoch === this.askOffEpoch();
+  }
+
+  /** A guest session answers to the jukebox code, never to the admin access level. */
+  private levelAdmitsLastRequest(session: SessionRecord): boolean {
+    return session.role === 'guest' || levelAdmits(this.currentAdminAccess, session.lastLocal, session.lastAddress);
   }
 
   // No hex digest holds the suffix, so an ask-off epoch never equals a password epoch.
@@ -853,17 +928,41 @@ export class AuthService {
     this.bans = this.bans.filter((ban) => ban.kind !== 'guest');
   }
 
-  /** The settings page writes a new hash to the store, and only a store-run player reads it back. */
-  private refreshCredential(): void {
-    if (this.source !== 'store') return;
-    const saved = this.readSavedAdminHash();
-    if (saved === undefined || saved === this.configuredHash) return;
+  /** Returns true when the credential epoch changed, which ends every admin session minted under the old one. */
+  private applySavedHash(saved: string | null): boolean {
+    if (saved === this.configuredHash) return false;
     this.configuredHash = saved;
     this.adminHash = usableHash(saved, 'webui.auth.adminPasswordHash');
     const epoch = credentialEpochOf(this.adminHash);
-    if (epoch === this.credentialEpoch) return;
+    if (epoch === this.credentialEpoch) return false;
     this.credentialEpoch = epoch;
     logger.info('webui: the admin password changed, so every admin session ended');
+    return true;
+  }
+
+  /** Returns true when the ask turned on, which ends every session minted while it was off. */
+  private applySavedAsk(saved: boolean): boolean {
+    if (saved === this.currentAskPassword) return false;
+    this.currentAskPassword = saved;
+    if (!saved) {
+      logger.info("webui: the player's computer now logs in as admin with no password");
+      return false;
+    }
+    // With no password saved, isPasswordlessHere still admits the player's computer with no password.
+    const askEffect = this.adminHash === null ? 'will ask for the admin password once one is saved' : 'now asks for the admin password';
+    logger.info(`webui: the player's computer ${askEffect}, so each session that logged in while the ask was off ended`);
+    return true;
+  }
+
+  /** Returns true when the level narrowed, which ends each admin session whose last request it no longer admits. */
+  private applySavedAdminAccess(saved: WebuiAdminAccess): boolean {
+    const previous = this.currentAdminAccess;
+    if (saved === previous) return false;
+    this.currentAdminAccess = saved;
+    const narrowed = accessRank(saved) < accessRank(previous);
+    logger.info(`webui: the admin access level changed to "${saved}"${narrowed ? ', so each admin session last seen outside it ended' : ''}`);
+    this.warnOnPlainHttpLogin();
+    return narrowed;
   }
 
   /**

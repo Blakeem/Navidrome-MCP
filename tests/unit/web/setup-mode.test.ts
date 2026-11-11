@@ -12,10 +12,11 @@ import { makeTestConfig } from '../../helpers/test-config.js';
 
 interface FakeOwner {
   url: string;
+  auth: { launchKey: string };
 }
 
 const CONFIGURED: ConfiguredState = { configured: true, config: makeTestConfig(), source: 'store' };
-const OWNER: FakeOwner = { url: 'http://127.0.0.1:8808' };
+const OWNER: FakeOwner = { url: 'http://127.0.0.1:8808', auth: { launchKey: 'k'.repeat(43) } };
 
 type ConfigState = ConfiguredState | { configured: false; failure?: StartupFailure };
 
@@ -34,7 +35,7 @@ describe('createSetupSaveHandler', () => {
     const acquire = vi.fn(() => Promise.resolve<PortAcquisition<FakeOwner>>({ mode: 'owner', owner: OWNER }));
     const { onSaved, leaveSetup, runOwner } = handlerFor(acquire);
 
-    await expect(onSaved()).resolves.toEqual({ mode: 'started', url: 'http://127.0.0.1:8808' });
+    await expect(onSaved()).resolves.toEqual({ mode: 'started', url: 'http://127.0.0.1:8808', launchKey: OWNER.auth.launchKey });
 
     expect(acquire).toHaveBeenCalledExactlyOnceWith(CONFIGURED);
     expect(leaveSetup).toHaveBeenCalledOnce();
@@ -86,7 +87,7 @@ describe('createSetupSaveHandler', () => {
 
     await expect(onSaved()).rejects.toThrow('Authentication failed: 401 Unauthorized');
     expect(leaveSetup).not.toHaveBeenCalled();
-    await expect(onSaved()).resolves.toEqual({ mode: 'started', url: OWNER.url });
+    await expect(onSaved()).resolves.toEqual({ mode: 'started', url: OWNER.url, launchKey: OWNER.auth.launchKey });
 
     expect(acquire).toHaveBeenCalledTimes(2);
   });

@@ -33,9 +33,9 @@ import type { McpLeaseCounter } from '../webui/routes/player.js';
 import { createServer } from '../webui/server.js';
 import { isAddressRewritingHost } from '../webui/source-address.js';
 import { VisualizerHub } from '../webui/visualizer-hub.js';
-import { isTlsEnabled } from '../webui/tls.js';
 import { acquireOrAttach } from './acquire.js';
 import { buildAttachLines, buildBannerLines, buildSetupHeadline } from './banner.js';
+import { readLaunchKey, withLaunchKey, writeLaunchKey } from './launch-key.js';
 import {
   getPersist,
   getVisualizer,
@@ -268,9 +268,11 @@ async function acquirePlayerPort(state: ConfiguredState, runtime: Runtime): Prom
     const attachLines = buildAttachLines(adminUrl, result.url.startsWith('https:'));
     logger.info(`${attachLines.join(' ')} Standing down.`);
     process.stdout.write(`\n  ${attachLines.join('\n  ')}\n\n`);
-    if (!launchedByMcp) maybeOpenBrowser(adminUrl, config.webui.autoOpenBrowser);
+    if (!launchedByMcp) maybeOpenBrowser(withLaunchKey(adminUrl, readLaunchKey(config.webui.port)), config.webui.autoOpenBrowser);
     return { mode: 'attached', url: result.url };
   }
+  // Before the bind's first request runs, so a launcher finds this start's key.
+  writeLaunchKey(config.webui.port, auth.launchKey);
   return { mode: 'owner', owner: { runtime, url: result.url, server: result.server, auth, guests, broadcaster, visualizer } };
 }
 
@@ -300,14 +302,12 @@ async function runPortOwner(owner: PortOwner): Promise<void> {
     keepPlaybackAttached();
   }
 
-  if (config.webui.auth.mode !== 'none' && config.webui.auth.adminAccess === 'anywhere' && !isTlsEnabled(config.webui.tls)) {
-    logger.warn('Jukebox Remote admits admin logins from anywhere over plain HTTP, so the admin password crosses the network in clear text. Turn on HTTPS on the settings page.');
-  }
+  auth.warnOnPlainHttpLogin();
   if (isAddressRewritingHost()) {
     logger.warn('Jukebox Remote runs in a container or WSL, where port forwarding may rewrite source addresses. LAN checks may then treat internet clients as local.');
   }
   logBanner(config.webui);
-  maybeOpenBrowser(adminPageUrl(owner.url), config.webui.autoOpenBrowser);
+  maybeOpenBrowser(withLaunchKey(adminPageUrl(owner.url), auth.launchKey), config.webui.autoOpenBrowser);
   installShutdownTriggers();
 
   logger.info('Jukebox Remote started successfully (port owner)');

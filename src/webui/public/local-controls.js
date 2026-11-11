@@ -55,10 +55,12 @@ export function setLocalPeer(isLocal) {
   setHidden(remoteNote, isLocal);
 }
 
-// A passwordless session hides Log out, since the page would log straight back in. The server writes
-// the notice text, since only it knows the config source. The notice sits in the local-only Player group.
-export function showAdminControls(session) {
-  setHidden(logoutBtn, session.passwordlessHere === true);
+// A passwordless page that holds the launch key hides Log out, since a launcher on this computer logs straight back in.
+// A page with no key, such as one a tunnel on the host serves, keeps Log out, since its next load shows the login view.
+// The server writes the notice text, since only it knows the config source. The notice sits in the local-only
+// Player group.
+export function showAdminControls(session, holdsLaunchKey) {
+  setHidden(logoutBtn, session.passwordlessHere === true && holdsLaunchKey);
   noAdminPasswordNotice.textContent = session.noAdminPasswordMessage ?? '';
   setHidden(noAdminPasswordNotice, session.noAdminPasswordMessage === undefined);
 }

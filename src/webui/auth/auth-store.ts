@@ -27,6 +27,11 @@ const AdminSessionSchema = z.object({
   credentialEpoch: z.string().min(1),
   /** The nickname the host queues under from the guest page. A session stored before it existed reads as none. */
   hostNickname: z.string().nullable().default(null),
+  /**
+   * Whether the session's last request passed `isLocalRequest`, so narrowing the admin access level ends
+   * a session last seen from outside it. A session stored before it existed reads as not local.
+   */
+  lastLocal: z.boolean().default(false),
 });
 
 /** A session or ban stored before device cookies existed has no device id, so it reads as null. */

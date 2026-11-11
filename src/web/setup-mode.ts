@@ -16,7 +16,10 @@ export type PortAcquisition<Owner extends { url: string }> =
   | { mode: 'attached'; url: string }
   | { mode: 'mcp-exited' };
 
-interface SetupSaveDeps<Owner extends { url: string }> {
+/** The player's own address and the launch key its start made. */
+type StartedOwner = { url: string; auth: { launchKey: string } };
+
+interface SetupSaveDeps<Owner extends StartedOwner> {
   resolveState: () => Promise<ConfigState>;
   /** Builds the runtime and binds the player port, or finds another player on it. */
   acquire: (state: ConfiguredState) => Promise<PortAcquisition<Owner>>;
@@ -35,7 +38,7 @@ const MCP_EXITED_DURING_SETUP =
  * The settings server runs it after each Save, one Save at a time, so a shortcut launch with no
  * settings starts the player without a relaunch. A rejection keeps setup mode with its reason.
  */
-export function createSetupSaveHandler<Owner extends { url: string }>(deps: SetupSaveDeps<Owner>): () => Promise<SaveTakeover> {
+export function createSetupSaveHandler<Owner extends StartedOwner>(deps: SetupSaveDeps<Owner>): () => Promise<SaveTakeover> {
   return async (): Promise<SaveTakeover> => {
     const state = await deps.resolveState();
     if (!state.configured) throw new Error(state.failure?.reason ?? NO_USABLE_URL);
@@ -45,6 +48,6 @@ export function createSetupSaveHandler<Owner extends { url: string }>(deps: Setu
     deps.leaveSetup();
     if (acquired.mode === 'attached') return { mode: 'attached', url: acquired.url };
     deps.runOwner(acquired.owner);
-    return { mode: 'started', url: acquired.owner.url };
+    return { mode: 'started', url: acquired.owner.url, launchKey: acquired.owner.auth.launchKey };
   };
 }

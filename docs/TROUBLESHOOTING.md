@@ -44,8 +44,8 @@ Run `navidrome-mcp shortcut` again after you move or reinstall navidrome-mcp, si
 
 The player asks for an admin password that nobody knows.
 
-1. In `settings.json`, set `webui.auth.adminPasswordHash` to `null`. A running player reads the change within about 10 seconds. Another way is to turn off **Ask for the admin password on this computer** with `navidrome-mcp settings`, which applies after the player restarts.
-2. Open the Jukebox Remote on the host computer, such as by asking the AI. It opens as admin with no login.
+1. In `settings.json`, set `webui.auth.adminPasswordHash` to `null`. A running player reads the change within about 10 seconds. Another way is to turn off **Ask for the admin password on this computer** with `navidrome-mcp settings`, which applies the next time a player page loads.
+2. Open the Jukebox Remote from the desktop shortcut on the host computer, or ask the AI to open it. It opens as admin with no login.
 3. Set a new password in **All settings** in the gear menu.
 
 ## Logs and Debug Mode

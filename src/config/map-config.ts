@@ -20,8 +20,10 @@ import { logger } from '../utils/logger.js';
 import { isLanReachable } from '../webui/network.js';
 import { resolveFeatureSwitches } from './feature-switches.js';
 import { nonEmpty } from './non-empty.js';
-import type { RawConfigInput } from './schema.js';
+import type { Config, RawConfigInput } from './schema.js';
 import type { SettingsFile } from './store.js';
+
+type StoredWebuiAuth = NonNullable<SettingsFile['webui']>['auth'];
 
 function cleanList(value: readonly (string | null | undefined)[] | null | undefined): string[] | undefined {
   if (value === null || value === undefined) return undefined;
@@ -116,6 +118,16 @@ function bindConflict(section: string, listener: string, host: string, expose: b
   );
 }
 
+/** A running player re-reads these values from the store too, so it fills an absent key with the same default as startup. */
+export function mapStoreWebuiAuth(auth: StoredWebuiAuth): Config['webui']['auth'] {
+  return {
+    mode: auth?.mode ?? 'none',
+    adminPasswordHash: nonEmpty(auth?.adminPasswordHash) ?? null,
+    adminAccess: auth?.adminAccess ?? 'localhost',
+    askPasswordOnThisComputer: auth?.askPasswordOnThisComputer ?? true,
+  };
+}
+
 /** `mpvPath` is the caller's resolved mpv binary, and null turns playback off. */
 export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null): RawConfigInput {
   const nav = settings.navidrome ?? {};
@@ -199,12 +211,7 @@ export function mapStoreToConfig(settings: SettingsFile, mpvPath: string | null)
         certPath: nonEmpty(webui.tls?.certPath) ?? null,
         keyPath: nonEmpty(webui.tls?.keyPath) ?? null,
       },
-      auth: {
-        mode: webui.auth?.mode ?? 'none',
-        adminPasswordHash: nonEmpty(webui.auth?.adminPasswordHash) ?? null,
-        adminAccess: webui.auth?.adminAccess ?? 'localhost',
-        askPasswordOnThisComputer: webui.auth?.askPasswordOnThisComputer ?? true,
-      },
+      auth: mapStoreWebuiAuth(webui.auth),
     },
 
     jukebox: {

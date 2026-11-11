@@ -7,6 +7,9 @@
 // The spawn, the owner probe and the browser launch are stubs, so no test starts a player or opens a tab.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { WebOwnerProbe } from '../../../src/web/acquire.js';
 import { makeTestConfig } from '../../helpers/test-config.js';
@@ -37,6 +40,7 @@ vi.mock('../../../src/webui/network.js', async (importOriginal) => {
 const { openJukeboxRemote } = await import('../../../src/tools/jukebox-remote.js');
 const { JUKEBOX_REMOTE_START_TIMEOUT_MS } = await import('../../../src/constants/timeouts.js');
 const { jukeboxLogPath } = await import('../../../src/web/log-path.js');
+const { createLaunchKey, writeLaunchKey } = await import('../../../src/web/launch-key.js');
 
 const PORT = 8808;
 const ADMIN_URL = `http://127.0.0.1:${String(PORT)}/admin`;
@@ -50,12 +54,22 @@ function configWith(webui: Record<string, unknown> = {}): ReturnType<typeof make
   return { ...base, webui: { ...base.webui, port: PORT, host: '127.0.0.1', autoOpenBrowser: false, ...webui } };
 }
 
+// A private folder, so no launch key file another test or a running player wrote reaches these tests.
+let dir: string;
+let savedPath: string | undefined;
+
 beforeEach(() => {
+  savedPath = process.env['NAVIDROME_CONFIG_PATH'];
+  dir = mkdtempSync(join(tmpdir(), 'nd-open-remote-'));
+  process.env['NAVIDROME_CONFIG_PATH'] = join(dir, 'settings.json');
   readSavedWebuiSettingsMock.mockReturnValue(null);
   listLanInterfacesMock.mockReturnValue([{ iface: 'eth0', address: '192.168.1.20', url: `http://192.168.1.20:${String(PORT)}` }]);
 });
 
 afterEach(() => {
+  if (savedPath === undefined) delete process.env['NAVIDROME_CONFIG_PATH'];
+  else process.env['NAVIDROME_CONFIG_PATH'] = savedPath;
+  rmSync(dir, { recursive: true, force: true });
   vi.useRealTimers();
   vi.clearAllMocks();
 });
@@ -71,6 +85,19 @@ describe('openJukeboxRemote', () => {
     expect(ensureWebForPlaybackMock).toHaveBeenCalledWith(config);
     expect(result).toEqual({ url: ADMIN_URL, lanUrls: [] });
     expect(openBrowserMock).toHaveBeenCalledExactlyOnceWith(ADMIN_URL);
+  });
+
+  it('opens the address with the launch key the player wrote, and returns only the plain address to the AI', async () => {
+    const key = createLaunchKey();
+    writeLaunchKey(PORT, key);
+    ensureWebForPlaybackMock.mockResolvedValue('running');
+    probeWebOwnerMock.mockResolvedValue({ ...probe('ours'), lan: true });
+
+    const result = await openJukeboxRemote(configWith());
+
+    expect(openBrowserMock).toHaveBeenCalledExactlyOnceWith(`${ADMIN_URL}?launch=${key}`);
+    expect(result).toEqual({ url: ADMIN_URL, lanUrls: [`http://192.168.1.20:${String(PORT)}/admin`] });
+    expect(JSON.stringify(result)).not.toContain(key);
   });
 
   it('waits for a spawned player to answer before it opens the address', async () => {

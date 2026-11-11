@@ -6,8 +6,10 @@
 
 import { isDeepStrictEqual } from 'node:util';
 import type { Config } from '../config.js';
+import { mapStoreWebuiAuth } from '../config/map-config.js';
 import { pruneEmptyValues } from '../config/settings-file-checks.js';
 import { SettingsFileSchema, type SettingsFile } from '../config/store.js';
+import { withLaunchKey } from '../web/launch-key.js';
 import { loopbackUrl } from '../webui/network.js';
 import { adminPageUrl } from '../webui/page-paths.js';
 import { isTlsEnabled } from '../webui/tls.js';
@@ -18,11 +20,9 @@ export type SettingsPageHost = 'mcp-setup' | 'jukebox-setup' | 'jukebox-settings
 /**
  * How a host that waits on a Save took over: it owns the player port, or another player already does.
  * The url is the player's base address, which for another player can differ from the saved scheme.
+ * A started player also gives the launch key it holds, so its link opens it with no login.
  */
-export interface SaveTakeover {
-  mode: 'started' | 'attached';
-  url: string;
-}
+export type SaveTakeover = { mode: 'started'; url: string; launchKey: string } | { mode: 'attached'; url: string };
 
 /** A host start failure that no settings change fixes, so the page shows its message as the remedy. */
 export class HostStartError extends Error {}
@@ -31,6 +31,8 @@ interface NextStep {
   text: string;
   /** The page shows it as a link after the text. */
   url?: string;
+  /** The link's target when it differs from `url`, so the launch key opens the player but never shows on the page. */
+  href?: string;
 }
 
 type Restart = 'mcp' | 'player';
@@ -55,11 +57,11 @@ const RESTART_LINES: Readonly<Record<Restart, string>> = {
     'A new start is the next play from the AI, a restart of the MCP client, or `navidrome-mcp jukebox`.',
 };
 
-const ADMIN_PASSWORD_RULES = [
-  'A new admin password applies to a running player within about 10 seconds and signs out every admin session.',
-  'This holds when the player runs from settings.json and Access already uses a password.',
-  'A change of Access, or a player started from environment variables, needs a restart.',
-] as const;
+const ADMIN_PASSWORD_LINE = 'A new admin password applies to a running player within about 10 seconds and signs out every admin session.';
+const LIVE_AUTH_LINE =
+  'Ask for the admin password on this computer and Admin login allowed from apply to a running player the next time one of its pages loads.';
+const LIVE_APPLY_CONDITION = 'This holds when the player runs from settings.json and Access already uses a password.';
+const ADMIN_PASSWORD_RESTART_CASES = 'A change of Access, or a player started from environment variables, needs a restart.';
 
 const NO_CHANGES_MESSAGE = 'No changes to save.';
 
@@ -83,11 +85,22 @@ export function laterSaveMessage(savedTo: string, change: SaveChange, namedInNex
   // storedFile holds coerced values, so only the cleared notice shows that a save fixed a hand-edit slip.
   // A save that dropped an empty value differs from storedFile, so it reports the write too.
   if (!clearedStoreNotice && isDeepStrictEqual(storedFile, pruned(saved))) return NO_CHANGES_MESSAGE;
-  const restarts = restartsFor(pruned(withoutAdminHash(storedSettings)), pruned(withoutAdminHash(saved)));
+  const restarts = restartsFor(pruned(withoutLiveAuth(storedSettings)), pruned(withoutLiveAuth(saved)));
   const lines = (['mcp', 'player'] as const)
     .filter((restart) => restarts.has(restart) && restart !== namedInNextSteps)
     .map((restart) => RESTART_LINES[restart]);
-  return [savedTo, ...lines, ...(adminPasswordChanged ? ADMIN_PASSWORD_RULES : [])].join(' ');
+  return [savedTo, ...lines, ...liveApplyLines(adminPasswordChanged, liveAuthChanged(storedSettings, saved))].join(' ');
+}
+
+/** The admin password and the live auth keys share one condition, so a Save that changes both states it once. */
+function liveApplyLines(adminPasswordChanged: boolean, liveAuth: boolean): string[] {
+  if (!adminPasswordChanged && !liveAuth) return [];
+  return [
+    ...(adminPasswordChanged ? [ADMIN_PASSWORD_LINE] : []),
+    ...(liveAuth ? [LIVE_AUTH_LINE] : []),
+    LIVE_APPLY_CONDITION,
+    ...(adminPasswordChanged ? [ADMIN_PASSWORD_RESTART_CASES] : []),
+  ];
 }
 
 function restartsFor(before: SettingsFile, after: SettingsFile): Set<Restart> {
@@ -101,11 +114,19 @@ function restartsFor(before: SettingsFile, after: SettingsFile): Set<Restart> {
   return restarts;
 }
 
-/** A new admin password has its own live-apply lines, so its hash alone names no restart. */
-function withoutAdminHash(settings: SettingsFile): SettingsFile {
+/** A running player applies these keys itself, and each has its own live-apply line, so a change of them alone names no restart. */
+function withoutLiveAuth(settings: SettingsFile): SettingsFile {
   const auth = settings.webui?.auth;
   if (auth === undefined || auth === null) return settings;
-  return { ...settings, webui: { ...settings.webui, auth: { ...auth, adminPasswordHash: undefined } } };
+  const liveKeysCleared = { adminPasswordHash: undefined, adminAccess: undefined, askPasswordOnThisComputer: undefined };
+  return { ...settings, webui: { ...settings.webui, auth: { ...auth, ...liveKeysCleared } } };
+}
+
+/** Compares the values the player reads, so a save that only writes a default it already read names no change. */
+function liveAuthChanged(before: SettingsFile, after: SettingsFile): boolean {
+  const old = mapStoreWebuiAuth(before.webui?.auth);
+  const next = mapStoreWebuiAuth(after.webui?.auth);
+  return old.adminAccess !== next.adminAccess || old.askPasswordOnThisComputer !== next.askPasswordOnThisComputer;
 }
 
 function pruned(settings: SettingsFile): SettingsFile {
@@ -120,11 +141,13 @@ const PAGE_CLOSED_STEP: NextStep = {
  * Replaces every restart line after a Save over a store that gave no usable config or a Save a host took over.
  * In MCP setup mode over a usable store it replaces only the MCP restart line, since a running player may have read that store.
  * A host that took over gives the player's address. Otherwise the address comes from the saved port and TLS paths, not the defaults.
+ * Only the started player's link carries its launch key, since every other link's step names a start first, and that start makes a new key.
  */
 export function firstSaveSteps(host: SettingsPageHost, webui: Config['webui'], takeover: SaveTakeover | null): NextStep[] {
   const url = adminPageUrl(takeover?.url ?? loopbackUrl(webui.port, isTlsEnabled(webui.tls)));
   if (takeover?.mode === 'started') {
-    return [{ text: 'The Jukebox Remote is starting.' }, { text: 'It needs mpv to play music. Open it at', url }, PAGE_CLOSED_STEP];
+    const openStep: NextStep = { text: 'It needs mpv to play music. Open it at', url, href: withLaunchKey(url, takeover.launchKey) };
+    return [{ text: 'The Jukebox Remote is starting.' }, openStep, PAGE_CLOSED_STEP];
   }
   if (takeover?.mode === 'attached') {
     return [
