@@ -1,7 +1,7 @@
 import { getJson } from './api.js';
 import { byId } from './dom.js';
 import { canChangePlayerSettings } from './local-controls.js';
-import { clearMessage } from './messages.js';
+import { openDialog } from './messages.js';
 import { openAllSettings } from './settings.js';
 
 const openBtn = byId('open-network-info');
@@ -9,7 +9,6 @@ const dialog = byId('network-info-dialog');
 const help = byId('network-info-help');
 const list = byId('network-info-list');
 const hint = byId('network-info-hint');
-const status = byId('network-info-status');
 
 // The settings page opens only on the player's computer, so a remote viewer gets the place named instead.
 const LOCAL_SETTINGS = 'All settings';
@@ -19,7 +18,6 @@ const RESTART_STEP = 'then shut down the player and start it again';
 export function bindNetworkInfo() {
   openBtn.addEventListener('click', async () => {
     const info = await getJson('/api/network-info');
-    clearMessage(status);
     if (info === null) {
       list.replaceChildren();
       hint.replaceChildren();
@@ -27,7 +25,7 @@ export function bindNetworkInfo() {
     } else {
       renderNetworkInfo(info);
     }
-    dialog.showModal();
+    openDialog(dialog);
   });
 }
 
@@ -53,7 +51,7 @@ function buildAllSettingsButton() {
   button.type = 'button';
   button.className = 'btn-secondary small';
   button.textContent = LOCAL_SETTINGS;
-  button.addEventListener('click', () => void openAllSettings(status));
+  button.addEventListener('click', () => void openAllSettings());
   return button;
 }
 

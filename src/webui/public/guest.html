@@ -21,6 +21,14 @@
           <path fill="currentColor" d="M784-120 532-372q-30 24-69 38t-83 14q-109 0-184.500-75.500T120-580q0-109 75.500-184.500T380-840q109 0 184.500 75.500T640-580q0 44-14 83t-38 69l252 252-56 56ZM380-400q75 0 127.500-52.500T560-580q0-75-52.500-127.500T380-760q-75 0-127.500 52.500T200-580q0 75 52.500 127.500T380-400Z"/>
         </svg>
       </button>
+      <button type="button" class="ghost-btn" id="guest-theme-toggle" aria-label="Switch to dark mode" hidden>
+        <svg class="icon-moon" viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true">
+          <path fill="currentColor" d="M480-120q-150 0-255-105T120-480q0-150 105-255t255-105q14 0 27.500 1t26.500 3q-41 29-65.500 75.500T444-660q0 90 63 153t153 63q55 0 101-24.500t75-65.500q2 13 3 26.500t1 27.500q0 150-105 255T480-120Zm0-80q88 0 158-48.500T740-375q-20 5-40 8t-40 3q-123 0-209.500-86.500T364-660q0-20 3-40t8-40q-78 32-126.500 102T200-480q0 116 82 198t198 82Z"/>
+        </svg>
+        <svg class="icon-sun" viewBox="0 -960 960 960" width="22" height="22" aria-hidden="true" hidden>
+          <path fill="currentColor" d="M480-360q50 0 85-35t35-85q0-50-35-85t-85-35q-50 0-85 35t-35 85q0 50 35 85t85 35Zm0 80q-83 0-141.500-58.500T280-480q0-83 58.500-141.500T480-680q83 0 141.500 58.500T680-480q0 83-58.500 141.500T480-280ZM200-440H40v-80h160v80Zm720 0H760v-80h160v80ZM440-760v-160h80v160h-80Zm0 720v-160h80v160h-80ZM256-650l-101-97 57-59 96 100-52 56Zm492 496-97-101 53-55 101 97-57 59Zm-98-550 97-101 59 57-100 96-56-52ZM154-212l101-97 55 53-97 101-59-57Z"/>
+        </svg>
+      </button>
       <span class="conn" data-state="connecting" aria-live="polite">
         <span class="conn-dot"></span>
         <span class="conn-label">Connecting&hellip;</span>
@@ -77,7 +85,6 @@
         <button type="submit" class="primary-btn save-btn" id="guest-name-save">Save</button>
         <button type="button" class="btn-secondary" id="guest-name-cancel">Cancel</button>
       </form>
-      <div class="msg-slot msg-lines-2 guest-name-msg"><p class="msg" id="guest-name-status" aria-live="polite"></p></div>
     </div>
 
     <section class="queue" aria-label="Play queue">
@@ -113,8 +120,6 @@
     </section>
   </main>
 
-  <div class="msg-slot msg-lines-2 guest-status-bar" id="guest-status-bar"><p class="msg" id="guest-status" aria-live="polite"></p></div>
-
   <dialog id="guest-welcome" class="modal" aria-labelledby="guest-welcome-title">
     <form method="dialog" class="modal-content">
       <header class="modal-header">
@@ -135,7 +140,6 @@
         </div>
       </div>
       <button type="button" class="btn-secondary" id="guest-welcome-done">Got it</button>
-      <div class="msg-slot msg-lines-2"><p class="msg" id="guest-nickname-status" aria-live="polite"></p></div>
     </form>
   </dialog>
 

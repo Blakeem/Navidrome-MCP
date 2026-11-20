@@ -131,7 +131,6 @@
       </button>
     </section>
 
-    <div class="msg-slot"><p class="msg control-status" id="control-status" aria-live="polite"></p></div>
     <div class="output-banner" id="output-banner" role="status" hidden>
       <p class="output-banner-text" id="output-banner-text"></p>
       <button type="button" class="btn-secondary output-banner-btn" aria-describedby="output-banner-text">Pick output</button>
@@ -314,7 +313,6 @@
         </button>
       </header>
       <ul class="audio-device-list" id="audio-device-list"></ul>
-      <div class="msg-slot msg-lines-2"><p class="msg" id="audio-device-status" aria-live="polite"></p></div>
     </form>
   </dialog>
 
@@ -338,7 +336,17 @@
           <input type="radio" class="visually-hidden" name="theme" id="theme-system" value="system" />
           <label for="theme-system" class="mode-toggle-btn">System</label>
         </div>
-        <p class="modal-hint">Light and Dark apply to every device. System follows each device's own setting.</p>
+        <p class="modal-hint">Light and Dark apply to every device, guests included. With System, each device picks its own.</p>
+      </fieldset>
+      <fieldset class="settings-group" id="settings-device-theme-group" hidden>
+        <legend class="settings-heading">Theme</legend>
+        <div class="mode-toggle theme-toggle">
+          <input type="radio" class="visually-hidden" name="device-theme" id="device-theme-light" value="light" />
+          <label for="device-theme-light" class="mode-toggle-btn">Light</label>
+          <input type="radio" class="visually-hidden" name="device-theme" id="device-theme-dark" value="dark" />
+          <label for="device-theme-dark" class="mode-toggle-btn">Dark</label>
+        </div>
+        <p class="modal-hint">Applies to this device only.</p>
       </fieldset>
       <fieldset class="settings-group" id="settings-player-group" hidden>
         <legend class="settings-heading">Player</legend>
@@ -357,7 +365,7 @@
         </label>
         <p class="modal-hint" id="no-admin-password-notice" hidden></p>
         <button type="button" class="btn-secondary" id="open-all-settings" aria-describedby="all-settings-hint"><svg viewBox="0 -960 960 960" aria-hidden="true"><path fill="currentColor" d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z"/></svg>All settings</button>
-        <p class="modal-hint" id="all-settings-hint">Navidrome connection, admin password, access and more. Opens on this computer.</p>
+        <p class="modal-hint" id="all-settings-hint">Navidrome connection, admin password, access and more.</p>
       </fieldset>
       <fieldset class="settings-group">
         <legend class="settings-heading">This player</legend>
@@ -368,7 +376,6 @@
         </div>
       </fieldset>
       <p class="modal-hint" id="settings-remote-note" hidden>Player settings and Shut down are on the player's computer.</p>
-      <div class="msg-slot msg-lines-3"><p class="msg" id="settings-status" aria-live="polite"></p></div>
     </form>
   </dialog>
 
@@ -431,7 +438,6 @@
       <div class="modal-pane" id="play-pane-favorites" role="tabpanel" aria-labelledby="play-tab-favorites" hidden>
         <ul class="lib-list" id="favorites-list"></ul>
       </div>
-      <div class="msg-slot msg-lines-2 play-status-bar"><p class="msg" id="play-status" aria-live="polite"></p></div>
     </form>
   </dialog>
 
@@ -448,7 +454,6 @@
       <p class="modal-help" id="network-info-help"></p>
       <ul class="network-list" id="network-info-list"></ul>
       <p class="modal-hint" id="network-info-hint"></p>
-      <div class="msg-slot msg-lines-3"><p class="msg" id="network-info-status" aria-live="polite"></p></div>
     </form>
   </dialog>
 
@@ -486,13 +491,11 @@
             <button type="button" class="btn-secondary" id="guest-ban-cancel">Cancel</button>
           </div>
         </div>
-        <div class="msg-slot msg-lines-4"><p class="msg" id="guest-message" aria-live="polite"></p></div>
       </fieldset>
       <fieldset class="settings-group">
         <legend class="settings-heading">Banned</legend>
         <p class="modal-help" id="ban-list-status"></p>
         <ul class="network-list" id="ban-list"></ul>
-        <div class="msg-slot msg-lines-3"><p class="msg" id="ban-message" aria-live="polite"></p></div>
       </fieldset>
       <fieldset class="settings-group">
         <legend class="settings-heading">Song limit</legend>
@@ -502,7 +505,6 @@
           <input type="number" id="jukebox-guest-limit" min="1" max="20" step="1" required aria-describedby="jukebox-guest-limit-hint" />
           <button type="button" class="primary-btn save-btn" id="jukebox-guest-limit-save">Save</button>
         </div>
-        <div class="msg-slot msg-lines-2"><p class="msg" id="jukebox-guest-limit-message" aria-live="polite"></p></div>
       </fieldset>
     </form>
   </dialog>
@@ -574,13 +576,12 @@
           </div>
         </div>
       </div>
-      <div class="msg-slot msg-lines-3"><p class="msg" id="jukebox-message" aria-live="polite"></p></div>
     </form>
   </dialog>
 
   <dialog id="jukebox-fullscreen" class="jukebox-fullscreen" aria-label="Jukebox QR code">
     <img class="jukebox-qr" id="jukebox-fullscreen-qr" alt="" />
-    <p>Scan to add songs to the queue.</p>
+    <p class="jukebox-fullscreen-caption">Scan to add songs to the queue.</p>
   </dialog>
 
   <!-- A module script runs after parsing, so each module looks up its elements at import. -->

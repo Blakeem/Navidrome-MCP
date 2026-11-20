@@ -46,7 +46,7 @@ export class GuestPage {
   readonly changeNameButton: Locator;
   readonly nicknameInput: Locator;
   readonly nicknameSaveButton: Locator;
-  readonly nicknameStatus: Locator;
+  readonly notice: Locator;
 
   readonly joinCard: Locator;
   readonly refusedJoinCard: Locator;
@@ -74,15 +74,16 @@ export class GuestPage {
     this.queue = page.getByRole('region', { name: 'Play queue' });
     this.queueRows = this.queue.getByRole('listitem');
     this.emptyQueueText = this.queue.getByText('Queue is empty', { exact: true });
-    // The "You are" line and the name status are live regions with no role, and the host banner also
-    // starts with "You are", so their ids locate them.
+    // The "You are" line is a live region with no role, and the host banner also starts with "You are",
+    // so its id locates it.
     this.jukeboxLine = page.locator('#guest-jukebox');
     this.songsLeft = addSongs.getByText(/^\d+ of \d+ songs left$/);
     const main = page.getByRole('main');
     this.changeNameButton = main.getByRole('button', { name: 'Change name' });
     this.nicknameInput = main.getByRole('textbox', { name: 'Nickname', exact: true });
     this.nicknameSaveButton = main.getByRole('button', { name: 'Save', exact: true });
-    this.nicknameStatus = page.locator('#guest-name-status');
+    // The action notice has no name and moves into the open dialog, so its test id locates it page-wide.
+    this.notice = page.getByTestId('notice');
 
     // Each card is one section that its title names, so the title tells the cards apart.
     this.joinCard = page.getByRole('region', { name: 'Join the jukebox' });

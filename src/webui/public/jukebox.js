@@ -2,7 +2,7 @@
 
 import { getJson, postJson } from './api.js';
 import { byId, setHidden } from './dom.js';
-import { clearMessage, showMessage } from './messages.js';
+import { clearNotice, notify, openDialog } from './messages.js';
 import { formatDateTime } from './time-format.js';
 
 // Music Assistant caps its guest links at 7 days, so a longer lifetime earns a warning.
@@ -14,7 +14,6 @@ const CLOSE_CONFIRM = 'Close the jukebox? Every guest is signed out and the code
 
 const openBtn = byId('open-jukebox');
 const dialog = byId('jukebox-dialog');
-const message = byId('jukebox-message');
 const lifetimeField = byId('jukebox-lifetime-field');
 const lifetime = byId('jukebox-lifetime');
 const lifetimeWarn = byId('jukebox-lifetime-warn');
@@ -48,10 +47,9 @@ let shareLink = 'lan';
 
 export function bindJukebox() {
   openBtn.addEventListener('click', () => {
-    clearMessage(message);
     closeNewConfirm();
     void refresh();
-    dialog.showModal();
+    openDialog(dialog);
   });
   lifetime.addEventListener('change', renderLifetimeWarning);
   openJukeboxBtn.addEventListener('click', () => void makeCode(false));
@@ -93,7 +91,8 @@ async function refresh() {
 
 function render() {
   const active = view?.active === true;
-  if (view === null) showMessage(message, 'Could not load the jukebox. Check the connection and try again.', 'error');
+  // A failure that arrives after the dialog closed would show on the page, away from the dialog it explains.
+  if (view === null && dialog.open) notify('Could not load the jukebox. Check the connection and try again.', 'error');
   setHidden(closedState, view === null || active);
   setHidden(openState, !active);
   if (!active) {
@@ -156,17 +155,17 @@ function qrDataUrl(link) {
 async function saveShareLink(link) {
   const previous = shareLink;
   shareLink = link;
-  clearMessage(message);
+  clearNotice();
   renderLink();
   const { ok, data } = await postJson('/api/jukebox/settings', { shareLink: link });
   if (!ok) {
     shareLink = previous;
     renderShareSwitch();
     renderLink();
-    showMessage(message, data?.error ?? 'The link choice was not saved. Check the connection and try again.', 'error');
+    notify(data?.error ?? 'The link choice was not saved. Check the connection and try again.', 'error');
     return;
   }
-  if (data?.persisted === false) showMessage(message, 'The link choice holds until the player restarts. settings.json was not written.', 'warning');
+  if (data?.persisted === false) notify('The link choice holds until the player restarts. settings.json was not written.', 'warning');
 }
 
 function renderLifetimeWarning() {
@@ -188,12 +187,12 @@ function closeNewConfirm() {
 async function makeCode(signOutGuests) {
   openJukeboxBtn.disabled = true;
   newMakeBtn.disabled = true;
-  clearMessage(message);
+  clearNotice();
   const error = await makeNewCode(signOutGuests);
   openJukeboxBtn.disabled = false;
   newMakeBtn.disabled = false;
   if (error !== null) {
-    showMessage(message, error, 'error');
+    notify(error, 'error');
     return;
   }
   closeNewConfirm();
@@ -202,15 +201,15 @@ async function makeCode(signOutGuests) {
 
 async function closeJukebox() {
   if (!window.confirm(CLOSE_CONFIRM)) return;
-  clearMessage(message);
+  clearNotice();
   closeBtn.disabled = true;
   const { ok, data } = await postJson('/api/jukebox/key/revoke');
   closeBtn.disabled = false;
   if (!ok) {
-    showMessage(message, data?.error ?? 'The jukebox did not close. Try again.', 'error');
+    notify(data?.error ?? 'The jukebox did not close. Try again.', 'error');
     return;
   }
-  showMessage(message, 'The jukebox closed. Every guest was signed out.', 'success');
+  notify('The jukebox closed. Guests were signed out.', 'success');
   closeNewConfirm();
   await refresh();
 }
@@ -220,7 +219,7 @@ function openFullscreen() {
   if (link === null) return;
   fullscreenQr.src = qrDataUrl(link);
   fullscreenQr.alt = qr.alt;
-  fullscreen.showModal();
+  openDialog(fullscreen);
 }
 
 async function copyLink() {

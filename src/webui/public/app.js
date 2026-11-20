@@ -18,8 +18,9 @@ import { bindPlayDialog } from './play-dialog.js';
 import { rebaseClock } from './playback-clock.js';
 import { bindQueue, renderQueue, revealCurrentRow } from './queue.js';
 import { bindSettings } from './settings.js';
+import { bindDeviceTheme } from './settings-device-theme.js';
 import { playingIndex, storeSnapshot } from './snapshot.js';
-import { applyTheme, applyThemeHint } from './theme.js';
+import { applyTheme, applyThemeHint, ignoreDeviceTheme } from './theme.js';
 import { bindTransport, renderTransport } from './transport.js';
 import { bindVisualizer, renderVisualizer } from './visualizer.js';
 import { bindVolume, renderVolume } from './volume.js';
@@ -111,6 +112,7 @@ function bootPlayer(session) {
   bindPlayDialog();
   bindNetworkInfo();
   bindSettings();
+  bindDeviceTheme();
   bindPowerButton();
   bindLyricsView();
   bindVisualizer();
@@ -134,6 +136,8 @@ async function bootstrap() {
   bindLoginForm();
   setLoginRequiredHandler(() => void returnToLogin());
   const session = await readSession();
+  // Before the login branch, so the login view on the player's computer drops the choice too.
+  if (session?.isLocal === true) ignoreDeviceTheme();
   if (adminView(session) !== 'player') {
     showLoginView(session);
     return;

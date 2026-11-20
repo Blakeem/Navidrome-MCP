@@ -4,7 +4,7 @@
 import { getJsonResult, postJson } from './api.js';
 import { buildIcon, byId, ICON_CHECK, setHidden, SYMBOL_VIEWBOX } from './dom.js';
 import { answerSettled, ANSWER_GRACE_MS, buttonState, queuedSongs, sendAdds } from './guest-add-state.js';
-import { clearMessage, showMessage } from './messages.js';
+import { announce, clearNotice, notify } from './messages.js';
 import { removeConfirmText } from './queue-list.js';
 import { formatTime } from './time-format.js';
 
@@ -21,8 +21,6 @@ const input = byId('guest-search-input');
 const slots = byId('guest-slots');
 const searchStatus = byId('guest-search-status');
 const results = byId('guest-results');
-const statusBar = byId('guest-status-bar');
-const statusLine = byId('guest-status');
 
 // The last song count the server confirmed, from the stream or a request's answer.
 let remaining = 0;
@@ -51,10 +49,6 @@ export function bindGuestAdd() {
     event.preventDefault();
     void search(input.value);
   });
-  // A long song title wraps the status bar past its reserved height, so the page padding follows the bar.
-  new ResizeObserver(() => {
-    document.body.style.setProperty('--status-bar-height', `${statusBar.offsetHeight}px`);
-  }).observe(statusBar);
 }
 
 // Every join card hides the section and ends the session, so nothing the session started may show in a later one.
@@ -69,7 +63,7 @@ export function showGuestAdd(visible) {
   answers.clear();
   searchStatus.textContent = '';
   results.replaceChildren();
-  clearMessage(statusLine);
+  clearNotice();
 }
 
 /**
@@ -101,7 +95,7 @@ export function renderAddState(items) {
 /** The queue's remove button confirms first, so this only sends the removal. */
 export async function removeSong(item) {
   const generation = sessionGeneration;
-  clearMessage(statusLine);
+  clearNotice();
   removing.add(item.songId);
   paintButtons();
   const { ok, status, data } = await postJson('/api/guest/queue/remove', { entryId: item.entryId });
@@ -129,9 +123,10 @@ function applyRemaining(value) {
   paintSlots();
 }
 
+// The song's button or queue row and the song count already show a success, so only a screen reader hears it.
 function showAnswer(ok, data, successText) {
-  if (ok) showMessage(statusLine, successText, 'success');
-  else showMessage(statusLine, data?.error ?? NO_ANSWER, 'error');
+  if (ok) announce(successText);
+  else notify(data?.error ?? NO_ANSWER, 'error');
 }
 
 // An answer that outlives its grace with no snapshot to clear it still needs a repaint.
@@ -216,7 +211,7 @@ function onButton(song, button) {
     void removeFromResults(song);
     return;
   }
-  clearMessage(statusLine);
+  clearNotice();
   pending.set(song.id, song);
   paintButtons();
   void drainAdds();

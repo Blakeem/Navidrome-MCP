@@ -2,6 +2,7 @@
 // reader's eyesight belong to the device.
 
 import { byId, setHidden } from './dom.js';
+import { openDialog } from './messages.js';
 import { prefWrite, readStoredInt } from './prefs.js';
 
 /** A stepper over fixed sizes lets the reader pick a legible size without hunting for a value. */
@@ -41,7 +42,7 @@ export function setOffsetControlVisible(visible) {
 export function bindLyricsPrefs(onSizeChange) {
   sizeDown.addEventListener('click', () => stepSize(-1, onSizeChange));
   sizeUp.addEventListener('click', () => stepSize(1, onSizeChange));
-  settingsBtn.addEventListener('click', () => settingsDialog.showModal());
+  settingsBtn.addEventListener('click', () => openDialog(settingsDialog));
   offsetDown.addEventListener('click', () => nudgeOffset(-OFFSET_STEP_MS));
   offsetUp.addEventListener('click', () => nudgeOffset(OFFSET_STEP_MS));
   loadLyricsPrefs();

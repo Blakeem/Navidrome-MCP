@@ -2,6 +2,7 @@ import { postLogin } from './api.js';
 import { stopConnection } from './connection.js';
 import { bindPasswordReveal, byId, setHidden } from './dom.js';
 import { closeLyrics } from './lyrics-view.js';
+import { clearNotice } from './messages.js';
 import { loginCard } from './page-view.js';
 
 const view = byId('login-view');
@@ -46,14 +47,15 @@ function loginHelp(card, session) {
   return card === 'unavailable' ? UNAVAILABLE_HELP : LOGIN_HELP;
 }
 
-// The stream closes first, so it stops reconnecting with the ended session. The open dialogs and the
-// lyrics overlay close next, since they would cover the login card.
+// The stream closes first, so it stops reconnecting with the ended session. The open dialogs, the
+// lyrics overlay and the notice close next, since they would cover the login card.
 // A passwordless source gets no password field, since the login route ignores its password once the launch key
 // admits it. readSession clears the flag when the route asks for the password.
 export function showLoginView(session) {
   stopConnection();
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   closeLyrics();
+  clearNotice();
   document.body.classList.add('login-required');
   view.hidden = false;
   address.textContent = session === null ? '' : `Your address as the player sees it: ${session.yourAddress}`;

@@ -35,6 +35,14 @@ export function setProgressVar(el, percent) {
 export const SYMBOL_VIEWBOX = '0 -960 960 960';
 export const ICON_CHECK = 'M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z';
 
+// A list's loading, empty or failed state shows as a row in the list it stands in for.
+export function buildListStatusRow(text) {
+  const row = document.createElement('li');
+  row.className = 'lib-notice';
+  row.textContent = text;
+  return row;
+}
+
 export function buildIcon(className, pathData, viewBox = '0 0 24 24') {
   const svg = document.createElementNS(SVG_NS, 'svg');
   const path = document.createElementNS(SVG_NS, 'path');

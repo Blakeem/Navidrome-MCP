@@ -3,7 +3,7 @@
 
 import { getJson, postJson } from './api.js';
 import { buildIcon, byId, setHidden, SYMBOL_VIEWBOX } from './dom.js';
-import { clearMessage, showMessage } from './messages.js';
+import { clearNotice, notify } from './messages.js';
 import { formatDateTime } from './time-format.js';
 
 const ADDRESS_CLASS_LABELS = { loopback: 'this computer', lan: 'local network', public: 'internet' };
@@ -14,7 +14,6 @@ const ICON_UNBAN = 'M240-160h480v-400H240v400Zm240-120q33 0 56.5-23.5T560-360q0-
 
 const guestStatus = byId('guest-list-status');
 const guestList = byId('guest-list');
-const guestMessage = byId('guest-message');
 const banPanel = byId('guest-ban');
 const banTitle = byId('guest-ban-title');
 const banHours = byId('guest-ban-hours');
@@ -24,7 +23,6 @@ const banConfirm = byId('guest-ban-confirm');
 const banCancel = byId('guest-ban-cancel');
 const banStatus = byId('ban-list-status');
 const banList = byId('ban-list');
-const banMessage = byId('ban-message');
 
 let banTarget = null;
 // The Ban button that opened the panel, so Cancel returns focus to its row.
@@ -42,8 +40,6 @@ export function bindGuestList({ rotate, changed }) {
 }
 
 export function resetGuests() {
-  clearMessage(guestMessage);
-  clearMessage(banMessage);
   closeBanPanel();
 }
 
@@ -127,11 +123,11 @@ function buildButton(text, ariaLabel, iconPath, className, onClick) {
 }
 
 async function removeGuest(guest, button) {
-  clearMessage(guestMessage);
+  clearNotice();
   button.disabled = true;
   const { ok, data } = await postJson('/api/jukebox/guests/remove', { sessionId: guest.sessionId });
-  if (ok) showMessage(guestMessage, `${displayName(guest)} was signed out. Their songs stay queued, and the jukebox code lets them join again.`, 'success');
-  else showMessage(guestMessage, data?.error ?? 'The guest was not signed out. Try again.', 'error');
+  if (ok) notify(`${displayName(guest)} was signed out.`, 'success');
+  else notify(data?.error ?? 'The guest was not signed out. Try again.', 'error');
   await onChange();
   button.disabled = false;
 }
@@ -151,7 +147,7 @@ function openBanPanel(guest, opener) {
     : sharedWarnings(guest).join(' ');
   setHidden(banWarn, banWarn.textContent === '');
   setHidden(banPanel, false);
-  clearMessage(guestMessage);
+  clearNotice();
   // A disabled select cannot take focus.
   (loopback ? banConfirm : banHours).focus();
 }
@@ -187,14 +183,14 @@ async function confirmBan() {
   const { ok, data } = await postJson('/api/jukebox/guests/ban', { sessionId: guest.sessionId, networkBanHours: Number(banHours.value) });
   banConfirm.disabled = false;
   if (!ok) {
-    showMessage(guestMessage, data?.error ?? 'The guest was not banned. Try again.', 'error');
+    notify(data?.error ?? 'The guest was not banned. Try again.', 'error');
     return;
   }
   closeBanPanel();
   const banned = banResult(guest, data.songsRemoved, data.songsStayed);
   const rotateError = rotate ? await rotateCode() : null;
-  if (rotateError === null) showMessage(guestMessage, banned.text, banned.tone);
-  else showMessage(guestMessage, `${banned.text} ${rotateError}`, 'error');
+  if (rotateError === null) notify(banned.text, banned.tone);
+  else notify(`${banned.text} ${rotateError}`, 'error');
   await onChange();
 }
 
@@ -207,9 +203,11 @@ function banResult(guest, songsRemoved, songsStayed) {
   if (songsRemoved === null) {
     return { text: `${displayName(guest)} was banned, but their songs could not be removed from the queue.`, tone: 'warning' };
   }
-  const removed = `${displayName(guest)} was banned, and ${songCount(songsRemoved)} left the queue.`;
-  if (songsStayed > 0) return { text: `${removed} ${songCount(songsStayed)} stayed, since no player is running.`, tone: 'warning' };
-  return { text: removed, tone: 'success' };
+  if (songsStayed > 0) {
+    const removed = `${displayName(guest)} was banned, and ${songCount(songsRemoved)} left the queue.`;
+    return { text: `${removed} ${songCount(songsStayed)} stayed, since no player is running.`, tone: 'warning' };
+  }
+  return { text: `${displayName(guest)} was banned. ${songCount(songsRemoved)} removed.`, tone: 'success' };
 }
 
 function renderBans(bans) {
@@ -241,11 +239,11 @@ function buildBanRow(ban) {
 }
 
 async function liftBan(ban, button) {
-  clearMessage(banMessage);
+  clearNotice();
   button.disabled = true;
   const { ok, data } = await postJson('/api/jukebox/bans/remove', { banId: ban.id });
-  if (ok) showMessage(banMessage, liftedMessage(ban), 'success');
-  else showMessage(banMessage, data?.error ?? 'The ban was not lifted. Try again.', 'error');
+  if (ok) notify(liftedMessage(ban), 'success');
+  else notify(data?.error ?? 'The ban was not lifted. Try again.', 'error');
   await onChange();
   button.disabled = false;
 }
@@ -253,5 +251,5 @@ async function liftBan(ban, button) {
 function liftedMessage(ban) {
   return ban.kind === 'network'
     ? `The network ban on ${displayName(ban)} was lifted.`
-    : `The ban on ${displayName(ban)} was lifted, so their browser can join again.`;
+    : `The ban on ${displayName(ban)} was lifted.`;
 }

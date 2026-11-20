@@ -4,7 +4,7 @@
 
 import { byId, setHidden } from './dom.js';
 import { currentNickname, saveNickname } from './guest-name.js';
-import { clearMessage, runDialogSave } from './messages.js';
+import { openDialog, runDialogSave } from './messages.js';
 import { prefRead, prefWrite } from './prefs.js';
 import { formatDateTime } from './time-format.js';
 
@@ -16,7 +16,6 @@ const text = byId('guest-welcome-text');
 const expiry = byId('guest-welcome-expiry');
 const nicknameInput = byId('guest-nickname');
 const nicknameSave = byId('guest-nickname-save');
-const nicknameStatus = byId('guest-nickname-status');
 const done = byId('guest-welcome-done');
 
 // Held in memory too, since blocked storage would otherwise reopen the welcome on every snapshot.
@@ -52,8 +51,7 @@ export function maybeShowWelcome(jukebox, isHost) {
   expiry.textContent = isHost ? '' : jukeboxEndText(jukebox.expiresAt);
   setHidden(expiry, isHost);
   nicknameInput.value = jukebox.nickname ?? '';
-  clearMessage(nicknameStatus);
-  dialog.showModal();
+  openDialog(dialog);
 }
 
 // A modal welcome would cover the card that replaces the player when the session ends.
@@ -72,7 +70,7 @@ function queueText(jukebox) {
 async function saveTypedNickname(confirm = true) {
   const nickname = nicknameInput.value.trim();
   if (nickname === '' || nickname === currentNickname()) return true;
-  return runDialogSave({ form, button: nicknameSave, line: nicknameStatus, request: () => saveNickname(nickname), confirm });
+  return runDialogSave({ form, button: nicknameSave, request: () => saveNickname(nickname), confirm });
 }
 
 async function closeAfterSave() {

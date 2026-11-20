@@ -55,7 +55,6 @@ export class HostPage {
   readonly jukeboxQr: Locator;
   readonly jukeboxUrl: Locator;
   readonly jukeboxStatus: Locator;
-  readonly jukeboxMessage: Locator;
   readonly fullScreenButton: Locator;
   readonly downloadQrButton: Locator;
   readonly newCodeButton: Locator;
@@ -69,7 +68,6 @@ export class HostPage {
   readonly guestsCloseButton: Locator;
   readonly signedInGroup: Locator;
   readonly guestListStatus: Locator;
-  readonly guestMessage: Locator;
   readonly banHoursSelect: Locator;
   readonly banWarning: Locator;
   readonly banNewCodeCheckbox: Locator;
@@ -77,10 +75,10 @@ export class HostPage {
   readonly banCancelButton: Locator;
   readonly bannedGroup: Locator;
   readonly banListStatus: Locator;
-  readonly banMessage: Locator;
   readonly guestLimitInput: Locator;
   readonly guestLimitSaveButton: Locator;
-  readonly guestLimitMessage: Locator;
+
+  readonly notice: Locator;
 
   constructor(readonly page: Page) {
     // The connection label is a live region with no role, so its text locates it.
@@ -121,10 +119,9 @@ export class HostPage {
     this.jukeboxLifetime = this.jukeboxDialog.getByLabel('Open for');
     this.openJukeboxButton = this.jukeboxDialog.getByRole('button', { name: 'Open the jukebox' });
     this.jukeboxQr = this.jukeboxDialog.getByRole('img', { name: /^QR code for the / });
-    // The link, the status line and the message have no role or label, so their ids locate them.
+    // The link and the status line have no role or label, so their ids locate them.
     this.jukeboxUrl = this.jukeboxDialog.locator('#jukebox-url');
     this.jukeboxStatus = this.jukeboxDialog.locator('#jukebox-status');
-    this.jukeboxMessage = this.jukeboxDialog.locator('#jukebox-message');
     this.fullScreenButton = this.jukeboxDialog.getByRole('button', { name: 'Full screen' });
     this.downloadQrButton = this.jukeboxDialog.getByRole('button', { name: 'Download QR' });
     this.newCodeButton = this.jukeboxDialog.getByRole('button', { name: 'New code' });
@@ -139,12 +136,10 @@ export class HostPage {
     // A ban row names the guest as its guest row does, so each list is scoped to its section.
     this.signedInGroup = this.guestsDialog.getByRole('group', { name: 'Signed in' });
     this.bannedGroup = this.guestsDialog.getByRole('group', { name: 'Banned' });
-    // The list status lines, the ban warning and the messages have no role or label, so their ids locate them.
+    // The list status lines and the ban warning have no role or label, so their ids locate them.
     this.guestListStatus = this.signedInGroup.locator('#guest-list-status');
-    this.guestMessage = this.signedInGroup.locator('#guest-message');
     this.banWarning = this.signedInGroup.locator('#guest-ban-warn');
     this.banListStatus = this.bannedGroup.locator('#ban-list-status');
-    this.banMessage = this.bannedGroup.locator('#ban-message');
     this.banHoursSelect = this.signedInGroup.getByLabel('Also block their network address');
     this.banNewCodeCheckbox = this.signedInGroup.getByRole('checkbox', { name: /^Also make a new jukebox code/ });
     // Each guest row's Ban button names its guest, so the exact name picks the panel's button.
@@ -153,8 +148,9 @@ export class HostPage {
     this.guestLimitInput = this.guestsDialog.getByLabel('Songs each guest may have waiting');
     // The Save button's name follows its label (Save, Saving…, Saved), so its id locates it in every state.
     this.guestLimitSaveButton = this.guestsDialog.locator('#jukebox-guest-limit-save');
-    // The limit message is a live region with no role, so its id locates it.
-    this.guestLimitMessage = this.guestsDialog.locator('#jukebox-guest-limit-message');
+
+    // The action notice has no name and moves into the open dialog, so its test id locates it page-wide.
+    this.notice = page.getByTestId('notice');
   }
 
   async goto(): Promise<void> {

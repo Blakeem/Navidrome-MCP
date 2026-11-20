@@ -1,7 +1,7 @@
 import { byId } from './dom.js';
 import { loadFavoritesPane } from './favorites-pane.js';
 import { relabelLibraryActions } from './library-tree.js';
-import { clearMessage } from './messages.js';
+import { openDialog } from './messages.js';
 import { placeBelowTopbar } from './modal-placement.js';
 import { bindPlayToolbar } from './play-toolbar.js';
 import { loadPlaylistsPane } from './playlists-pane.js';
@@ -10,7 +10,6 @@ import { bindSearchPane, resetSearchPane } from './search-pane.js';
 const dialog = byId('play-dialog');
 const openButton = byId('open-play-dialog');
 const tabList = byId('play-tabs');
-const statusLine = byId('play-status');
 const TABS = {
   search: { tab: byId('play-tab-search'), pane: byId('play-pane-search') },
   playlists: { tab: byId('play-tab-playlists'), pane: byId('play-pane-playlists') },
@@ -30,12 +29,11 @@ export function bindPlayDialog() {
 
 function openPlayDialog() {
   switchTab('search');
-  clearMessage(statusLine);
   resetSearchPane();
   void loadFavoritesPane();
   void loadPlaylistsPane();
   placeBelowTopbar(dialog);
-  dialog.showModal();
+  openDialog(dialog);
 }
 
 function switchTab(name) {

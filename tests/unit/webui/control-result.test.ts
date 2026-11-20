@@ -10,6 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { missingAudioOutputMessage, OUTPUT_MISSING_CODE } from '../../../src/tools/missing-audio-output.js';
+import { noticeDocument, type Shown } from './fake-notice.js';
 
 interface FakeButton {
   focus: () => void;
@@ -25,13 +26,8 @@ interface FakeBanner {
   removeAttribute: (name: string) => void;
   querySelector: (selector: string) => unknown;
 }
-interface FakeLine {
-  textContent: string;
-  dataset: Record<string, string>;
-}
 interface FakeDom {
-  status: FakeLine;
-  playStatus: FakeLine;
+  shown: () => Shown;
   main: FakeBanner;
   lyrics: FakeBanner;
   active: FakeButton | null;
@@ -74,20 +70,19 @@ function fakeBanner(getActive: () => FakeDom): FakeBanner {
 }
 
 function installDom(): FakeDom {
+  const notice = noticeDocument();
   const dom: FakeDom = {
-    status: { textContent: '', dataset: {} },
-    playStatus: { textContent: '', dataset: {} },
+    shown: notice.shown,
     main: fakeBanner(() => dom),
     lyrics: fakeBanner(() => dom),
     active: null,
   };
   const byId: Record<string, unknown> = {
-    'control-status': dom.status,
-    'play-status': dom.playStatus,
     'output-banner': dom.main,
     'lyrics-output-banner': dom.lyrics,
   };
   vi.stubGlobal('document', {
+    ...notice.parts,
     getElementById: (id: string) => byId[id] ?? null,
     get activeElement() {
       return dom.active;
@@ -96,16 +91,27 @@ function installDom(): FakeDom {
   return dom;
 }
 
+const OTHER_REFUSAL = { success: false, message: 'The play queue is empty. Nothing to shuffle. Start something with a play tool.' };
+
+const OTHER_ACTION_TEXT = 'Could not load settings.';
+
 async function loadPage() {
   vi.resetModules();
   const dom = installDom();
   const controls = await import('../../../src/webui/public/controls.js');
   const banner = await import('../../../src/webui/public/output-banner.js');
-  return { dom, controls, banner };
+  const messages = (await import('../../../src/webui/public/messages.js')) as unknown as {
+    notify: (text: string, tone: string) => void;
+  };
+  return { dom, controls, banner, messages };
 }
 
 function answerWith(body: unknown) {
   return vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) });
+}
+
+function answerNever() {
+  return vi.fn().mockReturnValue(new Promise(() => undefined));
 }
 
 beforeEach(() => {
@@ -119,22 +125,16 @@ afterEach(() => {
 });
 
 describe('showControlResult', () => {
-  it('clears the line after an answer that succeeded', async () => {
-    const { dom, controls } = await loadPage();
-    dom.status.textContent = 'old';
+  it.each([
+    ['that succeeded', { success: true }],
+    ['with no success field', { ok: true }],
+  ])('leaves a notice another action wrote after an answer %s', async (_name, answer) => {
+    const { dom, controls, messages } = await loadPage();
+    messages.notify(OTHER_ACTION_TEXT, 'error');
 
-    controls.showControlResult(true, { success: true });
+    controls.showControlResult(true, answer);
 
-    expect(dom.status.textContent).toBe('');
-  });
-
-  it('clears the line after an answer with no success field', async () => {
-    const { dom, controls } = await loadPage();
-    dom.status.textContent = 'old';
-
-    controls.showControlResult(true, { ok: true });
-
-    expect(dom.status.textContent).toBe('');
+    expect(dom.shown()).toEqual({ text: OTHER_ACTION_TEXT, tone: 'error' });
   });
 
   it.each([
@@ -142,11 +142,10 @@ describe('showControlResult', () => {
     ['a named device', NAMED_REFUSAL],
   ])('shows the banner and focuses its button when resume is refused for %s', async (_name, message) => {
     const { dom, controls } = await loadPage();
-    dom.status.textContent = 'old';
 
     controls.showControlResult(true, { success: false, message, code: OUTPUT_MISSING_CODE });
 
-    expect(dom.status.textContent).toBe('');
+    expect(dom.shown().text).toBe('');
     expect(dom.main.hidden).toBe(false);
     expect(dom.lyrics.hidden).toBe(false);
     expect(dom.active).toBe(dom.main.button);
@@ -163,32 +162,28 @@ describe('showControlResult', () => {
 
   it('shows the banner and focuses its button when a play stays paused for a missing output', async () => {
     const { dom, controls } = await loadPage();
-    dom.status.textContent = 'old';
 
     controls.showControlResult(true, { success: true, paused: true, message: NAMED_REFUSAL, code: OUTPUT_MISSING_CODE });
 
-    expect(dom.status.textContent).toBe('');
+    expect(dom.shown().text).toBe('');
     expect(dom.main.hidden).toBe(false);
     expect(dom.active).toBe(dom.main.button);
   });
 
-  it('shows page wording for any other refusal and keeps it until the next control answers', async () => {
+  it('shows page wording for any other refusal and keeps it until the next control starts', async () => {
     const { dom, controls } = await loadPage();
 
-    controls.showControlResult(true, {
-      success: false,
-      message: 'The play queue is empty. Nothing to shuffle. Start something with a play tool.',
-    });
+    controls.showControlResult(true, OTHER_REFUSAL);
 
-    expect(dom.status.textContent).toBe(REFUSED_TEXT);
-    expect(dom.status.dataset.tone).toBe('error');
+    expect(dom.shown()).toEqual({ text: REFUSED_TEXT, tone: 'error' });
     expect(dom.main.hidden).toBe(true);
     vi.advanceTimersByTime(60_000);
-    expect(dom.status.textContent).toBe(REFUSED_TEXT);
+    expect(dom.shown().text).toBe(REFUSED_TEXT);
 
-    controls.showControlResult(true, { success: true });
+    vi.stubGlobal('fetch', answerNever());
+    void controls.postControl('/api/controls/next');
 
-    expect(dom.status.textContent).toBe('');
+    expect(dom.shown().text).toBe('');
   });
 
   it('shows page wording, not the message, for a refusal whose text names an audio output but carries no code', async () => {
@@ -196,7 +191,7 @@ describe('showControlResult', () => {
 
     controls.showControlResult(true, { success: false, message: NAMED_REFUSAL });
 
-    expect(dom.status.textContent).toBe(REFUSED_TEXT);
+    expect(dom.shown().text).toBe(REFUSED_TEXT);
     expect(dom.main.hidden).toBe(true);
   });
 
@@ -205,8 +200,7 @@ describe('showControlResult', () => {
 
     controls.showControlResult(false, { error: 'Not allowed', message: NAMED_REFUSAL });
 
-    expect(dom.status.textContent).toBe('Not allowed');
-    expect(dom.status.dataset.tone).toBe('error');
+    expect(dom.shown()).toEqual({ text: 'Not allowed', tone: 'error' });
     expect(dom.main.hidden).toBe(true);
   });
 
@@ -215,7 +209,7 @@ describe('showControlResult', () => {
 
     controls.showControlResult(false, null);
 
-    expect(dom.status.textContent).toBe(GENERIC_TEXT);
+    expect(dom.shown().text).toBe(GENERIC_TEXT);
   });
 });
 
@@ -261,7 +255,7 @@ describe('playLibraryItem', () => {
     expect(dom.main.hidden).toBe(true);
   });
 
-  it('shows an append in the status bar, clears it after its reading time and leaves the row usable', async () => {
+  it('shows an append in the notice, clears it after its reading time and leaves the row usable', async () => {
     const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
     const { readingTimeMs } = (await import('../../../src/webui/public/messages.js')) as unknown as { readingTimeMs: (text: string) => number };
     const text = `Added “${NAME}” to the queue.`;
@@ -269,35 +263,45 @@ describe('playLibraryItem', () => {
 
     await playLibraryItem(button, 'album', 'al-1', NAME);
 
-    expect(dom.playStatus.textContent).toBe(text);
-    expect(dom.playStatus.dataset.tone).toBe('success');
+    expect(dom.shown()).toEqual({ text, tone: 'success' });
     expect(button.disabled).toBe(false);
     vi.advanceTimersByTime(readingTimeMs(text) + 150);
-    expect(dom.playStatus.textContent).toBe('');
+    expect(dom.shown().text).toBe('');
   });
 
-  it('keeps a failed add in the status bar until the next play action', async () => {
+  it('keeps a failed add in the notice until the next play action', async () => {
     const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
     vi.stubGlobal('fetch', refuseWith(500, { error: 'Navidrome did not answer.' }));
 
     await playLibraryItem(button, 'album', 'al-1', NAME);
     vi.advanceTimersByTime(60_000);
 
-    expect(dom.playStatus.textContent).toBe(`Could not add “${NAME}”.`);
-    expect(dom.playStatus.dataset.tone).toBe('error');
-    vi.stubGlobal('fetch', vi.fn().mockReturnValue(new Promise(() => undefined)));
+    expect(dom.shown()).toEqual({ text: `Could not add “${NAME}”.`, tone: 'error' });
+    vi.stubGlobal('fetch', answerNever());
     void playLibraryItem(button, 'album', 'al-2', 'Album Two');
-    expect(dom.playStatus.textContent).toBe('');
+    expect(dom.shown().text).toBe('');
   });
 
-  it('shows an empty source as a warning', async () => {
-    const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
-    vi.stubGlobal('fetch', refuseWith(422, { error: 'Nothing to play.', code: 'empty-source' }));
+  it('shows a failed replace as an error', async () => {
+    const { dom, playLibraryItem, button } = await loadLibraryPlay('replace');
+    vi.stubGlobal('fetch', refuseWith(500, { error: 'Navidrome did not answer.' }));
 
     await playLibraryItem(button, 'album', 'al-1', NAME);
 
-    expect(dom.playStatus.textContent).toBe(`Nothing to play in “${NAME}”.`);
-    expect(dom.playStatus.dataset.tone).toBe('warning');
+    expect(dom.shown()).toEqual({ text: `Could not play “${NAME}”.`, tone: 'error' });
+  });
+
+  it.each([
+    ['album', `Nothing to play in “${NAME}”.`],
+    ['starred-albums', 'No albums starred yet.'],
+    ['starred-songs', 'No songs starred yet.'],
+  ])('shows an empty %s source as info', async (kind, text) => {
+    const { dom, playLibraryItem, button } = await loadLibraryPlay('append');
+    vi.stubGlobal('fetch', refuseWith(422, { error: 'Nothing to play.', code: 'empty-source' }));
+
+    await playLibraryItem(button, kind, 'al-1', NAME);
+
+    expect(dom.shown()).toEqual({ text, tone: 'info' });
   });
 
   it('closes the dialog with no message after a replace', async () => {
@@ -307,7 +311,7 @@ describe('playLibraryItem', () => {
     await playLibraryItem(button, 'album', 'al-1', NAME);
 
     expect(dialog.close).toHaveBeenCalledTimes(1);
-    expect(dom.playStatus.textContent).toBe('');
+    expect(dom.shown().text).toBe('');
   });
 });
 
@@ -324,6 +328,17 @@ describe('postControl', () => {
     vi.stubGlobal('fetch', answerWith({ success: true }));
 
     await expect(controls.postControl('/api/controls/next')).resolves.toBe(true);
+  });
+
+  it('keeps a notice another action wrote while the request ran', async () => {
+    const { dom, controls, messages } = await loadPage();
+    vi.stubGlobal('fetch', answerWith({ success: true }));
+
+    const pending = controls.postControl('/api/controls/volume', { level: 40 });
+    messages.notify(OTHER_ACTION_TEXT, 'error');
+    await pending;
+
+    expect(dom.shown()).toEqual({ text: OTHER_ACTION_TEXT, tone: 'error' });
   });
 });
 

@@ -157,13 +157,13 @@ test('a guest sets a nickname the host sees, and each refused name shows its rea
   await guest.openNameForm();
 
   await guest.submitNickname('Host');
-  await expect(guest.nicknameStatus).toHaveText("Host is the host's name. Pick another nickname.");
+  await expect(guest.notice).toHaveText("Host is the host's name. Pick another nickname.");
 
   await guest.submitNickname('<b>');
-  await expect(guest.nicknameStatus).toHaveText("nickname must be 1 to 24 letters, digits, spaces or . , ' ! ? - _");
+  await expect(guest.notice).toHaveText("nickname must be 1 to 24 letters, digits, spaces or . , ' ! ? - _");
 
   await guest.submitNickname('   ');
-  await expect(guest.nicknameStatus).toHaveText('Enter a nickname to save.');
+  await expect(guest.notice).toHaveText('Enter a nickname to save.');
   expect((await jukebox.guests())[0]?.nickname).toBeNull();
 
   await guest.submitNickname(NICKNAME);
@@ -248,8 +248,8 @@ test('closing the jukebox ends each guest session and stops the link', async ({ 
   const prompt = hostPage.acceptNextPrompt();
   await hostPage.closeJukeboxButton.click();
 
-  // The message shows only once the prompt was accepted, so a missing prompt fails here instead of at the test timeout.
-  await expect(hostPage.jukeboxMessage).toHaveText('The jukebox closed. Every guest was signed out.');
+  // The notice shows only once the prompt was accepted, so a missing prompt fails here instead of at the test timeout.
+  await expect(hostPage.notice).toHaveText('The jukebox closed. Guests were signed out.');
   expect(await prompt).toBe(CLOSE_PROMPT);
   await expect(hostPage.jukeboxClosedText).toBeVisible();
   for (const guest of guests) {

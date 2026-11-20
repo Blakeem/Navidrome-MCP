@@ -1,5 +1,5 @@
 import { getJson } from './api.js';
-import { buildIcon, ICON_PLAY } from './dom.js';
+import { buildIcon, buildListStatusRow, ICON_PLAY } from './dom.js';
 import { FAVORITE_SOURCES } from './favorite-sources.js';
 import { playLibraryItem } from './library-play.js';
 import { playMode } from './play-toolbar.js';
@@ -120,13 +120,6 @@ function buildLibraryThumb(coverId) {
   return img;
 }
 
-function buildLibraryNotice(message) {
-  const notice = document.createElement('li');
-  notice.className = 'lib-notice';
-  notice.textContent = message;
-  return notice;
-}
-
 function labelLibraryToggle(toggle, noun, name, expanded) {
   toggle.setAttribute('aria-expanded', String(expanded));
   toggle.setAttribute('aria-label', `${expanded ? 'Hide' : 'Show'} ${noun} of “${name}”`);
@@ -170,18 +163,18 @@ async function loadLibraryChildren({ node, list, source, id, depth }) {
   let data = null;
   let items = null;
 
-  list.replaceChildren(buildLibraryNotice('Loading…'));
+  list.replaceChildren(buildListStatusRow('Loading…'));
   data = await getJson(url);
   // A new search replaced the results while this load was in flight.
   if (!node.isConnected) return false;
   items = data !== null && Array.isArray(data[source.key]) ? data[source.key] : null;
 
   if (items === null) {
-    list.replaceChildren(buildLibraryNotice(`Could not load ${source.noun}.`));
+    list.replaceChildren(buildListStatusRow(`Could not load ${source.noun}.`));
     return false;
   }
   if (items.length === 0) {
-    list.replaceChildren(buildLibraryNotice(`No ${source.noun}.`));
+    list.replaceChildren(buildListStatusRow(`No ${source.noun}.`));
     return true;
   }
   list.replaceChildren(...items.map((child) => buildLibraryNode(source.kind, child, depth + 1)));

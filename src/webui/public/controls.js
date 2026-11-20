@@ -1,13 +1,12 @@
 // The play state changes only when a snapshot confirms it, so no button disagrees with mpv.
 
 import { FAILED_TEXT, postJson } from './api.js';
-import { byId, setHidden } from './dom.js';
-import { clearMessage, showMessage } from './messages.js';
+import { setHidden } from './dom.js';
+import { clearNotice, notify } from './messages.js';
 import { isOutputMissing, revealOutputBanner } from './output-banner.js';
 import { isPaused, positionSeconds, setPosition } from './playback-clock.js';
 import { playingIndex } from './snapshot.js';
 
-const controlStatus = byId('control-status');
 // The refusal messages are written for the MCP agent and name tools the page cannot call.
 const REFUSED_TEXT = 'That is not possible right now.';
 
@@ -17,7 +16,9 @@ function isRefusal(data) {
 }
 
 // Every control reports a failed or refused request on the page, so a failed click is never silent.
+// The clear runs before the request, since a late answer must not clear a notice another action wrote.
 export async function postControl(path, body = {}) {
+  clearNotice();
   const { ok, data } = await postJson(path, body);
   showControlResult(ok, data);
   return ok && !isRefusal(data);
@@ -66,13 +67,9 @@ function failureText(data) {
 export function showControlResult(ok, data) {
   // A resume refusal and a play that stayed paused both carry `code: 'output-missing'`, so either shows the banner.
   if (ok && isOutputMissing(data)) {
-    clearMessage(controlStatus);
     revealOutputBanner();
     return;
   }
-  if (ok && !isRefusal(data)) {
-    clearMessage(controlStatus);
-    return;
-  }
-  showMessage(controlStatus, ok ? REFUSED_TEXT : failureText(data), 'error');
+  if (ok && !isRefusal(data)) return;
+  notify(ok ? REFUSED_TEXT : failureText(data), 'error');
 }

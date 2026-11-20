@@ -9,6 +9,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { noticeDocument } from './fake-notice.js';
 
 const PUBLIC_DIR = new URL('../../../src/webui/public/', import.meta.url);
 const read = (file: string): string => readFileSync(new URL(file, PUBLIC_DIR), 'utf8');
@@ -70,7 +71,24 @@ describe('the settings dialog', () => {
     expect(button).toMatch(/^<button type="button" class="btn-secondary" id="open-all-settings" aria-describedby="all-settings-hint">/);
     expect(button).toContain('All settings</button>');
     expect(button.trimEnd()).toMatch(
-      /<p class="modal-hint" id="all-settings-hint">Navidrome connection, admin password, access and more\. Opens on this computer\.<\/p>$/,
+      /<p class="modal-hint" id="all-settings-hint">Navidrome connection, admin password, access and more\.<\/p>$/,
+    );
+  });
+
+  it('holds a device Theme group with Light and Dark only, hidden until a remote browser shows it', () => {
+    const group = between(settingsDialog, 'id="settings-device-theme-group"', '</fieldset>');
+
+    expect(settingsDialog).toContain('<fieldset class="settings-group" id="settings-device-theme-group" hidden>');
+    expect(idsOf(group, /<input[^>]*name="device-theme" id="([^"]+)"/g)).toEqual(['device-theme-light', 'device-theme-dark']);
+    expect(group).toContain('<div class="mode-toggle theme-toggle">');
+    expect(group).toContain('<p class="modal-hint">Applies to this device only.</p>');
+  });
+
+  it("words the host's Theme hint for the per-device choice", () => {
+    const group = between(settingsDialog, 'id="settings-theme-group"', '</fieldset>');
+
+    expect(group).toContain(
+      '<p class="modal-hint">Light and Dark apply to every device, guests included. With System, each device picks its own.</p>',
     );
   });
 
@@ -100,7 +118,7 @@ describe('the Guests dialog', () => {
 });
 
 describe('the modules behind the header', () => {
-  const MODULES = ['guests.js', 'guests-list.js', 'local-controls.js', 'network-info.js', 'settings.js'];
+  const MODULES = ['guests.js', 'guests-list.js', 'local-controls.js', 'network-info.js', 'settings.js', 'settings-device-theme.js'];
 
   it.each(MODULES)('%s looks up only ids that index.html holds', (file) => {
     const ids = idsOf(read(file), /byId\('([^']+)'\)/g);
@@ -281,6 +299,21 @@ describe('app.js', () => {
     expect(location.reload).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["the player view on the player's computer", { mode: 'jukebox', role: 'admin', isLocal: true, csrfToken: 'token' }, 1],
+    ["the login view on the player's computer", { mode: 'jukebox', role: 'anonymous', isLocal: true, adminLoginAvailable: true }, 1],
+    ['the login view on another browser', { mode: 'jukebox', role: 'anonymous', isLocal: false, adminLoginAvailable: true }, 0],
+    ['the player view on another browser', { mode: 'jukebox', role: 'admin', isLocal: false, csrfToken: 'token' }, 0],
+  ])('drops the stored device theme choice only for the player\'s computer, in %s', async (_label, loaded, calls) => {
+    session = loaded;
+    await import('../../../src/webui/public/app.js');
+    const loginView = await import('../../../src/webui/public/login-view.js');
+    const themeModule = await import('../../../src/webui/public/theme.js');
+    await vi.waitFor(() => expect(vi.mocked(loginView.showLoginView).mock.calls.length + setLocalPeer.mock.calls.length).toBeGreaterThan(0));
+
+    expect(vi.mocked(themeModule.ignoreDeviceTheme)).toHaveBeenCalledTimes(calls);
+  });
+
   it('treats an unread session as remote', async () => {
     session = null;
 
@@ -425,6 +458,7 @@ describe('settings.js', () => {
   let mayChangeSettings = false;
   let elements = new Map<string, FakeControl>();
   let form = { inert: false, busy: false };
+  let notice = noticeDocument();
 
   const element = (id: string): FakeControl => {
     if (!elements.has(id)) {
@@ -457,7 +491,8 @@ describe('settings.js', () => {
     showModal.mockReset();
     getJson.mockReset().mockResolvedValue(null);
     postJson.mockReset();
-    vi.stubGlobal('document', { getElementById: element });
+    notice = noticeDocument();
+    vi.stubGlobal('document', { getElementById: element, ...notice.parts });
     vi.resetModules();
     vi.doMock(API, () => ({ FAILED_TEXT: 'That action failed. Try again.', getJson, postJson }));
     vi.doMock(LOCAL_CONTROLS, () => ({ canChangePlayerSettings: () => mayChangeSettings }));
@@ -508,6 +543,16 @@ describe('settings.js', () => {
     expect(getJson).toHaveBeenCalledWith('/api/player/settings');
   });
 
+  it('shows a failed settings load as an error after the dialog opens', async () => {
+    mayChangeSettings = true;
+    getJson.mockResolvedValue(null);
+
+    await open();
+
+    expect(notice.shown()).toEqual({ text: 'Could not load settings.', tone: 'error' });
+    expect(element('set-persist')['disabled']).toBe(true);
+  });
+
   it('blocks the form during a toggle save, then shows Saved. and clears it after its reading time', async () => {
     mayChangeSettings = true;
     getJson.mockResolvedValue(STORED);
@@ -517,13 +562,12 @@ describe('settings.js', () => {
 
     expect(postJson).toHaveBeenCalledWith('/api/player/settings', { persistAfterMcpExit: true });
     expect(form.busy).toBe(false);
-    expect(element('settings-status').textContent).toBe('Saved.');
-    expect(element('settings-status').dataset.tone).toBe('success');
+    expect(notice.shown()).toEqual({ text: 'Saved.', tone: 'success' });
     vi.advanceTimersByTime(2500 + 150);
-    expect(element('settings-status').textContent).toBe('');
+    expect(notice.shown().text).toBe('');
   });
 
-  it('keeps the session-only warning on the line', async () => {
+  it('keeps the session-only warning in the notice', async () => {
     mayChangeSettings = true;
     getJson.mockResolvedValue(STORED);
     await open();
@@ -531,8 +575,7 @@ describe('settings.js', () => {
     await toggleKeepPlaying({ ok: true, status: 200, data: { ...STORED, persistAfterMcpExit: true, persisted: false } });
     vi.advanceTimersByTime(60_000);
 
-    expect(element('settings-status').textContent).toBe(SESSION_ONLY);
-    expect(element('settings-status').dataset.tone).toBe('warning');
+    expect(notice.shown()).toEqual({ text: SESSION_ONLY, tone: 'warning' });
   });
 
   it('puts the control back and keeps the error when a save fails', async () => {
@@ -544,8 +587,7 @@ describe('settings.js', () => {
     vi.advanceTimersByTime(60_000);
 
     expect(element('set-persist').checked).toBe(false);
-    expect(element('settings-status').textContent).toBe('Could not save settings.');
-    expect(element('settings-status').dataset.tone).toBe('error');
+    expect(notice.shown()).toEqual({ text: 'Could not save settings.', tone: 'error' });
   });
 });
 
@@ -555,19 +597,21 @@ describe('openAllSettings in settings.js', () => {
   const THEME = '../../../src/webui/public/theme.js';
   const SETTINGS_URL = 'http://127.0.0.1:5555/';
 
-  type StatusLine = { textContent: string; dataset: Record<string, string> };
-  type OpenAllSettings = (statusLine: StatusLine) => Promise<void>;
+  type OpenAllSettings = () => Promise<void>;
 
   const postJson = vi.fn();
   const windowOpen = vi.fn();
   let tab: { opener: unknown; location: { href: string }; close: ReturnType<typeof vi.fn> };
+  let notice = noticeDocument();
 
   beforeEach(() => {
     tab = { opener: {}, location: { href: '' }, close: vi.fn() };
     postJson.mockReset();
     windowOpen.mockReset().mockReturnValue(tab);
+    notice = noticeDocument();
     vi.stubGlobal('document', {
       getElementById: () => ({ textContent: '', addEventListener: () => undefined, querySelectorAll: () => [], querySelector: () => ({}) }),
+      ...notice.parts,
     });
     vi.stubGlobal('window', { open: windowOpen });
     vi.resetModules();
@@ -588,11 +632,10 @@ describe('openAllSettings in settings.js', () => {
 
   it('opens the tab before the request leaves, then points it at the settings page', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: 'old', dataset: {} };
     let answer: (value: unknown) => void = () => undefined;
     postJson.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
 
-    const opening = openAllSettings(statusLine);
+    const opening = openAllSettings();
 
     expect(windowOpen).toHaveBeenCalledWith('', '_blank');
     expect(tab.opener).toBeNull();
@@ -602,42 +645,51 @@ describe('openAllSettings in settings.js', () => {
     await opening;
     expect(tab.location.href).toBe(SETTINGS_URL);
     expect(tab.close).not.toHaveBeenCalled();
-    expect(statusLine.textContent).toBe('');
+    expect(notice.shown().text).toBe('');
+  });
+
+  it('clears the error of an earlier open when the next open succeeds', async () => {
+    const openAllSettings = await load();
+    windowOpen.mockReturnValueOnce(null);
+    await openAllSettings();
+    expect(notice.shown().tone).toBe('error');
+    postJson.mockResolvedValue({ ok: true, status: 200, data: { url: SETTINGS_URL } });
+
+    await openAllSettings();
+
+    expect(tab.location.href).toBe(SETTINGS_URL);
+    expect(notice.shown().text).toBe('');
   });
 
   it('closes the tab and shows the server error when the request fails', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: '', dataset: {} };
     postJson.mockResolvedValue({ ok: false, status: 500, data: { error: 'The settings page failed to start: listen EACCES' } });
 
-    await openAllSettings(statusLine);
+    await openAllSettings();
 
     expect(tab.close).toHaveBeenCalledTimes(1);
     expect(tab.location.href).toBe('');
-    expect(statusLine.textContent).toBe('The settings page failed to start: listen EACCES');
-    expect(statusLine.dataset).toEqual({ tone: 'error' });
+    expect(notice.shown()).toEqual({ text: 'The settings page failed to start: listen EACCES', tone: 'error' });
   });
 
   it('closes the tab and shows the generic failure when no answer arrives', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: '', dataset: {} };
     postJson.mockResolvedValue({ ok: false, status: null, data: null });
 
-    await openAllSettings(statusLine);
+    await openAllSettings();
 
     expect(tab.close).toHaveBeenCalledTimes(1);
-    expect(statusLine.textContent).toBe('That action failed. Try again.');
+    expect(notice.shown()).toEqual({ text: 'That action failed. Try again.', tone: 'error' });
   });
 
   it('names the blocked tab and starts no settings server when the browser refuses the tab', async () => {
     const openAllSettings = await load();
-    const statusLine = { textContent: '', dataset: {} };
     windowOpen.mockReturnValue(null);
 
-    await openAllSettings(statusLine);
+    await openAllSettings();
 
     expect(postJson).not.toHaveBeenCalled();
-    expect(statusLine.textContent).toBe('The browser blocked the new tab. Allow pop-ups for this page, then try again.');
+    expect(notice.shown()).toEqual({ text: 'The browser blocked the new tab. Allow pop-ups for this page, then try again.', tone: 'error' });
   });
 });
 
@@ -711,7 +763,7 @@ describe('network-info.js hints', () => {
     expect(text).toBe(`Turn on Expose on LAN in All settings, ${RESTART}`);
     expect((button as FakeNode).textContent).toBe('All settings');
     (button as FakeNode).handlers['click']?.();
-    expect(openAllSettings).toHaveBeenCalledWith(byId('network-info-status'));
+    expect(openAllSettings).toHaveBeenCalledWith();
   });
 
   it('gives a local viewer of a loopback bind host the Bind host step and an All settings button', async () => {
@@ -760,10 +812,12 @@ describe('login-view.js', () => {
   type LoginView = { showLoginView: (session: Record<string, unknown> | null) => void };
 
   let elements = new Map<string, FakeElement>();
+  let notice = noticeDocument();
   const element = (id: string): FakeElement => elements.get(id) as FakeElement;
 
   beforeEach(() => {
     elements = new Map();
+    notice = noticeDocument();
     const fake = (): FakeElement => {
       const el: FakeElement = {
         hidden: false,
@@ -780,7 +834,8 @@ describe('login-view.js', () => {
         return elements.get(id);
       },
       querySelectorAll: () => [],
-      body: { classList: { add: () => undefined } },
+      ...notice.parts,
+      body: Object.assign(notice.parts.body, { classList: { add: () => undefined } }),
     });
     vi.resetModules();
     for (const file of MOCKED) {
@@ -833,5 +888,16 @@ describe('login-view.js', () => {
     view.showLoginView(NO_PASSWORD_SESSION);
 
     expect(element('login-help').textContent).toBe(NO_PASSWORD_SESSION.noAdminPasswordMessage);
+  });
+
+  it('clears an error notice on the page, since it would stay over the login card', async () => {
+    const view = await load();
+    const messages = (await import('../../../src/webui/public/messages.js')) as unknown as { notify: (text: string, tone: string) => void };
+    messages.notify('That action failed. Try again.', 'error');
+    expect(notice.shown().tone).toBe('error');
+
+    view.showLoginView(NO_PASSWORD_SESSION);
+
+    expect(notice.shown()).toEqual({ text: '', tone: undefined });
   });
 });

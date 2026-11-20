@@ -4,22 +4,20 @@ import { getJson, postJson } from './api.js';
 import { byId, setHidden } from './dom.js';
 import { bindGuestList, refreshGuests, resetGuests } from './guests-list.js';
 import { makeNewCode } from './jukebox.js';
-import { clearMessage, runDialogSave, showMessage } from './messages.js';
+import { notify, openDialog, runDialogSave } from './messages.js';
 
 const openBtn = byId('open-guests');
 const dialog = byId('guests-dialog');
 const form = dialog.querySelector('form');
 const guestLimit = byId('jukebox-guest-limit');
 const guestLimitSave = byId('jukebox-guest-limit-save');
-const guestLimitMessage = byId('jukebox-guest-limit-message');
 
 export function bindGuestsDialog() {
   openBtn.addEventListener('click', () => {
-    clearMessage(guestLimitMessage);
     resetGuests();
     void refreshGuests();
     void loadGuestLimit();
-    dialog.showModal();
+    openDialog(dialog);
   });
   guestLimitSave.addEventListener('click', () => void saveGuestLimit());
   bindGuestList({ rotate: () => makeNewCode(false), changed: refreshGuests });
@@ -38,7 +36,8 @@ export function showGuestsButton() {
 async function loadGuestLimit() {
   const settings = await getJson('/api/jukebox/settings');
   if (settings === null) {
-    showMessage(guestLimitMessage, 'Could not load the guest song limit.', 'error');
+    // A failure that arrives after the dialog closed would show on the page, away from the dialog it explains.
+    if (dialog.open) notify('Could not load the guest song limit.', 'error');
     return;
   }
   guestLimit.value = String(settings.guestQueueLimit);
@@ -46,7 +45,7 @@ async function loadGuestLimit() {
 
 // The limit applies at once, and each guest page shows its new count with the next snapshot.
 function saveGuestLimit() {
-  return runDialogSave({ form, button: guestLimitSave, line: guestLimitMessage, request: postGuestLimit });
+  return runDialogSave({ form, button: guestLimitSave, request: postGuestLimit });
 }
 
 async function postGuestLimit() {
