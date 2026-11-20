@@ -231,7 +231,7 @@ describe('settings store read/write', () => {
       expect(readSettings()).toBeNull();
       expect(readSalvagedSettings()).toEqual({
         navidrome: { url: 'http://h:4533', username: 'u' },
-        webui: { expose: true, auth: {} },
+        webui: { expose: true, auth: { mode: 'password' } },
       });
     });
 

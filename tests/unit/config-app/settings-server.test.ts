@@ -262,6 +262,19 @@ describe('settings server seed/save', () => {
     expect(readSettings()?.features).toEqual({ radio: true, lyrics: false, radioBrowserUserAgent: 'UA/1.0' });
   });
 
+  it('names the MCP server restart when a save over a legacy file turns off the radio the page showed', async () => {
+    writeFileSync(file, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'secret' },
+      features: { radioBrowserUserAgent: 'UA/1.0' },
+    }));
+    const base = await start();
+
+    const reply = await getJson(await post(base, { features: { radio: false } }));
+
+    expect(reply.brief).toBe(false);
+    expect(reply.message).toContain('The MCP server applies these changes after it restarts.');
+  });
+
   it('keeps the env values of the player-owned settings and the token expiry on a first save', async () => {
     process.env['WEBUI_PERSIST_AFTER_MCP_EXIT'] = 'true';
     process.env['WEBUI_VISUALIZER'] = 'false';

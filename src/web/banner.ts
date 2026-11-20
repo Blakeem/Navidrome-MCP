@@ -5,6 +5,7 @@
  */
 
 import { STOP_HINT } from '../cli/texts.js';
+import { LIVE_APPLY_WHEN, LIVE_AUTH_FIELDS } from '../config-app/save-message.js';
 import type { Config, StartupFailure } from '../config.js';
 import { redact } from '../utils/logger.js';
 import { isLanReachable, listLanInterfaces, loopbackUrl } from '../webui/network.js';
@@ -19,7 +20,7 @@ export const TLS_LOCAL_ADDRESS_WARNING =
 /** A re-run attaches to the running player and never reloads its settings, so the line tells the user how to apply a change. */
 const ATTACH_SETTINGS_NOTE =
   'Settings page changes saved after it started apply once you click Shut down player in the gear menu and start it again. ' +
-  'A new admin password applies without that step when the player runs from settings.json in a password access mode.';
+  `A new admin password, ${LIVE_AUTH_FIELDS} apply without that step when ${LIVE_APPLY_WHEN}.`;
 
 /** A foreground run is one a person started, so only it gets the line that says how to stop. */
 export function buildBannerLines(webui: Config['webui'], foreground: boolean): string[] {

@@ -19,7 +19,9 @@ let onSaved = () => {};
 
 // The server answers a name it already holds without spending the guest's hourly budget.
 export async function saveNickname(nickname) {
-  const { ok, data } = await postGuestNickname(nickname);
+  const { ok, status, data } = await postGuestNickname(nickname);
+  // The login-required handler is already replacing the page with an ended card, which a notice would cover.
+  if (status === 401) return { ok: false, error: null };
   if (!ok) return { ok: false, error: data?.error ?? SAVE_FAILED };
   storedNickname = data.nickname;
   onSaved(data.nickname);

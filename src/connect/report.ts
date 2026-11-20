@@ -7,7 +7,7 @@
 import { ABSOLUTE_FLAG, REINSTALL_HINT } from '../cli/texts.js';
 import { SERVER_NAME, type McpServerEntry, type MergeResult } from './claude-desktop.js';
 
-/** Quotes what a shell would split or unescape, so the common line stays bare. A backslash is quoted because Git Bash drops it unquoted. */
+/** Quotes whitespace, quote marks, ^ & | < > ( ) and the backslash for a line pasted into PowerShell, cmd or Git Bash, so the common line stays bare. A backslash is quoted because Git Bash drops it unquoted. */
 function shellQuote(text: string): string {
   return /[\s"'&|<>()^\\]/.test(text) ? `"${text.replaceAll('"', '\\"')}"` : text;
 }
@@ -16,7 +16,22 @@ export function claudeCodeCommand(entry: McpServerEntry): string {
   return `claude mcp add ${SERVER_NAME} -- ${[entry.command, ...entry.args].map(shellQuote).join(' ')}`;
 }
 
-export function buildConnectReport(result: MergeResult, entry: McpServerEntry, absolute: boolean): string {
+function claudeCodeLines(entry: McpServerEntry, platform: NodeJS.Platform): string[] {
+  const command = claudeCodeCommand(entry);
+  if (platform !== 'win32' || !entry.args.some((arg) => arg.startsWith('/'))) {
+    return ['For Claude Code, run this line.', command];
+  }
+  return [
+    'For Claude Code in PowerShell or cmd, run this line.',
+    command,
+    '',
+    'For Claude Code in Git Bash, run this line.',
+    // MSYS rewrites a bare /c to C:/ even when quoted, so Git Bash needs its path conversion off.
+    `MSYS_NO_PATHCONV=1 ${command}`,
+  ];
+}
+
+export function buildConnectReport(result: MergeResult, entry: McpServerEntry, absolute: boolean, platform: NodeJS.Platform): string {
   const lines: string[] = [];
   const json = JSON.stringify({ mcpServers: { [SERVER_NAME]: entry } }, null, 2);
 
@@ -36,8 +51,7 @@ export function buildConnectReport(result: MergeResult, entry: McpServerEntry, a
     '',
     'Quit Claude Desktop fully and open it again.',
     '',
-    'For Claude Code, run this line.',
-    claudeCodeCommand(entry),
+    ...claudeCodeLines(entry, platform),
     '',
     'Other MCP clients take this JSON.',
     json,

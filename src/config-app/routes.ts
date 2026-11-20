@@ -181,6 +181,8 @@ async function saveSettings(req: IncomingMessage, res: ServerResponse, context: 
   const stored = readRawSettings();
   const noticesBeforeSave = readStoreNotices();
   const storedConfig = usableStoredSettings(stored);
+  // Runs before the write, since normalizedForSave reads the store through buildFormSeed.
+  const storedBefore = storedConfig === null ? null : { storedFile: storedConfig, storedSettings: normalizedForSave(storedConfig) };
   // A changed-fields body over an env or salvaged base would replace the values the page showed.
   if (stored === null && req.headers[CHANGED_ONLY_HEADER] === '1') {
     writeError(res, 409, STORE_CHANGED_SINCE_LOAD);
@@ -232,16 +234,16 @@ async function saveSettings(req: IncomingMessage, res: ServerResponse, context: 
   const { takeover } = hostStart;
   const webui = validation.config.webui;
   const clearedStoreNotice = noticesBeforeSave.some((notice) => !storeNotices.includes(notice));
-  if (storedConfig === null || takeover !== null) {
+  if (storedBefore === null || takeover !== null) {
     const nextSteps = firstSaveSteps(context.host, webui, takeover);
     writeJson(res, 200, { ok: true, message: savedTo, nextSteps, pageClosed: takeover !== null, storeNotices });
   } else if (context.host === 'mcp-setup') {
     // An MCP server in setup mode loads no store until the AI app restarts, so its next steps name that
     // restart. A running player may still have read the stored file, so the message names its restart.
-    const { message } = laterSaveMessage(savedTo, saveChange(storedConfig, settings, newAdminPassword, clearedStoreNotice), 'mcp');
+    const { message } = laterSaveMessage(savedTo, saveChange(storedBefore, settings, newAdminPassword, clearedStoreNotice), 'mcp');
     writeJson(res, 200, { ok: true, message, nextSteps: firstSaveSteps(context.host, webui, null), storeNotices });
   } else {
-    const { message, brief } = laterSaveMessage(savedTo, saveChange(storedConfig, settings, newAdminPassword, clearedStoreNotice));
+    const { message, brief } = laterSaveMessage(savedTo, saveChange(storedBefore, settings, newAdminPassword, clearedStoreNotice));
     writeJson(res, 200, { ok: true, message, brief, storeNotices });
   }
   if (takeover !== null) finished(res, () => void context.close());
@@ -261,8 +263,13 @@ async function runOnSaved(context: SettingsRouteContext): Promise<{ takeover: Sa
   }
 }
 
-function saveChange(storedFile: SettingsFile, saved: SettingsFile, newAdminPassword: string | null, clearedStoreNotice: boolean): SaveChange {
-  return { storedFile, storedSettings: normalizedForSave(storedFile), saved, adminPasswordChanged: newAdminPassword !== null, clearedStoreNotice };
+function saveChange(
+  storedBefore: Pick<SaveChange, 'storedFile' | 'storedSettings'>,
+  saved: SettingsFile,
+  newAdminPassword: string | null,
+  clearedStoreNotice: boolean,
+): SaveChange {
+  return { ...storedBefore, saved, adminPasswordChanged: newAdminPassword !== null, clearedStoreNotice };
 }
 
 /** Null when the store before the save gave no usable config, so no running process read it. */

@@ -603,6 +603,20 @@ describe('runDialogSave', () => {
     expect(notice(dialog).box.parentElement).toBe(dialog);
   });
 
+  it('restores the form and button on a failure the caller already reported and attaches no notice', async () => {
+    const { runDialogSave } = await loadMessages();
+    const { button, form } = saveParts();
+
+    const saved = await runDialogSave({ form, button, request: () => Promise.resolve({ ok: false, error: null }) });
+
+    expect(saved).toBe(false);
+    expect(form.inert).toBe(false);
+    expect(button.textContent).toBe('Save');
+    expect(button.disabled).toBe(false);
+    vi.advanceTimersByTime(60_000);
+    expect(findNotice()).toBeUndefined();
+  });
+
   it('shows a warning answer in place of the button confirmation', async () => {
     const { runDialogSave } = await loadMessages();
     const { button, form } = saveParts();

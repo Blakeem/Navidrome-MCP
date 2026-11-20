@@ -38,7 +38,7 @@ describe('claudeCodeCommand', () => {
 
 describe('buildConnectReport', () => {
   it('names the file, the backup, the restart step, the Claude Code line and the JSON in order', () => {
-    const report = buildConnectReport(ADDED, ENTRY, false);
+    const report = buildConnectReport(ADDED, ENTRY, false, 'linux');
 
     const order = [
       'Added the navidrome entry in /c/config.json',
@@ -53,7 +53,7 @@ describe('buildConnectReport', () => {
   });
 
   it('says a replaced entry was replaced', () => {
-    expect(buildConnectReport({ ...ADDED, replaced: true }, ENTRY, false)).toContain(
+    expect(buildConnectReport({ ...ADDED, replaced: true }, ENTRY, false, 'linux')).toContain(
       'Replaced the existing navidrome entry in /c/config.json',
     );
   });
@@ -61,22 +61,44 @@ describe('buildConnectReport', () => {
   it('says an identical entry left the file unchanged and names no backup', () => {
     const unchanged: MergeResult = { configPath: '/c/config.json', backupPath: null, replaced: true, unchanged: true };
 
-    const report = buildConnectReport(unchanged, ENTRY, false);
+    const report = buildConnectReport(unchanged, ENTRY, false, 'linux');
 
     expect(report).toContain('already has this navidrome entry, so /c/config.json is unchanged.');
     expect(report).not.toContain('saved as');
   });
 
   it('omits the backup line for a new file', () => {
-    expect(buildConnectReport({ ...ADDED, backupPath: null }, ENTRY, false)).not.toContain('saved as');
+    expect(buildConnectReport({ ...ADDED, backupPath: null }, ENTRY, false, 'linux')).not.toContain('saved as');
   });
 
   it('says --absolute pins the install and how to update', () => {
-    const report = buildConnectReport(ADDED, { command: '/usr/bin/node', args: ['/pkg/dist/index.js'] }, true);
+    const report = buildConnectReport(ADDED, { command: '/usr/bin/node', args: ['/pkg/dist/index.js'] }, true, 'linux');
 
     expect(report).toContain('--absolute pins this install.');
     expect(report).toContain('If it is a global install, update it with npm update -g navidrome-mcp.');
     expect(report).toContain('navidrome-mcp connect --absolute again after you move or reinstall navidrome-mcp.');
     expect(report).toContain('claude mcp add navidrome -- /usr/bin/node /pkg/dist/index.js');
+    expect(report).not.toContain('MSYS_NO_PATHCONV');
+  });
+
+  it('prints a PowerShell or cmd line and a Git Bash line for the Windows cmd /c entry', () => {
+    const report = buildConnectReport(ADDED, { command: 'cmd', args: ['/c', 'npx', 'navidrome-mcp'] }, false, 'win32');
+
+    const order = [
+      'For Claude Code in PowerShell or cmd, run this line.',
+      '  claude mcp add navidrome -- cmd /c npx navidrome-mcp',
+      'For Claude Code in Git Bash, run this line.',
+      '  MSYS_NO_PATHCONV=1 claude mcp add navidrome -- cmd /c npx navidrome-mcp',
+    ].map((text) => report.indexOf(text));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(report).not.toContain('For Claude Code, run this line.');
+  });
+
+  it('prints one Claude Code line for the Windows --absolute entry', () => {
+    const report = buildConnectReport(ADDED, { command: 'C:\\nodejs\\node.exe', args: ['C:\\pkg\\dist\\index.js'] }, true, 'win32');
+
+    expect(report).toContain('For Claude Code, run this line.');
+    expect(report).not.toContain('MSYS_NO_PATHCONV');
   });
 });

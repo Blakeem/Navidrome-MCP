@@ -38,7 +38,7 @@ function main(): void {
   });
   const configPath = claudeDesktopConfigPath({ platform: process.platform, env: process.env, home: homedir() });
   const result = mergeServerEntry(configPath, entry);
-  process.stdout.write(`\n${buildConnectReport(result, entry, absolute)}\n`);
+  process.stdout.write(`\n${buildConnectReport(result, entry, absolute, process.platform)}\n`);
 }
 
 try {

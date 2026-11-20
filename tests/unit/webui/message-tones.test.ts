@@ -37,6 +37,7 @@ interface Answer {
 const getJson = vi.fn();
 const getJsonResult = vi.fn();
 const postJson = vi.fn();
+const postGuestNickname = vi.fn();
 let elements = new Map<string, FakeElement>();
 let created: FakeElement[] = [];
 
@@ -104,6 +105,7 @@ beforeEach(() => {
   getJson.mockReset().mockResolvedValue(null);
   getJsonResult.mockReset();
   postJson.mockReset();
+  postGuestNickname.mockReset();
   vi.stubGlobal('document', {
     activeElement: null,
     body: fakeElement(),
@@ -120,7 +122,7 @@ beforeEach(() => {
       this.value = value;
     }
   });
-  vi.doMock(API, () => ({ FAILED_TEXT, getJson, getJsonResult, postJson }));
+  vi.doMock(API, () => ({ FAILED_TEXT, getJson, getJsonResult, postJson, postGuestNickname }));
 });
 
 afterEach(() => {
@@ -453,5 +455,32 @@ describe('the remove answer in guest-add.js', () => {
 
     expect(shown).toEqual({ text: '', tone: undefined });
     expect(announced()).toBe('');
+  });
+});
+
+describe('the nickname save answer in guest-name.js', () => {
+  const save = async (reply: Answer): Promise<Shown> => {
+    const name = (await import('../../../src/webui/public/guest-name.js')) as unknown as {
+      bindChangeName: (onSaved: (nickname: string) => void) => void;
+    };
+    postGuestNickname.mockResolvedValue(reply);
+    name.bindChangeName(() => undefined);
+    element('guest-name-input').value = 'Sam';
+    element('guest-name-form').handlers['submit']?.({ preventDefault: () => undefined });
+    expect(postGuestNickname).toHaveBeenCalledWith('Sam');
+    await vi.advanceTimersByTimeAsync(ANNOUNCE_DELAY_MS);
+    return notice();
+  };
+
+  it('shows the server error in the error tone', async () => {
+    const shown = await save(answer(false, { error: 'That nickname is taken.' }));
+
+    expect(shown).toEqual({ text: 'That nickname is taken.', tone: 'error' });
+  });
+
+  it('shows nothing when the session ended', async () => {
+    const shown = await save(answer(false, { error: 'Log in to use the web remote.' }, 401));
+
+    expect(shown).toEqual({ text: '', tone: undefined });
   });
 });

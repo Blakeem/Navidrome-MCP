@@ -60,6 +60,16 @@ describe('buildFormSeed', () => {
     expect(seed.navidrome?.username).toBe('envuser');
   });
 
+  it('seeds password access and keeps the hash for a voided store whose auth mode is mistyped', () => {
+    writeFileSync(
+      process.env['NAVIDROME_CONFIG_PATH']!,
+      JSON.stringify({ navidrome: { url: 'http://from-store:4533' }, webui: { auth: { mode: 'pasword', adminPasswordHash: '$argon2id$x' } } }),
+    );
+    const seed = buildFormSeed();
+    expect(seed.webui?.auth?.mode).toBe('password');
+    expect(seed.webui?.auth?.adminPasswordHash).toBe('$argon2id$x');
+  });
+
   it('imports from process.env when no store exists', () => {
     process.env['NAVIDROME_URL'] = 'http://env-only:4533';
     process.env['NAVIDROME_USERNAME'] = 'envuser';

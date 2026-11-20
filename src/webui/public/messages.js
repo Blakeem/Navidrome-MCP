@@ -98,7 +98,8 @@ export function openDialog(dialog) {
  * Blocks `form` while `request` runs, so the save cannot be sent twice. `request` resolves
  * `{ ok: true }`, `{ ok: true, warning }` or `{ ok: false, error }`. A save with a `button`, which holds
  * only its text label, confirms on it, and one without confirms in the notice. A form that closes on
- * success passes `confirm: false`, since the close is its confirmation. Resolves whether the save went through.
+ * success passes `confirm: false`, since the close is its confirmation. `{ ok: false, error: null }` is a
+ * failure the caller already reported, so it writes no notice. Resolves whether the save went through.
  */
 export async function runDialogSave({ form, button = null, request, confirm = true }) {
   const focused = form.contains(document.activeElement) ? document.activeElement : null;
@@ -122,8 +123,9 @@ export async function runDialogSave({ form, button = null, request, confirm = tr
 
   const warned = result.ok && typeof result.warning === 'string';
   setBusy(form, false);
-  if (!result.ok) notify(result.error, 'error');
-  else if (warned) notify(result.warning, 'warning');
+  if (!result.ok) {
+    if (result.error !== null) notify(result.error, 'error');
+  } else if (warned) notify(result.warning, 'warning');
   else if (button === null) notify(SAVED_NOTICE_TEXT, 'success');
   if (button !== null && result.ok && !warned && confirm) holdSaved(button, label, focused);
   else if (button !== null) button.textContent = label;

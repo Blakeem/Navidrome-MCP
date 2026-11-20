@@ -145,7 +145,7 @@ Before you start, Navidrome must be running. Your MCP client must start local se
    ```bash
    navidrome-mcp connect
    ```
-   It saves a copy of the old Claude Desktop config file first. It also prints the line for Claude Code and the entry other MCP clients take.
+   It saves a copy of the old Claude Desktop config file first. It also prints the Claude Code command and the entry other MCP clients take.
 4. **MCP client:** quit it fully and open it again. The settings page opens in your browser. Fill in the Navidrome URL, username, and password. Then click **Test connection** and **Save settings**.
 5. **MCP client:** quit it fully and open it again, so the server loads the saved settings.
 6. **MCP client:** with mpv installed, ask the AI to open the Jukebox Remote. For a desktop icon that starts the player, click **Create desktop shortcut** in the settings page.

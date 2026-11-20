@@ -58,9 +58,11 @@ const RESTART_LINES: Readonly<Record<Restart, string>> = {
 };
 
 const ADMIN_PASSWORD_LINE = 'A new admin password applies to a running player within about 10 seconds and signs out every admin session.';
-const LIVE_AUTH_LINE =
-  'Ask for the admin password on this computer and Admin login allowed from apply to a running player the next time one of its pages loads.';
-const LIVE_APPLY_CONDITION = 'This holds when the player runs from settings.json and Access already uses a password.';
+/** The banner of a second launch names the same live-applied keys and condition, so both build from these. */
+export const LIVE_AUTH_FIELDS = 'Ask for the admin password on this computer and Admin login allowed from';
+export const LIVE_APPLY_WHEN = 'the player runs from settings.json and Access already uses a password';
+const LIVE_AUTH_LINE = `${LIVE_AUTH_FIELDS} apply to a running player the next time one of its pages loads.`;
+const LIVE_APPLY_CONDITION = `This holds when ${LIVE_APPLY_WHEN}.`;
 const ADMIN_PASSWORD_RESTART_CASES = 'A change of Access, or a player started from environment variables, needs a restart.';
 
 const NO_CHANGES_MESSAGE = 'No changes to save.';

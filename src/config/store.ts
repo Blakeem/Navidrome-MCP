@@ -178,7 +178,12 @@ export function readSalvagedSettings(): SettingsFile | null {
  */
 export function readSalvagedRawSettings(): JsonObject | null {
   const { parsed, problemKind } = readStore();
-  return problemKind === 'invalid' ? salvageValidLeaves(SettingsFileSchema, parsed) : null;
+  if (problemKind !== 'invalid') return null;
+  const salvaged = salvageValidLeaves(SettingsFileSchema, parsed);
+  const mode = storedAuthMode(parsed);
+  const unknownMode = mode !== undefined && mode !== null && !WEBUI_AUTH_MODES.some((known) => known === mode);
+  // An unknown mode falls back to password, as toAuthMode does, so a typo never opens the remote.
+  return unknownMode ? mergeOntoStored(salvaged, { webui: { auth: { mode: 'password' } } }) : salvaged;
 }
 
 /**
@@ -193,11 +198,16 @@ export function readSettingsForStartup(): {
   notices: string[];
 } {
   const { settings, parsed, problem, problemKind, notices } = readStore();
-  const stored = StoredAuthModeSchema.safeParse(parsed);
-  const mode = stored.success ? stored.data.webui.auth.mode : undefined;
+  const mode = storedAuthMode(parsed);
   const namesAuthMode = mode !== undefined && mode !== null && mode !== 'none';
   const unparsable = problemKind === 'unreadable' || problemKind === 'not-json';
   return { settings, requestsWebuiAuth: unparsable || namesAuthMode, problem, notices };
+}
+
+/** The file's webui.auth.mode as written, read even when the schema rejects the file. */
+function storedAuthMode(parsed: unknown): unknown {
+  const stored = StoredAuthModeSchema.safeParse(parsed);
+  return stored.success ? stored.data.webui.auth.mode : undefined;
 }
 
 function readStore(): StoreContents {

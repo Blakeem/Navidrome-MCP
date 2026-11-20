@@ -56,7 +56,8 @@ describe('Jukebox Remote attach lines', () => {
     expect(lines[0]).toBe('Jukebox Remote already running at http://127.0.0.1:8808/admin.');
     expect(lines[1]).toBe(
       'Settings page changes saved after it started apply once you click Shut down player in the gear menu and start it again. ' +
-        'A new admin password applies without that step when the player runs from settings.json in a password access mode.',
+        'A new admin password, Ask for the admin password on this computer and Admin login allowed from apply without that step ' +
+        'when the player runs from settings.json and Access already uses a password.',
     );
     expect(lines).toHaveLength(2);
   });
