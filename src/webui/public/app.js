@@ -1,7 +1,7 @@
 // Production serves the copy that pnpm build places in dist/webui/public and reads it on every
 // request, so an edit to this folder needs a build and a page reload.
 
-import { getJson, setCsrfToken, setLoginRequiredHandler } from './api.js';
+import { getJson, postLogin, setCsrfToken, setLoginRequiredHandler } from './api.js';
 import { bindAudioDevice, renderAudioDevice } from './audio-device.js';
 import { connect } from './connection.js';
 import { bindGuestsDialog, showGuestsButton } from './guests.js';
@@ -13,13 +13,14 @@ import { setLrclibEnabled } from './lyrics-content.js';
 import { bindLyricsView, syncLyricsToSnapshot } from './lyrics-view.js';
 import { bindNetworkInfo } from './network-info.js';
 import { renderNowPlaying } from './now-playing.js';
-import { adminView, isLoginMode } from './page-view.js';
+import { adminView, isLoginMode, needsPasswordlessLogin, splitLaunchKey, withLaunchKey } from './page-view.js';
 import { bindPlayDialog } from './play-dialog.js';
 import { rebaseClock } from './playback-clock.js';
 import { bindQueue, renderQueue, revealCurrentRow } from './queue.js';
 import { bindSettings } from './settings.js';
+import { bindDeviceTheme } from './settings-device-theme.js';
 import { playingIndex, storeSnapshot } from './snapshot.js';
-import { applyTheme, applyThemeHint } from './theme.js';
+import { applyTheme, applyThemeHint, ignoreDeviceTheme } from './theme.js';
 import { bindTransport, renderTransport } from './transport.js';
 import { bindVisualizer, renderVisualizer } from './visualizer.js';
 import { bindVolume, renderVolume } from './volume.js';
@@ -49,22 +50,53 @@ async function loadPlayerState() {
   applyTheme(state.theme);
 }
 
+// Held for the page's lifetime, so a later passwordless login on this page sends it again.
+let launchKey = null;
+
+// The key leaves the address bar and the history entry at once, so a bookmark or a shared address never holds it.
+function takeLaunchKey() {
+  const { key, address } = splitLaunchKey(window.location.href);
+  if (address !== window.location.href) window.history.replaceState(window.history.state, '', address);
+  return key;
+}
+
+// The player's computer logs in with no password when the server admits it and the page holds the launch
+// key. A 401 means the server wants the password, since the page holds no valid key, so the login view shows
+// the password field. Any other refusal keeps the session it read and adds the refusal, since the login
+// view's own card may point at All settings, which needs a login.
+async function readSession() {
+  const session = await getJson('/api/auth/session');
+  if (!needsPasswordlessLogin(session)) return session;
+  const { ok, status, data } = await postLogin('', launchKey);
+  if (ok) return getJson('/api/auth/session');
+  if (status === 401) return { ...session, passwordlessHere: false };
+  return { ...session, loginError: data?.error ?? null };
+}
+
+// A passwordless session that ended, such as by a password change while the ask is off, boots again at
+// the address with the launch key, so the new page logs in again with it.
+function leavePlayer(session) {
+  if (!needsPasswordlessLogin(session)) showLoginView(session);
+  else if (launchKey === null) window.location.reload();
+  else window.location.replace(withLaunchKey(window.location.href, launchKey));
+}
+
 // A 401 means the session ended. A failed session read still shows the login form.
 async function returnToLogin() {
-  showLoginView(await getJson('/api/auth/session'));
+  leavePlayer(await getJson('/api/auth/session'));
 }
 
 // Runs when the event stream gives up, so a session that ended elsewhere returns to the login view.
 async function checkSessionEnded() {
   const session = await getJson('/api/auth/session');
-  if (adminView(session) !== 'player') showLoginView(session);
+  if (adminView(session) !== 'player') leavePlayer(session);
 }
 
 // An unread session reads as remote, so a failed read hides the system settings and Shut down and keeps Network info.
 function bootPlayer(session) {
   setLocalPeer(session?.isLocal === true);
   if (isLoginMode(session)) {
-    showAdminControls();
+    showAdminControls(session, launchKey !== null);
     bindLogoutButton();
   }
   if (session?.mode === 'jukebox') {
@@ -80,6 +112,7 @@ function bootPlayer(session) {
   bindPlayDialog();
   bindNetworkInfo();
   bindSettings();
+  bindDeviceTheme();
   bindPowerButton();
   bindLyricsView();
   bindVisualizer();
@@ -96,11 +129,15 @@ function bootPlayer(session) {
 
 // A mode with a login shows the login view until an admin session exists, a guest session included.
 async function bootstrap() {
-  // First, so a forced theme replaces the system one before anything else renders.
+  // First, so the key leaves the address before any other work.
+  launchKey = takeLaunchKey();
+  // Next, so a forced theme replaces the system one before anything else renders.
   applyThemeHint();
   bindLoginForm();
   setLoginRequiredHandler(() => void returnToLogin());
-  const session = await getJson('/api/auth/session');
+  const session = await readSession();
+  // Before the login branch, so the login view on the player's computer drops the choice too.
+  if (session?.isLocal === true) ignoreDeviceTheme();
   if (adminView(session) !== 'player') {
     showLoginView(session);
     return;

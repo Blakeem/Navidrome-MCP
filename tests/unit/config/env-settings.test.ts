@@ -14,7 +14,7 @@ const ENV_KEYS = [
   'NAVIDROME_URL', 'NAVIDROME_USERNAME', 'NAVIDROME_PASSWORD',
   'WEBUI_PORT', 'WEBUI_EXPOSE', 'DEBUG', 'LASTFM_API_KEY',
   'RADIO_BROWSER_USER_AGENT', 'RADIO_BROWSER_BASE',
-  'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE',
+  'LYRICS_PROVIDER', 'LRCLIB_USER_AGENT', 'LRCLIB_BASE', 'MUSICBRAINZ_USER_AGENT',
   'MCP_TRANSPORT', 'MCP_HTTP_HOST', 'MCP_HTTP_PORT', 'MCP_HTTP_EXPOSE',
   'MCP_HTTP_AUTH_TOKEN', 'WEBUI_ENABLED', 'WEBUI_PUBLIC_URL', 'WEBUI_TLS_CERT', 'WEBUI_TLS_KEY', 'WEBUI_AUTH_MODE', 'WEBUI_ADMIN_ACCESS', 'WEBUI_ADMIN_PASSWORD', 'NAVIDROME_DEFAULT_LIBRARIES', 'PLAYBACK_AUDIO_DEVICE', 'JUKEBOX_GUEST_QUEUE_LIMIT',
 ];
@@ -46,6 +46,28 @@ describe('buildFormSeed', () => {
     );
     process.env['NAVIDROME_URL'] = 'http://from-env:4533';
     expect(buildFormSeed().navidrome?.url).toBe('http://from-store:4533');
+  });
+
+  it('lets each valid value of a voided store win over env, and env fills the rest', () => {
+    writeFileSync(
+      process.env['NAVIDROME_CONFIG_PATH']!,
+      JSON.stringify({ navidrome: { url: 'http://from-store:4533' }, webui: { port: 'abc' } }),
+    );
+    process.env['NAVIDROME_URL'] = 'http://from-env:4533';
+    process.env['NAVIDROME_USERNAME'] = 'envuser';
+    const seed = buildFormSeed();
+    expect(seed.navidrome?.url).toBe('http://from-store:4533');
+    expect(seed.navidrome?.username).toBe('envuser');
+  });
+
+  it('seeds password access and keeps the hash for a voided store whose auth mode is mistyped', () => {
+    writeFileSync(
+      process.env['NAVIDROME_CONFIG_PATH']!,
+      JSON.stringify({ navidrome: { url: 'http://from-store:4533' }, webui: { auth: { mode: 'pasword', adminPasswordHash: '$argon2id$x' } } }),
+    );
+    const seed = buildFormSeed();
+    expect(seed.webui?.auth?.mode).toBe('password');
+    expect(seed.webui?.auth?.adminPasswordHash).toBe('$argon2id$x');
   });
 
   it('imports from process.env when no store exists', () => {
@@ -121,25 +143,84 @@ describe('buildFormSeed', () => {
     expect(buildFormSeed().playback?.audioDevice).toBeNull();
   });
 
-  it('pre-fills working radio + lyrics defaults on first run (no store, no env)', () => {
+  it('checks radio and lyrics on first run (no store, no env), with no override pre-filled', () => {
     process.env['NAVIDROME_URL'] = 'http://env:4533';
     const seed = buildFormSeed();
-    // Pre-filled gate fields let a fresh install enable radio and lyrics without looking up values.
-    expect(seed.features?.radioBrowserUserAgent).toBe('Navidrome-MCP');
-    expect(seed.features?.lyricsProvider).toBe('lrclib');
-    expect(seed.features?.lrclibUserAgent).toBe('Navidrome-MCP');
-    expect(seed.features?.lrclibBase).toBe('https://lrclib.net');
-    // A blank radio base selects a mirror by SRV lookup.
+    expect(seed.features?.radio).toBe(true);
+    expect(seed.features?.lyrics).toBe(true);
+    // A blank override falls back to the default user agent or base at the call site.
+    expect(seed.features?.radioBrowserUserAgent ?? null).toBeNull();
+    expect(seed.features?.lrclibUserAgent ?? null).toBeNull();
+    expect(seed.features?.lrclibBase ?? null).toBeNull();
+    expect(seed.features?.musicBrainzUserAgent ?? null).toBeNull();
     expect(seed.features?.radioBrowserBase ?? null).toBeNull();
   });
 
-  it('lets env override the pre-filled radio/lyrics defaults', () => {
+  it('imports env user agents and bases as overrides', () => {
     process.env['NAVIDROME_URL'] = 'http://env:4533';
     process.env['RADIO_BROWSER_USER_AGENT'] = 'MyAgent';
     process.env['LRCLIB_BASE'] = 'https://lrclib.example';
     const seed = buildFormSeed();
+    expect(seed.features?.radio).toBe(true);
     expect(seed.features?.radioBrowserUserAgent).toBe('MyAgent');
     expect(seed.features?.lrclibBase).toBe('https://lrclib.example');
+  });
+
+  it.each([
+    ['LRCLIB', true],
+    ['lrclib', true],
+    ['none', false],
+    ['off', false],
+  ])('reads LYRICS_PROVIDER=%s in the first-run seed as lyrics %s', (provider, expected) => {
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    process.env['LYRICS_PROVIDER'] = provider;
+    expect(buildFormSeed().features?.lyrics).toBe(expected);
+  });
+
+  it('warns with the env key name for an unsupported LYRICS_PROVIDER', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    process.env['NAVIDROME_URL'] = 'http://env:4533';
+    // Each warning logs once per process, so this value appears in no earlier test.
+    process.env['LYRICS_PROVIDER'] = 'genius';
+    buildFormSeed();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('LYRICS_PROVIDER "genius" is not supported'));
+    warn.mockRestore();
+  });
+
+  it('seeds the radio and lyrics state of a stored file that predates the booleans', () => {
+    writeFileSync(process.env['NAVIDROME_CONFIG_PATH'] as string, JSON.stringify({
+      navidrome: { url: 'http://h:4533', username: 'u', password: 'p' },
+      features: { radioBrowserUserAgent: 'UA/1.0', lyricsProvider: 'lrclib' },
+    }));
+    expect(buildFormSeed().features).toMatchObject({ radio: true, lyrics: false, radioBrowserUserAgent: 'UA/1.0' });
+  });
+
+  it('seeds each switch a voided store names from that file', () => {
+    writeFileSync(process.env['NAVIDROME_CONFIG_PATH'] as string, JSON.stringify({
+      navidrome: { url: 'http://h:4533' },
+      features: { radioBrowserUserAgent: '', lyricsProvider: 'lrclib' },
+      webui: { port: 'abc' },
+    }));
+    expect(buildFormSeed().features).toMatchObject({ radio: false, lyrics: false });
+  });
+
+  it('keeps the imported radio and lyrics state for a voided store that names neither', () => {
+    writeFileSync(process.env['NAVIDROME_CONFIG_PATH'] as string, JSON.stringify({
+      navidrome: { url: 'http://h:4533' },
+      webui: { port: 'abc' },
+    }));
+    process.env['RADIO_BROWSER_USER_AGENT'] = 'MyAgent';
+    expect(buildFormSeed().features).toMatchObject({ radio: true, lyrics: true, radioBrowserUserAgent: 'MyAgent' });
+  });
+
+  it('lets a voided store that names one switch keep the imported state of the other', () => {
+    writeFileSync(process.env['NAVIDROME_CONFIG_PATH'] as string, JSON.stringify({
+      navidrome: { url: 'http://h:4533' },
+      features: { radio: false },
+      webui: { port: 'abc' },
+    }));
+    process.env['RADIO_BROWSER_USER_AGENT'] = 'MyAgent';
+    expect(buildFormSeed().features).toMatchObject({ radio: false, lyrics: true });
   });
 
   it('defaults the transport to stdio (unexposed) when no env is set', () => {

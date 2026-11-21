@@ -272,9 +272,10 @@ class PlaybackEngine {
     return PlaybackEngine.instance;
   }
 
-  configure(config: Config): void {
+  /** A null clears the config, so a runtime with playback off never streams with an earlier runtime's settings. */
+  configure(config: Config | null): void {
     this.config = config;
-    this.mpvBinary = config.mpvPath ?? null;
+    this.mpvBinary = config?.mpvPath ?? null;
   }
 
   /**

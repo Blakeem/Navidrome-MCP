@@ -34,7 +34,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     // The override skips the resolver's DNS lookup. radio-browser-resolver.test.ts covers it.
     radioBrowserBaseOverride: 'https://de1.api.radio-browser.info',
     radioBrowserUserAgent: 'TestAgent/1.0',
-    lyricsProvider: undefined,
     lrclibUserAgent: undefined,
     lrclibBase: 'https://lrclib.net',
     playbackTranscodeFormat: 'mp3',

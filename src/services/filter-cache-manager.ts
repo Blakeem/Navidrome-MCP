@@ -217,7 +217,7 @@ class FilterCacheManager {
     ) as Record<FilterType, number>;
   }
 
-  /** Test isolation only. */
+  /** Lets a new runtime load another server's filter values, and isolates tests. */
   reset(): void {
     for (const set of Object.values(this.filterSets)) {
       set.ids.clear();
@@ -227,7 +227,6 @@ class FilterCacheManager {
     this.initialized = false;
     this.cacheEnabled = true;
     this.client = null;
-    FilterCacheManager.instance = null;
   }
 }
 

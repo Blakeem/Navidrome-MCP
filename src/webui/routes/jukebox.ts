@@ -19,15 +19,19 @@ import { GUEST_PAGE_PATH } from '../page-paths.js';
 import { networkKey } from '../source-address.js';
 import { isTlsEnabled } from '../tls.js';
 
+// Bind and public URL settings apply at startup, so each remedy ends with the restart step.
+const ALL_SETTINGS = "All settings in the gear menu on the player's computer";
+const RESTART_STEP = 'then shut down the player and start it again';
 const LOOPBACK_ONLY =
   'No address reaches guests, since the web remote listens on this computer only. ' +
-  'Turn on Expose on LAN in navidrome-config, then restart the player.';
+  `Turn on Expose on LAN in ${ALL_SETTINGS}, ${RESTART_STEP}.`;
 // An explicit bind host wins over Expose on LAN, so turning Expose on cannot fix this bind.
 const BIND_HOST_OVERRIDES_EXPOSE =
-  'No address reaches guests, since the web player bind host is a loopback address, which overrides Expose on LAN. ' +
-  'Clear Bind host in the Web Player section of navidrome-config, then restart the player.';
+  'No address reaches guests, since the bind host is a loopback address, which overrides Expose on LAN. ' +
+  `Clear Bind host in the Jukebox Remote section of ${ALL_SETTINGS}, ${RESTART_STEP}.`;
 const NO_LAN_ADDRESS =
-  'No LAN IPv4 address was found. Connect this computer to the network, or set webui.publicUrl in navidrome-config.';
+  'No LAN IPv4 address was found. Connect this computer to the network. ' +
+  `For guests on the internet, set Public URL in ${ALL_SETTINGS}, ${RESTART_STEP}.`;
 
 interface JoinBases {
   lan: Array<{ label: string; origin: string }>;

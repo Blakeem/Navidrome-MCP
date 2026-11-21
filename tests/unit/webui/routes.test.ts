@@ -63,16 +63,20 @@ vi.mock('../../../src/tools/playback.js', async (importOriginal) => {
 });
 
 import { readRawSettings, readSettings, writeSettings } from '../../../src/config/store.js';
+import { logger } from '../../../src/utils/logger.js';
+import { createSettingsPageHolder } from '../../../src/web/settings-page.js';
 import { getPersist, setPersist, setTheme, setVisualizer } from '../../../src/web/player-runtime.js';
 import { fetchWithTimeout } from '../../../src/utils/fetch-with-timeout.js';
 import { HEALTH_APP_ID, handleHealth } from '../../../src/webui/routes/health.js';
 import {
   handleGetPlayerSettings,
   handleMcpLease,
+  handleOpenSettingsPage,
   handlePlayerState,
   handleSetPlayerSettings,
   handleShutdown,
   MCP_LEASE_PATH,
+  type SettingsPageOpener,
 } from '../../../src/webui/routes/player.js';
 import { handleCover } from '../../../src/webui/routes/cover.js';
 import { handlePlayQueueIndex, handleSeek, handleVolume } from '../../../src/webui/routes/controls.js';
@@ -145,7 +149,7 @@ function configWith(webui: { expose: boolean; host: string; autoOpenBrowser?: bo
       theme: null,
       visualizer: true,
       tls: { certPath: null, keyPath: null },
-      auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' },
+      auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost', askPasswordOnThisComputer: true },
     },
   });
 }
@@ -212,11 +216,17 @@ describe('handleHealth loopback gate (resolved bind host matrix)', () => {
     expect(cap.status()).toBe(200);
   });
 
-  it('serves only the app signature and the version', () => {
+  it('serves only the app signature, the version and the LAN bind state', () => {
     const cap = fakeRes();
     handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: false, host: '127.0.0.1' }));
-    expect(Object.keys(cap.json() as object).sort()).toEqual(['app', 'version']);
-    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID });
+    expect(Object.keys(cap.json() as object).sort()).toEqual(['app', 'lan', 'version']);
+    expect(cap.json()).toMatchObject({ app: HEALTH_APP_ID, lan: false });
+  });
+
+  it('reports a LAN-reachable bind to a loopback peer', () => {
+    const cap = fakeRes();
+    handleHealth(fakeReq(LOOPBACK), cap.res, configWith({ expose: true, host: '0.0.0.0' }));
+    expect(cap.json()).toMatchObject({ lan: true });
   });
 });
 
@@ -367,6 +377,62 @@ describe('player routes reject non-loopback peers in access mode none', () => {
     handleMcpLease(fakeReq(LAN_PEER), cap.res, leases);
     expect(cap.status()).toBe(404);
     expect(leases.open).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/player/settings-page', () => {
+  const SETTINGS_URL = 'http://127.0.0.1:5555/';
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubStart(): ReturnType<typeof vi.fn> {
+    return vi.fn(() => Promise.resolve({ url: SETTINGS_URL, close: vi.fn(() => Promise.resolve()) }));
+  }
+
+  it('answers a local request with the settings server URL', async () => {
+    const settingsPage = { open: vi.fn(() => Promise.resolve(SETTINGS_URL)) };
+
+    const reply = await dispatchFrom(LOOPBACK, '/api/player/settings-page', LOOPBACK_CONFIG, '127.0.0.1:8808', { method: 'POST', body: {}, settingsPage });
+
+    expect(reply.status).toBe(200);
+    expect(JSON.parse(reply.body)).toEqual({ url: SETTINGS_URL });
+  });
+
+  it('answers a LAN peer 404 and starts no settings server', async () => {
+    const settingsPage = { open: vi.fn(() => Promise.resolve(SETTINGS_URL)) };
+
+    const reply = await dispatchFrom(LAN_PEER, '/api/player/settings-page', LOOPBACK_CONFIG, '127.0.0.1:8808', { method: 'POST', body: {}, settingsPage });
+
+    expect(reply.status).toBe(404);
+    expect(settingsPage.open).not.toHaveBeenCalled();
+  });
+
+  it('starts one settings server for two concurrent requests, which get the same URL', async () => {
+    const start = stubStart();
+    const settingsPage = createSettingsPageHolder(start);
+    const options = { method: 'POST', body: {}, settingsPage } as const;
+
+    const replies = await Promise.all([
+      dispatchFrom(LOOPBACK, '/api/player/settings-page', LOOPBACK_CONFIG, '127.0.0.1:8808', options),
+      dispatchFrom(LOOPBACK, '/api/player/settings-page', LOOPBACK_CONFIG, '127.0.0.1:8808', options),
+    ]);
+
+    expect(replies.map((reply) => reply.status)).toEqual([200, 200]);
+    expect(replies.map((reply) => JSON.parse(reply.body))).toEqual([{ url: SETTINGS_URL }, { url: SETTINGS_URL }]);
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers 500 with the cause when the settings server fails to start', async () => {
+    const errorLog = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    const cap = fakeRes();
+
+    await handleOpenSettingsPage(cap.res, { open: () => Promise.reject(new Error('listen EACCES 127.0.0.1')) });
+
+    expect(cap.status()).toBe(500);
+    expect(cap.json()).toEqual({ error: 'The settings page failed to start: listen EACCES 127.0.0.1' });
+    expect(errorLog).toHaveBeenCalledWith('settings page: failed to start:', expect.any(Error));
   });
 });
 
@@ -852,6 +918,7 @@ function testServer(
     visualizer: { addClient: addVisualizerClient },
     shutdown: () => undefined,
     leases: { open: () => undefined, close: () => undefined },
+    settingsPage: { open: () => Promise.resolve('http://127.0.0.1:1/') },
     auth: new AuthService(config),
     guests: new GuestQueue(),
   });
@@ -1085,6 +1152,7 @@ describe('MCP lease route over a live dispatcher', () => {
       visualizer: { addClient: vi.fn() },
       shutdown: () => undefined,
       leases,
+      settingsPage: { open: () => Promise.resolve('http://127.0.0.1:1/') },
       auth: new AuthService(config),
       guests: new GuestQueue(),
     });
@@ -1320,7 +1388,7 @@ describe('createConnectionLimiter', () => {
     ['jukebox', 'anywhere', false],
   ] as const)('in mode %s at level %s, a ninth internet socket is refused: %s', (mode, adminAccess, refused) => {
     const config = configWith({ expose: true, host: '0.0.0.0' });
-    config.webui.auth = { mode, adminPasswordHash: null, adminAccess };
+    config.webui.auth = { mode, adminPasswordHash: null, adminAccess, askPasswordOnThisComputer: true };
     const limit = testServer(config).listeners('connection').at(-1) as (socket: Socket) => void;
 
     const sockets = openSockets(limit, Array.from({ length: 9 }, (_, index) => `203.0.113.${String(index + 1)}`));
@@ -1330,7 +1398,7 @@ describe('createConnectionLimiter', () => {
 
   it('in mode password at level anywhere, one internet network cannot take every internet slot', () => {
     const config = configWith({ expose: true, host: '0.0.0.0' });
-    config.webui.auth = { mode: 'password', adminPasswordHash: null, adminAccess: 'anywhere' };
+    config.webui.auth = { mode: 'password', adminPasswordHash: null, adminAccess: 'anywhere', askPasswordOnThisComputer: true };
     const limit = testServer(config).listeners('connection').at(-1) as (socket: Socket) => void;
 
     const flood = openSockets(limit, Array.from({ length: 17 }, () => '203.0.113.5'));
@@ -1516,6 +1584,7 @@ interface DispatchOptions {
   body?: unknown;
   headers?: Record<string, string>;
   shutdown?: () => void;
+  settingsPage?: SettingsPageOpener;
 }
 
 /** A real socket here is always loopback, so a fake request carries the chosen peer address. */
@@ -1556,6 +1625,7 @@ async function dispatchFrom(
     visualizer: { addClient: vi.fn() },
     shutdown: options.shutdown ?? ((): void => undefined),
     leases: { open: () => undefined, close: () => undefined },
+    settingsPage: options.settingsPage ?? { open: () => Promise.resolve('http://127.0.0.1:1/') },
     auth: new AuthService(config),
     guests: new GuestQueue(),
   }).emit('request', req, res);

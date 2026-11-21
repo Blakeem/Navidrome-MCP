@@ -39,7 +39,7 @@ const BASE: Config = {
     theme: null,
     visualizer: true,
     tls: { certPath: null, keyPath: null },
-    auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost' },
+    auth: { mode: 'none', adminPasswordHash: null, adminAccess: 'localhost', askPasswordOnThisComputer: true },
   },
   jukebox: { guestQueueLimit: DEFAULT_GUEST_QUEUE_LIMIT, shareLink: DEFAULT_JUKEBOX_SHARE_LINK },
 };

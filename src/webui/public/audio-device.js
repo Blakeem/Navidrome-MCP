@@ -1,16 +1,17 @@
 import { FAILED_TEXT, getJsonResult, postJson } from './api.js';
-import { byId } from './dom.js';
+import { buildListStatusRow, byId } from './dom.js';
+import { clearNotice, notify, openDialog } from './messages.js';
 import { bindOutputBanner, renderOutputBanner } from './output-banner.js';
 
 const openBtn = byId('btn-audio-device');
 const dialog = byId('audio-device-dialog');
 const list = byId('audio-device-list');
-const statusLine = byId('audio-device-status');
 
 const OUTPUT_LABEL = 'Audio output';
+const LOADING_TEXT = 'Loading outputs…';
 
 function openAudioDevice() {
-  dialog.showModal();
+  openDialog(dialog);
   void loadDevices();
 }
 
@@ -29,14 +30,14 @@ export function renderAudioDevice(status) {
 }
 
 async function loadDevices() {
-  statusLine.textContent = 'Loading outputs…';
-  list.replaceChildren();
+  list.replaceChildren(buildListStatusRow(LOADING_TEXT));
   const { ok, data } = await getJsonResult('/api/audio-devices');
   if (!ok || data === null) {
-    statusLine.textContent = failureText(data);
+    list.replaceChildren();
+    // A failure that arrives after the dialog closed would show on the page, away from the dialog it explains.
+    if (dialog.open) notify(failureText(data), 'error');
     return;
   }
-  statusLine.textContent = '';
   list.replaceChildren(...deviceEntries(data).map(buildDeviceRow));
 }
 
@@ -73,13 +74,13 @@ function buildDeviceRow(entry) {
 }
 
 async function chooseDevice(id) {
-  statusLine.textContent = '';
+  clearNotice();
   const { ok, data } = await postJson('/api/controls/audio-device', { id });
   if (ok && data?.success === true) {
     dialog.close();
     return;
   }
-  statusLine.textContent = failureText(data);
+  notify(failureText(data), 'error');
 }
 
 function failureText(data) {

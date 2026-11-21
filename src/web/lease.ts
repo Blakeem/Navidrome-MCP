@@ -50,7 +50,7 @@ export function holdOwnerLease(port: number, secure: boolean): Promise<void> {
       (res) => {
         if (res.statusCode !== 200) {
           // A player older than the lease route answers 404 and keeps its old lifetime rule.
-          logger.debug(`web player refused the MCP lease with HTTP ${String(res.statusCode)}`);
+          logger.debug(`Jukebox Remote refused the MCP lease with HTTP ${String(res.statusCode)}`);
           release(req);
           res.resume();
         }
@@ -62,7 +62,7 @@ export function holdOwnerLease(port: number, secure: boolean): Promise<void> {
     held = { port, secure, req };
     req.on('socket', (socket) => socket.unref());
     req.on('error', (err) => {
-      logger.debug(`web player lease failed: ${err.message}`);
+      logger.debug(`Jukebox Remote lease failed: ${err.message}`);
       release(req);
       settle();
     });

@@ -68,8 +68,8 @@ export function randomPort(): number {
 // Each store copies the real credentials, so teardown removes every one.
 const tempStoreDirs: string[] = [];
 
-/** Clones the seeded test store, so the children get working credentials on an isolated port. */
-export function makeTempStore(port: number, webuiOverrides: Record<string, unknown> = {}): string {
+/** The seeded test store's working credentials, with the player on an isolated port. */
+export function testStoreSettings(port: number, webuiOverrides: Record<string, unknown> = {}): Record<string, unknown> {
   const base = JSON.parse(readFileSync(getSettingsStorePath(), 'utf8')) as Record<string, unknown>;
   base['webui'] = {
     ...((base['webui'] as Record<string, unknown> | undefined) ?? {}),
@@ -79,10 +79,14 @@ export function makeTempStore(port: number, webuiOverrides: Record<string, unkno
     autoOpenBrowser: false,
     ...webuiOverrides,
   };
+  return base;
+}
+
+export function makeTempStore(port: number, webuiOverrides: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(join(tmpdir(), 'ndmcp-coord-'));
   tempStoreDirs.push(dir);
   const path = join(dir, 'settings.json');
-  writeFileSync(path, JSON.stringify(base));
+  writeFileSync(path, JSON.stringify(testStoreSettings(port, webuiOverrides)));
   return path;
 }
 
@@ -127,14 +131,19 @@ export function spawnWeb(storePath: string, extraEnv: NodeJS.ProcessEnv = {}): C
   return child;
 }
 
-/** Untracked, since setup mode never binds the web port or touches mpv. Its test owns teardown. */
+/**
+ * Tracked, since a Save in setup mode starts the player, which binds the saved port and may attach
+ * mpv. A test that saves takes that port from randomPort, so teardown shuts the player down.
+ */
 export function spawnUnconfiguredWeb(storePath: string): ChildProcess {
   const env: NodeJS.ProcessEnv = { ...process.env, NAVIDROME_CONFIG_PATH: storePath, NAVIDROME_WEB_AUTO_OPEN: '0' };
   // The env fallback would configure the child from these and skip setup mode.
   delete env['NAVIDROME_URL'];
   delete env['NAVIDROME_USERNAME'];
   delete env['NAVIDROME_PASSWORD'];
-  return spawn(process.execPath, [DIST_WEB_MAIN], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+  const child = spawn(process.execPath, [DIST_WEB_MAIN], { env, stdio: ['ignore', 'pipe', 'ignore'] });
+  children.push(child);
+  return child;
 }
 
 /** A detached grandchild cannot be killed by handle, so each used port also gets a power request,

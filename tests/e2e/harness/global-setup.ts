@@ -108,7 +108,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     const storePath = writeTempStore({ runDir, port, adminPasswordHash: await hashPassword(adminPassword) });
     run.baseUrl = loopbackBaseUrl(port);
     run.child = spawnInstance(storePath, childEnv);
-    await waitForHealthy(run.baseUrl, run.child, join(runDir, 'navidrome-web.log'));
+    await waitForHealthy(run.baseUrl, run.child, join(runDir, 'jukebox-remote.log'));
     await logInOnce(run, adminPassword);
     publishRunEnv({ instance: { port, baseUrl: run.baseUrl, adminPassword, ipcPath }, adminStatePath: run.adminStatePath });
   } catch (err) {

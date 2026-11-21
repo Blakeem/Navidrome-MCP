@@ -7,7 +7,8 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { handleSettingsRoute } from './routes.js';
+import { handleSettingsRoute, type SettingsRouteContext } from './routes.js';
+import type { SaveTakeover, SettingsPageHost } from './save-message.js';
 import {
   CROSS_ORIGIN_REFUSAL,
   crossOriginRefusal,
@@ -30,19 +31,25 @@ interface ConfigServer {
 }
 
 interface ConfigServerOptions {
+  host: SettingsPageHost;
   /**
-   * The web player's setup mode sets this, since it may run without a terminal and has no power
-   * button to stop an abandoned settings page.
+   * The Jukebox Remote sets this for its setup mode and its All settings button, since it may run
+   * without a terminal and the settings page has no power button to stop an abandoned server.
    */
   idleTimeoutMs?: number;
   onIdleTimeout?: () => void;
+  /**
+   * Runs after each Save writes settings.json, before the reply. A rejection keeps this server, and
+   * the page shows its reason. A resolve means the host took over, so this server closes after the reply.
+   */
+  onSaved?: () => Promise<SaveTakeover>;
 }
 
 /**
  * Settings carry credentials, so the server binds loopback and also checks each peer. An ephemeral
- * port never collides with the web player.
+ * port never collides with the Jukebox Remote.
  */
-export async function startConfigServer(options: ConfigServerOptions = {}): Promise<ConfigServer> {
+export async function startConfigServer(options: ConfigServerOptions): Promise<ConfigServer> {
   // A missing Argon2 blocks only a new admin password, so the page still opens and the save reports it.
   void assertArgon2Available().catch((err: unknown) => {
     logger.warn('settings Argon2 probe failed, so a new admin password cannot be saved:', err);
@@ -50,7 +57,7 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
   let idleTimer: NodeJS.Timeout | undefined;
   const server: Server = createServer((req, res) => {
     setSecurityHeaders(res);
-    void handleRequest(req, res);
+    void handleRequest(req, res, context);
   });
 
   const close = (): Promise<void> =>
@@ -63,7 +70,7 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
     });
 
   // Unref'd, since the listening server keeps the process alive and this timer only bounds how
-  // long an abandoned setup page lingers.
+  // long an abandoned settings page lingers.
   const bumpIdle = (): void => {
     const ms = options.idleTimeoutMs;
     if (ms === undefined) return;
@@ -73,6 +80,8 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
     }, ms);
     idleTimer.unref();
   };
+
+  const context: SettingsRouteContext = { host: options.host, onSaved: options.onSaved, close };
 
   server.on('request', bumpIdle);
 
@@ -93,7 +102,7 @@ export async function startConfigServer(options: ConfigServerOptions = {}): Prom
   return { url, close };
 }
 
-async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleRequest(req: IncomingMessage, res: ServerResponse, context: SettingsRouteContext): Promise<void> {
   const method = req.method ?? 'GET';
   const path = (req.url ?? '/').split('?')[0] ?? '/';
 
@@ -122,7 +131,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   try {
-    if (await handleSettingsRoute(req, res, method, path)) return;
+    if (await handleSettingsRoute(req, res, method, path, context)) return;
 
     if (method === 'GET') {
       await handleStatic(res, path, PUBLIC_DIR);

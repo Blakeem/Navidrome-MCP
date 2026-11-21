@@ -117,6 +117,9 @@ const EXPECTED_PLAYBACK_TOOLS = [
   'play_queue_index',
 ];
 
+// Registers only over stdio with the Jukebox Remote on, since the browser opens on the server's computer.
+const JUKEBOX_REMOTE_TOOL = 'open_jukebox_remote';
+
 describe('Tools Registry - Tool Count Verification', () => {
   let liveClient: NavidromeClient;
   let config: Config;
@@ -128,7 +131,6 @@ describe('Tools Registry - Tool Count Verification', () => {
       features: { lastfm: true, radioBrowser: true, lyrics: true, playback: false },
       lastFmApiKey: 'test-lastfm-key',
       radioBrowserUserAgent: 'Test-Agent/1.0',
-      lyricsProvider: 'lrclib',
       lrclibUserAgent: 'Test-Agent/1.0',
     });
 
@@ -155,6 +157,7 @@ describe('Tools Registry - Tool Count Verification', () => {
 
     if (config.features.playback) {
       expectedTools.push(...EXPECTED_PLAYBACK_TOOLS);
+      if (config.transport.type === 'stdio' && config.webui.enabled) expectedTools.push(JUKEBOX_REMOTE_TOOL);
     }
 
     return expectedTools.sort();
@@ -263,6 +266,21 @@ describe('Tools Registry - Tool Count Verification', () => {
       expect(uniqueNames.size).toBe(actualToolNames.length);
 
       expect(actualToolNames.sort()).toEqual(expectedToolNames);
+    });
+
+    it.each([
+      ['stdio with playback and the Jukebox Remote on', 'stdio', true, true, true],
+      ['the HTTP transport', 'http', true, true, false],
+      ['playback off', 'stdio', false, true, false],
+      ['the Jukebox Remote off', 'stdio', true, false, false],
+    ] as const)('registers open_jukebox_remote only for %s', (_label, transportType, playback, webuiEnabled, registered) => {
+      const variant: Config = {
+        ...withFeatures({ playback }),
+        transport: { ...config.transport, type: transportType },
+        webui: { ...config.webui, enabled: webuiEnabled },
+      };
+
+      expect(toolNamesOf(buildToolRegistry(liveClient, variant)).includes(JUKEBOX_REMOTE_TOOL)).toBe(registered);
     });
 
     it('rejects a category that registers an already-registered tool name', () => {

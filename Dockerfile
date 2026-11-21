@@ -24,7 +24,7 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN corepack enable
 
 ENV NAVIDROME_CONFIG_PATH=/config/settings.json
-# The `node` user writes beside the settings file, such as navidrome-web.log in an image with mpv.
+# The `node` user writes beside the settings file, such as jukebox-remote.log in an image with mpv.
 # A Docker-created volume inherits this ownership. A bind mount keeps the host's ownership.
 RUN mkdir -p /config && chown node:node /config
 VOLUME ["/config"]
@@ -46,4 +46,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["node", "-e", "require('node:http').get('http://127.0.0.1:3000/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
 
 USER node
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/index.js", "serve"]

@@ -6,11 +6,16 @@
 
 import { copyFileSync, existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { finished } from 'node:stream';
+import type { z } from 'zod';
 import { validateMappedSettings } from '../config.js';
-import { buildFormSeed, FORM_SUGGESTIONS } from '../config/env-settings.js';
+import { ConfigSchema } from '../config/schema.js';
+import { buildFormSeed } from '../config/env-settings.js';
 import {
   mergeOntoStored,
   readRawSettings,
+  readSalvagedRawSettings,
+  readStoreNotices,
   readStoreProblem,
   writeSettings,
   SettingsFileSchema,
@@ -25,6 +30,7 @@ import {
   WEBUI_BIND_HOSTS,
 } from '../constants/defaults.js';
 import { NavidromeClient } from '../client/navidrome-client.js';
+import { listUserLibraries } from '../services/library-manager.js';
 import { audioDeviceDriver, filterToOneDriver, probeAudioDevices } from '../services/playback/audio-devices.js';
 import { resolveMpvBinary } from '../services/playback/mpv-process.js';
 import { writeJson, writeError, readJsonBody } from '../webui/http-helpers.js';
@@ -32,6 +38,11 @@ import { ErrorFormatter, errorMessage } from '../utils/error-formatter.js';
 import { logger, redact } from '../utils/logger.js';
 import { describeFetchError } from '../utils/network-safety.js';
 import { hashPassword, isPasswordHash } from '../utils/secrets.js';
+import { jukeboxLogPath } from '../web/log-path.js';
+import { GNOME_ALLOW_LAUNCH_HINT, REINSTALL_HINT } from '../cli/texts.js';
+import { createJukeboxShortcut, type ShortcutResult } from '../shortcut/create.js';
+import { APP_NAME } from '../shortcut/paths.js';
+import { firstSaveSteps, HostStartError, laterSaveMessage, type SaveChange, type SaveTakeover, type SettingsPageHost } from './save-message.js';
 
 /**
  * Stands in for the Navidrome password, MCP auth token and Last.fm API key in the browser, so they
@@ -39,19 +50,33 @@ import { hashPassword, isPasswordHash } from '../utils/secrets.js';
  */
 const SECRET_SENTINEL = '********';
 
+/** The page sets it on a Save that posts only the fields changed since it loaded a usable store. */
+const CHANGED_ONLY_HEADER = 'x-settings-changed-only';
+const STORE_CHANGED_SINCE_LOAD =
+  'settings.json changed after this page loaded, and the server can no longer use it. Reload the page, then save again.';
+const HOST_STARTING_FROM_SAVE = "Another tab's Save is starting the Jukebox Remote. Save here again only if that start fails.";
+
+/** Holds each host that is starting, or started, from a Save until its settings server closes. */
+const hostsStartingFromSave = new WeakSet<SettingsRouteContext>();
+
+/** What the settings server's host gives the Save route. */
+export interface SettingsRouteContext {
+  host: SettingsPageHost;
+  /** A resolve means the host took over, so the route closes the server once the reply is sent. */
+  onSaved: (() => Promise<SaveTakeover>) | undefined;
+  close: () => Promise<void>;
+}
+
 /** The caller (server.ts) owns the loopback guard, so these handlers assume a local peer. */
 export async function handleSettingsRoute(
   req: IncomingMessage,
   res: ServerResponse,
   method: string,
   path: string,
+  context: SettingsRouteContext,
 ): Promise<boolean> {
   if (method === 'GET' && path === '/api/settings/seed') {
     handleSeed(res);
-    return true;
-  }
-  if (method === 'GET' && path === '/api/settings/suggestions') {
-    writeJson(res, 200, FORM_SUGGESTIONS);
     return true;
   }
   if (method === 'GET' && path === '/api/settings/audio-devices') {
@@ -59,11 +84,19 @@ export async function handleSettingsRoute(
     return true;
   }
   if (method === 'POST' && path === '/api/settings') {
-    await handleSave(req, res);
+    await handleSave(req, res, context);
     return true;
   }
   if (method === 'POST' && path === '/api/settings/test') {
     await handleTest(req, res);
+    return true;
+  }
+  if (method === 'POST' && path === '/api/settings/libraries') {
+    await handleLibraries(req, res);
+    return true;
+  }
+  if (method === 'POST' && path === '/api/settings/shortcut') {
+    await handleShortcut(res);
     return true;
   }
   return false;
@@ -74,8 +107,14 @@ function handleSeed(res: ServerResponse): void {
     const problem = readStoreProblem();
     writeJson(res, 200, {
       ...seedForBrowser(buildFormSeed()),
+      // The page posts only changed fields over a usable store, and every field otherwise.
+      storeUsable: readRawSettings() !== null,
       storeProblem: problem?.text ?? null,
       storeUnreadable: problem?.unreadable === true,
+      storeSalvaged: problem?.salvaged === true,
+      storeNotices: readStoreNotices(),
+      storePath: getSettingsStorePath(),
+      logPath: jukeboxLogPath(),
     });
   } catch (err) {
     logger.warn('settings seed failed:', err);
@@ -103,35 +142,62 @@ async function handleAudioDevices(res: ServerResponse): Promise<void> {
   }
 }
 
+/**
+ * A host that starts from a Save reads settings.json once, so a Save from a second tab during that
+ * start, or after it, would write settings the started host never reads.
+ */
+async function handleSave(req: IncomingMessage, res: ServerResponse, context: SettingsRouteContext): Promise<void> {
+  if (context.onSaved === undefined) {
+    await saveSettings(req, res, context);
+    return;
+  }
+  if (hostsStartingFromSave.has(context)) {
+    writeError(res, 409, HOST_STARTING_FROM_SAVE);
+    return;
+  }
+  hostsStartingFromSave.add(context);
+  let tookOver = false;
+  try {
+    tookOver = await saveSettings(req, res, context);
+  } finally {
+    if (!tookOver) hostsStartingFromSave.delete(context);
+  }
+}
+
 // The player's /api/player/settings also writes this file with atomic writeSettings, so
-// concurrent saves are last-writer-wins on the entire file.
-async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<void> {
+// concurrent saves are last-writer-wins on the entire file. Returns true when the host took over.
+async function saveSettings(req: IncomingMessage, res: ServerResponse, context: SettingsRouteContext): Promise<boolean> {
   const body = await parseSettingsBody(req, res);
-  if (body === null) return;
+  if (body === null) return false;
   const { settings: parsed, newAdminPassword } = body;
 
   if (newAdminPassword !== null && !isAdminPasswordLengthValid(newAdminPassword)) {
     writeError(res, 400, ErrorFormatter.configValidation([
       `webui.auth.adminPassword: The admin password must be ${String(ADMIN_PASSWORD_MIN_LENGTH)} to ${String(ADMIN_PASSWORD_MAX_LENGTH)} characters.`,
     ]));
-    return;
+    return false;
   }
 
   const stored = readRawSettings();
-  const merged = withoutLegacyTheme(mergeOntoStored(stored ?? {}, parsed) as SettingsFile);
+  const noticesBeforeSave = readStoreNotices();
+  const storedConfig = usableStoredSettings(stored);
+  // Runs before the write, since normalizedForSave reads the store through buildFormSeed.
+  const storedBefore = storedConfig === null ? null : { storedFile: storedConfig, storedSettings: normalizedForSave(storedConfig) };
+  // A changed-fields body over an env or salvaged base would replace the values the page showed.
+  if (stored === null && req.headers[CHANGED_ONLY_HEADER] === '1') {
+    writeError(res, 409, STORE_CHANGED_SINCE_LOAD);
+    return false;
+  }
+  // The form seeded from a rejected file's valid values, so a save also keeps the values and keys the form does not show, such as the admin password hash.
+  const salvaged = stored === null ? readSalvagedRawSettings() : null;
+  const base = stored ?? withSeedValuesTheFormHides(salvaged ?? {});
+  const merged = normalizedForSave(mergeOntoStored(base, parsed) as SettingsFile);
 
   // Never persist a file the runtime would reject, such as one with a blank URL.
   const validation = validateForm(merged);
   if (!validation.ok) {
     writeError(res, 400, ErrorFormatter.configValidation(validation.messages));
-    return;
-  }
-  const { mode, adminPasswordHash: storedHash } = validation.config.webui.auth;
-  if (mode !== 'none' && newAdminPassword === null && !isUsableAdminHash(storedHash)) {
-    writeError(res, 400, ErrorFormatter.configValidation([
-      'webui.auth.adminPassword: Access with the admin password needs an admin password. Enter one, or set Access to Open.',
-    ]));
-    return;
+    return false;
   }
 
   let settings = merged;
@@ -141,7 +207,7 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
     } catch (err) {
       logger.error('admin password hash failed:', err);
       writeError(res, 500, `Failed to hash the admin password: ${errorMessage(err)}`);
-      return;
+      return false;
     }
   }
 
@@ -153,26 +219,74 @@ async function handleSave(req: IncomingMessage, res: ServerResponse): Promise<vo
     logger.error('settings save failed:', err);
     const reason = errorMessage(err);
     writeError(res, 500, `Failed to write settings to ${getSettingsStorePath()}: ${reason}`);
-    return;
+    return false;
   }
-  const backupNotice = backupPath === null
-    ? ''
-    : `The previous settings.json could not be read, so it was kept as ${backupPath}. `;
-  writeJson(res, 200, {
-    ok: true,
-    // The settings server runs under the MCP server, the web player, or `navidrome-config`, so the
-    // message names every restart path.
-    message:
-      `${backupNotice}Settings saved. They load at startup and the server does not hot-reload, so restart ` +
-      "whatever you launched to apply them: your MCP client (e.g. quit and reopen Claude " +
-      'Desktop, the full toolset appears after a restart) and/or the web player (re-run ' +
-      '`navidrome-web`). A web player port or host change needs both restarted. ' +
-      'You can keep changing settings and saving again from this page.',
-  });
+  const backupNotice = backupPath === null ? '' : backupMessage(backupPath, salvaged !== null);
+  const savedTo = `${backupNotice}Settings saved to ${getSettingsStorePath()}.`;
+  const storeNotices = readStoreNotices();
+
+  const hostStart = await runOnSaved(context);
+  if ('startError' in hostStart) {
+    writeJson(res, 200, { ok: true, message: `${savedTo} ${hostStart.startError}`, startFailed: true, storeNotices });
+    return false;
+  }
+
+  const { takeover } = hostStart;
+  const webui = validation.config.webui;
+  const clearedStoreNotice = noticesBeforeSave.some((notice) => !storeNotices.includes(notice));
+  if (storedBefore === null || takeover !== null) {
+    const nextSteps = firstSaveSteps(context.host, webui, takeover);
+    writeJson(res, 200, { ok: true, message: savedTo, nextSteps, pageClosed: takeover !== null, storeNotices });
+  } else if (context.host === 'mcp-setup') {
+    // An MCP server in setup mode loads no store until the AI app restarts, so its next steps name that
+    // restart. A running player may still have read the stored file, so the message names its restart.
+    const { message } = laterSaveMessage(savedTo, saveChange(storedBefore, settings, newAdminPassword, clearedStoreNotice), 'mcp');
+    writeJson(res, 200, { ok: true, message, nextSteps: firstSaveSteps(context.host, webui, null), storeNotices });
+  } else {
+    const { message, brief } = laterSaveMessage(savedTo, saveChange(storedBefore, settings, newAdminPassword, clearedStoreNotice));
+    writeJson(res, 200, { ok: true, message, brief, storeNotices });
+  }
+  if (takeover !== null) finished(res, () => void context.close());
+  return takeover !== null;
 }
 
-// The form never loaded a store that readRawSettings rejected, so overwriting it would lose every
-// value not retyped.
+/** A null takeover means no host waits on a Save. A startError says why the host could not start and how to recover. */
+async function runOnSaved(context: SettingsRouteContext): Promise<{ takeover: SaveTakeover | null } | { startError: string }> {
+  if (context.onSaved === undefined) return { takeover: null };
+  try {
+    return { takeover: await context.onSaved() };
+  } catch (err) {
+    logger.error('settings save: the host could not start with the saved settings:', err);
+    if (err instanceof HostStartError) return { startError: err.message };
+    const reason = browserSafeError(err);
+    return { startError: `The Jukebox Remote could not start. Fix the settings and save again. Error: ${reason}` };
+  }
+}
+
+function saveChange(
+  storedBefore: Pick<SaveChange, 'storedFile' | 'storedSettings'>,
+  saved: SettingsFile,
+  newAdminPassword: string | null,
+  clearedStoreNotice: boolean,
+): SaveChange {
+  return { ...storedBefore, saved, adminPasswordChanged: newAdminPassword !== null, clearedStoreNotice };
+}
+
+/** Null when the store before the save gave no usable config, so no running process read it. */
+function usableStoredSettings(stored: Record<string, unknown> | null): SettingsFile | null {
+  if (stored === null) return null;
+  const settings = stored as SettingsFile;
+  return validateMappedSettings(settings, null).ok ? settings : null;
+}
+
+function backupMessage(backupPath: string, salvaged: boolean): string {
+  return salvaged
+    ? `The previous settings.json failed validation. This save kept each of its valid values. The old file is kept as ${backupPath}. `
+    : `The previous settings.json could not be read, so it was kept as ${backupPath}. `;
+}
+
+// A save over a store that readRawSettings rejected drops its invalid values, so the backup keeps
+// them, such as a mistyped value the user still has to retype.
 function backupUnusableStore(stored: Record<string, unknown> | null): string | null {
   const storePath = getSettingsStorePath();
   if (stored !== null || !existsSync(storePath)) return null;
@@ -181,10 +295,61 @@ function backupUnusableStore(stored: Record<string, unknown> | null): string | n
   return backupPath;
 }
 
+// Each step writes a value the runtime already read the same way, so a later save compares the stored file through it too.
+function normalizedForSave(settings: SettingsFile): SettingsFile {
+  return withoutLegacyLyricsProvider(withShownFeatureSwitches(withoutLegacyTheme(settings)));
+}
+
 // The runtime reads a legacy theme such as 'system' as unset, so a save drops it from the file.
 function withoutLegacyTheme(settings: SettingsFile): SettingsFile {
   if (settings.webui === undefined) return settings;
   return { ...settings, webui: { ...settings.webui, theme: parseWebuiTheme(settings.webui.theme) ?? undefined } };
+}
+
+// The page posts no value for these keys, so a save with no usable store carries the seed's values, such as MUSICBRAINZ_USER_AGENT.
+// Each key has no page field, belongs to the player's gear menu or Guests dialog, or sits in a row the page disables while unused.
+function withSeedValuesTheFormHides(base: Record<string, unknown>): Record<string, unknown> {
+  const seed = buildFormSeed();
+  const auth = seed.webui?.auth;
+  const rules = ConfigSchema.shape;
+  return mergeOntoStored(base, {
+    transport: {
+      ...seed.transport,
+      port: seedNumberOrUndefined('transport.port', seed.transport?.port, rules.transport.shape.port),
+    },
+    playback: { transcodeBitrate: seed.playback?.transcodeBitrate },
+    features: { musicBrainzUserAgent: seed.features?.musicBrainzUserAgent ?? undefined },
+    webui: {
+      persistAfterMcpExit: seed.webui?.persistAfterMcpExit,
+      visualizer: seed.webui?.visualizer,
+      auth: { adminAccess: auth?.adminAccess, askPasswordOnThisComputer: auth?.askPasswordOnThisComputer },
+    },
+    jukebox: {
+      guestQueueLimit: seedNumberOrUndefined('jukebox.guestQueueLimit', seed.jukebox?.guestQueueLimit, rules.jukebox.shape.guestQueueLimit),
+    },
+    advanced: { tokenExpiry: seedNumberOrUndefined('advanced.tokenExpiry', seed.advanced?.tokenExpiry, rules.tokenExpiry) },
+  });
+}
+
+// The page cannot correct a seed number it has no field for or disables. An env seed number that fails its rule
+// would block every save, so the save leaves it out and the runtime default applies. A salvaged file's value stays in the base.
+function seedNumberOrUndefined(storePath: string, value: number | undefined, rule: z.ZodType<number>): number | undefined {
+  if (value === undefined || rule.safeParse(value).success) return value;
+  logger.warn(`The settings save leaves out the seed value ${String(value)} of ${storePath}, since it fails validation. A salvaged settings.json value at that key stays, and the save error names it.`);
+  return undefined;
+}
+
+// The page posts only changed fields, so a save of a file that predates the radio and lyrics booleans writes the state the page showed.
+function withShownFeatureSwitches(settings: SettingsFile): SettingsFile {
+  const features = settings.features ?? {};
+  const shown = buildFormSeed().features;
+  return { ...settings, features: { ...features, radio: features.radio ?? shown?.radio, lyrics: features.lyrics ?? shown?.lyrics } };
+}
+
+// The runtime reads features.lyricsProvider only while features.lyrics is absent, so a save that sets features.lyrics drops it.
+function withoutLegacyLyricsProvider(settings: SettingsFile): SettingsFile {
+  if (settings.features?.lyrics === undefined) return settings;
+  return { ...settings, features: { ...settings.features, lyricsProvider: undefined } };
 }
 
 // The runtime downgrades an unsupported webui.host to a warning, so the form rejects it here,
@@ -201,25 +366,78 @@ function validateForm(settings: SettingsFile): ReturnType<typeof validateMappedS
   return validateMappedSettings(settings, null);
 }
 
-async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+// fetch echoes a URL's userinfo verbatim in its error, and this text reaches the browser.
+function browserSafeError(err: unknown): string {
+  return redact(describeFetchError(err)) as string;
+}
+
+/**
+ * A failed validation or login answers with a 200 and `ok: false`, and a malformed body answers
+ * 400. Each returns null after it answers.
+ */
+async function loginFromBody(req: IncomingMessage, res: ServerResponse): Promise<NavidromeClient | null> {
   const body = await parseSettingsBody(req, res);
-  if (body === null) return;
+  if (body === null) return null;
 
   const validation = validateForm(body.settings);
   if (!validation.ok) {
     writeJson(res, 200, { ok: false, error: ErrorFormatter.configValidation(validation.messages) });
-    return;
+    return null;
   }
 
   try {
     const client = new NavidromeClient(validation.config);
     await client.initialize();
-    writeJson(res, 200, { ok: true, message: 'Successfully connected to Navidrome.' });
+    return client;
   } catch (err) {
-    // fetch echoes a URL's userinfo verbatim in its error, and this text reaches the browser.
-    const message = redact(describeFetchError(err)) as string;
-    writeJson(res, 200, { ok: false, error: message });
+    writeJson(res, 200, { ok: false, error: browserSafeError(err) });
+    return null;
   }
+}
+
+async function handleTest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const client = await loginFromBody(req, res);
+  if (client === null) return;
+  writeJson(res, 200, { ok: true, message: 'Successfully connected to Navidrome.' });
+}
+
+// The page keeps its text field when this answers ok: false, so a failed list never blocks a save.
+async function handleLibraries(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const client = await loginFromBody(req, res);
+  if (client === null) return;
+
+  try {
+    writeJson(res, 200, { ok: true, libraries: await listUserLibraries(client) });
+  } catch (err) {
+    logger.warn('settings library list failed:', err);
+    writeJson(res, 200, { ok: false, error: browserSafeError(err) });
+  }
+}
+
+// A failure answers ok: false with the cause, such as the build hint a dev clone with no dist/ gets.
+async function handleShortcut(res: ServerResponse): Promise<void> {
+  let result: ShortcutResult;
+  try {
+    result = await createJukeboxShortcut();
+  } catch (err) {
+    logger.warn('settings shortcut creation failed:', err);
+    writeJson(res, 200, { ok: false, error: `Could not create the shortcut: ${errorMessage(err)}` });
+    return;
+  }
+  writeJson(res, 200, { ok: true, message: shortcutMessage(result), paths: result.written });
+}
+
+/** The page lists the written paths below this text. */
+function shortcutMessage(result: ShortcutResult): string {
+  const { removed, kept } = result.oldCleanup;
+  const sentences = [`Created the ${APP_NAME} shortcut. Double-click it to start the ${APP_NAME}.`];
+  if (result.runner !== null) sentences.push(`The shortcut runs ${result.runner}.`);
+  if (result.unconfigured) sentences.push('Navidrome is not configured yet, so the first launch opens this settings page.');
+  if (removed.length > 0) sentences.push(`Removed the old Navidrome Player shortcut files: ${removed.join(', ')}.`);
+  if (kept.length > 0) sentences.push(`Left in place: ${kept.map(({ path, reason }) => `${path} (${reason})`).join(', ')}.`);
+  sentences.push(`Create it again ${REINSTALL_HINT}`);
+  if (process.platform === 'linux') sentences.push(GNOME_ALLOW_LAUNCH_HINT);
+  return sentences.join(' ');
 }
 
 interface SettingsBody {
@@ -271,7 +489,7 @@ function withAdminPasswordHash(settings: SettingsFile, adminPasswordHash: string
   return { ...settings, webui: { ...settings.webui, auth: { ...settings.webui?.auth, adminPasswordHash } } };
 }
 
-/** The web player ignores a stored value that is not an Argon2id hash, so the page counts it as unset too. */
+/** The Jukebox Remote ignores a stored value that is not an Argon2id hash, so the page counts it as unset too. */
 function isUsableAdminHash(hash: string | null): boolean {
   return hash !== null && isPasswordHash(hash);
 }

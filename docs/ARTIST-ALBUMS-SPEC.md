@@ -4,7 +4,7 @@
 > enriched with **popularity** (Last.fm), and flagged **in-library / missing** (Navidrome).
 > Answers "what full albums by X am I missing?" in one call. Status: **implemented**.
 
-Sources: [`LAST-FM-API-SPEC.md`](./LAST-FM-API-SPEC.md) · [`musicbrainz-api.md`](./musicbrainz-api.md).
+Sources: [`lastfm/INDEX.md`](./lastfm/INDEX.md) · [`musicbrainz/INDEX.md`](./musicbrainz/INDEX.md).
 
 ---
 

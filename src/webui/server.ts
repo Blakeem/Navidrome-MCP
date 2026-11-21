@@ -17,7 +17,7 @@ import type { Config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import type { SseBroadcaster } from './broadcaster.js';
 import { endGuestStream, MAX_GUESTS_PER_CODE, type AuthService } from './auth/auth-service.js';
-import { authorize, resolvePrincipal, type Principal } from './auth/principal.js';
+import { authorize, isPasswordlessHere, resolvePrincipal, type Principal } from './auth/principal.js';
 import { JOIN_ROUTE_PATH } from './auth/session-cookie.js';
 import type { SessionRecord } from './auth/auth-store.js';
 import type { Permission } from './auth/roles.js';
@@ -30,7 +30,7 @@ import {
   writeJson,
   writeRedirect,
 } from './http-helpers.js';
-import { isLoopbackHostHeader, isRebindSafeHostHeader } from './loopback.js';
+import { isLocalRequest, isLoopbackHostHeader, isRebindSafeHostHeader } from './loopback.js';
 import { isLanReachable } from './network.js';
 import type { GuestQueue } from './jukebox/guest-queue.js';
 import { ADMIN_PAGE_PATH, GUEST_PAGE_PATH } from './page-paths.js';
@@ -76,11 +76,13 @@ import {
 import {
   handleGetPlayerSettings,
   handleMcpLease,
+  handleOpenSettingsPage,
   handlePlayerState,
   handleSetPlayerSettings,
   handleShutdown,
   MCP_LEASE_PATH,
   type McpLeaseCounter,
+  type SettingsPageOpener,
 } from './routes/player.js';
 import { handleStatic, PUBLIC_DIR } from './routes/static-files.js';
 import { handleVisualizerModes } from './routes/visualizer-modes.js';
@@ -96,6 +98,7 @@ interface ServerDeps {
   visualizer: Pick<VisualizerHub, 'addClient'>;
   shutdown: () => void;
   leases: McpLeaseCounter;
+  settingsPage: SettingsPageOpener;
   auth: AuthService;
   guests: GuestQueue;
 }
@@ -406,9 +409,10 @@ function labelsHostAdds(auth: Pick<AuthService, 'mode'>, principal: Principal): 
   return auth.mode === 'jukebox' && principal.kind === 'admin';
 }
 
-// Page routing only picks a page, since every `/api/` route checks its own access.
-function routeRoot({ res, deps, principal }: RouteContext): void {
-  const guestLanding = deps.auth.mode === 'jukebox' && principal.kind !== 'admin';
+// Page routing only picks a page, since every `/api/` route checks its own access. The player's
+// computer lands on the player when it logs in with no password.
+function routeRoot({ req, res, deps, principal }: RouteContext): void {
+  const guestLanding = deps.auth.mode === 'jukebox' && principal.kind !== 'admin' && !isPasswordlessHere(req, deps.auth);
   writeRedirect(res, guestLanding ? GUEST_PAGE_PATH : ADMIN_PAGE_PATH);
 }
 
@@ -490,6 +494,7 @@ const ROUTES: readonly Route[] = [
   { method: 'GET',  path: '/api/network-info',          access: 'host.info',       handle: ({ res, deps }) => handleNetworkInfo(res, deps.config) },
   { method: 'GET',  path: '/api/player/settings',       access: 'player.settings', handle: ({ res, deps }) => handleGetPlayerSettings(res, deps.config) },
   { method: 'POST', path: '/api/player/settings',       access: 'player.settings', handle: ({ req, res, deps }) => handleSetPlayerSettings(req, res, deps.config, deps.broadcaster) },
+  { method: 'POST', path: '/api/player/settings-page',  access: 'player.settings', handle: ({ res, deps }) => handleOpenSettingsPage(res, deps.settingsPage) },
   { method: 'POST', path: '/api/shutdown',              access: 'player.power',    handle: ({ res, deps }) => handleShutdown(res, deps.shutdown) },
 
   {
@@ -531,7 +536,7 @@ function admitGatedRequest(req: IncomingMessage, res: ServerResponse, deps: Serv
     writeError(res, 403, 'Missing or wrong X-CSRF-Token header. Reload the page and try again.');
     return false;
   }
-  deps.auth.touch(principal.session, sourceAddress(req.socket.remoteAddress));
+  deps.auth.touch(principal.session, sourceAddress(req.socket.remoteAddress), isLocalRequest(req));
   return true;
 }
 
@@ -541,6 +546,9 @@ async function handleRequest(
   deps: ServerDeps,
   streams: StreamLimiter,
 ): Promise<void> {
+  // The checks below read the saved admin login values, so a Save on the settings page applies to this request.
+  deps.auth.refreshSavedAuth();
+
   // A banned network learns nothing about the server, so the refusal comes before any other check.
   if (deps.auth.isNetworkBanned(req.socket.remoteAddress)) {
     writeError(res, 403, NETWORK_BAN_REFUSAL);

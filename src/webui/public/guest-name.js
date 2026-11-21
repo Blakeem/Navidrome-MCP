@@ -2,6 +2,7 @@
 
 import { postGuestNickname } from './api.js';
 import { byId, setHidden } from './dom.js';
+import { clearNotice, notify, runDialogSave } from './messages.js';
 
 const SAVE_FAILED = 'The nickname was not saved. Check the connection and try again.';
 const NICKNAME_BLANK = 'Enter a nickname to save.';
@@ -11,7 +12,6 @@ const form = byId('guest-name-form');
 const input = byId('guest-name-input');
 const saveButton = byId('guest-name-save');
 const cancelButton = byId('guest-name-cancel');
-const status = byId('guest-name-status');
 
 let storedNickname = null;
 let available = false;
@@ -19,7 +19,9 @@ let onSaved = () => {};
 
 // The server answers a name it already holds without spending the guest's hourly budget.
 export async function saveNickname(nickname) {
-  const { ok, data } = await postGuestNickname(nickname);
+  const { ok, status, data } = await postGuestNickname(nickname);
+  // The login-required handler is already replacing the page with an ended card, which a notice would cover.
+  if (status === 401) return { ok: false, error: null };
   if (!ok) return { ok: false, error: data?.error ?? SAVE_FAILED };
   storedNickname = data.nickname;
   onSaved(data.nickname);
@@ -53,7 +55,7 @@ export function bindChangeName(onNicknameSaved) {
 
 function openForm() {
   input.value = storedNickname ?? '';
-  status.textContent = '';
+  clearNotice();
   setHidden(form, false);
   setHidden(changeButton, true);
   input.focus();
@@ -62,18 +64,16 @@ function openForm() {
 function closeForm() {
   setHidden(form, true);
   setHidden(changeButton, !available);
-  status.textContent = '';
+  clearNotice();
 }
 
+// The form closes on success, which confirms the save, so the button skips its Saved state.
 async function submitForm() {
   const nickname = input.value.trim();
   if (nickname === '') {
-    status.textContent = NICKNAME_BLANK;
+    notify(NICKNAME_BLANK, 'error');
     return;
   }
-  saveButton.disabled = true;
-  const result = await saveNickname(nickname);
-  saveButton.disabled = false;
-  if (result.ok) closeForm();
-  else status.textContent = result.error;
+  const saved = await runDialogSave({ form, button: saveButton, request: () => saveNickname(nickname), confirm: false });
+  if (saved) closeForm();
 }

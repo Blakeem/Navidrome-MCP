@@ -1,17 +1,14 @@
 // The play state changes only when a snapshot confirms it, so no button disagrees with mpv.
 
 import { FAILED_TEXT, postJson } from './api.js';
-import { byId, setHidden } from './dom.js';
+import { setHidden } from './dom.js';
+import { clearNotice, notify } from './messages.js';
 import { isOutputMissing, revealOutputBanner } from './output-banner.js';
 import { isPaused, positionSeconds, setPosition } from './playback-clock.js';
 import { playingIndex } from './snapshot.js';
 
-const controlStatus = byId('control-status');
-const CONTROL_STATUS_CLEAR_MS = 4000;
 // The refusal messages are written for the MCP agent and name tools the page cannot call.
 const REFUSED_TEXT = 'That is not possible right now.';
-
-let controlStatusTimer = null;
 
 // A refusal is an answer with HTTP 200 and `success: false`, such as a pause with nothing playing.
 function isRefusal(data) {
@@ -19,7 +16,9 @@ function isRefusal(data) {
 }
 
 // Every control reports a failed or refused request on the page, so a failed click is never silent.
+// The clear runs before the request, since a late answer must not clear a notice another action wrote.
 export async function postControl(path, body = {}) {
+  clearNotice();
   const { ok, data } = await postJson(path, body);
   showControlResult(ok, data);
   return ok && !isRefusal(data);
@@ -66,23 +65,11 @@ function failureText(data) {
 }
 
 export function showControlResult(ok, data) {
-  if (controlStatusTimer !== null) {
-    clearTimeout(controlStatusTimer);
-    controlStatusTimer = null;
-  }
   // A resume refusal and a play that stayed paused both carry `code: 'output-missing'`, so either shows the banner.
   if (ok && isOutputMissing(data)) {
-    controlStatus.textContent = '';
     revealOutputBanner();
     return;
   }
-  if (ok && !isRefusal(data)) {
-    controlStatus.textContent = '';
-    return;
-  }
-  controlStatus.textContent = ok ? REFUSED_TEXT : failureText(data);
-  controlStatusTimer = setTimeout(() => {
-    controlStatusTimer = null;
-    controlStatus.textContent = '';
-  }, CONTROL_STATUS_CLEAR_MS);
+  if (ok && !isRefusal(data)) return;
+  notify(ok ? REFUSED_TEXT : failureText(data), 'error');
 }

@@ -180,8 +180,8 @@ export const TrendingMusicSchema = z.object({
   verbose: VerboseSchema,
 });
 
-// MusicBrainz release-group types (docs/musicbrainz-api.md §8). Lowercase, since MB's `type=`
-// browse filter accepts lowercase and the parser lowercases secondary types.
+// MusicBrainz release-group types (docs/musicbrainz/official/musicbrainz-api.md, "Release (Group) Type and Status").
+// Lowercase, since MB's `type=` browse filter accepts lowercase and the parser lowercases secondary types.
 const MbPrimaryTypeSchema = z.enum(['album', 'ep', 'single']);
 const MbSecondaryTypeSchema = z.enum([
   'live',
@@ -374,9 +374,15 @@ export const PlayerSettingsPatchSchema = z.strictObject({
   visualizer: z.boolean().optional(),
 });
 
+// A launch key is 43 characters, so the cap leaves room and still bounds the compare.
+const LAUNCH_KEY_MAX_LENGTH = 128;
+
 // Any string is a login attempt, so a too-short or too-long one fails as "Wrong password" too.
 export const AdminLoginSchema = z.strictObject({
   password: z.string({ error: 'password must be a string' }),
+  launchKey: z.string({ error: 'launchKey must be a string' })
+    .max(LAUNCH_KEY_MAX_LENGTH, { error: `launchKey must be at most ${String(LAUNCH_KEY_MAX_LENGTH)} characters` })
+    .optional(),
 });
 
 const JUKEBOX_CODE_LIFETIME_ERROR = `lifetimeHours must be a whole number from 1 to ${String(JUKEBOX_CODE_MAX_LIFETIME_HOURS)}`;

@@ -4,60 +4,16 @@
     "username": "your_username",
     "password": "your_password"
   },
-  "transport": {
-    "type": "stdio",
-    "host": null,
-    "port": 3000,
-    "expose": false,
-    "authToken": "",
-    "allowedHosts": [],
-    "allowedOrigins": []
-  },
-  "library": {
-    "defaultLibraryIds": [],
-    "filterCacheEnabled": true
-  },
   "features": {
-    "lastFmApiKey": null,
-    "musicBrainzUserAgent": "Navidrome-MCP (https://github.com/Blakeem/Navidrome-MCP)",
-    "radioBrowserUserAgent": "Navidrome-MCP",
-    "radioBrowserBase": null,
-    "lyricsProvider": "lrclib",
-    "lrclibUserAgent": "Navidrome-MCP",
-    "lrclibBase": "https://lrclib.net"
-  },
-  "playback": {
-    "mpvPath": null,
-    "transcodeFormat": "raw",
-    "transcodeBitrate": "192",
-    "audioDevice": null
+    "radio": true,
+    "lyrics": true
   },
   "webui": {
     "enabled": true,
-    "port": 8808,
-    "host": null,
     "expose": false,
-    "allowedHosts": [],
-    "publicUrl": null,
     "autoOpenBrowser": false,
-    "persistAfterMcpExit": false,
-    "visualizer": true,
-    "tls": {
-      "certPath": null,
-      "keyPath": null
-    },
     "auth": {
-      "mode": "none",
-      "adminPasswordHash": null,
-      "adminAccess": "localhost"
+      "mode": "none"
     }
-  },
-  "jukebox": {
-    "guestQueueLimit": 3,
-    "shareLink": "lan"
-  },
-  "advanced": {
-    "debug": false,
-    "tokenExpiry": 86400
   }
 }

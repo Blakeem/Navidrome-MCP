@@ -67,6 +67,11 @@ export class ErrorFormatter {
     return `${service} not configured: missing ${configKey}`;
   }
 
+  /** A server that runs from env never reads the store switch, so the message also names the env switch. */
+  static featureOff(feature: string, switchKey: string, envSwitch: string): string {
+    return `${feature} is off. Set ${switchKey} to true in settings.json. When the server runs from environment variables, set ${envSwitch}.`;
+  }
+
   static unknownResource(resourceUri: string): string {
     return `Unknown resource: ${resourceUri}`;
   }

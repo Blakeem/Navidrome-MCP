@@ -35,8 +35,12 @@ import { searchSongs } from './search/index.js';
 
 type LyricsMetadataParams = z.infer<typeof LyricsMetadataSchema>;
 
-/** Both settings gate LRCLIB, so a missing-config error names both. */
-export const LRCLIB_CONFIG_KEYS = 'features.lyricsProvider and features.lrclibUserAgent';
+/** The store gates LRCLIB with one boolean, and env keeps the legacy provider and user-agent switch. */
+export const LRCLIB_OFF_MESSAGE = ErrorFormatter.featureOff(
+  'LRCLIB lyrics lookup',
+  'features.lyrics',
+  'LYRICS_PROVIDER=lrclib and LRCLIB_USER_AGENT',
+);
 
 /** LRCLIB search answers with dozens of rows, so the candidate list is capped to bound context. */
 const MAX_LYRICS_CANDIDATES = 10;
@@ -620,7 +624,7 @@ export async function getLyricsByIdentity(
 
     if (params.lrclibId !== undefined) {
       if (!allowLrclib) {
-        throw new Error(ErrorFormatter.configMissing('LRCLIB lyrics', LRCLIB_CONFIG_KEYS));
+        throw new Error(LRCLIB_OFF_MESSAGE);
       }
       return withoutDuplicateText(await resolveByLrclibId(config, params.lrclibId));
     }

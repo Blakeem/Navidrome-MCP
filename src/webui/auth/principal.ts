@@ -7,10 +7,9 @@
 import type { IncomingMessage } from 'node:http';
 import type { WebuiAdminAccess, WebuiAuthMode } from '../../constants/defaults.js';
 import { isLocalRequest } from '../loopback.js';
-import { classifySource } from '../source-address.js';
 import type { AuthService } from './auth-service.js';
 import type { AdminSession, GuestSession } from './auth-store.js';
-import { modeHasPermission, roleHolds, sourceAdmits, type Permission } from './roles.js';
+import { levelAdmits, modeHasPermission, roleHolds, sourceAdmits, type Permission } from './roles.js';
 
 /**
  * `open` is mode `none`. `anonymous` holds no valid session in a mode with a login. `outside-level`
@@ -36,11 +35,18 @@ const ACCESS_LEVEL_LABELS: Readonly<Record<WebuiAdminAccess, string>> = {
 const FORBIDDEN: Authorization = { ok: false, status: 403, body: { error: 'Forbidden' } };
 const NOT_FOUND: Authorization = { ok: false, status: 404, body: { error: 'Not found' } };
 
-/** `localhost` needs the same proof as the loopback-only routes, so a same-host proxy never counts as local. */
 export function sourcePassesLevel(req: IncomingMessage, level: WebuiAdminAccess): boolean {
-  if (level === 'anywhere') return true;
-  if (isLocalRequest(req)) return true;
-  return level === 'lan' && classifySource(req.socket.remoteAddress) === 'lan';
+  return levelAdmits(level, isLocalRequest(req), req.socket.remoteAddress);
+}
+
+/**
+ * The player's computer is the root of trust, so it logs in with no password when the owner turned the
+ * ask off or no password is saved. Every admin access level admits a local request. The login also needs
+ * the launch key, which `handleLogin` checks, since only the login body carries it.
+ */
+export function isPasswordlessHere(req: IncomingMessage, auth: AuthService): boolean {
+  if (auth.mode === 'none' || !isLocalRequest(req)) return false;
+  return !auth.askPasswordOnThisComputer || !auth.hasAdminPassword();
 }
 
 export function resolvePrincipal(req: IncomingMessage, auth: AuthService): Principal {

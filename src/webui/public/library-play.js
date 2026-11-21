@@ -1,17 +1,19 @@
 import { postJson } from './api.js';
 import { FAVORITE_SOURCES } from './favorite-sources.js';
+import { clearNotice, notify } from './messages.js';
 import { isOutputMissing, revealOutputBanner } from './output-banner.js';
 import { playMode, shuffleOptions } from './play-toolbar.js';
 
 // Each play fetches for a varying time before it enqueues, so one POST at a time keeps click order.
 let playChain = Promise.resolve();
 
-export async function playLibraryItem(button, kind, id, name, status) {
+export async function playLibraryItem(button, kind, id, name) {
   const mode = playMode();
   const favorite = FAVORITE_SOURCES[kind];
   const body = { type: kind, id, mode, ...shuffleOptions() };
   const hadFocus = document.activeElement === button;
 
+  clearNotice();
   button.disabled = true;
   const request = playChain.then(() => postJson('/api/library/play', body));
   playChain = request;
@@ -23,17 +25,17 @@ export async function playLibraryItem(button, kind, id, name, status) {
   const emptySource = !ok && data?.code === 'empty-source';
 
   if (emptySource) {
-    status.textContent = favorite !== undefined ? favorite.emptyNotice : `Nothing to play in “${name}”.`;
+    notify(favorite !== undefined ? favorite.emptyNotice : `Nothing to play in “${name}”.`, 'info');
     return;
   }
   if (!ok) {
-    status.textContent = mode === 'replace' ? `Could not play “${name}”.` : `Could not add “${name}”.`;
+    notify(mode === 'replace' ? `Could not play “${name}”.` : `Could not add “${name}”.`, 'error');
     return;
   }
   if (mode === 'replace') {
     button.closest('dialog')?.close();
   } else {
-    status.textContent = `Added “${name}” to the queue.`;
+    notify(`Added “${name}” to the queue.`, 'success');
   }
   if (isOutputMissing(data)) revealOutputBanner();
 }

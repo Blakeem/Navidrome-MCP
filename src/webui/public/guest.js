@@ -8,6 +8,7 @@ import { bindGuestAdd, keepAddSongsInPlace, renderAddState, renderSlots, showGue
 import { bindGuestLyrics, showGuestLyrics, tickGuestLyrics } from './guest-lyrics.js';
 import { bindGuestQueue, renderGuestQueue } from './guest-queue.js';
 import { bindChangeName, rememberNickname, showChangeName } from './guest-name.js';
+import { bindThemeToggle } from './guest-theme.js';
 import { bindWelcome, closeWelcome, maybeShowWelcome, jukeboxEndText } from './guest-welcome.js';
 import { renderNowPlaying } from './now-playing.js';
 import { guestEndCard, guestView, hostPollView, keyFromHash } from './page-view.js';
@@ -254,6 +255,7 @@ async function bootstrap() {
   const key = takeKeyFromHash();
   // Before anything renders, so a forced theme replaces the system one.
   applyThemeHint();
+  bindThemeToggle();
   setLoginRequiredHandler(() => showEnded());
   // A new link opened in this tab changes only the fragment, so the page does not reload.
   window.addEventListener('hashchange', () => {

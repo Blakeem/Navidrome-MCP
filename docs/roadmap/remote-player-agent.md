@@ -4,7 +4,7 @@
 
 ## Verdict
 
-BUILD, once Web UI Auth + Roles ships its machine grant. The web player process (`navidrome-web`) already holds Navidrome credentials, spawns mpv, builds stream URLs and scrobbles. A remote agent is that process plus an authenticated, versioned agent API. The MCP server needs one new seam, the player target, and Music Assistant Bridge can reuse it. MVP effort is 2 to 3 weeks and the full roadmap 6 to 9 weeks for one developer [INFERRED].
+BUILD, once Web UI Auth + Roles ships its machine grant. The web player process (`navidrome-mcp jukebox`) already holds Navidrome credentials, spawns mpv, builds stream URLs and scrobbles. A remote agent is that process plus an authenticated, versioned agent API. The MCP server needs one new seam, the player target, and Music Assistant Bridge can reuse it. MVP effort is 2 to 3 weeks and the full roadmap 6 to 9 weeks for one developer [INFERRED].
 
 ## Scope
 
@@ -22,7 +22,7 @@ OUT OF SCOPE:  synchronized multiroom playback (no part of this design keeps two
                the design of Music Assistant Bridge (only the shared player target is named here)
                the authentication system itself (Web UI Auth + Roles owns it)
                audio device listing and selection (Audio-Device Selector owns it)
-               agents in Docker Desktop on Windows or macOS (no audio device, DOCKER.md:75-77)
+               agents in Docker Desktop on Windows or macOS (no audio device, HTTP-AND-DOCKER.md)
                Navidrome /api/queue sync (rejected in PLAYBACK-SPEC.md:16)
 BOUNDARY CASE: an MCP server and an agent on one machine → OUT of the agent path, because the
                local player target already drives that mpv. Rule: a player whose mpv shares the MCP
@@ -38,7 +38,7 @@ BOUNDARY CASE: the browser web remote served by each agent → IN as it exists t
 
 Each statement below must hold for the feature to work.
 
-1. **The web player process can run with no MCP server and stay up.** Holds. `shouldStopForMcpExit` stops the process only when it was launched by an MCP server (`src/web/player-runtime.ts:42-49`). A direct `navidrome-web` run has no IPC channel, so `launchedByMcp` is false (`src/web/main.ts:44`) [DIRECT: code].
+1. **The web player process can run with no MCP server and stay up.** Holds. `shouldStopForMcpExit` stops the process only when it was launched by an MCP server (`src/web/player-runtime.ts:42-49`). A direct `navidrome-mcp jukebox` run has no IPC channel, so `launchedByMcp` is false (`src/web/main.ts:44`) [DIRECT: code].
 2. **The web player process can start mpv by itself.** Holds. `POST /api/library/play` reaches `playbackEngine.enqueue`, which calls `ensureRunning` and spawns mpv when none answers (`src/tools/playback.ts:543`, `src/services/playback/playback-engine.ts:226-237`, `:739-760`) [DIRECT: code].
 3. **The web player process can build stream URLs without help.** Holds. It runs `createRuntime` with the full config (`src/web/main.ts:199`), which configures the engine (`src/bootstrap.ts:37-43`). The engine signs each URL with the configured password (`playback-engine.ts:711-730`). An agent therefore needs only song IDs [DIRECT: code].
 4. **The web player process scrobbles by itself.** Holds. It attaches its own `ScrobbleTracker` (`src/web/main.ts:236-237`) [DIRECT: code].
@@ -52,7 +52,7 @@ Each statement below must hold for the feature to work.
 
 Starting-list claims:
 
-- "Add mpv to an optional Docker image." Holds, as a separate image tag. Audio passthrough works on Linux hosts only (DOCKER.md:71-77).
+- "Add mpv to an optional Docker image." Holds, as a separate image tag. Audio passthrough works on Linux hosts only (HTTP-AND-DOCKER.md, "Adding mpv to the image").
 - "Let one MCP server address multiple named agents." Holds, once playback tools can register without local mpv.
 - "Keep mpv's socket local and expose only the authenticated agent API." Holds. On an agent the browser routes are LAN-exposed too, so Web UI Auth + Roles must also guard them.
 - "1 to 2 weeks." Refuted as low. The MVP is 2 to 3 weeks and the full roadmap 6 to 9 weeks [INFERRED].
@@ -80,7 +80,7 @@ Starting-list claims:
        │                                     │   POST /api/mcp-lease, kept open (src/web/lease.ts)
        │                                     │   or spawn a detached child (src/web/spawn.ts)
        ▼                                     ▼
-   ┌───────┐   JSON-IPC    ┌──── web player process (src/web/main.ts, `navidrome-web`) ────┐
+   ┌───────┐   JSON-IPC    ┌──── web player (src/web/main.ts, `navidrome-mcp jukebox`) ────┐
    │  mpv  │ ◄──────────── │ own playback engine singleton + own scrobble tracker         │
    └───┬───┘               │ HTTP server src/webui/server.ts, port-as-lock                │
        │                   │ routes: /api/controls/*, /api/library/*, /api/events (SSE),  │
@@ -118,7 +118,7 @@ Facts about the parts in this diagram:
                              ▼                        │ /api/agent/v1/*  carries song IDs, station IDs,
                          local mpv                    │ control ops and state reads, never URLs
                                                       ▼
-                  ┌──── web player process in agent mode (garage Pi, `navidrome-web` as a service) ────┐
+                  ┌──── web player in agent mode (garage Pi, `navidrome-mcp jukebox` as a service) ────┐
                   │ agent API routes  src/webui/routes/agent.ts  → existing tool impls and engine ops   │
                   │ playback engine → JSON-IPC → garage mpv (socket stays on the Pi)                   │
                   │ scrobble tracker with the agent's own Navidrome credentials                        │
@@ -378,7 +378,7 @@ Criteria: maintainability 30, match with comparable tools 25, image size for MCP
 | effort (10) | 4 | 5 | 5 |
 | **Weighted total** | **4.20** | **3.60** | **4.05** |
 
-- The separate agent image tag is a second target in the same `Dockerfile`, such as `ghcr.io/blakeem/navidrome-mcp:<version>-agent`, on a trixie base for mpv 0.40. Its command is `navidrome-web`.
+- The separate agent image tag is a second target in the same `Dockerfile`, such as `ghcr.io/blakeem/navidrome-mcp:<version>-agent`, on a trixie base for mpv 0.40. Its command is `navidrome-mcp jukebox`.
 - mpv in the main image makes every MCP-only user pull mpv's dependency closure. In Debian, mpv hard-depends on FFmpeg, X11, Wayland, Vulkan, SDL2 and libplacebo, and `--no-install-recommends` cannot drop them [DIRECT: packages.debian.org bookworm mpv]. The added size is unmeasured [ABSENT].
 - The native install (npm, `apt install mpv`, a systemd user unit) is needed in any case, since a user unit reaches the user's PipeWire session without a socket mount.
 
@@ -409,7 +409,7 @@ Comparable tools: Lyrion keeps sync groups on the server [INFERRED]. Roon aims "
 
 ## Recommendation
 
-**Agent runtime.** Use the web player agent mode. Run `navidrome-web` standalone on the agent machine with `webui.expose` and an `agent` settings section. The lifecycle, the engine, the tracker and the per-room web remote come with it.
+**Agent runtime.** Use the web player agent mode. Run `navidrome-mcp jukebox` standalone on the agent machine with `webui.expose` and an `agent` settings section. The lifecycle, the engine, the tracker and the per-room web remote come with it.
 
 **Remote seam.** Use the queue-op API. The MCP server keeps every Navidrome read and its active-library scope. The agent receives song IDs with metadata, station IDs and control operations, and never a URL.
 
@@ -468,7 +468,7 @@ Steps in dependency order. Each step names the parts it adds or changes.
 | An agent that is the local mpv | the player registry | An agent URL that points at the MCP server's own machine would double-control one mpv. `/info` returns an instance ID, and the registry warns when it matches the local web player's ID. |
 | Duplicate or reserved names | the player registry | Names are case-insensitive and unique. `local` is reserved. Config validation rejects a clash at load. |
 | Token rotation | the agent player target | A 401 fails the tool with a message that names the player and the settings key to update. |
-| No audio output on the agent | the agent API `/info` | A Docker agent with no device plays nothing and reports success (DOCKER.md:79-82). `/info` and `list_players` report `current-ao` from Audio-Device Selector, so the assistant sees the missing output. |
+| No audio output on the agent | the agent API `/info` | A Docker agent with no device plays nothing and reports success (HTTP-AND-DOCKER.md, "Adding mpv to the image"). `/info` and `list_players` report `current-ao` from Audio-Device Selector, so the assistant sees the missing output. |
 | Navidrome player records | Navidrome's player table | Navidrome matches a player by user, client name and user agent (`core/players.go`, `FindMatch`). One shared client name would merge every room into one Navidrome player, so each agent sends its own client name. |
 | Queue in another room | the player targets | Each agent has its own mpv queue. Moving a queue between rooms is a later release. |
 
@@ -533,7 +533,7 @@ On new npm packages:
 
 Assume the feature shipped and failed.
 
-- **Agents play nothing and report success.** Violated assumption: mpv reports a missing audio device as an error. Docker agents without a device go idle in silence (DOCKER.md:79-82).
+- **Agents play nothing and report success.** Violated assumption: mpv reports a missing audio device as an error. Docker agents without a device go idle in silence (HTTP-AND-DOCKER.md, "Adding mpv to the image").
 - **An upgrade on one machine breaks control.** Violated assumption: the MCP server and its agents upgrade together.
 - **The seam refactor regresses local playback.** Violated assumption: moving engine calls behind the player target is mechanical. `src/tools/playback.ts` holds intricate queue and metadata repair logic.
 - **Music plays in the wrong room.** Violated assumption: the assistant names a player on each call, or the default fits.

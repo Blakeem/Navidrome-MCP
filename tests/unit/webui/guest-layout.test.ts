@@ -30,6 +30,22 @@ describe('guest page order', () => {
   });
 });
 
+describe('guest header theme button', () => {
+  const header = HTML.slice(HTML.indexOf('<header class="topbar">'), HTML.indexOf('</header>'));
+
+  it('is a hidden icon button before the connection pill, with the moon shown and the sun hidden', () => {
+    expect(header).toMatch(/<button[^>]*id="guest-theme-toggle"[^>]*aria-label="Switch to dark mode"[^>]*hidden>/);
+    expect(header.match(/<svg class="icon-moon"[^>]*>/)?.[0]).not.toMatch(/ hidden>$/);
+    expect(header.match(/<svg class="icon-sun"[^>]*>/)?.[0]).toMatch(/ hidden>$/);
+    expect(header.indexOf('id="guest-theme-toggle"')).toBeGreaterThan(header.indexOf('id="guest-add-jump"'));
+    expect(header.indexOf('id="guest-theme-toggle"')).toBeLessThan(header.indexOf('class="conn"'));
+  });
+
+  it('is bound at boot, after the stored theme paints', () => {
+    expect(read('guest.js')).toMatch(/applyThemeHint\(\);\s*bindThemeToggle\(\);/);
+  });
+});
+
 describe('guest header search button', () => {
   it('is a hidden icon button named Add songs in the header', () => {
     const header = HTML.slice(HTML.indexOf('<header class="topbar">'), HTML.indexOf('</header>'));
@@ -49,10 +65,28 @@ describe('guest header search button', () => {
     expect(read('styles.css')).toContain('.guest-page { overflow-anchor: none; }');
   });
 
-  it('reports add and remove results in a toast outside the page flow', () => {
-    expect(HTML.indexOf('id="guest-toast"')).toBeGreaterThan(HTML.indexOf('</main>'));
-    expect(HTML).toMatch(/<p class="guest-toast" id="guest-toast" role="status"><\/p>/);
-    expect(read('styles.css')).toMatch(/\.guest-toast \{\s*position: fixed;/);
+  it('announces an add or a remove, shows a failure as an error notice, and reserves no bar', () => {
+    const css = read('styles.css');
+    const add = read('guest-add.js');
+    expect(HTML).not.toMatch(/id="guest-status(-bar)?"/);
+    expect(css).not.toMatch(/\.guest-page \{[^}]*padding-bottom/);
+    expect(add).not.toMatch(/ResizeObserver|--status-bar-height/);
+    expect(add).toContain('showAnswer(ok, data, `Added ${songTitle(song)}.`);');
+    expect(add).toContain('showAnswer(ok, data, `Removed ${songTitle(item)}.`);');
+    expect(add).toMatch(/if \(ok\) announce\(successText\);\s*else notify\(data\?\.error \?\? NO_ANSWER, 'error'\);/);
+    expect(add).toMatch(/export function showGuestAdd[\s\S]*?clearNotice\(\);/);
+  });
+
+  it('clears the notice when the guest starts the next add or remove', () => {
+    const add = read('guest-add.js');
+    expect(add).toMatch(/export async function removeSong\(item\) \{\s*const generation = sessionGeneration;\s*clearNotice\(\);/);
+    expect(add).toMatch(/function onButton\(song, button\) \{[\s\S]*?clearNotice\(\);\s*pending\.set\(song\.id, song\);/);
+  });
+
+  it('holds no toast', () => {
+    expect(HTML).not.toContain('guest-toast');
+    expect(read('styles.css')).not.toContain('.guest-toast');
+    expect(read('guest-add.js')).not.toMatch(/showToast|TOAST_MS|TOAST_FADE_MS|toastTimer/);
   });
 
   it('asks before an Added button removes the song', () => {
@@ -149,7 +183,7 @@ describe('guest nickname controls', () => {
   it('saves a typed nickname through the guest route before Got it closes the card', () => {
     expect(HTML).toMatch(/<button type="button"[^>]*id="guest-welcome-done">Got it</);
     const welcome = read('guest-welcome.js');
-    expect(welcome).toMatch(/async function closeAfterSave\(\) \{\s*if \(await saveTypedNickname\(\)\) dialog\.close\(\);/);
+    expect(welcome).toMatch(/async function closeAfterSave\(\) \{\s*if \(await saveTypedNickname\(false\)\) dialog\.close\(\);/);
     expect(read('api.js')).toContain("requestJson('/api/guest/nickname', { nickname })");
   });
 

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { Config } from '../../../src/config.js';
 import { logger, redact } from '../../../src/utils/logger.js';
 import { hashPassword, randomToken, verifyPassword } from '../../../src/utils/secrets.js';
-import { AuthService } from '../../../src/webui/auth/auth-service.js';
+import { AuthService, type SavedAuth } from '../../../src/webui/auth/auth-service.js';
 import type { QueuedNames } from '../../../src/webui/jukebox/jukebox-names.js';
 import { getAuthStorePath, readAuthFile, readAuthFileWithStatus, writeAuthFile, type AdminSession, type SessionRecord } from '../../../src/webui/auth/auth-store.js';
 import { deviceCookieName, readCookieValues, sessionCookieName } from '../../../src/webui/auth/session-cookie.js';
@@ -35,9 +35,14 @@ function jukeboxConfig(overrides: Partial<Config['webui']['auth']> = {}, tls = f
     webui: {
       ...base.webui,
       tls: tls ? { certPath: '/c.pem', keyPath: '/k.pem' } : { certPath: null, keyPath: null },
-      auth: { mode: 'jukebox', adminPasswordHash: adminHash, adminAccess: 'localhost', ...overrides },
+      auth: { mode: 'jukebox', adminPasswordHash: adminHash, adminAccess: 'localhost', askPasswordOnThisComputer: true, ...overrides },
     },
   });
+}
+
+/** The saved values a store-run player re-reads, with the ask and level that jukeboxConfig starts with. */
+function savedAuth(adminPasswordHash: string | null, overrides: Partial<SavedAuth> = {}): SavedAuth {
+  return { adminPasswordHash, adminAccess: 'localhost', askPasswordOnThisComputer: true, ...overrides };
 }
 
 function clock(start = Date.UTC(2026, 0, 1)): { now: () => number; advance: (ms: number) => void } {
@@ -140,7 +145,7 @@ describe('session cookie', () => {
 describe('AuthService sessions', () => {
   it('mints a token whose secret only the cookie carries and finds the session by it', () => {
     const service = new AuthService(jukeboxConfig());
-    const { token, session } = service.createSession('127.0.0.1');
+    const { token, session } = service.createSession('127.0.0.1', true);
     const [id, secret] = token.split('.');
 
     expect(id).toBe(session.id);
@@ -151,7 +156,7 @@ describe('AuthService sessions', () => {
 
   it('refuses a wrong secret, an unknown id, a malformed token and a missing cookie', () => {
     const service = new AuthService(jukeboxConfig());
-    const { session } = service.createSession('127.0.0.1');
+    const { session } = service.createSession('127.0.0.1', true);
 
     for (const token of [`${session.id}.wrong`, 'unknown.secret', 'no-separator', `.${session.id}`]) {
       expect(service.findSession(requestWithCookie(`ndmcp-web-8808=${token}`))).toBeNull();
@@ -161,7 +166,7 @@ describe('AuthService sessions', () => {
 
   it('skips a stale cookie of the same name that comes first', () => {
     const service = new AuthService(jukeboxConfig());
-    const { token, session } = service.createSession('127.0.0.1');
+    const { token, session } = service.createSession('127.0.0.1', true);
 
     expect(service.findSession(requestWithCookie(`ndmcp-web-8808=stale.value; ndmcp-web-8808=${token}`))).toBe(session);
   });
@@ -169,11 +174,11 @@ describe('AuthService sessions', () => {
   it('expires a session after 7 idle days and slides the expiry on use', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const { token, session } = service.createSession('127.0.0.1');
+    const { token, session } = service.createSession('127.0.0.1', true);
     const req = requestWithCookie(cookieFor(service, token));
 
     time.advance(6 * DAY_MS);
-    service.touch(session, '127.0.0.1');
+    service.touch(session, '127.0.0.1', true);
     time.advance(6 * DAY_MS);
     expect(service.findSession(req)).toBe(session);
     time.advance(DAY_MS + 1);
@@ -183,12 +188,12 @@ describe('AuthService sessions', () => {
   it('never slides past the 30-day absolute cap', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const { token, session } = service.createSession('127.0.0.1');
+    const { token, session } = service.createSession('127.0.0.1', true);
     const req = requestWithCookie(cookieFor(service, token));
 
     for (let day = 0; day < 29; day += 1) {
       time.advance(DAY_MS);
-      service.touch(session, '127.0.0.1');
+      service.touch(session, '127.0.0.1', true);
     }
     expect(session.expiresAt).toBe(session.createdAt + 30 * DAY_MS);
     time.advance(DAY_MS);
@@ -204,7 +209,7 @@ describe('AuthService sessions', () => {
 
   it('compares the CSRF token with the session token only', () => {
     const service = new AuthService(jukeboxConfig());
-    const { session } = service.createSession('127.0.0.1');
+    const { session } = service.createSession('127.0.0.1', true);
 
     expect(service.isCsrfTokenValid(session, session.csrfToken)).toBe(true);
     expect(service.isCsrfTokenValid(session, 'wrong')).toBe(false);
@@ -213,11 +218,25 @@ describe('AuthService sessions', () => {
   });
 });
 
+describe('AuthService launch key', () => {
+  it('admits only the key of this start', () => {
+    const service = new AuthService(jukeboxConfig());
+    const earlierStart = new AuthService(jukeboxConfig());
+
+    expect(service.launchKey).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(service.isLaunchKey(service.launchKey)).toBe(true);
+    expect(service.isLaunchKey(earlierStart.launchKey)).toBe(false);
+    expect(service.isLaunchKey(undefined)).toBe(false);
+    expect(service.isLaunchKey('')).toBe(false);
+    expect(service.isLaunchKey(service.launchKey.slice(1))).toBe(false);
+  });
+});
+
 describe('AuthService credential', () => {
   it('ends every admin session and closes its streams when the stored password changes', () => {
     let stored: string | null = adminHash;
-    const service = new AuthService(jukeboxConfig(), { readSavedAdminHash: () => stored });
-    const { token, session } = service.createSession('127.0.0.1');
+    const service = new AuthService(jukeboxConfig(), { readSavedAuth: () => savedAuth(stored) });
+    const { token, session } = service.createSession('127.0.0.1', true);
     const stream = new FakeStream();
     service.trackStream(session.id, stream as unknown as ServerResponse, '127.0.0.1');
 
@@ -236,7 +255,7 @@ describe('AuthService credential', () => {
     writeFileSync(settingsPath, '{ not json');
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
     const service = new AuthService(jukeboxConfig());
-    const { token } = service.createSession('127.0.0.1');
+    const { token } = service.createSession('127.0.0.1', true);
 
     service.sweep();
     service.sweep();
@@ -249,20 +268,76 @@ describe('AuthService credential', () => {
   });
 
   it('keeps the credential when the store is unreadable', () => {
-    const service = new AuthService(jukeboxConfig(), { readSavedAdminHash: () => undefined });
-    const { token } = service.createSession('127.0.0.1');
+    const service = new AuthService(jukeboxConfig(), { readSavedAuth: () => undefined });
+    const { token } = service.createSession('127.0.0.1', true);
 
     service.sweep();
 
     expect(service.findSession(requestWithCookie(cookieFor(service, token)))).not.toBeNull();
   });
 
-  it('treats a hash that is not Argon2id as unset, so the login stays off', async () => {
+  it('treats a hash that is not Argon2id as unset, so no password logs in', async () => {
     const service = new AuthService(jukeboxConfig({ adminPasswordHash: 'plaintext-by-mistake' }));
 
     expect(service.hasAdminPassword()).toBe(false);
     expect(await service.verifyAdminPassword('plaintext-by-mistake')).toBe(false);
-    expect(() => service.createSession('127.0.0.1')).toThrow(/No admin password/);
+    expect(await service.login('plaintext-by-mistake', '127.0.0.1', true)).toBeNull();
+  });
+
+  it('keeps a session minted with no password until a first password is saved, then ends it', () => {
+    let stored: string | null = null;
+    const service = new AuthService(jukeboxConfig({ adminPasswordHash: null }), { readSavedAuth: () => savedAuth(stored) });
+    const { token, session } = service.createPasswordlessSession('127.0.0.1', true);
+    const stream = new FakeStream();
+    service.trackStream(session.id, stream as unknown as ServerResponse, '127.0.0.1');
+
+    service.sweep();
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))?.id).toBe(session.id);
+    stored = adminHash;
+    service.sweep();
+
+    expect(stream.destroyed).toBe(true);
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
+    expect(service.hasAdminPassword()).toBe(true);
+  });
+
+  it('never keeps a session minted under a password once the password is cleared', () => {
+    let stored: string | null = adminHash;
+    const service = new AuthService(jukeboxConfig(), { readSavedAuth: () => savedAuth(stored) });
+    const { token } = service.createSession('127.0.0.1', true);
+
+    stored = null;
+    service.sweep();
+
+    expect(service.hasAdminPassword()).toBe(false);
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
+  });
+
+  it('ends a session minted with the ask off once a restart turns the ask on, and keeps a password session', async () => {
+    const askOff = new AuthService(jukeboxConfig({ askPasswordOnThisComputer: false }));
+    askOff.claimStore();
+    const passwordless = askOff.createPasswordlessSession('127.0.0.1', true);
+    const withPassword = askOff.createSession('127.0.0.1', true);
+    expect(askOff.findSession(requestWithCookie(cookieFor(askOff, passwordless.token)))?.id).toBe(passwordless.session.id);
+
+    const askOn = await AuthService.load(jukeboxConfig(), 'store', null);
+    askOn.claimStore();
+
+    expect(askOn.findSession(requestWithCookie(cookieFor(askOn, passwordless.token)))).toBeNull();
+    expect(askOn.findSession(requestWithCookie(cookieFor(askOn, withPassword.token)))?.id).toBe(withPassword.session.id);
+  });
+
+  it('ends a session minted with the ask off when the password changes', () => {
+    let stored: string | null = adminHash;
+    const service = new AuthService(jukeboxConfig({ askPasswordOnThisComputer: false }), {
+      readSavedAuth: () => savedAuth(stored, { askPasswordOnThisComputer: false }),
+    });
+    const { token } = service.createPasswordlessSession('127.0.0.1', true);
+
+    stored = otherHash;
+    service.sweep();
+
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
   });
 
   it('verifies the admin password against the stored hash', async () => {
@@ -275,18 +350,18 @@ describe('AuthService credential', () => {
   it('logs in with the admin password and refuses a wrong one', async () => {
     const service = new AuthService(jukeboxConfig());
 
-    const login = await service.login(PASSWORD, '127.0.0.1');
+    const login = await service.login(PASSWORD, '127.0.0.1', true);
 
     expect(login).not.toBeNull();
     expect(service.findSession(requestWithCookie(cookieFor(service, login?.token ?? '')))?.id).toBe(login?.session.id);
-    expect(await service.login('wrong password!', '127.0.0.1')).toBeNull();
+    expect(await service.login('wrong password!', '127.0.0.1', true)).toBeNull();
   });
 
   it('starts no session when the password changes while the old one is being verified', async () => {
     let stored: string | null = adminHash;
-    const service = new AuthService(jukeboxConfig(), { readSavedAdminHash: () => stored });
+    const service = new AuthService(jukeboxConfig(), { readSavedAuth: () => savedAuth(stored) });
 
-    const pending = service.login(PASSWORD, '127.0.0.1');
+    const pending = service.login(PASSWORD, '127.0.0.1', true);
     stored = otherHash;
     service.sweep();
 
@@ -295,12 +370,228 @@ describe('AuthService credential', () => {
   });
 });
 
+describe('AuthService live admin login settings', () => {
+  const PLAIN_HTTP_WARNING = 'admits admin logins from anywhere over plain HTTP';
+
+  function trackedStream(service: AuthService, sessionId: string, address: string): FakeStream {
+    const stream = new FakeStream();
+    service.trackStream(sessionId, stream as unknown as ServerResponse, address);
+    return stream;
+  }
+
+  function plainHttpWarnings(warn: ReturnType<typeof vi.spyOn>): unknown[][] {
+    return warn.mock.calls.filter(([message]) => String(message).includes(PLAIN_HTTP_WARNING));
+  }
+
+  it('applies a saved ask at the next refresh, and turning it back on ends the ask-off sessions and their streams at once', () => {
+    let saved = savedAuth(adminHash, { askPasswordOnThisComputer: false });
+    const service = new AuthService(jukeboxConfig(), { readSavedAuth: () => saved });
+
+    service.refreshSavedAuth();
+    expect(service.askPasswordOnThisComputer).toBe(false);
+    const askOff = service.createPasswordlessSession('127.0.0.1', true);
+    const withPassword = service.createSession('127.0.0.1', true);
+    const askOffStream = trackedStream(service, askOff.session.id, '127.0.0.1');
+    saved = savedAuth(adminHash);
+    service.refreshSavedAuth();
+
+    expect(service.askPasswordOnThisComputer).toBe(true);
+    expect(askOffStream.destroyed).toBe(true);
+    expect(service.findSession(requestWithCookie(cookieFor(service, askOff.token)))).toBeNull();
+    expect(service.findSession(requestWithCookie(cookieFor(service, withPassword.token)))?.id).toBe(withPassword.session.id);
+    expect(readAuthFile(PORT).sessions.map((session) => session.id)).toEqual([withPassword.session.id]);
+  });
+
+  it.each<[string, boolean, string]>([
+    ['a saved password', true, 'now asks for the admin password'],
+    ['no saved password', false, 'will ask for the admin password once one is saved'],
+  ])('logs what turning the ask on does with %s, and ends the ask-off session', (_label, passwordSaved, logged) => {
+    const hash = passwordSaved ? adminHash : null;
+    let saved = savedAuth(hash, { askPasswordOnThisComputer: false });
+    const service = new AuthService(jukeboxConfig({ adminPasswordHash: hash, askPasswordOnThisComputer: false }), { readSavedAuth: () => saved });
+    const { token } = service.createPasswordlessSession('127.0.0.1', true);
+    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+
+    saved = savedAuth(hash);
+    service.refreshSavedAuth();
+
+    expect(info).toHaveBeenCalledWith(`webui: the player's computer ${logged}, so each session that logged in while the ask was off ended`);
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
+  });
+
+  it('never revives an ask-off session when the ask turns on and off again before a sweep', () => {
+    let saved = savedAuth(adminHash, { askPasswordOnThisComputer: false });
+    const service = new AuthService(jukeboxConfig({ askPasswordOnThisComputer: false }), { readSavedAuth: () => saved });
+    const { token } = service.createPasswordlessSession('127.0.0.1', true);
+
+    saved = savedAuth(adminHash);
+    service.refreshSavedAuth();
+    saved = savedAuth(adminHash, { askPasswordOnThisComputer: false });
+    service.refreshSavedAuth();
+
+    expect(service.findSession(requestWithCookie(cookieFor(service, token)))).toBeNull();
+  });
+
+  it('narrowing to localhost ends each admin session last seen from outside this computer, with its streams', () => {
+    let saved = savedAuth(adminHash, { adminAccess: 'lan' });
+    const service = new AuthService(jukeboxConfig({ adminAccess: 'lan' }), { readSavedAuth: () => saved });
+    const local = service.createSession('127.0.0.1', true);
+    const lan = service.createSession('192.168.1.50', false);
+    const proxied = service.createSession('127.0.0.1', false);
+    const lanStream = trackedStream(service, lan.session.id, '192.168.1.50');
+    const localStream = trackedStream(service, local.session.id, '127.0.0.1');
+
+    saved = savedAuth(adminHash, { adminAccess: 'localhost' });
+    service.refreshSavedAuth();
+
+    expect(service.adminAccess).toBe('localhost');
+    expect([lanStream.destroyed, localStream.destroyed]).toEqual([true, false]);
+    expect(readAuthFile(PORT).sessions.map((session) => session.id)).toEqual([local.session.id]);
+    expect(service.findSession(requestWithCookie(cookieFor(service, proxied.token)))).toBeNull();
+  });
+
+  it('narrowing to lan ends an internet session and a session last seen through a same-host proxy, and keeps the LAN one', () => {
+    let saved = savedAuth(adminHash, { adminAccess: 'anywhere' });
+    const service = new AuthService(jukeboxConfig({ adminAccess: 'anywhere' }), { readSavedAuth: () => saved });
+    const local = service.createSession('127.0.0.1', true);
+    const lan = service.createSession('192.168.1.50', false);
+    service.createSession('203.0.113.5', false);
+    service.createSession('127.0.0.1', false);
+
+    saved = savedAuth(adminHash, { adminAccess: 'lan' });
+    service.refreshSavedAuth();
+
+    expect(readAuthFile(PORT).sessions.map((session) => session.id).sort()).toEqual([local.session.id, lan.session.id].sort());
+  });
+
+  it('judges a session by its last request, which each use records', () => {
+    let saved = savedAuth(adminHash, { adminAccess: 'lan' });
+    const service = new AuthService(jukeboxConfig({ adminAccess: 'lan' }), { readSavedAuth: () => saved });
+    const { session } = service.createSession('127.0.0.1', true);
+
+    service.touch(session, '192.168.1.50', false);
+    saved = savedAuth(adminHash, { adminAccess: 'localhost' });
+    service.refreshSavedAuth();
+
+    expect(readAuthFile(PORT).sessions).toEqual([]);
+  });
+
+  it('a restart at a narrower level ends each admin session last seen from outside it, so a later widen never revives one', async () => {
+    const lanStart = new AuthService(jukeboxConfig({ adminAccess: 'lan' }));
+    lanStart.claimStore();
+    const local = lanStart.createSession('127.0.0.1', true);
+    const lan = lanStart.createSession('192.168.1.50', false);
+    const proxied = lanStart.createSession('127.0.0.1', false);
+    const joined = lanStart.join(lanStart.createJukeboxCode(24, false).key, null, '192.168.1.60', null, newDeviceId(), NO_QUEUED_NAMES);
+    if (joined.kind !== 'joined') throw new Error(`join failed: ${joined.kind}`);
+
+    const localhostStart = await AuthService.load(jukeboxConfig({ adminAccess: 'localhost' }), 'store', null);
+    localhostStart.claimStore();
+
+    const kept = readAuthFile(PORT).sessions.map((session) => session.id).sort();
+    expect(kept).toEqual([local.session.id, joined.session.id].sort());
+    expect(localhostStart.findSession(requestWithCookie(cookieFor(localhostStart, lan.token)))).toBeNull();
+    expect(localhostStart.findSession(requestWithCookie(cookieFor(localhostStart, proxied.token)))).toBeNull();
+  });
+
+  it('keeps every session when the level widens', () => {
+    let saved = savedAuth(adminHash);
+    const service = new AuthService(jukeboxConfig(), { readSavedAuth: () => saved });
+    service.createSession('127.0.0.1', true);
+    service.createSession('127.0.0.1', false);
+
+    saved = savedAuth(adminHash, { adminAccess: 'lan' });
+    service.refreshSavedAuth();
+
+    expect(service.adminAccess).toBe('lan');
+    expect(readAuthFile(PORT).sessions).toHaveLength(2);
+  });
+
+  it('never changes the values of a player started from environment variables', () => {
+    const readSavedAuth = vi.fn(() => savedAuth(otherHash, { adminAccess: 'localhost', askPasswordOnThisComputer: false }));
+    const service = new AuthService(jukeboxConfig({ adminAccess: 'lan' }), { source: 'env', envAdminHash: adminHash, readSavedAuth });
+
+    service.refreshSavedAuth();
+    service.sweep();
+
+    expect(readSavedAuth).not.toHaveBeenCalled();
+    expect([service.adminAccess, service.askPasswordOnThisComputer]).toEqual(['lan', true]);
+  });
+
+  it.each([
+    ['an unknown admin access level', { adminAccess: 'everywhere' }],
+    ['an ask that is not a boolean', { askPasswordOnThisComputer: 'yes' }],
+  ])('keeps the current values and warns once for a store with %s', (_label, invalid) => {
+    const settingsPath = join(dir, 'settings.json');
+    const storeWith = (auth: Record<string, unknown>): string =>
+      JSON.stringify({ webui: { auth: { mode: 'jukebox', adminPasswordHash: adminHash, ...auth } } });
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const service = new AuthService(jukeboxConfig({ adminAccess: 'lan' }));
+
+    writeFileSync(settingsPath, storeWith({ adminAccess: 'lan', askPasswordOnThisComputer: true, ...invalid }));
+    service.refreshSavedAuth();
+    service.refreshSavedAuth();
+    const kept = [service.adminAccess, service.askPasswordOnThisComputer];
+    const invalidWarnings = warn.mock.calls.filter(([message]) => String(message).includes('failed validation'));
+    writeFileSync(settingsPath, storeWith({ adminAccess: 'localhost', askPasswordOnThisComputer: false }));
+    service.refreshSavedAuth();
+
+    expect(kept).toEqual(['lan', true]);
+    expect(invalidWarnings).toHaveLength(1);
+    expect([service.adminAccess, service.askPasswordOnThisComputer]).toEqual(['localhost', false]);
+  });
+
+  it('reads an absent ask as on and an absent level as localhost, as startup does', () => {
+    const settingsPath = join(dir, 'settings.json');
+    const service = new AuthService(jukeboxConfig({ adminAccess: 'lan', askPasswordOnThisComputer: false }));
+
+    writeFileSync(settingsPath, JSON.stringify({ webui: { auth: { mode: 'jukebox', adminPasswordHash: adminHash } } }));
+    service.refreshSavedAuth();
+
+    expect([service.adminAccess, service.askPasswordOnThisComputer]).toEqual(['localhost', true]);
+  });
+
+  it.each([
+    ['password', false, 1],
+    ['jukebox', false, 1],
+    ['jukebox', true, 0],
+  ] as const)('in mode %s with TLS %s, a change to anywhere logs the plain HTTP warning %i times', (mode, tls, expected) => {
+    let saved = savedAuth(adminHash);
+    const service = new AuthService(jukeboxConfig({ mode }, tls), { readSavedAuth: () => saved });
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    saved = savedAuth(adminHash, { adminAccess: 'anywhere' });
+    service.refreshSavedAuth();
+    service.refreshSavedAuth();
+
+    expect(plainHttpWarnings(warn)).toHaveLength(expected);
+  });
+
+  it('logs the same plain HTTP warning at startup, and none in mode none', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    new AuthService(jukeboxConfig({ adminAccess: 'anywhere' })).warnOnPlainHttpLogin();
+    new AuthService(jukeboxConfig({ mode: 'none', adminAccess: 'anywhere' })).warnOnPlainHttpLogin();
+
+    expect(plainHttpWarnings(warn)).toHaveLength(1);
+  });
+
+  it('reads an admin session stored before the local flag existed as not local', () => {
+    const service = new AuthService(jukeboxConfig());
+    const legacy: Partial<AdminSession> = { ...service.createSession('127.0.0.1', true).session };
+    delete legacy.lastLocal;
+    writeAuthFile(PORT, { version: 1, sessions: [legacy as AdminSession], envAdminHash: null });
+
+    expect(readAuthFile(PORT).sessions[0]).toMatchObject({ role: 'admin', lastLocal: false });
+  });
+});
+
 describe('AuthService streams', () => {
   it('closes a session stream on logout and on expiry, and forgets a closed stream', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const first = service.createSession('127.0.0.1').session;
-    const second = service.createSession('127.0.0.1').session;
+    const first = service.createSession('127.0.0.1', true).session;
+    const second = service.createSession('127.0.0.1', true).session;
     const loggedOut = new FakeStream();
     const expiring = new FakeStream();
     const closedEarly = new FakeStream();
@@ -322,7 +613,7 @@ describe('AuthService streams', () => {
   it("ends only the host's guest page stream when the jukebox closes or expires, with the same reason", () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const admin = service.createSession('127.0.0.1').session;
+    const admin = service.createSession('127.0.0.1', true).session;
     service.createJukeboxCode(1, false);
     const closedPage = new FakeStream();
     const player = new FakeStream();
@@ -345,14 +636,14 @@ describe('AuthService streams', () => {
 describe('AuthService persistence', () => {
   it('writes the store beside settings.json with mode 0600 and keeps only the secret digest', () => {
     const service = new AuthService(jukeboxConfig());
-    const { session } = service.createSession('192.168.1.5');
+    const { session } = service.createSession('192.168.1.5', false);
 
     expect(getAuthStorePath(PORT)).toBe(join(dir, `webui-auth-${String(PORT)}.json`));
     const file = JSON.parse(readFileSync(getAuthStorePath(PORT), 'utf8')) as { version: number; sessions: SessionRecord[] };
     expect(file.version).toBe(1);
     expect(file.sessions).toEqual([session]);
     expect(Object.keys(session).sort()).toEqual(
-      ['createdAt', 'credentialEpoch', 'csrfToken', 'expiresAt', 'hostNickname', 'id', 'lastAddress', 'lastSeenAt', 'role', 'secretDigest'],
+      ['createdAt', 'credentialEpoch', 'csrfToken', 'expiresAt', 'hostNickname', 'id', 'lastAddress', 'lastLocal', 'lastSeenAt', 'role', 'secretDigest'],
     );
     expect(session.credentialEpoch).toMatch(/^[0-9a-f]{16}$/);
     if (process.platform !== 'win32') expect(statSync(getAuthStorePath(PORT)).mode & 0o777).toBe(0o600);
@@ -363,8 +654,8 @@ describe('AuthService persistence', () => {
     const otherPortConfig = makeTestConfig({ webui: { ...base.webui, port: PORT + 1 } });
     const first = new AuthService(base);
     const second = new AuthService(otherPortConfig);
-    const firstLogin = first.createSession('127.0.0.1');
-    const secondLogin = second.createSession('127.0.0.1');
+    const firstLogin = first.createSession('127.0.0.1', true);
+    const secondLogin = second.createSession('127.0.0.1', true);
 
     const restarted = await AuthService.load(base, 'store', null);
     restarted.claimStore();
@@ -377,18 +668,18 @@ describe('AuthService persistence', () => {
   it('writes a lastSeenAt change at most every 5 minutes, and at flush', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const { session } = service.createSession('127.0.0.1');
+    const { session } = service.createSession('127.0.0.1', true);
     const storedLastSeen = (): number | undefined => readAuthFile(PORT).sessions[0]?.lastSeenAt;
 
     time.advance(60_000);
-    service.touch(session, '127.0.0.1');
+    service.touch(session, '127.0.0.1', true);
     expect(storedLastSeen()).toBe(session.createdAt);
     time.advance(4 * 60_000);
-    service.touch(session, '127.0.0.1');
+    service.touch(session, '127.0.0.1', true);
     expect(storedLastSeen()).toBe(session.lastSeenAt);
 
     time.advance(60_000);
-    service.touch(session, '127.0.0.1');
+    service.touch(session, '127.0.0.1', true);
     service.flush();
     expect(storedLastSeen()).toBe(session.lastSeenAt);
   });
@@ -396,7 +687,7 @@ describe('AuthService persistence', () => {
   it('adopts live sessions and drops expired and other-epoch ones when it claims the store', async () => {
     const config = jukeboxConfig();
     const writer = new AuthService(config);
-    const live = writer.createSession('127.0.0.1');
+    const live = writer.createSession('127.0.0.1', true);
     const file = readAuthFile(PORT);
     const expired = { ...live.session, id: 'expired', expiresAt: Date.now() - 1 };
     const otherEpoch = { ...live.session, id: 'other', credentialEpoch: '0000000000000000' };
@@ -414,10 +705,10 @@ describe('AuthService persistence', () => {
   it('reads the sessions the previous owner left between load and the claim', async () => {
     const config = jukeboxConfig();
     const previousOwner = new AuthService(config);
-    const loggedOut = previousOwner.createSession('127.0.0.1');
+    const loggedOut = previousOwner.createSession('127.0.0.1', true);
     const loaded = await AuthService.load(config, 'store', null);
     previousOwner.deleteSession(loggedOut.session.id);
-    const minted = previousOwner.createSession('127.0.0.1');
+    const minted = previousOwner.createSession('127.0.0.1', true);
 
     loaded.claimStore();
 
@@ -462,7 +753,7 @@ describe('AuthService env password', () => {
   it('reuses the stored hash while the variable matches it, so admin sessions survive a restart', async () => {
     const first = await AuthService.load(envConfig(), 'env', PASSWORD);
     first.claimStore();
-    const { token } = first.createSession('127.0.0.1');
+    const { token } = first.createSession('127.0.0.1', true);
     const storedHash = readAuthFile(PORT).envAdminHash;
 
     const restarted = await AuthService.load(envConfig(), 'env', PASSWORD);
@@ -475,7 +766,7 @@ describe('AuthService env password', () => {
   it('rehashes a changed variable, which ends the admin sessions', async () => {
     const first = await AuthService.load(envConfig(), 'env', PASSWORD);
     first.claimStore();
-    const { token } = first.createSession('127.0.0.1');
+    const { token } = first.createSession('127.0.0.1', true);
 
     const restarted = await AuthService.load(envConfig(), 'env', 'a different password');
 
@@ -489,8 +780,13 @@ describe('AuthService env password', () => {
     expect(service.hasAdminPassword()).toBe(false);
   });
 
-  it('refuses a variable outside 12 to 128 characters', async () => {
-    await expect(AuthService.load(envConfig(), 'env', 'short')).rejects.toThrow(/12 to 128 characters/);
+  it('refuses a variable outside 8 to 128 characters, and accepts 8', async () => {
+    await expect(AuthService.load(envConfig(), 'env', '7 chars')).rejects.toThrow(/8 to 128 characters/);
+    await expect(AuthService.load(envConfig(), 'env', 'x'.repeat(129))).rejects.toThrow(/8 to 128 characters/);
+
+    const service = await AuthService.load(envConfig(), 'env', '8 chars!');
+
+    expect(await service.verifyAdminPassword('8 chars!')).toBe(true);
   });
 
   it('ignores envAdminHash when the player runs from the store', async () => {
@@ -646,7 +942,7 @@ describe('AuthService jukebox code and guest sessions', () => {
     expect(session.expiresAt).toBe(time.now() + 24 * HOUR_MS);
 
     time.advance(20 * HOUR_MS);
-    service.touch(session, '192.168.1.50');
+    service.touch(session, '192.168.1.50', false);
 
     expect(session.expiresAt).toBe(jukeboxCode.expiresAt);
   });
@@ -731,7 +1027,7 @@ describe('AuthService jukebox code and guest sessions', () => {
 
   it('revokes the key, signs every guest out and leaves admin sessions alone', () => {
     const service = new AuthService(jukeboxConfig());
-    const admin = service.createSession('127.0.0.1');
+    const admin = service.createSession('127.0.0.1', true);
     const { key } = service.createJukeboxCode(24, false);
     const guest = joinGuest(service, key);
 
@@ -744,7 +1040,7 @@ describe('AuthService jukebox code and guest sessions', () => {
 
   it('sweeps an expired key, closes its guest streams and logs it', () => {
     const time = clock();
-    const service = new AuthService(jukeboxConfig(), { now: time.now, readSavedAdminHash: () => adminHash });
+    const service = new AuthService(jukeboxConfig(), { now: time.now, readSavedAuth: () => savedAuth(adminHash) });
     const { key } = service.createJukeboxCode(1, false);
     const guest = joinGuest(service, key);
     const stream = new FakeStream();
@@ -786,7 +1082,7 @@ describe('AuthService jukebox code and guest sessions', () => {
   it('reports the guest jukebox view, and the host label for an admin session', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const admin = service.createSession('127.0.0.1');
+    const admin = service.createSession('127.0.0.1', true);
     const adminAt = time.now();
     time.advance(60_000);
     const { key, jukeboxCode } = service.createJukeboxCode(24, false);
@@ -805,7 +1101,7 @@ describe('AuthService jukebox code and guest sessions', () => {
   it('gives an admin session the host view only while a code is live, under a host nickname a restart keeps', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const admin = service.createSession('127.0.0.1').session;
+    const admin = service.createSession('127.0.0.1', true).session;
 
     expect(admin.hostNickname).toBeNull();
     expect(service.guestJukeboxFor(admin.id)).toBeNull();
@@ -827,7 +1123,7 @@ describe('AuthService jukebox code and guest sessions', () => {
   it('keeps the host view through an expiry until the sweep, so the sweep ends the host stream with its reason', () => {
     const time = clock();
     const service = new AuthService(jukeboxConfig(), { now: time.now });
-    const admin = service.createSession('127.0.0.1').session;
+    const admin = service.createSession('127.0.0.1', true).session;
     service.createJukeboxCode(1, false);
 
     time.advance(60 * 60 * 1000 + 1);
@@ -840,7 +1136,7 @@ describe('AuthService jukebox code and guest sessions', () => {
 
   it('keeps the host identity through a new code that signs every guest out', () => {
     const service = new AuthService(jukeboxConfig());
-    const admin = service.createSession('127.0.0.1').session;
+    const admin = service.createSession('127.0.0.1', true).session;
     const { key } = service.createJukeboxCode(24, false);
     const guest = joinGuest(service, key);
     service.setJukeboxNickname(admin, 'DJ Bo');
@@ -855,7 +1151,7 @@ describe('AuthService jukebox code and guest sessions', () => {
 
   it('reads an admin session stored before host nicknames existed as having none', () => {
     const service = new AuthService(jukeboxConfig());
-    const legacy: Partial<AdminSession> = { ...service.createSession('127.0.0.1').session };
+    const legacy: Partial<AdminSession> = { ...service.createSession('127.0.0.1', true).session };
     delete legacy.hostNickname;
     writeAuthFile(PORT, { version: 1, sessions: [legacy as AdminSession], envAdminHash: null });
 
@@ -921,7 +1217,7 @@ describe('AuthService guest management and bans', () => {
   // A 48-hour code outlives the guest's one-day idle expiry, so only the idle expiry ends the guest.
   function longJukebox(): { service: AuthService; key: string; time: ReturnType<typeof clock> } {
     const time = clock();
-    const service = new AuthService(jukeboxConfig(), { now: time.now, readSavedAdminHash: () => adminHash });
+    const service = new AuthService(jukeboxConfig(), { now: time.now, readSavedAuth: () => savedAuth(adminHash) });
     const { key } = service.createJukeboxCode(48, false);
     return { service, key, time };
   }
@@ -993,7 +1289,7 @@ describe('AuthService guest management and bans', () => {
   it('destroys the streams with no reason on a guest logout and on an admin session end', () => {
     const { service, key } = jukeboxAt();
     const guest = streamOf(service, joinFrom(service, key, '192.168.1.50'));
-    const admin = service.createSession(HOST).session;
+    const admin = service.createSession(HOST, true).session;
     const adminStream = streamOf(service, admin.id);
 
     service.deleteSession([...service.listGuests()][0]?.session.id ?? '');
@@ -1030,7 +1326,7 @@ describe('AuthService guest management and bans', () => {
 
   it('refuses to sign out or ban an admin session or an unknown id', () => {
     const { service } = jukeboxAt();
-    const { session } = service.createSession('127.0.0.1');
+    const { session } = service.createSession('127.0.0.1', true);
 
     expect(service.signOutGuest(session.id)).toBeNull();
     expect(service.signOutGuest('missing')).toBeNull();
@@ -1171,7 +1467,7 @@ describe('AuthService guest management and bans', () => {
     const banned = joinFrom(service, key, '203.0.113.5');
     const laptop = joinFrom(service, key, '203.0.113.5');
     const elsewhere = joinFrom(service, key, '203.0.113.6');
-    const { session: phoneAdmin } = service.createSession('203.0.113.5');
+    const { session: phoneAdmin } = service.createSession('203.0.113.5', false);
     const streams = { laptop: new FakeStream(), elsewhere: new FakeStream(), phoneAdmin: new FakeStream() };
     service.trackStream(laptop, streams.laptop as unknown as ServerResponse, '203.0.113.5');
     service.trackStream(elsewhere, streams.elsewhere as unknown as ServerResponse, '203.0.113.6');
@@ -1199,8 +1495,8 @@ describe('AuthService guest management and bans', () => {
       if (found === undefined) throw new Error(`no session ${id}`);
       return found.session;
     };
-    service.touch(sessionOf(moved), '198.51.100.9');
-    service.touch(sessionOf(arrived), '203.0.113.5');
+    service.touch(sessionOf(moved), '198.51.100.9', false);
+    service.touch(sessionOf(arrived), '203.0.113.5', false);
 
     service.banGuest(joinFrom(service, key, '203.0.113.5'), 1, HOST);
 
@@ -1210,9 +1506,9 @@ describe('AuthService guest management and bans', () => {
 
   it('lists the network keys of the live non-loopback admin sessions', () => {
     const { service } = jukeboxAt();
-    service.createSession('127.0.0.1');
-    service.createSession('2001:db8:1:2::10');
-    service.createSession('192.168.1.20');
+    service.createSession('127.0.0.1', true);
+    service.createSession('2001:db8:1:2::10', false);
+    service.createSession('192.168.1.20', false);
 
     expect([...service.adminNetworkKeys()]).toEqual(['2001:db8:1:2::/64', '192.168.1.20']);
   });
@@ -1252,7 +1548,7 @@ describe('AuthService guest management and bans', () => {
 
   it('drops the jukebox code, its guests and the guest bans on a start in mode password, so a later jukebox start revives nothing', () => {
     const { service, key, time } = jukeboxAt();
-    const admin = service.createSession(HOST);
+    const admin = service.createSession(HOST, true);
     joinFrom(service, key, '203.0.113.5');
     service.banGuest(joinFrom(service, key, '203.0.113.9'), 24, HOST);
 
@@ -1274,7 +1570,7 @@ describe('AuthService guest management and bans', () => {
 
   it('drops the jukebox code, its guests and the guest bans on a start in mode none, and keeps the admin sessions', () => {
     const { service, key, time } = jukeboxAt();
-    const admin = service.createSession(HOST);
+    const admin = service.createSession(HOST, true);
     joinFrom(service, key, '203.0.113.5');
     service.banGuest(joinFrom(service, key, '203.0.113.9'), 24, HOST);
     writeAuthFile(PORT, { ...readAuthFile(PORT), envAdminHash: 'stored-env-hash' });
@@ -1298,7 +1594,7 @@ describe('AuthService guest management and bans', () => {
   it('leaves a store with no jukebox state unwritten on a start in mode none', () => {
     const { service, time } = jukeboxAt();
     service.revokeJukeboxCode();
-    service.createSession(HOST);
+    service.createSession(HOST, true);
     // Compact JSON differs from the indented form a write produces, so any write changes the bytes.
     const before = JSON.stringify(readAuthFile(PORT));
     writeFileSync(getAuthStorePath(PORT), before);
@@ -1326,7 +1622,7 @@ describe('AuthService guest management and bans', () => {
 
   it('reads a stored code without its key as closed, and keeps the admin sessions and network bans', () => {
     const { service, key, time } = jukeboxAt();
-    const admin = service.createSession(HOST);
+    const admin = service.createSession(HOST, true);
     service.banGuest(joinFrom(service, key, '203.0.113.5'), 24, HOST);
     const guest = joinFrom(service, key, '192.168.1.50');
     const stored = readAuthFile(PORT);
@@ -1349,7 +1645,7 @@ describe('AuthService guest management and bans', () => {
 
   it('clears an unreadable code record once and logs no jukebox warning on starts in modes none and password', () => {
     const { service, time } = jukeboxAt();
-    const admin = service.createSession(HOST);
+    const admin = service.createSession(HOST, true);
     const stored = readAuthFile(PORT);
     const keyless = Object.fromEntries(Object.entries(stored.jukeboxCode ?? {}).filter(([field]) => field !== 'secret'));
     const keylessFile = JSON.stringify({ ...stored, jukeboxCode: keyless });

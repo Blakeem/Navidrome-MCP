@@ -28,7 +28,7 @@ import {
 } from './helpers.js';
 
 const NO_MPV = !isMpvAvailable();
-const STOPPED_AFTER_MCP_EXIT = /spawning MCP exited during startup\. Standing down\.|navidrome-web shutting down \(mcp-exit\)/;
+const STOPPED_AFTER_MCP_EXIT = /spawning MCP exited during startup\. Standing down\.|Jukebox Remote shutting down \(mcp-exit\)/;
 
 describeCoordination('player lifecycle (IPC parent link)', () => {
   afterEach(killAllChildren);
@@ -48,7 +48,7 @@ describeCoordination('player lifecycle (IPC parent link)', () => {
   it('persist OFF: a player whose MCP exited during its startup does not keep running', async () => {
     const port = randomPort();
     const storePath = makeTempStore(port, { persistAfterMcpExit: false });
-    const logPath = join(dirname(storePath), 'navidrome-web.log');
+    const logPath = join(dirname(storePath), 'jukebox-remote.log');
     spawnIpcParent(storePath, { exitAfterSpawn: true });
 
     const stopped = await waitFor(

@@ -13,7 +13,7 @@ export async function loadPlaylistsPane() {
     status.textContent = 'Could not load playlists.';
     return;
   }
-  const rows = (data.playlists ?? []).map((pl) => buildLibraryNode('playlist', pl, 0, status));
+  const rows = (data.playlists ?? []).map((pl) => buildLibraryNode('playlist', pl, 0));
   status.textContent = rows.length > 0 ? '' : 'No playlists found.';
   list.replaceChildren(...rows);
 }

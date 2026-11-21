@@ -21,7 +21,6 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     tokenExpiry: 86400,
     features: { lastfm: true, radioBrowser: false, lyrics: false, playback: false },
     lastFmApiKey: 'test-key',
-    lyricsProvider: undefined,
     lrclibUserAgent: undefined,
     lrclibBase: 'https://lrclib.net',
     playbackTranscodeFormat: 'mp3',

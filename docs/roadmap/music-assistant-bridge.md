@@ -4,7 +4,7 @@
 
 ## Verdict
 
-BUILD. Music Assistant (MA) 2.10.7 has a token-authenticated HTTP JSON-RPC endpoint, and its OpenSubsonic provider keys every track by the Navidrome song ID, so the bridge can hand MA a list of song IDs as provider URIs with no search by name [DIRECT: MA 2.10.7 source]. The bridge keeps the existing search and one-shot play tools, and it gives the Docker image, which has no mpv, a way to play audio [DERIVED: docs/DOCKER.md, src/tools/handlers/registry.ts:103]. MVP effort is 1.5 to 3 weeks and the full roadmap is 4 to 6 weeks [INFERRED].
+BUILD. Music Assistant (MA) 2.10.7 has a token-authenticated HTTP JSON-RPC endpoint, and its OpenSubsonic provider keys every track by the Navidrome song ID, so the bridge can hand MA a list of song IDs as provider URIs with no search by name [DIRECT: MA 2.10.7 source]. The bridge keeps the existing search and one-shot play tools, and it gives the Docker image, which has no mpv, a way to play audio [DERIVED: docs/HTTP-AND-DOCKER.md, src/tools/handlers/registry.ts:103]. MVP effort is 1.5 to 3 weeks and the full roadmap is 4 to 6 weeks [INFERRED].
 
 ## Scope
 
@@ -97,7 +97,7 @@ LLM client
 Facts about these parts that shape the design:
 
 - At the playback tool functions, every play tool resolves songs first and calls the playback engine last. `playSongs` calls `fetchSongMetadata` then `playbackEngine.enqueue` [DIRECT: src/tools/playback.ts:299-308]. That last call is the one seam the bridge needs.
-- At the tool registry, `config.features.playback` means "an mpv binary was found" [DIRECT: src/config/map-config.ts:92]. The Docker image has no mpv, so it registers no play tools [DIRECT: docs/DOCKER.md].
+- At the tool registry, `config.features.playback` means "an mpv binary was found" [DIRECT: src/config/map-config.ts:92]. The Docker image has no mpv, so it registers no play tools [DIRECT: docs/HTTP-AND-DOCKER.md].
 - At the playback tool category, the play tools respawn the web player process before they run [DIRECT: playback-handlers.ts:378-380]. The web player process only drives mpv.
 - At the settings store, secrets already live in plaintext with mode 0600 (`navidrome.password`, `transport.authToken`) [DIRECT: src/config/store.ts:118-124].
 - At the logger, JWTs, `Bearer` values and keys ending in `token` are redacted [DIRECT: src/utils/logger.ts:14-37]. MA tokens are JWTs [DIRECT: MA webserver README].
@@ -365,7 +365,7 @@ docs                    → requires tool changes
 5. **MA player target.** Implement the MVP subset: `enqueue` (mode map `replace` → `replace`, `append` → `add`, chunked, `shuffle: false`), pause, resume, next, previous, `setVolume` (`players/cmd/volume_set`, or `group_volume` for a group), `nowPlaying` (`player_queues/get`, song ID read back from the provider mapping of the current item). Resolve the queue with `player_queues/get_active_queue`, as Home Assistant does, so a grouped player plays on its group's queue.
 6. **Player registry.** Resolve the `player` argument, apply the default rule, and serve `list_players` (local target plus `players/all`, with availability, state, volume and group members).
 7. **Tool changes.** Add `player` to the MVP tools, add `list_players`, change the registry gate, skip the web player respawn for MA targets, keep `playback_status` local-only, update tool descriptions so they no longer say "local speakers via mpv" when a player is given, and add an MA entry to `test_connection`'s feature report.
-8. **Docs.** Add a README section and a row in docs/DOCKER.md for "HTTP in Docker + MA". Update the "Remote/network playback" line in docs/PLAYBACK-SPEC.md "Out of Scope".
+8. **Docs.** Add a README section and a row in docs/HTTP-AND-DOCKER.md for "HTTP in Docker + MA". Update the "Remote/network playback" line in docs/PLAYBACK-SPEC.md "Out of Scope".
 
 ## Edge cases
 
@@ -397,7 +397,7 @@ docs                    → requires tool changes
 | Some m4a, opus or VBR files fail in MA | MA streams controller | Known MA limitation [DIRECT: MA Subsonic provider page]. MA skips the track. Document it. |
 | MA version drift | MA HTTP client | Read `schema_version` and `min_supported_schema_version` from `GET /info`. Refuse with a clear message below the minimum schema measured in the first live test. Log a warning when MA's `min_supported_schema_version` passes the schema the bridge was built against. |
 | Unknown command after an MA upgrade | MA HTTP client | 400 "Invalid Command: <name>". The error names the MA version from `/info`. |
-| Docker container cannot reach MA | MA HTTP client | Same as unreachable. docs/DOCKER.md names the container network requirement. |
+| Docker container cannot reach MA | MA HTTP client | Same as unreachable. docs/HTTP-AND-DOCKER.md names the container network requirement. |
 | Two MCP clients drive one MA player | MA server | MA serializes play actions with its playback lock [DIRECT: dev player queues README]. The last request wins. No lock in the bridge. |
 | Token in tool output or logs | MA HTTP client, logger | Never returned in a result. The logger already redacts JWTs and `Bearer` values. |
 

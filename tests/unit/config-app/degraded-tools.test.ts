@@ -54,7 +54,7 @@ describe('registerDegradedTools notice', () => {
 
   it('tells an env-built config to fix the environment variable, not the store', () => {
     const notice = noticeFor('test_connection', {
-      reason: 'The environment-derived config is invalid: Configuration validation failed:\nnavidromeUsername: Required',
+      reason: 'The environment-derived config is invalid: Configuration validation failed:\nnavidrome.username: Required',
       unreachable: false,
       source: 'env',
     });
@@ -132,5 +132,15 @@ describe('buildHeadlessStartupError', () => {
     });
     expect(text).toContain('Fix the environment variable that holds the named setting');
     expect(text).not.toContain('hunter2');
+  });
+
+  it('starts the exit text on its own line after a reason that ends in a list', () => {
+    const text = buildHeadlessStartupError({
+      reason: 'Configuration validation failed:\nnavidrome.url: Invalid URL\nsettings.json notices:\nwebui.prot is not a setting this version knows. Did you mean webui.port?',
+      unreachable: false,
+      source: 'store',
+    });
+    expect(text).toContain('Did you mean webui.port?\nSetup mode needs stdio');
+    expect(text).toContain('Fix or remove settings.json at ');
   });
 });

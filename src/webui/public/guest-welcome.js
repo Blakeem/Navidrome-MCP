@@ -4,17 +4,18 @@
 
 import { byId, setHidden } from './dom.js';
 import { currentNickname, saveNickname } from './guest-name.js';
+import { openDialog, runDialogSave } from './messages.js';
 import { prefRead, prefWrite } from './prefs.js';
 import { formatDateTime } from './time-format.js';
 
 const SEEN_KEY = 'navidrome-mcp.guest-welcome-seen';
 
 const dialog = byId('guest-welcome');
+const form = dialog.querySelector('form');
 const text = byId('guest-welcome-text');
 const expiry = byId('guest-welcome-expiry');
 const nicknameInput = byId('guest-nickname');
 const nicknameSave = byId('guest-nickname-save');
-const nicknameStatus = byId('guest-nickname-status');
 const done = byId('guest-welcome-done');
 
 // Held in memory too, since blocked storage would otherwise reopen the welcome on every snapshot.
@@ -50,8 +51,7 @@ export function maybeShowWelcome(jukebox, isHost) {
   expiry.textContent = isHost ? '' : jukeboxEndText(jukebox.expiresAt);
   setHidden(expiry, isHost);
   nicknameInput.value = jukebox.nickname ?? '';
-  nicknameStatus.textContent = '';
-  dialog.showModal();
+  openDialog(dialog);
 }
 
 // A modal welcome would cover the card that replaces the player when the session ends.
@@ -65,19 +65,14 @@ function queueText(jukebox) {
   return ` You can add up to ${songs} at a time to the end of the queue, and remove your own songs before they start playing.`;
 }
 
-// Resolves true when no new name was typed or the route stored it.
-async function saveTypedNickname() {
+// Resolves true when no new name was typed or the route stored it. Got it closes the card on success,
+// which confirms the save, so it passes `confirm` false.
+async function saveTypedNickname(confirm = true) {
   const nickname = nicknameInput.value.trim();
   if (nickname === '' || nickname === currentNickname()) return true;
-  nicknameSave.disabled = true;
-  done.disabled = true;
-  const result = await saveNickname(nickname);
-  nicknameSave.disabled = false;
-  done.disabled = false;
-  nicknameStatus.textContent = result.ok ? 'Saved.' : result.error;
-  return result.ok;
+  return runDialogSave({ form, button: nicknameSave, request: () => saveNickname(nickname), confirm });
 }
 
 async function closeAfterSave() {
-  if (await saveTypedNickname()) dialog.close();
+  if (await saveTypedNickname(false)) dialog.close();
 }

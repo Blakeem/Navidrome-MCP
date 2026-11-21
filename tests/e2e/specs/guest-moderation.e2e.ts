@@ -84,7 +84,7 @@ test('removing a guest shows it the removed card, drops it from the list, and it
 
   await hostPage.removeGuest(label);
 
-  await expect(hostPage.guestMessage).toHaveText(`${label} was signed out. Their songs stay queued, and the jukebox code lets them join again.`);
+  await expect(hostPage.notice).toHaveText(`${label} was signed out.`);
   await expect(hostPage.guestRow(label)).toHaveCount(0);
   await expect(hostPage.guestListStatus).toHaveText('No guest is signed in.');
   await expect(guest.sessionEndedCard).toContainText(REMOVED_TEXT);
@@ -112,7 +112,7 @@ test('a ban with no network ban ends the session, removes the guest songs and bl
 
   const reply = (await (await banReply).json()) as BanReply;
   expect(reply).toMatchObject({ songsRemoved: 1, songsStayed: 0 });
-  await expect(hostPage.guestMessage).toHaveText(`${label} was banned, and 1 song left the queue.`);
+  await expect(hostPage.notice).toHaveText(`${label} was banned. 1 song removed.`);
   await expect(guest.sessionEndedCard).toContainText(REMOVED_TEXT);
   await expect(hostPage.guestRow(label)).toHaveCount(0);
   await expect(hostPage.banRow(label, 'guest')).toBeVisible();
@@ -142,7 +142,7 @@ test('a ban that also makes a new code keeps the other guests on the new code an
 
   await hostPage.banGuest(target.label, { networkBanHours: 0, newCode: true });
 
-  await expect(hostPage.guestMessage).toHaveText(`${target.label} was banned, and 0 songs left the queue.`);
+  await expect(hostPage.notice).toHaveText(`${target.label} was banned. 0 songs removed.`);
   await expect(target.guest.sessionEndedCard).toContainText(REMOVED_TEXT);
   await expect(hostPage.guestRow(target.label)).toHaveCount(0);
   await expect(hostPage.guestRow(bystander.label)).toBeVisible();
@@ -172,7 +172,7 @@ test('unbanning a browser in the Guests dialog lets it join again', async ({ hos
 
   await hostPage.unban(label, 'guest');
 
-  await expect(hostPage.banMessage).toHaveText(`The ban on ${label} was lifted, so their browser can join again.`);
+  await expect(hostPage.notice).toHaveText(`The ban on ${label} was lifted.`);
   await expect(hostPage.banListStatus).toHaveText('No one is banned.');
   await expect(hostPage.banRow(label, 'guest')).toHaveCount(0);
   expect(await jukebox.bans()).toEqual([]);
@@ -242,7 +242,7 @@ test('a network ban blocks a new browser on the LAN address until the host lifts
 
   await hostPage.banGuest(label, { networkBanHours: NETWORK_BAN_HOURS, newCode: false });
 
-  await expect(hostPage.guestMessage).toHaveText(`${label} was banned, and 0 songs left the queue.`);
+  await expect(hostPage.notice).toHaveText(`${label} was banned. 0 songs removed.`);
   await expect(guest.sessionEndedCard).toContainText(REMOVED_TEXT);
   await expect(hostPage.banRow(label, 'guest')).toBeVisible();
   await expect(hostPage.banRow(label, 'network')).toContainText(`Network ${entry.networkKey} blocked until`);
@@ -258,7 +258,7 @@ test('a network ban blocks a new browser on the LAN address until the host lifts
 
   await hostPage.unban(label, 'network');
 
-  await expect(hostPage.banMessage).toHaveText(`The network ban on ${label} was lifted.`);
+  await expect(hostPage.notice).toHaveText(`The network ban on ${label} was lifted.`);
   await expect(hostPage.banRow(label, 'network')).toHaveCount(0);
   await expect(hostPage.banRow(label, 'guest')).toBeVisible();
   expect((await jukebox.bans()).map((ban) => ban.kind)).toEqual(['guest']);

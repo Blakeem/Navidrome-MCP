@@ -1,6 +1,7 @@
 import { byId } from './dom.js';
 import { loadFavoritesPane } from './favorites-pane.js';
 import { relabelLibraryActions } from './library-tree.js';
+import { openDialog } from './messages.js';
 import { placeBelowTopbar } from './modal-placement.js';
 import { bindPlayToolbar } from './play-toolbar.js';
 import { loadPlaylistsPane } from './playlists-pane.js';
@@ -32,7 +33,7 @@ function openPlayDialog() {
   void loadFavoritesPane();
   void loadPlaylistsPane();
   placeBelowTopbar(dialog);
-  dialog.showModal();
+  openDialog(dialog);
 }
 
 function switchTab(name) {

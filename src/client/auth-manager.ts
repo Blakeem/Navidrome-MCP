@@ -7,9 +7,14 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { Config } from '../config.js';
-import { MAX_AUTH_RATE_LIMIT_WAIT_MS, NAVIDROME_LOGIN_RATE_LIMIT_WINDOW_MS } from '../constants/timeouts.js';
+import {
+  MAX_AUTH_RATE_LIMIT_WAIT_MS,
+  NAVIDROME_LOGIN_RATE_LIMIT_WINDOW_MS,
+  NAVIDROME_TOKEN_EXPIRY_MARGIN_MS,
+} from '../constants/timeouts.js';
 import { logger } from '../utils/logger.js';
 import { ErrorFormatter } from '../utils/error-formatter.js';
+import { decodeJwtPayload } from '../utils/jwt-decode.js';
 import {
   FetchTimeoutError,
   fetchWithTimeout,
@@ -32,6 +37,9 @@ const UNREACHABLE_ERROR_CODES = new Set([
 ]);
 
 const MAX_CAUSE_DEPTH = 5;
+
+/** Three base64url segments. The signature may be empty. */
+const JWT_SHAPE = /^[\w-]+\.[\w-]+\.[\w-]*$/;
 
 /** An unrecognized failure counts as a configuration problem, so the settings page still opens. */
 export function isNavidromeUnreachable(error: unknown): boolean {
@@ -138,7 +146,7 @@ export class AuthManager {
       throw new Error(ErrorFormatter.authentication('server returned no token'));
     }
     this.token = token;
-    this.tokenExpiry = new Date(Date.now() + this.config.tokenExpiry * 1000);
+    this.tokenExpiry = tokenExpiryFor(token, this.config.tokenExpiry, Date.now());
     logger.debug('Authentication successful');
   }
 
@@ -161,6 +169,31 @@ export class AuthManager {
       },
     );
   }
+}
+
+/**
+ * Navidrome sets the token lifetime, so the token's `exp` claim decides when it renews. A token
+ * without a usable claim renews after the configured `advanced.tokenExpiry` seconds.
+ */
+function tokenExpiryFor(token: string, fallbackSeconds: number, nowMs: number): Date {
+  const fallback = new Date(nowMs + fallbackSeconds * 1000);
+  // decodeJwtPayload logs every failure, so a token that is not a JWT skips it.
+  if (!JWT_SHAPE.test(token)) return fallback;
+  const exp = decodeJwtPayload(token)?.exp;
+  if (exp === undefined) return fallback;
+
+  const renewAt = new Date(exp * 1000 - NAVIDROME_TOKEN_EXPIRY_MARGIN_MS);
+  if (Number.isNaN(renewAt.getTime())) return fallback;
+  // A clock ahead of Navidrome's would renew on every request, so a 401 renews this token instead.
+  if (renewAt.getTime() <= nowMs) {
+    logger.warn(
+      `The Navidrome token expires at ${new Date(exp * 1000).toISOString()}, which is less than ` +
+        `${String(NAVIDROME_TOKEN_EXPIRY_MARGIN_MS / 1000)} seconds from now by this computer's clock. ` +
+        `The token renews after ${String(fallbackSeconds)} seconds or when Navidrome rejects it.`,
+    );
+    return fallback;
+  }
+  return renewAt;
 }
 
 /** Reads a delta-seconds `Retry-After`, falling back to Navidrome's default login window. */

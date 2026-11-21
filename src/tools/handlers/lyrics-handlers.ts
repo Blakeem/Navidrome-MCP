@@ -10,7 +10,7 @@ import type { Config } from '../../config.js';
 import type { ToolCategory } from './registry.js';
 import { ErrorFormatter } from '../../utils/error-formatter.js';
 
-import { getLyricsByIdentity, LRCLIB_CONFIG_KEYS, searchLyricsCandidates } from '../lyrics.js';
+import { getLyricsByIdentity, LRCLIB_OFF_MESSAGE, searchLyricsCandidates } from '../lyrics.js';
 
 function buildGetLyricsTool(hasLrclib: boolean): Tool {
   const properties: Record<string, unknown> = {
@@ -88,7 +88,7 @@ export function createLyricsToolCategory(client: NavidromeClient, config: Config
           return await getLyricsByIdentity(config, client, args);
         case 'search_lyrics':
           if (!hasLrclib) {
-            throw new Error(ErrorFormatter.configMissing('LRCLIB lyrics', LRCLIB_CONFIG_KEYS));
+            throw new Error(LRCLIB_OFF_MESSAGE);
           }
           return await searchLyricsCandidates(config, client, args);
         default:

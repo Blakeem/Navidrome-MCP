@@ -3,7 +3,7 @@
  * Copyright (C) 2025
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Exactly one navidrome-web owns the configured port, and every other instance stands down.
+ * Exactly one Jukebox Remote owns the configured port, and every other instance stands down.
  */
 
 import { createServer as createHttpServer } from 'node:http';
@@ -23,7 +23,7 @@ import {
 describeCoordination('port-as-lock', () => {
   afterEach(killAllChildren);
 
-  it('a single navidrome-web becomes the port owner and serves /healthz', async () => {
+  it('a single Jukebox Remote becomes the port owner and serves /healthz', async () => {
     const port = randomPort();
     spawnWeb(makeTempStore(port));
 

@@ -18,6 +18,14 @@ import {
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { WEBUI_ADMIN_ACCESS_LEVELS, WEBUI_AUTH_MODES } from '../constants/defaults.js';
+import {
+  coerceSlips,
+  findUnknownKeys,
+  isJsonObject,
+  pruneEmptyValues,
+  salvageValidLeaves,
+  type JsonObject,
+} from './settings-file-checks.js';
 import { getSettingsStorePath } from './store-path.js';
 import { logger } from '../utils/logger.js';
 
@@ -46,9 +54,12 @@ export const SettingsFileSchema = z.object({
   }).optional(),
   features: z.object({
     lastFmApiKey: z.string().nullish(),
+    radio: z.boolean().optional(),
+    lyrics: z.boolean().optional(),
     musicBrainzUserAgent: z.string().nullish(),
     radioBrowserUserAgent: z.string().nullish(),
     radioBrowserBase: z.string().nullish(),
+    // Read only while features.lyrics is absent, by readNamedFeatureSwitches.
     lyricsProvider: z.string().nullish(),
     lrclibUserAgent: z.string().nullish(),
     lrclibBase: z.string().nullish(),
@@ -81,6 +92,7 @@ export const SettingsFileSchema = z.object({
       mode: z.enum(WEBUI_AUTH_MODES).optional(),
       adminPasswordHash: z.string().nullish(),
       adminAccess: z.enum(WEBUI_ADMIN_ACCESS_LEVELS).optional(),
+      askPasswordOnThisComputer: z.boolean().optional(),
     }).nullish(),
   }).optional(),
   jukebox: z.object({
@@ -90,6 +102,7 @@ export const SettingsFileSchema = z.object({
   }).optional(),
   advanced: z.object({
     debug: z.boolean().optional(),
+    // Seconds. A Navidrome token without a usable exp claim renews after this.
     tokenExpiry: z.number().optional(),
   }).optional(),
 }).passthrough();
@@ -99,16 +112,24 @@ export type SettingsFile = z.infer<typeof SettingsFileSchema>;
 interface StoreContents {
   /** Null when the file is absent, unreadable, not JSON, or fails the schema. */
   settings: SettingsFile | null;
-  /** Kept when the schema rejects the file. Null when the file is absent, unreadable or not JSON. */
+  /**
+   * The file's JSON after coerceSlips, with every unknown key kept. Kept when the schema rejects the
+   * file. Null when the file is absent, unreadable or not JSON.
+   */
   parsed: unknown;
   /** Why a present file is not usable. Both problem fields are null for an absent file or a usable one. */
   problem: string | null;
   problemKind: StoreProblemKind | null;
+  /** One notice per coerced value and per unknown key, each naming the settings.json key. Empty unless the file is JSON. */
+  notices: string[];
 }
 
 type StoreProblemKind = 'unreadable' | 'not-json' | 'invalid';
 
-const NO_STORE: StoreContents = { settings: null, parsed: null, problem: null, problemKind: null };
+const NO_STORE: StoreContents = { settings: null, parsed: null, problem: null, problemKind: null, notices: [] };
+
+/** readStore runs on every settings read, such as the web remote's periodic one, so each state of the file logs once. */
+let lastLoggedState = '';
 
 const StoredAuthModeSchema = z.object({ webui: z.object({ auth: z.object({ mode: z.unknown() }) }) });
 
@@ -119,7 +140,8 @@ export function readSettings(): SettingsFile | null {
 
 /**
  * The schema strips nested keys this build does not know, so a save merges onto this unstripped
- * object instead. It is null whenever readSettings returns null.
+ * object instead, which also writes each coerced value back in its proper type. It is null whenever
+ * readSettings returns null.
  */
 export function readRawSettings(): Record<string, unknown> | null {
   const { settings, parsed } = readStore();
@@ -127,10 +149,41 @@ export function readRawSettings(): Record<string, unknown> | null {
   return settings === null ? null : parsed as Record<string, unknown>;
 }
 
-/** Lets the settings page say why it shows default and environment values instead of the file's. */
-export function readStoreProblem(): { text: string; unreadable: boolean } | null {
+/**
+ * Lets the settings page say why it shows default and environment values in place of some or all of
+ * the file's. `salvaged` is true when the page shows the values readSalvagedSettings kept.
+ */
+export function readStoreProblem(): { text: string; unreadable: boolean; salvaged: boolean } | null {
   const { problem, problemKind } = readStore();
-  return problem === null ? null : { text: problem, unreadable: problemKind === 'unreadable' };
+  if (problem === null) return null;
+  return { text: problem, unreadable: problemKind === 'unreadable', salvaged: problemKind === 'invalid' };
+}
+
+/** Lets the settings page name each hand-edit slip the store read past. */
+export function readStoreNotices(): string[] {
+  return readStore().notices;
+}
+
+/** The settings page form seeds from these values. Null unless a present JSON file failed the schema. */
+export function readSalvagedSettings(): SettingsFile | null {
+  const raw = readSalvagedRawSettings();
+  if (raw === null) return null;
+  const salvaged = SettingsFileSchema.safeParse(raw);
+  return salvaged.success ? salvaged.data : null;
+}
+
+/**
+ * A save over a file the schema rejects merges onto this unstripped object, so it keeps the file's
+ * valid values and each key this build does not know. Null unless a present JSON file failed the schema.
+ */
+export function readSalvagedRawSettings(): JsonObject | null {
+  const { parsed, problemKind } = readStore();
+  if (problemKind !== 'invalid') return null;
+  const salvaged = salvageValidLeaves(SettingsFileSchema, parsed);
+  const mode = storedAuthMode(parsed);
+  const unknownMode = mode !== undefined && mode !== null && !WEBUI_AUTH_MODES.some((known) => known === mode);
+  // An unknown mode falls back to password, as toAuthMode does, so a typo never opens the remote.
+  return unknownMode ? mergeOntoStored(salvaged, { webui: { auth: { mode: 'password' } } }) : salvaged;
 }
 
 /**
@@ -142,13 +195,19 @@ export function readSettingsForStartup(): {
   settings: SettingsFile | null;
   requestsWebuiAuth: boolean;
   problem: string | null;
+  notices: string[];
 } {
-  const { settings, parsed, problem, problemKind } = readStore();
-  const stored = StoredAuthModeSchema.safeParse(parsed);
-  const mode = stored.success ? stored.data.webui.auth.mode : undefined;
+  const { settings, parsed, problem, problemKind, notices } = readStore();
+  const mode = storedAuthMode(parsed);
   const namesAuthMode = mode !== undefined && mode !== null && mode !== 'none';
   const unparsable = problemKind === 'unreadable' || problemKind === 'not-json';
-  return { settings, requestsWebuiAuth: unparsable || namesAuthMode, problem };
+  return { settings, requestsWebuiAuth: unparsable || namesAuthMode, problem, notices };
+}
+
+/** The file's webui.auth.mode as written, read even when the schema rejects the file. */
+function storedAuthMode(parsed: unknown): unknown {
+  const stored = StoredAuthModeSchema.safeParse(parsed);
+  return stored.success ? stored.data.webui.auth.mode : undefined;
 }
 
 function readStore(): StoreContents {
@@ -158,7 +217,10 @@ function readStore(): StoreContents {
     raw = readFileSync(path, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return NO_STORE;
+    if (code === 'ENOENT') {
+      logStateOnce([]);
+      return NO_STORE;
+    }
     return unusableStore(`settings.json at ${path} is unreadable (${code ?? String(err)})`, null, 'unreadable');
   }
   // Windows editors may prepend a UTF-8 BOM, which JSON.parse rejects.
@@ -171,24 +233,45 @@ function readStore(): StoreContents {
     return unusableStore(`settings.json is not valid JSON (${path})`, null, 'not-json');
   }
 
-  const result = SettingsFileSchema.safeParse(parsed);
+  const coerced = coerceSlips(SettingsFileSchema, parsed);
+  const notices = [...coerced.notices, ...findUnknownKeys(SettingsFileSchema, coerced.value)];
+  const result = SettingsFileSchema.safeParse(coerced.value);
   if (!result.success) {
     const issues = result.error.issues
       .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('; ');
-    return unusableStore(`settings.json failed validation (${path}) [${issues}]`, parsed, 'invalid');
+    return unusableStore(`settings.json failed validation (${path}) [${issues}]`, coerced.value, 'invalid', notices);
   }
-  return { settings: result.data, parsed, problem: null, problemKind: null };
+  logStateOnce(noticeLines(notices));
+  return { settings: result.data, parsed: coerced.value, problem: null, problemKind: null, notices };
 }
 
 // Startup decides between env fallback and setup mode, so this line states only that the values are dropped.
-function unusableStore(problem: string, parsed: unknown, kind: StoreProblemKind): StoreContents {
-  logger.warn(`${problem}. Its values are ignored.`);
-  return { settings: null, parsed, problem, problemKind: kind };
+function unusableStore(
+  problem: string,
+  parsed: unknown,
+  kind: StoreProblemKind,
+  notices: string[] = [],
+): StoreContents {
+  logStateOnce([`${problem}. Its values are ignored.`, ...noticeLines(notices)]);
+  return { settings: null, parsed, problem, problemKind: kind, notices };
 }
 
+function noticeLines(notices: readonly string[]): string[] {
+  return notices.map((notice) => `settings.json: ${notice}`);
+}
+
+function logStateOnce(lines: readonly string[]): void {
+  const key = lines.join('\n');
+  if (key === lastLoggedState) return;
+  lastLoggedState = key;
+  for (const line of lines) logger.warn(line);
+}
+
+/** A person who reads the file sees only keys with values. The runtime reads an absent key as it read the empty one. */
 export function writeSettings(settings: SettingsFile): void {
-  writePrivateFileAtomic(getSettingsStorePath(), `${JSON.stringify(settings, null, 2)}\n`);
+  const pruned = pruneEmptyValues(SettingsFileSchema, settings);
+  writePrivateFileAtomic(getSettingsStorePath(), `${JSON.stringify(pruned, null, 2)}\n`);
 }
 
 /**
@@ -220,12 +303,6 @@ export function writePrivateFileAtomic(path: string, content: string): void {
     }
     throw err;
   }
-}
-
-type JsonObject = Record<string, unknown>;
-
-function isJsonObject(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

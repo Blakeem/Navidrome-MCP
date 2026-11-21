@@ -51,8 +51,18 @@ export const MPV_QUIT_SOCKET_TIMEOUT_MS = 1000;
 
 export const MPV_STALE_SOCKET_PROBE_MS = 100;
 
+/** Bounds the open_jukebox_remote wait for a spawned player to answer, so a player that never starts cannot hang the call. */
+export const JUKEBOX_REMOTE_START_TIMEOUT_MS = 15_000;
+export const JUKEBOX_REMOTE_START_POLL_MS = 250;
+
 /** An mpv the MCP process spawned plays untracked by the web owner for at most this long. */
 export const WEB_OWNER_ATTACH_INTERVAL_MS = 5000;
+
+/**
+ * Generous, because reaping mid-config is worse than a harmless idle loopback server, and its own
+ * ephemeral port means a lingering one never blocks a freshly launched player.
+ */
+export const SETTINGS_PAGE_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** An echo is a local IPC round trip of milliseconds, so only a wedged or gone mpv hits this. */
 export const SCROBBLE_CLAIM_ECHO_TIMEOUT_MS = 5000;
@@ -114,3 +124,6 @@ export const MAX_AUTH_RATE_LIMIT_WAIT_MS = 25_000;
 
 /** Navidrome's default login window, the wait when a 429 has no usable `Retry-After`. */
 export const NAVIDROME_LOGIN_RATE_LIMIT_WINDOW_MS = 20_000;
+
+/** The token renews this long before its `exp` claim, so a request in flight never carries an expired token. */
+export const NAVIDROME_TOKEN_EXPIRY_MARGIN_MS = 60_000;

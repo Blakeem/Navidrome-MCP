@@ -131,7 +131,6 @@
       </button>
     </section>
 
-    <p class="control-status" id="control-status" aria-live="polite"></p>
     <div class="output-banner" id="output-banner" role="status" hidden>
       <p class="output-banner-text" id="output-banner-text"></p>
       <button type="button" class="btn-secondary output-banner-btn" aria-describedby="output-banner-text">Pick output</button>
@@ -314,7 +313,6 @@
         </button>
       </header>
       <ul class="audio-device-list" id="audio-device-list"></ul>
-      <p class="modal-hint" id="audio-device-status" aria-live="polite"></p>
     </form>
   </dialog>
 
@@ -338,7 +336,17 @@
           <input type="radio" class="visually-hidden" name="theme" id="theme-system" value="system" />
           <label for="theme-system" class="mode-toggle-btn">System</label>
         </div>
-        <p class="modal-hint">Light and Dark apply to every device. System follows each device's own setting.</p>
+        <p class="modal-hint">Light and Dark apply to every device, guests included. With System, each device picks its own.</p>
+      </fieldset>
+      <fieldset class="settings-group" id="settings-device-theme-group" hidden>
+        <legend class="settings-heading">Theme</legend>
+        <div class="mode-toggle theme-toggle">
+          <input type="radio" class="visually-hidden" name="device-theme" id="device-theme-light" value="light" />
+          <label for="device-theme-light" class="mode-toggle-btn">Light</label>
+          <input type="radio" class="visually-hidden" name="device-theme" id="device-theme-dark" value="dark" />
+          <label for="device-theme-dark" class="mode-toggle-btn">Dark</label>
+        </div>
+        <p class="modal-hint">Applies to this device only.</p>
       </fieldset>
       <fieldset class="settings-group" id="settings-player-group" hidden>
         <legend class="settings-heading">Player</legend>
@@ -355,8 +363,10 @@
           <span>Show the visualizer beside the track info <span class="modal-hint">Off also stops its audio analysis in mpv. A change during a song applies at the next song or pause.</span>
             <span class="modal-hint" id="set-visualizer-unsupported" hidden>mpv could not run the visualizer. The server log says why.</span></span>
         </label>
+        <p class="modal-hint" id="no-admin-password-notice" hidden></p>
+        <button type="button" class="btn-secondary" id="open-all-settings" aria-describedby="all-settings-hint"><svg viewBox="0 -960 960 960" aria-hidden="true"><path fill="currentColor" d="M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h280v80H200v560h560v-280h80v280q0 33-23.5 56.5T760-120H200Zm188-212-56-56 372-372H560v-80h280v280h-80v-144L388-332Z"/></svg>All settings</button>
+        <p class="modal-hint" id="all-settings-hint">Navidrome connection, admin password, access and more.</p>
       </fieldset>
-      <p class="modal-hint" id="settings-status" aria-live="polite"></p>
       <fieldset class="settings-group">
         <legend class="settings-heading">This player</legend>
         <div class="action-tiles">
@@ -419,7 +429,6 @@
           <button type="button" class="primary-btn" id="lib-search-btn">Search</button>
         </div>
         <p class="modal-hint" id="lib-caption" aria-live="polite"></p>
-        <p class="modal-hint" id="lib-status" aria-live="polite"></p>
         <div id="lib-results"></div>
       </div>
       <div class="modal-pane" id="play-pane-playlists" role="tabpanel" aria-labelledby="play-tab-playlists" hidden>
@@ -427,7 +436,6 @@
         <ul class="lib-list" id="playlists-list"></ul>
       </div>
       <div class="modal-pane" id="play-pane-favorites" role="tabpanel" aria-labelledby="play-tab-favorites" hidden>
-        <p class="modal-hint" id="favorites-status" aria-live="polite"></p>
         <ul class="lib-list" id="favorites-list"></ul>
       </div>
     </form>
@@ -483,13 +491,11 @@
             <button type="button" class="btn-secondary" id="guest-ban-cancel">Cancel</button>
           </div>
         </div>
-        <p class="modal-hint" id="guest-message" aria-live="polite"></p>
       </fieldset>
       <fieldset class="settings-group">
         <legend class="settings-heading">Banned</legend>
         <p class="modal-help" id="ban-list-status"></p>
         <ul class="network-list" id="ban-list"></ul>
-        <p class="modal-hint" id="ban-message" aria-live="polite"></p>
       </fieldset>
       <fieldset class="settings-group">
         <legend class="settings-heading">Song limit</legend>
@@ -497,9 +503,8 @@
         <p class="modal-hint" id="jukebox-guest-limit-hint">1 to 20. A slot frees when one of their songs starts or they remove it.</p>
         <div class="lib-search guest-limit-row">
           <input type="number" id="jukebox-guest-limit" min="1" max="20" step="1" required aria-describedby="jukebox-guest-limit-hint" />
-          <button type="button" class="primary-btn" id="jukebox-guest-limit-save">Save</button>
+          <button type="button" class="primary-btn save-btn" id="jukebox-guest-limit-save">Save</button>
         </div>
-        <p class="modal-hint" id="jukebox-guest-limit-message" aria-live="polite"></p>
       </fieldset>
     </form>
   </dialog>
@@ -571,13 +576,12 @@
           </div>
         </div>
       </div>
-      <p class="modal-hint" id="jukebox-message" aria-live="polite"></p>
     </form>
   </dialog>
 
   <dialog id="jukebox-fullscreen" class="jukebox-fullscreen" aria-label="Jukebox QR code">
     <img class="jukebox-qr" id="jukebox-fullscreen-qr" alt="" />
-    <p>Scan to add songs to the queue.</p>
+    <p class="jukebox-fullscreen-caption">Scan to add songs to the queue.</p>
   </dialog>
 
   <!-- A module script runs after parsing, so each module looks up its elements at import. -->

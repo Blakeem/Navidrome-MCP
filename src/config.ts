@@ -16,7 +16,7 @@ import {
   writeSettings,
   type SettingsFile,
 } from './config/store.js';
-import { mapStoreToConfig } from './config/map-config.js';
+import { findBindConflicts, mapStoreToConfig, storePathOf } from './config/map-config.js';
 import { getSettingsStorePath } from './config/store-path.js';
 import { buildEnvRuntimeSettings } from './config/env-settings.js';
 import { resolveMpvBinary } from './services/playback/mpv-process.js';
@@ -30,7 +30,7 @@ export function validateMappedSettings(
 ): { ok: true; config: Config } | { ok: false; messages: string[] } {
   const result = ConfigSchema.safeParse(mapStoreToConfig(settings, mpvPath));
   if (result.success) return { ok: true, config: result.data };
-  const messages = result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+  const messages = result.error.issues.map((issue) => `${storePathOf(issue.path)}: ${issue.message}`);
   return { ok: false, messages };
 }
 
@@ -45,7 +45,7 @@ export async function loadConfig(settings?: SettingsFile): Promise<Config> {
     throw new Error(
       ErrorFormatter.configValidation([
         `No usable settings found at ${getSettingsStorePath()}.`,
-        'Run `navidrome-config` (or start the server unconfigured) to create it.',
+        'Run `navidrome-mcp settings` (or start the server unconfigured) to create it.',
       ])
     );
   }
@@ -81,6 +81,11 @@ function rejected(source: ConfigSource, reason: string): ConfigState {
   return { configured: false, failure: { reason, unreachable: false, source } };
 }
 
+/** A reason that already describes settings.json also names each slip the store read past. */
+function withStoreNotices(reason: string, notices: readonly string[]): string {
+  return notices.length === 0 ? reason : `${reason}\nsettings.json notices:\n${notices.join('\n')}`;
+}
+
 export async function resolveConfigState(): Promise<ConfigState> {
   const store = readSettingsForStartup();
   const url = store.settings?.navidrome?.url;
@@ -90,12 +95,14 @@ export async function resolveConfigState(): Promise<ConfigState> {
 
   try {
     // Reuse the snapshot the URL guard read, since a second read could see a concurrent save.
-    return { configured: true, config: await loadConfig(store.settings), source: 'store' };
+    const config = await loadConfig(store.settings);
+    for (const conflict of findBindConflicts(store.settings)) logger.warn(conflict);
+    return { configured: true, config, source: 'store' };
   } catch (err) {
     // An invalid store opens the settings GUI instead of crashing. The logged reason
     // keeps a malformed hand-edited store from looking like a fresh first run.
     logger.warn('settings.json is present but invalid; entering setup mode:', err);
-    return rejected('store', errorMessage(err));
+    return rejected('store', withStoreNotices(errorMessage(err), store.notices));
   }
 }
 
@@ -117,13 +124,13 @@ async function resolveEnvFallbackState(store: ReturnType<typeof readSettingsForS
   if (store.requestsWebuiAuth) {
     const reason = envSkipReason(store.problem);
     logger.warn(`${reason} Setup mode starts.`);
-    return rejected('store', reason);
+    return rejected('store', withStoreNotices(reason, store.notices));
   }
   const envSettings = buildEnvRuntimeSettings();
   const envUrl = envSettings.navidrome?.url;
   if (envUrl === undefined || envUrl.trim() === '') {
     // A present store that failed to load is a rejected config, not a first run.
-    return store.problem === null ? { configured: false } : rejected('store', store.problem);
+    return store.problem === null ? { configured: false } : rejected('store', withStoreNotices(store.problem, store.notices));
   }
 
   try {
@@ -140,7 +147,8 @@ async function resolveEnvFallbackState(store: ReturnType<typeof readSettingsForS
     );
     // A schema-invalid store also reaches the env path, so the reason says the file was ignored.
     const ignoredStore = store.problem === null ? '' : `${store.problem}. Its values are ignored. `;
-    return rejected('env', `${ignoredStore}The environment-derived config is invalid: ${errorMessage(err)}`);
+    const reason = `${ignoredStore}The environment-derived config is invalid: ${errorMessage(err)}`;
+    return rejected('env', store.problem === null ? reason : withStoreNotices(reason, store.notices));
   }
 }
 

@@ -1,5 +1,5 @@
 /**
- * Navidrome MCP Server - navidrome-web first-run setup mode test
+ * Navidrome MCP Server - Jukebox Remote first-run setup mode test
  * Copyright (C) 2025
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
@@ -13,7 +13,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 
-import { describeCoordination, spawnUnconfiguredWeb, waitForExit } from './helpers.js';
+import {
+  describeCoordination,
+  healthz,
+  killAllChildren,
+  PLAYER_STARTUP_TIMEOUT_MS,
+  randomPort,
+  spawnUnconfiguredWeb,
+  testStoreSettings,
+  waitFor,
+  waitForExit,
+} from './helpers.js';
 
 const SETTINGS_URL_LINE = /Open this in your browser to set it up:\s+(\S+)/;
 const SETTINGS_URL_TIMEOUT_MS = 20000;
@@ -35,13 +45,11 @@ function readSettingsUrl(child: ChildProcess): Promise<string> {
   });
 }
 
-describeCoordination('navidrome-web setup mode', () => {
-  let web: ChildProcess | null = null;
+describeCoordination('Jukebox Remote setup mode', () => {
   let storeDir: string | null = null;
 
-  afterEach(() => {
-    if (web !== null && web.exitCode === null && web.signalCode === null) web.kill('SIGKILL');
-    web = null;
+  afterEach(async () => {
+    await killAllChildren();
     if (storeDir !== null) rmSync(storeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     storeDir = null;
   });
@@ -49,7 +57,6 @@ describeCoordination('navidrome-web setup mode', () => {
   it('hosts the settings page when no configuration exists', async () => {
     storeDir = mkdtempSync(join(tmpdir(), 'ndmcp-setup-'));
     const child = spawnUnconfiguredWeb(join(storeDir, 'settings.json'));
-    web = child;
 
     const url = await readSettingsUrl(child);
     const page = await fetch(url);
@@ -60,4 +67,25 @@ describeCoordination('navidrome-web setup mode', () => {
     await waitForExit(child);
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
   });
+
+  it('starts the player on the saved port after a usable Save, and closes the settings page', async () => {
+    storeDir = mkdtempSync(join(tmpdir(), 'ndmcp-setup-'));
+    const port = randomPort();
+    const child = spawnUnconfiguredWeb(join(storeDir, 'settings.json'));
+    const url = await readSettingsUrl(child);
+
+    const res = await fetch(`${url}api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testStoreSettings(port)),
+    });
+    const reply = (await res.json()) as { pageClosed?: boolean; nextSteps?: { text: string; url?: string }[] };
+
+    expect(reply.pageClosed).toBe(true);
+    expect(reply.nextSteps?.[0]?.text).toBe('The Jukebox Remote is starting.');
+    expect(reply.nextSteps?.[1]?.url).toBe(`http://127.0.0.1:${String(port)}/admin`);
+    expect(await waitFor(async () => (await healthz(port))?.app === 'navidrome-mcp-web')).toBe(true);
+    await expect(fetch(url)).rejects.toThrow();
+    expect(child.exitCode).toBeNull();
+  }, PLAYER_STARTUP_TIMEOUT_MS * 2);
 });

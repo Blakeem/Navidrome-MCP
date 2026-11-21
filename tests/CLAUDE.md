@@ -81,7 +81,7 @@ tests/
 | Live reads | `describeLive` and `skipIf(shouldSkipLiveTests())` blocks in the files `vitest.live.config.ts` lists | `vitest.live.config.ts` | `pnpm test:live` | Navidrome reads, one shared login | Before a release |
 | Playback integration | `tests/integration/playback/` | `vitest.playback.config.ts` | `pnpm test:playback` (user only) | The user's live mpv queue, which it clears, and Navidrome reads | After a playback change |
 | Coordination | `tests/integration/coordination/` | `vitest.playback.config.ts` | `pnpm test:playback` (user only) | Child `dist/web/main.js` processes on random ports, and mpv on the default pipe, which teardown quits | After a change to player startup, ports or leases |
-| End-to-end | `tests/e2e/` | `tests/e2e/playwright.config.ts` | `pnpm test:e2e` | One isolated `navidrome-web` instance with its own store, port and mpv, Navidrome reads, now-playing notices, and the machine's audio output at the test volume (`TEST_VOLUME` in `fixtures.ts`) | After a web remote or jukebox change |
+| End-to-end | `tests/e2e/` | `tests/e2e/playwright.config.ts` | `pnpm test:e2e` | One isolated Jukebox Remote instance with its own store, port and mpv, Navidrome reads, now-playing notices, and the machine's audio output at the test volume (`TEST_VOLUME` in `fixtures.ts`) | After a web remote or jukebox change |
 
 ### Playback Integration Tests (separate suite)
 

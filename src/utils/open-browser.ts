@@ -13,12 +13,18 @@ export function openBrowser(url: string): void {
   try {
     const child = spawn(command, args, { detached: true, stdio: 'ignore' });
     child.on('error', () => {
-      logger.debug(`openBrowser: could not launch a browser for ${url} (no GUI?)`);
+      logger.debug(`openBrowser: could not launch a browser for ${withoutQuery(url)} (no GUI?)`);
     });
     child.unref();
   } catch {
-    logger.debug(`openBrowser: spawn threw for ${url} (no GUI?)`);
+    logger.debug(`openBrowser: spawn threw for ${withoutQuery(url)} (no GUI?)`);
   }
+}
+
+/** The query can hold the player's launch key, which no log line may hold. */
+function withoutQuery(url: string): string {
+  const queryStart = url.indexOf('?');
+  return queryStart === -1 ? url : url.slice(0, queryStart);
 }
 
 function browserCommand(url: string): { command: string; args: string[] } {

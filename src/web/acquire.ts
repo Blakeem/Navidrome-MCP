@@ -27,17 +27,20 @@ export type ProbeOutcome = 'ours' | 'refused' | 'foreign';
 
 export type WebEndpoint = Pick<Config['webui'], 'port' | 'host' | 'tls'>;
 
-/** `port` and `secure` are the endpoint whose answer decided the outcome. */
-export interface WebOwnerProbe {
+/** `lan` is whether the owner's bind accepts LAN connections. An owner older than the field leaves it out. */
+interface HealthAnswer {
   outcome: ProbeOutcome;
-  port: number;
-  secure: boolean;
+  lan?: boolean;
 }
 
 /** `secure` is the scheme the owner answered on, or the preferred one when no owner answered. */
-interface OwnerAnswer {
-  outcome: ProbeOutcome;
+interface OwnerAnswer extends HealthAnswer {
   secure: boolean;
+}
+
+/** `port` and `secure` are the endpoint whose answer decided the outcome. */
+export interface WebOwnerProbe extends OwnerAnswer {
+  port: number;
 }
 
 export interface AcquireDeps {
@@ -54,13 +57,13 @@ function probeHost(bindHost: string): string {
   return WILDCARD_HOSTS.has(bindHost) ? '127.0.0.1' : bindHost;
 }
 
-export function probeHealthz(port: number, bindHost: string, secure: boolean): Promise<ProbeOutcome> {
-  return new Promise<ProbeOutcome>((resolve) => {
+export function probeHealthz(port: number, bindHost: string, secure: boolean): Promise<HealthAnswer> {
+  return new Promise<HealthAnswer>((resolve) => {
     let settled = false;
-    const done = (outcome: ProbeOutcome): void => {
+    const done = (outcome: ProbeOutcome, lan?: boolean): void => {
       if (settled) return;
       settled = true;
-      resolve(outcome);
+      resolve(lan === undefined ? { outcome } : { outcome, lan });
     };
 
     const req = loopbackRequest(
@@ -84,8 +87,9 @@ export function probeHealthz(port: number, bindHost: string, secure: boolean): P
         });
         res.on('end', () => {
           try {
-            const json = JSON.parse(body) as { app?: unknown };
-            done(json.app === HEALTH_APP_ID ? 'ours' : 'foreign');
+            const json = JSON.parse(body) as { app?: unknown; lan?: unknown };
+            if (json.app !== HEALTH_APP_ID) done('foreign');
+            else done('ours', typeof json.lan === 'boolean' ? json.lan : undefined);
           } catch {
             done('foreign');
           }
@@ -109,10 +113,10 @@ export function probeHealthz(port: number, bindHost: string, secure: boolean): P
  */
 export async function probeOwner(port: number, bindHost: string, preferSecure: boolean): Promise<OwnerAnswer> {
   const preferred = await probeHealthz(port, bindHost, preferSecure);
-  if (preferred !== 'foreign') return { outcome: preferred, secure: preferSecure };
+  if (preferred.outcome !== 'foreign') return { ...preferred, secure: preferSecure };
   const other = await probeHealthz(port, bindHost, !preferSecure);
-  if (other === 'ours') return { outcome: 'ours', secure: !preferSecure };
-  return { outcome: preferred, secure: preferSecure };
+  if (other.outcome === 'ours') return { ...other, secure: !preferSecure };
+  return { ...preferred, secure: preferSecure };
 }
 
 /**
@@ -172,11 +176,8 @@ function realBind(server: Server, port: number, host: string): Promise<'ok' | 'e
 
 const DEFAULT_DEPS: AcquireDeps = { probe: probeOwner, bind: realBind };
 
-function conflictError(port: number): Error {
-  return new Error(
-    `Web UI port ${port} is in use by another application. ` +
-      `Change webui.port in settings, or stop the conflicting process.`,
-  );
+export function portConflictMessage(port: number): string {
+  return `Web UI port ${port} is in use by another application. Change webui.port in settings, or stop the conflicting process.`;
 }
 
 /** `makeServer` runs only when a bind is attempted, so an attaching process builds no server. */
@@ -191,15 +192,15 @@ export async function acquireOrAttach(
 
   const first = await deps.probe(port, host, secure);
   if (first.outcome === 'ours') return { mode: 'attached', url: loopbackUrl(port, first.secure) };
-  if (first.outcome === 'foreign') throw conflictError(port);
+  if (first.outcome === 'foreign') throw new Error(portConflictMessage(port));
 
   const server = makeServer();
   const bound = await deps.bind(server, port, host);
   if (bound === 'ok') return { mode: 'owner', url, server };
 
   // EADDRINUSE after a refused probe means another process bound first. It is either a
-  // navidrome-web that won a cold-start race or a foreign process.
+  // Jukebox Remote that won a cold-start race or a foreign process.
   const second = await deps.probe(port, host, secure);
   if (second.outcome === 'ours') return { mode: 'attached', url: loopbackUrl(port, second.secure) };
-  throw conflictError(port);
+  throw new Error(portConflictMessage(port));
 }

@@ -5,7 +5,6 @@ import { buildLibraryNode } from './library-tree.js';
 const query = byId('lib-query');
 const searchBtn = byId('lib-search-btn');
 const caption = byId('lib-caption');
-const status = byId('lib-status');
 const results = byId('lib-results');
 const RESULT_GROUPS = [
   { kind: 'artist', key: 'artists', title: 'Artists' },
@@ -28,7 +27,6 @@ export function bindSearchPane() {
 
 export function resetSearchPane() {
   query.value = '';
-  status.textContent = '';
   void loadLibrary('');
 }
 
@@ -66,7 +64,7 @@ function buildResultGroup(title, kind, items) {
   heading.className = 'lib-group-title';
   heading.textContent = title;
   list.className = 'lib-list';
-  list.append(...items.map((item) => buildLibraryNode(kind, item, 0, status)));
+  list.append(...items.map((item) => buildLibraryNode(kind, item, 0)));
   group.append(heading, list);
   return group;
 }

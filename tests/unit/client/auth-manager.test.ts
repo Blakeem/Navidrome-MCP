@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockedFunction } from 'vitest';
 import { AuthManager, isNavidromeUnreachable } from '../../../src/client/auth-manager.js';
 import { FetchTimeoutError } from '../../../src/utils/fetch-with-timeout.js';
+import { logger } from '../../../src/utils/logger.js';
 import type { Config } from '../../../src/config.js';
 
 // vi.useFakeTimers does not fake node:timers/promises, which the 429 wait uses.
@@ -232,6 +233,67 @@ describe('AuthManager', () => {
       const result = await settled;
       expect(result).toBeInstanceOf(FetchTimeoutError);
       expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('token expiry', () => {
+    const NOW_MS = Date.UTC(2026, 0, 1);
+    const expiryOf = (auth: AuthManager): number => (auth as unknown as { tokenExpiry: Date }).tokenExpiry.getTime();
+    const jwt = (payload: object): string =>
+      `${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.sig`;
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW_MS);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    async function loginWith(token: string): Promise<AuthManager> {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ token }));
+      const auth = new AuthManager(makeConfig());
+      await auth.authenticate();
+      return auth;
+    }
+
+    it("renews 60 seconds before the token's exp claim", async () => {
+      const exp = NOW_MS / 1000 + 3600;
+
+      const auth = await loginWith(jwt({ uid: 'u1', exp }));
+
+      expect(expiryOf(auth)).toBe(exp * 1000 - 60_000);
+    });
+
+    it('falls back to the configured lifetime when the token has no exp claim', async () => {
+      const auth = await loginWith(jwt({ uid: 'u1' }));
+
+      expect(expiryOf(auth)).toBe(NOW_MS + 86400 * 1000);
+    });
+
+    it('falls back to the configured lifetime when the exp claim is past the Date range', async () => {
+      const auth = await loginWith(jwt({ uid: 'u1', exp: 1e300 }));
+
+      expect(expiryOf(auth)).toBe(NOW_MS + 86400 * 1000);
+    });
+
+    it('falls back to the configured lifetime for a token that is not a JWT, and logs no decode error', async () => {
+      const errorSpy = vi.spyOn(logger, 'error');
+
+      const auth = await loginWith('opaque-token');
+
+      expect(expiryOf(auth)).toBe(NOW_MS + 86400 * 1000);
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the configured lifetime with a warning when the exp claim is under 60 seconds away', async () => {
+      const warnSpy = vi.spyOn(logger, 'warn');
+
+      const auth = await loginWith(jwt({ uid: 'u1', exp: NOW_MS / 1000 + 30 }));
+
+      expect(expiryOf(auth)).toBe(NOW_MS + 86400 * 1000);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("by this computer's clock"));
     });
   });
 });

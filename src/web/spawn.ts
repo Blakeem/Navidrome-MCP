@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import { readSavedWebuiEndpoint, type Config } from '../config.js';
 import { logger } from '../utils/logger.js';
-import { probeWebOwner, type WebEndpoint, type WebOwnerProbe } from './acquire.js';
+import { portConflictMessage, probeWebOwner, type WebEndpoint, type WebOwnerProbe } from './acquire.js';
 import { holdOwnerLease } from './lease.js';
 
 /** `spawned` means only that a child launched. Port-as-lock decides whether it becomes owner. */
@@ -55,14 +55,14 @@ function spawnWebChild(): WebServerStatus {
     });
     // A late 'error' such as ENOENT fires after this function returns, so it can only be logged.
     child.on('error', (err) => {
-      logger.warn('navidrome-web child failed after spawn:', err);
+      logger.warn('Jukebox Remote child failed after spawn:', err);
     });
     child.unref();
     child.channel?.unref();
-    logger.debug(`spawned navidrome-web: ${target.command} ${target.args.join(' ')}`);
+    logger.debug(`spawned Jukebox Remote: ${target.command} ${target.args.join(' ')}`);
     return 'spawned';
   } catch (err) {
-    logger.warn('failed to spawn navidrome-web:', err);
+    logger.warn('failed to spawn Jukebox Remote:', err);
     return 'unavailable';
   }
 }
@@ -105,14 +105,10 @@ export async function ensureWebForPlayback(
       return 'running';
     }
     if (probe.outcome === 'foreign') {
-      logger.warn(
-        `Web UI port ${probe.port} is in use by another application; not starting the player. ` +
-          `Scrobbling will be handled by the MCP process until the conflict is resolved ` +
-          `(change webui.port in settings or stop the conflicting process).`,
-      );
+      logger.warn(`${portConflictMessage(probe.port)} The player does not start, and the MCP process scrobbles until the conflict is resolved.`);
       return 'unavailable';
     }
-    logger.debug('web player not running, spawning');
+    logger.debug('Jukebox Remote not running, spawning');
     return deps.spawn();
   })();
 

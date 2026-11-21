@@ -544,12 +544,79 @@ main {
 .play-btn svg { width: 36px; height: 36px; }
 .play-btn svg path { fill: var(--on-fill); }
 
-.control-status {
-  margin: 0;
-  text-align: center;
-  font-size: 0.85rem;
-  color: var(--bad);
+/* The one action-result notice (messages.js). It hangs from the top edge over the page or the open
+   dialog, so no layout reserves space for it. The z-index lifts it over the header and the lyrics view. */
+.notice {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
+  max-height: 50dvh;
+  margin: 0 auto;
+  padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  animation: notice-in 150ms ease-out;
 }
+.notice[hidden] { display: none; }
+/* messages.js hides the notice when this fade ends (FADE_MS). */
+.notice[data-leaving] { opacity: 0; transition: opacity 150ms; }
+.notice[data-tone="warning"] { border: 1px solid var(--warn); border-top: 0; }
+.notice[data-tone="error"] { border: 1px solid var(--bad); border-top: 0; }
+/* The text scrolls inside the notice, so a long server text never covers the entire screen. */
+.notice-text {
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-width: 0;
+  margin: 0;
+  padding-block: 2px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.notice[data-tone="success"] {
+  --notice-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 -960 960 960'%3E%3Cpath d='M382-240 154-468l57-57 171 171 367-367 57 57-424 424Z'/%3E%3C/svg%3E");
+  --notice-icon-color: var(--good);
+}
+.notice[data-tone="warning"],
+.notice[data-tone="error"] {
+  --notice-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 -960 960 960'%3E%3Cpath d='M480-280q17 0 28.5-11.5T520-320q0-17-11.5-28.5T480-360q-17 0-28.5 11.5T440-320q0 17 11.5 28.5T480-280Zm-40-160h80v-240h-80v240Zm40 360q-83 0-156-31.5T197-197q-54-54-85.5-127T80-480q0-83 31.5-156T197-763q54-54 127-85.5T480-880q83 0 156 31.5T763-763q54 54 85.5 127T880-480q0 83-31.5 156T763-197q-54 54-127 85.5T480-80Zm0-80q134 0 227-93t93-227q0-134-93-227t-227-93q-134 0-227 93t-93 227q0 134 93 227t227 93Z'/%3E%3C/svg%3E");
+  --notice-icon-color: var(--warn);
+}
+.notice[data-tone="error"] { --notice-icon-color: var(--bad); }
+.notice[data-tone="error"] .notice-text { color: var(--bad); }
+/* The icon is a mask over the tone color, so one SVG serves both themes and the text stays the notice's only content. */
+.notice[data-tone="success"] .notice-text::before,
+.notice[data-tone="warning"] .notice-text::before,
+.notice[data-tone="error"] .notice-text::before {
+  content: '';
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.35em;
+  vertical-align: -0.22em;
+  background-color: var(--notice-icon-color);
+  -webkit-mask: var(--notice-icon) center / contain no-repeat;
+  mask: var(--notice-icon) center / contain no-repeat;
+}
+@keyframes notice-in { from { transform: translateY(-100%); } }
+/* messages.js marks a dialog form busy while its save runs, so a second submit cannot start. */
+form[aria-busy="true"] { opacity: 0.6; transition: opacity 150ms; }
+/* The minimum width fits the longest label, Saving… or Saved, so the row stays still while the label changes. */
+.save-btn { min-width: 7rem; }
+@media (prefers-reduced-motion: reduce) {
+  .notice { animation: none; }
+  .notice[data-leaving],
+  form[aria-busy="true"] { transition: none; }
+}
+
 /* An empty line leaves the flex flow so it adds no gap. It stays in the accessibility tree,
    so the live region still announces the next message. */
 [aria-live]:empty {
@@ -996,9 +1063,9 @@ body.stream-evicted::after {
   font-size: 0.9rem;
 }
 body.player-stopped::after {
-  content: 'Player stopped. Relaunch navidrome-web or restart the MCP server to use it again.';
+  content: 'Player stopped. Run navidrome-mcp jukebox again or restart the MCP server to use it again.';
 }
-/* The connection label is hidden at phone width, so the notice names the cause. It sits above the lyrics overlay. */
+/* The connection label is hidden at phone width, so this bar names the cause. It sits above the lyrics overlay. */
 body.stream-evicted::after {
   content: 'This page closed because it is open in other tabs or windows on this device. Reload it to use it here.';
   z-index: 30;
@@ -1416,13 +1483,6 @@ body.stream-evicted::after {
   color: var(--text);
 }
 .lyrics-placard-note { display: block; margin-top: 6px; }
-.lyrics-placard-link {
-  display: inline-block;
-  margin-top: 12px;
-  color: var(--accent);
-  text-decoration: none;
-}
-.lyrics-placard-link:hover { text-decoration: underline; }
 
 .lyrics-lines {
   list-style: none;
@@ -1676,7 +1736,8 @@ body.stream-evicted::after {
   width: min(90vw, calc(100dvh - 120px));
   border-radius: 0;
 }
-.jukebox-fullscreen p { margin: 0; font-size: 1.25rem; text-align: center; }
+/* A class, not a p selector, since messages.js moves the notice and its live region into this dialog. */
+.jukebox-fullscreen-caption { margin: 0; font-size: 1.25rem; text-align: center; }
 
 /* Guests dialog: the guests and banned sections */
 #guest-list li,
@@ -1744,7 +1805,6 @@ body.stream-evicted::after {
 .nickname-fields { display: grid; gap: 6px; }
 .nickname-fields label .modal-hint { display: block; margin-top: 2px; }
 .guest-name-form .btn-secondary { flex: none; }
-.guest-name .guest-add-status { padding: 4px; }
 .guest-host-banner {
   margin: 0;
   padding: 10px 14px;
@@ -1792,28 +1852,6 @@ body.stream-evicted::after {
 .guest-add-btn[data-state="removing"]:disabled { opacity: 0.7; cursor: progress; }
 /* guest-add.js keeps Add songs in place by hand, so the browser's own anchoring must not shift it twice. */
 .guest-page { overflow-anchor: none; }
-.guest-toast {
-  position: fixed;
-  left: 50%;
-  bottom: calc(16px + env(safe-area-inset-bottom));
-  z-index: 20;
-  max-width: min(480px, calc(100% - 32px));
-  margin: 0;
-  padding: 10px 16px;
-  border-radius: var(--radius-md);
-  background: var(--text);
-  color: var(--bg);
-  box-shadow: var(--shadow);
-  font-size: 0.9rem;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, 8px);
-  transition: opacity 160ms, transform 160ms;
-}
-.guest-toast.is-shown { opacity: 1; transform: translate(-50%, 0); }
-@media (prefers-reduced-motion: reduce) {
-  .guest-toast { transition: none; }
-}
 .queue-list li.mine .qtitle { color: var(--accent); }
 .queue-list .qguest {
   align-self: flex-start;

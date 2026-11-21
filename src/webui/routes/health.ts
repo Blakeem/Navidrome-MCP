@@ -11,7 +11,7 @@ import { writeError, writeJson } from '../http-helpers.js';
 import { isLocalRequest } from '../loopback.js';
 import { isLanReachable } from '../network.js';
 
-/** The port-as-lock probe tells a navidrome-web owner from a foreign process by this value. */
+/** The port-as-lock probe tells a Jukebox Remote owner from a foreign process by this value. The id keeps its old name, so a new MCP server still recognizes an old running player. */
 export const HEALTH_APP_ID = 'navidrome-mcp-web';
 
 export function handleHealth(req: IncomingMessage, res: ServerResponse, config: Config): void {
@@ -24,5 +24,7 @@ export function handleHealth(req: IncomingMessage, res: ServerResponse, config: 
   writeJson(res, 200, {
     app: HEALTH_APP_ID,
     version: getPackageVersion(),
+    // A Save does not rebind a running player, so open_jukebox_remote reads the bind from here, not settings.json.
+    lan: isLanReachable(config.webui.host),
   });
 }
